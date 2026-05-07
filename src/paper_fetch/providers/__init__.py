@@ -8,6 +8,7 @@ from typing import Any
 _EXPORTS: dict[str, tuple[str, str]] = {
     "CrossrefClient": (".crossref", "CrossrefClient"),
     "ElsevierClient": (".elsevier", "ElsevierClient"),
+    "IeeeClient": (".ieee", "IeeeClient"),
     "PnasClient": (".pnas", "PnasClient"),
     "ScienceClient": (".science", "ScienceClient"),
     "SpringerClient": (".springer", "SpringerClient"),

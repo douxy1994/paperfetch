@@ -32,6 +32,36 @@ class PdfFetchFailure(Exception):
 
 
 _CONTENT_DISPOSITION_FILENAME_PATTERN = re.compile(r'filename\*?=(?:UTF-8\'\')?"?([^";]+)"?', flags=re.IGNORECASE)
+_PDF_MARKDOWN_WORD_PATTERN = re.compile(r"\b[\w][\w'-]*\b", flags=re.UNICODE)
+_PDF_LICENSE_MARKERS = (
+    "authorized licensed use limited to",
+    "restrictions apply",
+    "downloaded on",
+    "from ieee xplore",
+    "personal use is permitted",
+)
+_MIN_USABLE_PDF_MARKDOWN_WORDS = 250
+_MIN_TRANSPARENT_TEXT_WORDS = 500
+_TRANSPARENT_FALLBACK_WORD_FACTOR = 3
+
+
+@dataclass(frozen=True)
+class _PdfMarkdownQuality:
+    word_count: int
+    license_word_count: int
+    license_only: bool
+    has_text: bool
+
+    @property
+    def is_usable(self) -> bool:
+        return self.word_count >= _MIN_USABLE_PDF_MARKDOWN_WORDS and not self.license_only
+
+
+@dataclass(frozen=True)
+class _PdfTextLayerStats:
+    raw_words: int
+    visible_words: int
+    transparent_words: int
 
 
 def sanitize_storage_state(path: Path) -> Path:
@@ -62,12 +92,156 @@ def filename_from_headers(headers: Mapping[str, str] | None) -> str | None:
     return normalize_text(match.group(1)) or None
 
 
-def render_pdf_markdown(pdf_path: Path) -> str:
+def _pdf_word_count(text: str) -> int:
+    return len(_PDF_MARKDOWN_WORD_PATTERN.findall(normalize_text(text)))
+
+
+def _pdf_markdown_quality(markdown_text: str) -> _PdfMarkdownQuality:
+    normalized = normalize_text(markdown_text)
+    word_count = _pdf_word_count(normalized)
+    lines = [line for line in normalized.splitlines() if normalize_text(line)]
+    license_word_count = 0
+    for line in lines:
+        normalized_line = normalize_text(line).lower()
+        if any(marker in normalized_line for marker in _PDF_LICENSE_MARKERS):
+            license_word_count += _pdf_word_count(line)
+    license_only = license_word_count > 0 and (
+        word_count < _MIN_USABLE_PDF_MARKDOWN_WORDS
+        or license_word_count >= max(20, int(word_count * 0.6))
+    )
+    return _PdfMarkdownQuality(
+        word_count=word_count,
+        license_word_count=license_word_count,
+        license_only=license_only,
+        has_text=bool(normalized),
+    )
+
+
+def _render_default_pdf_markdown(pdf_path: Path) -> str:
     try:
         import pymupdf4llm
     except Exception as exc:  # pragma: no cover - exercised by missing dependency integration tests
         raise PdfFetchFailure("missing_pymupdf4llm", "pymupdf4llm is not installed; cannot use PDF fallback.") from exc
     return str(pymupdf4llm.to_markdown(str(pdf_path)) or "")
+
+
+def _render_transparent_pdf_markdown(pdf_path: Path) -> str:
+    try:
+        from pymupdf4llm.helpers import pymupdf_rag
+    except Exception as exc:  # pragma: no cover - exercised by missing dependency integration tests
+        raise PdfFetchFailure("missing_pymupdf4llm", "pymupdf4llm is not installed; cannot use PDF fallback.") from exc
+    return str(pymupdf_rag.to_markdown(str(pdf_path), ignore_alpha=True, hdr_info=False) or "")
+
+
+def _pdf_text_layer_stats(pdf_path: Path) -> _PdfTextLayerStats:
+    try:
+        import pymupdf
+    except Exception:  # pragma: no cover - PyMuPDF is a pymupdf4llm dependency in supported installs
+        try:
+            import fitz as pymupdf
+        except Exception:
+            return _PdfTextLayerStats(raw_words=0, visible_words=0, transparent_words=0)
+
+    raw_words = 0
+    transparent_words = 0
+    try:
+        with pymupdf.open(str(pdf_path)) as document:
+            for page in document:
+                text_dict = page.get_text("dict")
+                for block in text_dict.get("blocks", []):
+                    if block.get("type") != 0:
+                        continue
+                    for line in block.get("lines", []):
+                        for span in line.get("spans", []):
+                            span_words = _pdf_word_count(str(span.get("text") or ""))
+                            raw_words += span_words
+                            alpha_value = span.get("alpha", 255)
+                            if alpha_value is None:
+                                alpha_value = 255
+                            if int(alpha_value) == 0:
+                                transparent_words += span_words
+    except Exception:
+        return _PdfTextLayerStats(raw_words=0, visible_words=0, transparent_words=0)
+    return _PdfTextLayerStats(
+        raw_words=raw_words,
+        visible_words=max(0, raw_words - transparent_words),
+        transparent_words=transparent_words,
+    )
+
+
+def _should_try_transparent_pdf_fallback(
+    *,
+    default_quality: _PdfMarkdownQuality,
+    text_layer_stats: _PdfTextLayerStats,
+) -> bool:
+    if default_quality.is_usable:
+        return False
+    return (
+        text_layer_stats.transparent_words >= _MIN_TRANSPARENT_TEXT_WORDS
+        and text_layer_stats.raw_words >= default_quality.word_count * _TRANSPARENT_FALLBACK_WORD_FACTOR
+    )
+
+
+def _insufficient_pdf_markdown_failure(
+    *,
+    default_quality: _PdfMarkdownQuality,
+    text_layer_stats: _PdfTextLayerStats,
+    legacy_quality: _PdfMarkdownQuality | None = None,
+) -> PdfFetchFailure:
+    details: dict[str, Any] = {
+        "default_words": default_quality.word_count,
+        "default_license_words": default_quality.license_word_count,
+        "default_license_only": default_quality.license_only,
+        "raw_words": text_layer_stats.raw_words,
+        "visible_words": text_layer_stats.visible_words,
+        "transparent_words": text_layer_stats.transparent_words,
+    }
+    if legacy_quality is not None:
+        details.update(
+            {
+                "legacy_words": legacy_quality.word_count,
+                "legacy_license_words": legacy_quality.license_word_count,
+                "legacy_license_only": legacy_quality.license_only,
+            }
+        )
+    return PdfFetchFailure(
+        "insufficient_pdf_markdown",
+        "PDF fallback produced insufficient Markdown.",
+        details=details,
+    )
+
+
+def render_pdf_markdown(pdf_path: Path) -> str:
+    default_markdown = _render_default_pdf_markdown(pdf_path)
+    default_quality = _pdf_markdown_quality(default_markdown)
+    if default_quality.is_usable:
+        return default_markdown
+
+    text_layer_stats = _pdf_text_layer_stats(pdf_path)
+    if _should_try_transparent_pdf_fallback(
+        default_quality=default_quality,
+        text_layer_stats=text_layer_stats,
+    ):
+        legacy_markdown = _render_transparent_pdf_markdown(pdf_path)
+        legacy_quality = _pdf_markdown_quality(legacy_markdown)
+        min_legacy_words = max(
+            _MIN_USABLE_PDF_MARKDOWN_WORDS,
+            default_quality.word_count * _TRANSPARENT_FALLBACK_WORD_FACTOR,
+        )
+        if legacy_quality.word_count >= min_legacy_words and not legacy_quality.license_only:
+            return legacy_markdown
+        raise _insufficient_pdf_markdown_failure(
+            default_quality=default_quality,
+            text_layer_stats=text_layer_stats,
+            legacy_quality=legacy_quality,
+        )
+
+    if not default_quality.has_text:
+        return default_markdown
+    raise _insufficient_pdf_markdown_failure(
+        default_quality=default_quality,
+        text_layer_stats=text_layer_stats,
+    )
 
 
 def looks_like_pdf_payload(content_type: str | None, payload: bytes, final_url: str | None = None) -> bool:

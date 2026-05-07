@@ -356,6 +356,64 @@ class CliTests(unittest.TestCase):
             self.assertIn("![Figure 3](10.1073_pnas.1219683110_assets/pnas.1219683110fig03.jpeg)", rewritten)
             self.assertNotIn("https://www.pnas.org/cms/10.1073/pnas.1219683110/asset/example", rewritten)
 
+    def test_rewrite_markdown_asset_links_maps_ieee_full_and_preview_fallback_urls(self) -> None:
+        article = sample_article()
+        article.sections[0].text = "\n".join(
+            [
+                "IEEE inline images before local rewrite:",
+                "![Fig. 1](https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg1-0932570-large.gif)",
+                "![Fig. 2](https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg2-0932570-large.gif)",
+            ]
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "downloads"
+            output_dir.mkdir(parents=True)
+            asset_dir = output_dir / "10.1109_CICTN64563.2025.10932570_assets"
+            asset_dir.mkdir()
+            full_path = asset_dir / "garg1-0932570-large.gif"
+            preview_path = asset_dir / "garg2-0932570-small.gif"
+            full_path.write_bytes(b"full")
+            preview_path.write_bytes(b"preview")
+            article.assets = [
+                Asset(
+                    kind="figure",
+                    heading="Fig. 1",
+                    caption="Full-size figure.",
+                    path=str(full_path),
+                    section="body",
+                    original_url="https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg1-0932570-large.gif",
+                    download_url="https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg1-0932570-large.gif",
+                    download_tier="full_size",
+                ),
+                Asset(
+                    kind="figure",
+                    heading="Fig. 2",
+                    caption="Preview fallback figure.",
+                    path=str(preview_path),
+                    section="body",
+                    original_url="https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg2-0932570-large.gif",
+                    download_url="https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg2-0932570-small.gif",
+                    download_tier="preview",
+                ),
+            ]
+            envelope = paper_fetch.build_fetch_envelope(
+                article,
+                modes={"article", "markdown"},
+                render=RenderOptions(asset_profile="body"),
+            )
+
+            rewritten = paper_fetch_cli.rewrite_markdown_asset_links(
+                envelope.markdown or "",
+                envelope,
+                target_path=output_dir / "article.md",
+                render=RenderOptions(asset_profile="body"),
+            )
+
+            self.assertIn("![Fig. 1](10.1109_CICTN64563.2025.10932570_assets/garg1-0932570-large.gif)", rewritten)
+            self.assertIn("![Fig. 2](10.1109_CICTN64563.2025.10932570_assets/garg2-0932570-small.gif)", rewritten)
+            self.assertNotIn("ieeexplore.ieee.org/mediastore", rewritten)
+
     def test_rewrite_markdown_asset_links_rewrites_repo_relative_local_paths_against_output_file(self) -> None:
         article = sample_article()
 

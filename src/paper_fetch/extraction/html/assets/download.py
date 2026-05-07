@@ -317,6 +317,7 @@ def _resolve_figure_asset_with_image_document_fetcher(
     )
     if not candidate_urls:
         return None
+    full_size_url = _resolved_full_size_url(asset, preview_url=preview_url, candidate_urls=candidate_urls)
 
     last_attempt: _AssetDownloadAttempt | None = None
     for candidate_url in candidate_urls:
@@ -577,6 +578,191 @@ def _file_document_fetch_failure(
     except Exception:
         return {}
     return dict(failure) if isinstance(failure, Mapping) else {}
+
+
+def _figure_asset_request_headers(
+    *,
+    headers: Mapping[str, str] | None,
+    active_user_agent: str,
+    browser_cookies: list[dict[str, Any]],
+    candidate_url: str,
+) -> dict[str, str]:
+    request_headers = {"User-Agent": active_user_agent, "Accept": "*/*"}
+    request_headers.update({str(key): str(value) for key, value in (headers or {}).items() if value is not None})
+    if active_user_agent:
+        request_headers["User-Agent"] = active_user_agent
+    request_headers.setdefault("Accept", "*/*")
+    cookie_header = _cookie_header_for_url(browser_cookies, candidate_url)
+    if cookie_header:
+        request_headers["Cookie"] = cookie_header
+    return request_headers
+
+
+def _request_figure_asset_candidate(
+    transport: HttpTransport,
+    candidate_url: str,
+    *,
+    headers: Mapping[str, str] | None,
+    active_user_agent: str,
+    browser_cookies: list[dict[str, Any]],
+    active_seed_urls: list[str],
+    cookie_opener_builder: Callable[..., urllib.request.OpenerDirector | None],
+    opener_requester: Callable[..., dict[str, Any]],
+) -> dict[str, Any]:
+    request_headers = _figure_asset_request_headers(
+        headers=headers,
+        active_user_agent=active_user_agent,
+        browser_cookies=browser_cookies,
+        candidate_url=candidate_url,
+    )
+    opener = (
+        cookie_opener_builder(
+            active_seed_urls,
+            headers=request_headers,
+            timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+            browser_cookies=browser_cookies,
+        )
+        if browser_cookies or active_seed_urls
+        else None
+    )
+    if opener is not None:
+        return opener_requester(
+            opener,
+            candidate_url,
+            headers=request_headers,
+            timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+        )
+    return transport.request(
+        "GET",
+        candidate_url,
+        headers=request_headers,
+        timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+        retry_on_rate_limit=True,
+        retry_on_transient=True,
+    )
+
+
+def _figure_request_failure_attempt(
+    asset: Mapping[str, Any],
+    candidate: _AssetDownloadCandidate,
+    exc: RequestFailure,
+) -> _AssetDownloadAttempt:
+    return _AssetDownloadAttempt(
+        candidate=candidate,
+        failure=_asset_failure(
+            {
+                "kind": asset.get("kind", "figure"),
+                "heading": asset.get("heading", "Figure"),
+                "caption": asset.get("caption", ""),
+                "source_url": candidate.url,
+                "status": exc.status_code,
+                "reason": str(exc),
+                "section": asset.get("section") or "body",
+            }
+        ),
+    )
+
+
+def _figure_non_image_attempt(
+    asset: Mapping[str, Any],
+    candidate: _AssetDownloadCandidate,
+    response: Mapping[str, Any],
+    content_type: str,
+) -> _AssetDownloadAttempt:
+    return _AssetDownloadAttempt(
+        candidate=candidate,
+        failure=_asset_failure(
+            {
+                "kind": asset.get("kind", "figure"),
+                "heading": asset.get("heading", "Figure"),
+                "caption": asset.get("caption", ""),
+                "source_url": candidate.url,
+                "status": response.get("status_code"),
+                "reason": (
+                    f"Asset candidate did not return image content "
+                    f"(content-type: {content_type or 'unknown'})."
+                ),
+                "section": asset.get("section") or "body",
+            }
+        ),
+    )
+
+
+def _attempt_figure_asset_candidate(
+    transport: HttpTransport,
+    *,
+    asset: Mapping[str, Any],
+    candidate: _AssetDownloadCandidate,
+    headers: Mapping[str, str] | None,
+    active_user_agent: str,
+    browser_cookies: list[dict[str, Any]],
+    active_seed_urls: list[str],
+    cookie_opener_builder: Callable[..., urllib.request.OpenerDirector | None],
+    opener_requester: Callable[..., dict[str, Any]],
+) -> _AssetDownloadAttempt:
+    try:
+        response = _request_figure_asset_candidate(
+            transport,
+            candidate.url,
+            headers=headers,
+            active_user_agent=active_user_agent,
+            browser_cookies=browser_cookies,
+            active_seed_urls=active_seed_urls,
+            cookie_opener_builder=cookie_opener_builder,
+            opener_requester=opener_requester,
+        )
+    except RequestFailure as exc:
+        return _figure_request_failure_attempt(asset, candidate, exc)
+
+    body = response.get("body", b"")
+    content_type = _response_header(response, "content-type")
+    final_url = normalize_text(str(response.get("url") or candidate.url))
+    if _requires_image_payload(asset) and not _looks_like_image_payload(content_type, body, final_url):
+        return _figure_non_image_attempt(asset, candidate, response, content_type)
+    return _AssetDownloadAttempt(
+        candidate=candidate,
+        response=response,
+        source_url=candidate.url,
+    )
+
+
+def _should_retry_seeded_full_size_candidate(
+    candidate_url: str,
+    *,
+    preview_url: str,
+    full_size_url: str,
+    active_seed_urls: list[str],
+    browser_cookies: list[dict[str, Any]],
+) -> bool:
+    if not active_seed_urls and not browser_cookies:
+        return False
+    candidate = normalize_text(candidate_url)
+    if not candidate or _is_preview_candidate(candidate, preview_url=preview_url, full_size_url=full_size_url):
+        return False
+    if full_size_url and candidate == full_size_url:
+        return True
+    if preview_url and candidate != preview_url:
+        return True
+    return looks_like_full_size_asset_url(candidate.lower())
+
+
+def _resolved_full_size_url(
+    asset: Mapping[str, Any],
+    *,
+    preview_url: str,
+    candidate_urls: list[str],
+) -> str:
+    direct_full_size_url = normalize_text(str(asset.get("full_size_url") or ""))
+    if direct_full_size_url:
+        return direct_full_size_url
+    primary_url = normalize_text(str(asset.get("url") or ""))
+    if primary_url and primary_url != preview_url and looks_like_full_size_asset_url(primary_url.lower()):
+        return primary_url
+    for candidate_url in candidate_urls:
+        candidate = normalize_text(candidate_url)
+        if candidate and candidate != preview_url:
+            return candidate
+    return ""
 
 
 def _supplementary_download_headers(
@@ -866,6 +1052,7 @@ def _resolve_figure_asset_download(
     transport: HttpTransport,
     asset: Mapping[str, Any],
     user_agent: str,
+    headers: Mapping[str, str] | None,
     browser_context_seed: Mapping[str, Any] | None,
     seed_urls: list[str] | None,
     figure_page_fetcher: FigurePageFetcher | None,
@@ -889,6 +1076,7 @@ def _resolve_figure_asset_download(
             preview_url=preview_url,
             full_size_url=full_size_url,
         )
+    full_size_url = _resolved_full_size_url(asset, preview_url=preview_url, candidate_urls=candidate_urls)
 
     last_attempt: _AssetDownloadAttempt | None = None
     active_user_agent = normalize_text(str((browser_context_seed or {}).get("browser_user_agent") or "")) or user_agent
@@ -920,119 +1108,41 @@ def _resolve_figure_asset_download(
             )
             continue
 
-        try:
-            request_headers = {"User-Agent": active_user_agent, "Accept": "*/*"}
-            opener = (
-                cookie_opener_builder(
-                    active_seed_urls,
-                    headers=request_headers,
-                    timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
-                    browser_cookies=browser_cookies,
-                )
-                if browser_cookies
-                else None
-            )
-            cookie_header = _cookie_header_for_url(browser_cookies, candidate_url)
-            if cookie_header:
-                request_headers["Cookie"] = cookie_header
-            response = (
-                opener_requester(
-                    opener,
-                    candidate_url,
-                    headers=request_headers,
-                    timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
-                )
-                if opener is not None
-                else transport.request(
-                    "GET",
-                    candidate_url,
-                    headers=request_headers,
-                    timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
-                    retry_on_rate_limit=True,
-                    retry_on_transient=True,
-                )
-            )
-            body = response.get("body", b"")
-            content_type = _response_header(response, "content-type")
-            final_url = normalize_text(str(response.get("url") or candidate_url))
-            if _requires_image_payload(asset) and not _looks_like_image_payload(content_type, body, final_url):
-                last_attempt = _AssetDownloadAttempt(
-                    candidate=candidate,
-                    failure=_asset_failure(
-                        {
-                            "kind": asset.get("kind", "figure"),
-                            "heading": asset.get("heading", "Figure"),
-                            "caption": asset.get("caption", ""),
-                            "source_url": candidate_url,
-                            "status": response.get("status_code"),
-                            "reason": (
-                                f"Asset candidate did not return image content "
-                                f"(content-type: {content_type or 'unknown'})."
-                            ),
-                            "section": asset.get("section") or "body",
-                        }
-                    ),
-                )
-                fallback_response = _fetch_image_document_fallback(image_document_fetcher, candidate_url, asset)
-                if fallback_response is not None:
-                    return _resolution_from_attempt(
-                        asset=asset,
-                        attempt=_AssetDownloadAttempt(
-                            candidate=candidate,
-                            response=fallback_response,
-                            source_url=candidate_url,
-                            download_tier_override="playwright_canvas_fallback",
-                        ),
-                        preview_url=preview_url,
-                        full_size_url=full_size_url,
-                    )
-                continue
-            if _requires_image_payload(asset) and _is_preview_candidate(
+        attempt = _attempt_figure_asset_candidate(
+            transport,
+            asset=asset,
+            candidate=candidate,
+            headers=headers,
+            active_user_agent=active_user_agent,
+            browser_cookies=browser_cookies,
+            active_seed_urls=active_seed_urls,
+            cookie_opener_builder=cookie_opener_builder,
+            opener_requester=opener_requester,
+        )
+        if (
+            attempt.response is None
+            and _should_retry_seeded_full_size_candidate(
                 candidate_url,
                 preview_url=preview_url,
                 full_size_url=full_size_url,
-            ):
-                for upgrade_target in _preview_upgrade_targets(candidate_url, asset):
-                    if upgrade_target == candidate_url:
-                        continue
-                    fallback_response = _fetch_image_document_fallback(image_document_fetcher, upgrade_target, asset)
-                    if fallback_response is not None:
-                        return _resolution_from_attempt(
-                            asset=asset,
-                            attempt=_AssetDownloadAttempt(
-                                candidate=_AssetDownloadCandidate(upgrade_target),
-                                response=fallback_response,
-                                source_url=upgrade_target,
-                                download_tier_override="playwright_canvas_fallback",
-                            ),
-                            preview_url=preview_url,
-                            full_size_url=full_size_url,
-                        )
-            return _resolution_from_attempt(
+                active_seed_urls=active_seed_urls,
+                browser_cookies=browser_cookies,
+            )
+        ):
+            attempt = _attempt_figure_asset_candidate(
+                transport,
                 asset=asset,
-                attempt=_AssetDownloadAttempt(
-                    candidate=candidate,
-                    response=response,
-                    source_url=candidate_url,
-                ),
-                preview_url=preview_url,
-                full_size_url=full_size_url,
-            )
-        except RequestFailure as exc:
-            last_attempt = _AssetDownloadAttempt(
                 candidate=candidate,
-                failure=_asset_failure(
-                    {
-                        "kind": asset.get("kind", "figure"),
-                        "heading": asset.get("heading", "Figure"),
-                        "caption": asset.get("caption", ""),
-                        "source_url": candidate_url,
-                        "status": exc.status_code,
-                        "reason": str(exc),
-                        "section": asset.get("section") or "body",
-                    }
-                ),
+                headers=headers,
+                active_user_agent=active_user_agent,
+                browser_cookies=browser_cookies,
+                active_seed_urls=active_seed_urls,
+                cookie_opener_builder=cookie_opener_builder,
+                opener_requester=opener_requester,
             )
+
+        if attempt.response is None:
+            last_attempt = attempt
             fallback_response = _fetch_image_document_fallback(image_document_fetcher, candidate_url, asset)
             if fallback_response is not None:
                 return _resolution_from_attempt(
@@ -1047,6 +1157,34 @@ def _resolve_figure_asset_download(
                     full_size_url=full_size_url,
                 )
             continue
+
+        if _requires_image_payload(asset) and _is_preview_candidate(
+            candidate_url,
+            preview_url=preview_url,
+            full_size_url=full_size_url,
+        ):
+            for upgrade_target in _preview_upgrade_targets(candidate_url, asset):
+                if upgrade_target == candidate_url:
+                    continue
+                fallback_response = _fetch_image_document_fallback(image_document_fetcher, upgrade_target, asset)
+                if fallback_response is not None:
+                    return _resolution_from_attempt(
+                        asset=asset,
+                        attempt=_AssetDownloadAttempt(
+                            candidate=_AssetDownloadCandidate(upgrade_target),
+                            response=fallback_response,
+                            source_url=upgrade_target,
+                            download_tier_override="playwright_canvas_fallback",
+                        ),
+                        preview_url=preview_url,
+                        full_size_url=full_size_url,
+                    )
+        return _resolution_from_attempt(
+            asset=asset,
+            attempt=attempt,
+            preview_url=preview_url,
+            full_size_url=full_size_url,
+        )
 
     return _resolution_from_attempt(
         asset=asset,
@@ -1089,7 +1227,10 @@ def _save_figure_asset_resolution(
         "kind": asset.get("kind", "figure"),
         "heading": asset.get("heading", "Figure"),
         "caption": asset.get("caption", ""),
-        "original_url": preview_url,
+        "url": asset.get("url", "") or full_size_url or preview_url,
+        "original_url": full_size_url or normalize_text(str(asset.get("original_url") or "")) or source_url,
+        "preview_url": preview_url,
+        "full_size_url": full_size_url,
         "figure_page_url": asset.get("figure_page_url", ""),
         "download_url": source_url,
         "download_tier": download_tier,
@@ -1115,6 +1256,7 @@ def download_figure_assets(
     output_dir: Path | None,
     user_agent: str,
     asset_profile: AssetProfile = "all",
+    headers: Mapping[str, str] | None = None,
     figure_page_fetcher: FigurePageFetcher | None = None,
     browser_context_seed: Mapping[str, Any] | None = None,
     seed_urls: list[str] | None = None,
@@ -1140,6 +1282,7 @@ def download_figure_assets(
             transport=transport,
             asset=asset,
             user_agent=user_agent,
+            headers=headers,
             browser_context_seed=browser_context_seed,
             seed_urls=seed_urls,
             figure_page_fetcher=figure_page_fetcher,

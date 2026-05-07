@@ -2,7 +2,7 @@
   "has": {
     "title": true,
     "authors": false,
-    "abstract": false,
+    "abstract": true,
     "body": true,
     "figures": false,
     "references": false,
@@ -10,8 +10,8 @@
     "code_availability": false
   },
   "counts": {
-    "sections": 6,
-    "abstract_sections": 0,
+    "sections": 7,
+    "abstract_sections": 1,
     "body_sections": 6,
     "figures": 0,
     "tables": 0,

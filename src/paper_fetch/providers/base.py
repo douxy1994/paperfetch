@@ -13,7 +13,7 @@ from ..http import RequestFailure
 from ..models import ArticleModel, AssetProfile
 from ..runtime import RuntimeContext
 from ..tracing import TraceEvent, source_trail_from_trace, trace_from_markers
-from ..utils import empty_asset_results, normalize_text
+from ..utils import empty_asset_results, normalize_text, provider_display_name
 
 
 class ProviderFailure(Exception):
@@ -610,7 +610,7 @@ class ProviderClient:
 
     def asset_download_failure_warning(self, exc: ProviderFailure | RequestFailure | OSError) -> str:
         message = exc.message if isinstance(exc, ProviderFailure) else str(exc)
-        return f"{self.name.replace('_', ' ').title()} related assets could not be downloaded: {message}"
+        return f"{provider_display_name(self.name)} related assets could not be downloaded: {message}"
 
     def describe_artifacts(
         self,

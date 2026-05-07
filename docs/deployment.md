@@ -237,9 +237,11 @@ scripts/clean-local-artifacts.sh --days 7
 
 该脚本只删除 `git check-ignore` 确认为 ignored 的目标；未被 `.gitignore` 覆盖的路径会跳过。
 
-## 4. Elsevier / Wiley / Science / PNAS 接入入口
+## 4. Elsevier / Wiley / Science / PNAS / IEEE 接入入口
 
 `elsevier` 现在不再依赖 FlareSolverr 浏览器链路；它只需要官方 API 凭据，并走 `官方 XML/API -> 官方 API PDF fallback -> metadata-only`。
+
+`ieee` 不需要 FlareSolverr 或 IEEE API key；它走 `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback`，但全文是否可用仍取决于当前环境对 IEEE Xplore 的合法访问上下文。clean-browser HTML 使用新的 Playwright context，不读取本机浏览器 profile、不复用用户登录态、不自动登录、不处理验证码，也不绕过访问权限。direct HTTP PDF 返回 `stamp.jsp` HTML wrapper 或 access/challenge 页面时，seeded-browser PDF fallback 只复用当前页面运行期间获得的合法 IEEE cookies/session。
 
 `wiley`、`science`、`pnas` 仍然不是“装完 wheel 就自动可用”的浏览器路径。
 
@@ -252,6 +254,7 @@ scripts/clean-local-artifacts.sh --days 7
 
 - `wiley` / `science` / `pnas` 还需要 Playwright Chromium，因为 PNAS direct HTML preflight、HTML 正文图片资产下载和 seeded-browser PDF/ePDF fallback 都会使用 browser context
 - `elsevier` 只需要 `ELSEVIER_API_KEY`
+- `ieee` 不需要额外 env；普通 fetch 在无授权或 REST/browser/PDF route 返回非全文时会降级到 provider abstract-only / metadata-only；golden criteria live review 面向具备合法 IEEE Xplore 授权上下文的机器，IEEE 样本预期为 fulltext，降级会作为 blocked live fetch 暴露；配置了 `download_dir` 时 PDF fallback 的最后一个非 PDF HTML 会保存在 `ieee_pdf_fallback/pdf.failure.html`
 - 如果只想启用 `wiley` 的官方 TDM API PDF lane，可以只配置 `WILEY_TDM_CLIENT_TOKEN`；这不会启用 HTML 资产下载或 seeded-browser PDF/ePDF fallback
 - `wiley` 现在走 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF -> abstract-only / metadata-only`
 - 本地 FlareSolverr 限速变量与账本已移除；browser workflow 不再读取 `FLARESOLVERR_MIN_INTERVAL_SECONDS`、`FLARESOLVERR_MAX_REQUESTS_PER_HOUR` 或 `FLARESOLVERR_MAX_REQUESTS_PER_DAY`

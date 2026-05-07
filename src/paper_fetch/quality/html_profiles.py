@@ -10,6 +10,11 @@ from typing import Any, Callable, Mapping
 
 from ..utils import normalize_text
 
+try:
+    from bs4 import BeautifulSoup
+except ImportError:  # pragma: no cover - dependency is declared in pyproject
+    BeautifulSoup = None
+
 HTML_STRONG_FULLTEXT_MARKERS = (
     'property="articleBody"',
     "property='articleBody'",
@@ -143,6 +148,50 @@ WILEY_SITE_RULE_OVERRIDES: dict[str, Any] = {
         ".publicationHistory",
     ],
     "drop_text": {"Recommended articles"},
+}
+IEEE_NOISE_PROFILE = "ieee"
+IEEE_SITE_RULE_OVERRIDES: dict[str, Any] = {
+    "candidate_selectors": [
+        "#article",
+        "#BodyWrapper",
+        ".ArticlePage",
+    ],
+    "remove_selectors": [
+        "accessType",
+        "accesstype",
+        "script",
+        "style",
+        "noscript",
+        "iframe",
+        "button",
+        "input",
+        "select",
+        "textarea",
+        ".zoom-container",
+        ".document-actions",
+        ".article-toolbar",
+        ".stats-document-abstract-view",
+        "button[data-docId]",
+        "a[data-docId][href^='javascript:']",
+        "[href^='javascript:']",
+    ],
+    "drop_keywords": {
+        "access-type",
+        "article-toolbar",
+        "document-actions",
+        "download",
+        "metrics",
+        "recommend",
+        "references-modal",
+        "rightslink",
+        "show-all",
+        "zoom",
+    },
+    "drop_text": {
+        "Show All",
+        "View References",
+        "Download PDF",
+    },
 }
 AAAS_DATALAYER_PATTERN = re.compile(r"AAASdataLayer=(\{.*?\});(?:if\(|</script>)", flags=re.DOTALL)
 PNAS_DATALAYER_PATTERN = re.compile(r"PNASdataLayer\s*=(\{.*?\});", flags=re.DOTALL)
@@ -302,6 +351,49 @@ def wiley_positive_signals(html_text: str) -> tuple[list[str], list[str], list[s
     return default_positive_signals(html_text)
 
 
+def ieee_blocking_fallback_signals(html_text: str) -> list[str]:
+    lowered = normalize_text(html_text).lower()
+    signals: list[str] = []
+    if any(
+        token in lowered
+        for token in (
+            "unable to complete your request",
+            "your request has been blocked",
+            "verify you are human",
+            "captcha",
+            "access denied",
+            "institutional sign in",
+            "purchase access",
+        )
+    ):
+        signals.append("ieee_access_or_challenge_page")
+    if BeautifulSoup is not None:
+        soup = BeautifulSoup(html_text, "html.parser")
+        article = soup.select_one("#article")
+        if article is not None:
+            text = normalize_text(article.get_text(" ", strip=True))
+            has_body_nodes = bool(article.select("p, h2, h3, div.section, div.section_2, figure, table, tex-math"))
+            if not text and not has_body_nodes:
+                signals.append("ieee_empty_article_shell")
+    return dedupe_signals(signals)
+
+
+def ieee_positive_signals(html_text: str) -> tuple[list[str], list[str], list[str]]:
+    strong, soft, abstract_only = default_positive_signals(html_text)
+    lowered = html_text.lower()
+    if 'id="article"' in lowered or "id='article'" in lowered:
+        soft.append("ieee_article_container")
+    if "div class=\"section" in lowered or "div class='section" in lowered:
+        strong.append("ieee_section_nodes")
+    if "<tex-math" in lowered or "tex-math" in lowered:
+        soft.append("ieee_formula_marker")
+    if "<figure" in lowered or "class=\"figure" in lowered or "class='figure" in lowered:
+        soft.append("ieee_figure_marker")
+    if "<table" in lowered:
+        soft.append("ieee_table_marker")
+    return dedupe_signals(strong), dedupe_signals(soft), dedupe_signals(abstract_only)
+
+
 @dataclass(frozen=True)
 class HtmlAvailabilityProfile:
     noise_profile: str = "generic"
@@ -329,6 +421,12 @@ PUBLISHER_AVAILABILITY_PROFILES: dict[str, HtmlAvailabilityProfile] = {
         site_rule_overrides=WILEY_SITE_RULE_OVERRIDES,
         positive_signals=wiley_positive_signals,
         blocking_fallback_signals=wiley_blocking_fallback_signals,
+    ),
+    "ieee": HtmlAvailabilityProfile(
+        noise_profile=IEEE_NOISE_PROFILE,
+        site_rule_overrides=IEEE_SITE_RULE_OVERRIDES,
+        positive_signals=ieee_positive_signals,
+        blocking_fallback_signals=ieee_blocking_fallback_signals,
     ),
 }
 

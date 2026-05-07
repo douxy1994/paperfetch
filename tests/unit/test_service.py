@@ -577,6 +577,17 @@ class ServiceTests(unittest.TestCase):
             ["Wiley official PDF/binary was not written to disk because --no-download was set."],
         )
         self.assertEqual(skipped_trail, ["download:wiley_skipped"])
+        ieee_skipped_warnings, ieee_skipped_trail = ArtifactStore.from_download_dir(None).save_provider_payload(
+            "ieee",
+            content=pdf_content,
+            doi="10.1109/example",
+            metadata={"title": "IEEE Example"},
+        )
+        self.assertEqual(
+            ieee_skipped_warnings,
+            ["IEEE official PDF/binary was not written to disk because --no-download was set."],
+        )
+        self.assertEqual(ieee_skipped_trail, ["download:ieee_skipped"])
 
         with tempfile.TemporaryDirectory() as tmpdir:
             store = ArtifactStore.from_download_dir(Path(tmpdir))

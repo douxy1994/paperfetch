@@ -23,10 +23,11 @@ Current runtime provider routing recognizes:
 - `wiley`
 - `science`
 - `pnas`
+- `ieee`
 
 If a journal belongs to another publisher, do not infer full-text support until that provider is explicitly added to both `api_notes.md` and the router logic.
 
-Copernicus, MDPI, and IEEE are documented in `api_notes.md` as planned provider routes, but the current runtime must still treat them as unsupported until each provider exists in the provider catalog, router, registry, status surface, and tests.
+Copernicus and MDPI are documented in `api_notes.md` as planned provider routes, but the current runtime must still treat them as unsupported until each provider exists in the provider catalog, router, registry, status surface, and tests. IEEE is implemented and participates in the normal provider catalog and routing flow.
 
 ## Decision Order
 
@@ -93,7 +94,7 @@ landing page discovery
 -> abstract-only / metadata-only fallback
 ```
 
-When IEEE is implemented, route signals should follow the same precedence model:
+IEEE route signals follow the same precedence model:
 
 1. `ieeexplore.ieee.org` landing-page / URL domain
 2. Crossref publisher-name aliases such as `IEEE` or `Institute of Electrical and Electronics Engineers`
@@ -102,10 +103,11 @@ When IEEE is implemented, route signals should follow the same precedence model:
 If selected, IEEE should default to a provider-owned `fulltext_first` waterfall:
 
 ```text
-IEEE article number resolution
+landing metadata / IEEE article number resolution
 -> dynamic full-text HTML endpoint
 -> full-text marker validation
 -> IEEE HTML -> Markdown
+-> direct HTTP PDF text-only fallback
 -> abstract-only / metadata-only fallback
 ```
 

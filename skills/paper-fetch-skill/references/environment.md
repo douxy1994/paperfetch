@@ -11,6 +11,7 @@
 - `FLARESOLVERR_URL`: Optional override for the local Wiley/Science/PNAS FlareSolverr endpoint; defaults to `http://127.0.0.1:8191/v1`.
 - `FLARESOLVERR_ENV_FILE`: Required for Science/PNAS and for Wiley HTML/browser PDF routes; points at a repo-local `vendor/flaresolverr` preset file. Wiley's TDM API PDF lane can run with `WILEY_TDM_CLIENT_TOKEN` without browser readiness.
 - `FLARESOLVERR_SOURCE_DIR`: Optional override for the repo-local `vendor/flaresolverr` directory.
+- IEEE dynamic HTML / direct HTTP PDF / seeded-browser PDF fallback does not use an IEEE API key or FlareSolverr; full text availability still depends on the current environment's lawful IEEE Xplore access context. The browser PDF fallback only runs after non-PDF PDF candidates and fails closed on access, challenge, or temporary unavailable pages.
 - `PAPER_FETCH_DOWNLOAD_DIR`: Overrides the default CLI/MCP download directory; otherwise downloads use the user data directory, with CLI falling back to `live-downloads` only if that directory cannot be created.
 - `XDG_DATA_HOME`: Changes the user data base used for default downloads and formula tools; otherwise the platform default from `platformdirs` is used.
 - `PAPER_FETCH_FORMULA_TOOLS_DIR`: Overrides the directory used to find optional formula backends.

@@ -20,6 +20,7 @@ EXPECTED_FULLTEXT_SOURCES_BY_PROVIDER = {
     "wiley": frozenset({"wiley_browser"}),
     "science": frozenset({"science"}),
     "pnas": frozenset({"pnas"}),
+    "ieee": frozenset({"ieee_html", "ieee_pdf"}),
 }
 ASCII_DOI_PATTERN = re.compile(r"^10\.\d{4,9}/[!-~]+$")
 RESEARCH_BRIEFING_HEADING_SIGNATURE = (

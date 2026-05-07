@@ -328,6 +328,7 @@ class ProviderManagedFallbackServiceTests(unittest.TestCase):
             "wiley": ("wiley_browser", "10.1111/test-abstract", "https://onlinelibrary.wiley.com/doi/full/10.1111/test-abstract"),
             "science": ("science", "10.1126/science.test-abstract", "https://www.science.org/doi/full/10.1126/science.test-abstract"),
             "pnas": ("pnas", "10.1073/pnas.test-abstract", "https://www.pnas.org/doi/full/10.1073/pnas.test-abstract"),
+            "ieee": ("ieee_html", "10.1109/test-abstract", "https://ieeexplore.ieee.org/document/1234567/"),
         }
 
         for provider_name, (source_name, doi, landing_url) in provider_cases.items():
@@ -395,6 +396,7 @@ class ProviderManagedFallbackServiceTests(unittest.TestCase):
             "wiley": ("wiley_browser", "10.1111/test-metadata", "https://onlinelibrary.wiley.com/doi/full/10.1111/test-metadata"),
             "science": ("science", "10.1126/science.test-metadata", "https://www.science.org/doi/full/10.1126/science.test-metadata"),
             "pnas": ("pnas", "10.1073/pnas.test-metadata", "https://www.pnas.org/doi/full/10.1073/pnas.test-metadata"),
+            "ieee": ("ieee_html", "10.1109/test-metadata", "https://ieeexplore.ieee.org/document/1234568/"),
         }
 
         for provider_name, (source_name, doi, landing_url) in provider_cases.items():

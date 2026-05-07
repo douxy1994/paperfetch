@@ -11,7 +11,7 @@ on:
         default: false
         type: boolean
       run_full_golden:
-        description: "Run full 51-fixture golden corpus regression"
+        description: "Run full 52-fixture golden corpus regression"
         required: false
         default: false
         type: boolean

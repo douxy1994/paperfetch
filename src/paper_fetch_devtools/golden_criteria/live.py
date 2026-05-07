@@ -11,6 +11,7 @@ from pathlib import Path
 import re
 import shutil
 import time
+import urllib.parse
 from typing import Any, Callable, Mapping, Sequence
 
 from paper_fetch.config import build_runtime_env, resolve_repo_root
@@ -26,7 +27,7 @@ from paper_fetch.workflow.rendering import rewrite_markdown_asset_links
 
 logger = logging.getLogger("paper_fetch_devtools.golden_criteria.live")
 
-SUPPORTED_PROVIDERS = ("elsevier", "springer", "wiley", "science", "pnas")
+SUPPORTED_PROVIDERS = ("elsevier", "springer", "wiley", "science", "pnas", "ieee")
 UNSUPPORTED_PROVIDER_STATUS = "skipped_unsupported_provider"
 DEFAULT_REVIEW_ROOT_NAME = "golden-criteria-review"
 RUN_LIVE_ENV_VAR = "PAPER_FETCH_RUN_LIVE"
@@ -51,6 +52,13 @@ QUALITY_FLAG_CATEGORY_MAP = {
     "formula_fallback_present": "math_loss",
     "formula_missing_present": "math_loss",
 }
+MARKDOWN_IMAGE_URL_PATTERN = re.compile(r"!\[[^\]]*\]\(([^)]+)\)")
+MARKDOWN_HEADING_PATTERN = re.compile(r"^\s{0,3}#{1,6}\s+")
+REFERENCES_HEADING_PATTERN = re.compile(r"^\s{0,3}#{1,6}\s+references(?:\s|\(|$)", flags=re.IGNORECASE)
+NUMBERED_REFERENCE_ITEM_PATTERN = re.compile(r"^\s*(?:\d{1,4}[.)]|\[\d{1,4}\])\s+\S")
+BULLET_REFERENCE_ITEM_PATTERN = re.compile(r"^\s*[-*+]\s+\S")
+IEEE_MEDIASTORE_HOST = "ieeexplore.ieee.org"
+IEEE_MEDIASTORE_PATH_TOKEN = "/mediastore/ieee/content/media/"
 SOLUTION_BY_CATEGORY = {
     "live_fetch_blocked": (
         "Stabilize live provider setup and fallback handling.",
@@ -511,8 +519,11 @@ def issue_categories_for_result(
             "asset_failures" in trail_blob
             or "partially downloaded" in warning_blob
             or ("assets_preview_fallback" in trail_blob and (not preview_fallback_assets or preview_fallback_has_non_formula_asset))
+            or _markdown_has_unlocalized_downloaded_ieee_mediastore_asset(envelope)
         ):
             categories.append("asset_download_failure")
+        if _markdown_references_block_mixes_numbered_and_bullet_items(envelope.markdown):
+            categories.append("reference_loss")
         for flag in envelope.quality.flags:
             category = QUALITY_FLAG_CATEGORY_MAP.get(normalize_text(flag).lower())
             if category:
@@ -524,6 +535,104 @@ def issue_categories_for_result(
         ):
             categories.append("metadata_loss")
     return [category for category in ISSUE_CATEGORIES if category in set(categories)]
+
+
+def _markdown_image_urls(markdown: str | None) -> list[str]:
+    return [normalize_text(match.group(1)).strip("<>") for match in MARKDOWN_IMAGE_URL_PATTERN.finditer(markdown or "")]
+
+
+def _markdown_references_block_mixes_numbered_and_bullet_items(markdown: str | None) -> bool:
+    in_references = False
+    has_numbered_item = False
+    has_bullet_item = False
+    for line in (markdown or "").splitlines():
+        if REFERENCES_HEADING_PATTERN.match(line):
+            in_references = True
+            has_numbered_item = False
+            has_bullet_item = False
+            continue
+        if not in_references:
+            continue
+        if MARKDOWN_HEADING_PATTERN.match(line):
+            if has_numbered_item and has_bullet_item:
+                return True
+            in_references = False
+            continue
+        if NUMBERED_REFERENCE_ITEM_PATTERN.match(line):
+            has_numbered_item = True
+        elif BULLET_REFERENCE_ITEM_PATTERN.match(line):
+            has_bullet_item = True
+        if has_numbered_item and has_bullet_item:
+            return True
+    return has_numbered_item and has_bullet_item
+
+
+def _is_ieee_mediastore_url(url: str) -> bool:
+    parsed = urllib.parse.urlparse(normalize_text(url) if not url.startswith("//") else f"https:{url}")
+    return (
+        normalize_text(parsed.netloc).lower().endswith(IEEE_MEDIASTORE_HOST)
+        and IEEE_MEDIASTORE_PATH_TOKEN in normalize_text(parsed.path).lower()
+    )
+
+
+def _reference_candidates(value: str | None) -> set[str]:
+    normalized = normalize_text(value).strip("<>")
+    if not normalized:
+        return set()
+    parsed = urllib.parse.urlsplit(normalized)
+    path = parsed.path or normalized
+    raw_candidates = {normalized, path, urllib.parse.unquote(normalized), urllib.parse.unquote(path)}
+    candidates: set[str] = set()
+    for raw_candidate in raw_candidates:
+        candidate = re.sub(r"/+", "/", normalize_text(raw_candidate).replace("\\", "/")).strip().removeprefix("./")
+        if candidate:
+            candidates.add(candidate)
+            candidates.add(candidate.lstrip("/"))
+    return candidates
+
+
+def _reference_basename(value: str) -> str:
+    return value.rstrip("/").rsplit("/", 1)[-1]
+
+
+def _references_match(left: set[str], right: set[str]) -> bool:
+    if left & right:
+        return True
+    left_basenames = {_reference_basename(item) for item in left if _reference_basename(item)}
+    right_basenames = {_reference_basename(item) for item in right if _reference_basename(item)}
+    return bool(left_basenames & right_basenames)
+
+
+def _asset_reference_candidates(asset: Any) -> set[str]:
+    candidates: set[str] = set()
+    for field in (
+        "path",
+        "url",
+        "original_url",
+        "download_url",
+        "source_url",
+        "preview_url",
+        "full_size_url",
+        "link",
+    ):
+        candidates |= _reference_candidates(getattr(asset, field, None))
+    return candidates
+
+
+def _markdown_has_unlocalized_downloaded_ieee_mediastore_asset(envelope: FetchEnvelope) -> bool:
+    if envelope.article is None:
+        return False
+    remote_urls = [url for url in _markdown_image_urls(envelope.markdown) if _is_ieee_mediastore_url(url)]
+    if not remote_urls:
+        return False
+    remote_candidate_sets = [_reference_candidates(url) for url in remote_urls]
+    for asset in list(envelope.article.assets or []):
+        if local_existing_asset_path(asset) is None:
+            continue
+        asset_candidates = _asset_reference_candidates(asset)
+        if asset_candidates and any(_references_match(asset_candidates, remote_candidates) for remote_candidates in remote_candidate_sets):
+            return True
+    return False
 
 
 def review_status_for(status: str, issue_categories: Sequence[str]) -> str:
@@ -648,6 +757,8 @@ def collect_asset_diagnostics(article: Any) -> list[dict[str, Any]]:
             "render_state": normalize_text(getattr(asset, "render_state", None)),
             "download_tier": normalize_text(getattr(asset, "download_tier", None)),
             "download_url": normalize_text(getattr(asset, "download_url", None)),
+            "original_url": normalize_text(getattr(asset, "original_url", None)),
+            "path": normalize_text(getattr(asset, "path", None)),
             "content_type": normalize_text(getattr(asset, "content_type", None)),
             "downloaded_bytes": getattr(asset, "downloaded_bytes", None),
             "width": getattr(asset, "width", None),

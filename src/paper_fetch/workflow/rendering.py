@@ -6,6 +6,7 @@ import os
 import re
 import urllib.parse
 from pathlib import Path
+from typing import Any, Mapping
 
 from ..models import ArticleModel, FetchEnvelope, OutputMode, RenderOptions
 from ..provider_catalog import known_article_source_names
@@ -79,6 +80,85 @@ def _local_asset_lookup_by_basename(
     return {basename: path for basename, path in candidates.items() if basename not in ambiguous}
 
 
+def _image_reference_candidates(value: str | None) -> set[str]:
+    normalized = normalize_text(value).strip("<>")
+    if not normalized:
+        return set()
+
+    parsed = urllib.parse.urlsplit(normalized)
+    path = parsed.path or normalized
+    candidates = {normalized, path, urllib.parse.unquote(normalized), urllib.parse.unquote(path)}
+    cleaned: set[str] = set()
+    for candidate in candidates:
+        text = normalize_text(candidate).replace("\\", "/")
+        text = re.sub(r"/+", "/", text).strip()
+        text = text.removeprefix("./")
+        if text:
+            cleaned.add(text)
+            cleaned.add(text.lstrip("/"))
+    return cleaned
+
+
+def _asset_field(asset: Any, field: str) -> str | None:
+    if isinstance(asset, Mapping):
+        return normalize_text(asset.get(field)) or None
+    return normalize_text(getattr(asset, field, None)) or None
+
+
+def _reference_basename(value: str) -> str:
+    return value.rstrip("/").rsplit("/", 1)[-1]
+
+
+def _local_asset_lookups(
+    article: ArticleModel | None,
+    *,
+    target_path: Path,
+) -> tuple[dict[str, str], dict[str, str]]:
+    if article is None:
+        return {}, {}
+
+    exact: dict[str, str] = {}
+    exact_ambiguous: set[str] = set()
+    basenames: dict[str, str] = {}
+    basename_ambiguous: set[str] = set()
+    for asset in article.assets:
+        relative_path = relative_asset_link(_asset_field(asset, "path"), target_path=target_path)
+        if relative_path is None:
+            continue
+        candidates: set[str] = set()
+        for field in (
+            "path",
+            "url",
+            "original_url",
+            "download_url",
+            "source_url",
+            "preview_url",
+            "full_size_url",
+            "link",
+        ):
+            candidates |= _image_reference_candidates(_asset_field(asset, field))
+        for candidate in candidates:
+            existing = exact.get(candidate)
+            if existing is None:
+                exact[candidate] = relative_path
+            elif existing != relative_path:
+                exact_ambiguous.add(candidate)
+
+            basename = _reference_basename(candidate)
+            if not basename:
+                continue
+            existing_basename = basenames.get(basename)
+            if existing_basename is None:
+                basenames[basename] = relative_path
+            elif existing_basename != relative_path:
+                basename_ambiguous.add(basename)
+
+    return (
+        {candidate: path for candidate, path in exact.items() if candidate not in exact_ambiguous},
+        {basename: path for basename, path in basenames.items() if basename not in basename_ambiguous},
+    )
+
+
 def _remote_asset_basename(destination: str) -> str | None:
     if not destination.startswith(("http://", "https://", "//")):
         return None
@@ -98,13 +178,28 @@ def rewrite_markdown_asset_links(
         return markdown
 
     local_assets_by_basename = _local_asset_lookup_by_basename(envelope.article, target_path=target_path)
+    local_assets_by_reference, local_assets_by_candidate_basename = _local_asset_lookups(
+        envelope.article,
+        target_path=target_path,
+    )
 
     def rewrite_inline_match(match: re.Match[str]) -> str:
         prefix = match.group(1)
         destination = match.group(2)
         relative_path = relative_asset_link(destination, target_path=target_path)
         if relative_path is None and prefix.startswith("!["):
-            relative_path = local_assets_by_basename.get(_remote_asset_basename(destination) or "")
+            destination_candidates = _image_reference_candidates(destination)
+            for candidate in destination_candidates:
+                relative_path = local_assets_by_reference.get(candidate)
+                if relative_path is not None:
+                    break
+            if relative_path is None:
+                for candidate in destination_candidates:
+                    relative_path = local_assets_by_candidate_basename.get(_reference_basename(candidate))
+                    if relative_path is not None:
+                        break
+            if relative_path is None:
+                relative_path = local_assets_by_basename.get(_remote_asset_basename(destination) or "")
         if relative_path is None:
             return match.group(0)
         return f"{prefix}{relative_path}{match.group(3)}"

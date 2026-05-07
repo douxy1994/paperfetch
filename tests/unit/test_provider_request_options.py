@@ -1359,6 +1359,125 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             self.assertEqual(result["asset_failures"], [])
             self.assertEqual(Path(result["assets"][0]["path"]).read_bytes(), png_body(b"preview-image"))
 
+    def test_html_asset_download_retries_seeded_full_size_before_preview(self) -> None:
+        large_url = "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg1-large.gif"
+        preview_url = "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg1-small.gif"
+        landing_url = "https://ieeexplore.ieee.org/document/10932570/"
+        opener_builder = mock.Mock(side_effect=[object(), object()])
+        requested_urls: list[str] = []
+
+        def opener_requester(opener, url, **kwargs):
+            del opener
+            requested_urls.append(url)
+            self.assertEqual(kwargs["headers"]["Referer"], landing_url)
+            if len(requested_urls) == 1:
+                raise RequestFailure(403, "Forbidden", url=url)
+            return {
+                "status_code": 200,
+                "headers": {"content-type": "image/png"},
+                "body": png_body(b"large-after-seed-refresh"),
+                "url": url,
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = html_assets.download_figure_assets(
+                RecordingTransport({}),
+                article_id="10.1109/example",
+                assets=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "caption": "Seeded full-size retry",
+                        "url": large_url,
+                        "full_size_url": large_url,
+                        "preview_url": preview_url,
+                        "section": "body",
+                    }
+                ],
+                output_dir=Path(tmpdir),
+                user_agent="unit-test",
+                asset_profile="body",
+                headers={"Referer": landing_url},
+                seed_urls=[landing_url],
+                cookie_opener_builder=opener_builder,
+                opener_requester=opener_requester,
+                asset_download_concurrency=1,
+            )
+            saved_bytes = Path(result["assets"][0]["path"]).read_bytes()
+
+        self.assertEqual(requested_urls, [large_url, large_url])
+        self.assertEqual(opener_builder.call_count, 2)
+        self.assertEqual(len(result["assets"]), 1)
+        self.assertEqual(result["assets"][0]["download_tier"], "full_size")
+        self.assertEqual(result["assets"][0]["full_size_url"], large_url)
+        self.assertEqual(result["assets"][0]["preview_url"], preview_url)
+        self.assertEqual(result["assets"][0]["original_url"], large_url)
+        self.assertEqual(saved_bytes, png_body(b"large-after-seed-refresh"))
+
+    def test_html_asset_download_preserves_mapping_when_seeded_preview_fallback_succeeds(self) -> None:
+        large_url = "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg2-large.gif"
+        preview_url = "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg2-small.gif"
+        landing_url = "https://ieeexplore.ieee.org/document/10932570/"
+        opener_builder = mock.Mock(side_effect=[object(), object(), object()])
+        requested_urls: list[str] = []
+
+        def opener_requester(opener, url, **kwargs):
+            del opener
+            requested_urls.append(url)
+            self.assertEqual(kwargs["headers"]["Referer"], landing_url)
+            if len(requested_urls) == 1:
+                raise RequestFailure(403, "Forbidden", url=url)
+            if len(requested_urls) == 2:
+                return {
+                    "status_code": 200,
+                    "headers": {"content-type": "text/html; charset=utf-8"},
+                    "body": b"<html><title>Access denied</title></html>",
+                    "url": url,
+                }
+            return {
+                "status_code": 200,
+                "headers": {"content-type": "image/png"},
+                "body": png_body(b"preview-after-full-size-failure"),
+                "url": url,
+            }
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = html_assets.download_figure_assets(
+                RecordingTransport({}),
+                article_id="10.1109/example",
+                assets=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 2",
+                        "caption": "Preview fallback after seeded retry",
+                        "url": large_url,
+                        "full_size_url": large_url,
+                        "preview_url": preview_url,
+                        "section": "body",
+                    }
+                ],
+                output_dir=Path(tmpdir),
+                user_agent="unit-test",
+                asset_profile="body",
+                headers={"Referer": landing_url},
+                seed_urls=[landing_url],
+                cookie_opener_builder=opener_builder,
+                opener_requester=opener_requester,
+                asset_download_concurrency=1,
+            )
+            saved_bytes = Path(result["assets"][0]["path"]).read_bytes()
+
+        self.assertEqual(requested_urls, [large_url, large_url, preview_url])
+        self.assertEqual(opener_builder.call_count, 3)
+        self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(len(result["assets"]), 1)
+        self.assertEqual(result["assets"][0]["download_tier"], "preview")
+        self.assertEqual(result["assets"][0]["full_size_url"], large_url)
+        self.assertEqual(result["assets"][0]["preview_url"], preview_url)
+        self.assertEqual(result["assets"][0]["original_url"], large_url)
+        self.assertEqual(result["assets"][0]["download_url"], preview_url)
+        self.assertEqual(saved_bytes, png_body(b"preview-after-full-size-failure"))
+
     def test_springer_body_asset_profile_ignores_supplementary_download_pdf_links(self) -> None:
         figure_url = "https://media.springernature.com/full/example-figure-1.png"
         transport = RecordingTransport(

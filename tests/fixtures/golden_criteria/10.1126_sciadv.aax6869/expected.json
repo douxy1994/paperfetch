@@ -5,7 +5,7 @@
     "abstract": true,
     "body": true,
     "figures": false,
-    "references": false,
+    "references": true,
     "data_availability": false,
     "code_availability": false
   },
@@ -15,7 +15,7 @@
     "body_sections": 4,
     "figures": 0,
     "tables": 0,
-    "references": 0
+    "references": 31
   },
   "expected_content_kind": "fulltext"
 }

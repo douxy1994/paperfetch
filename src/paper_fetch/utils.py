@@ -145,6 +145,17 @@ def sanitize_filename(value: str) -> str:
     return f"{truncated or 'fulltext'}{suffix}"
 
 
+def provider_display_name(value: str) -> str:
+    normalized = normalize_text(value).lower().replace("-", "_")
+    special_names = {
+        "ieee": "IEEE",
+        "pnas": "PNAS",
+    }
+    if normalized in special_names:
+        return special_names[normalized]
+    return normalized.replace("_", " ").title() if normalized else "Provider"
+
+
 def canonical_author_key(name: str) -> str:
     normalized = normalize_author_name(name)
     if not normalized:

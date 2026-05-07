@@ -142,6 +142,13 @@ PROFILE_MARKDOWN_PROMO_TOKENS = {
         "reprints and permissions",
         "similar content being viewed by others",
     ),
+    "ieee": (
+        "download pdf",
+        "export citation",
+        "show all",
+        "view references",
+        "view all authors",
+    ),
 }
 DEFAULT_NOISE_PROFILE = "generic"
 HTML_BODY_MIN_CHARS = 800

@@ -9,6 +9,7 @@ from paper_fetch.providers import _flaresolverr
 from paper_fetch.providers.base import ProviderFailure
 from paper_fetch.providers.crossref import CrossrefClient
 from paper_fetch.providers.elsevier import ElsevierClient
+from paper_fetch.providers.ieee import IeeeClient
 from paper_fetch.providers.pnas import PnasClient
 from paper_fetch.providers.science import ScienceClient
 from paper_fetch.providers.springer import SpringerClient
@@ -94,6 +95,16 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertEqual(len(result.checks), 1)
         self.assertEqual(result.checks[0].name, "html_route")
         self.assertEqual(result.checks[0].status, "ok")
+
+    def test_ieee_direct_html_and_pdf_routes_are_ready_without_env(self) -> None:
+        result = IeeeClient(DummyTransport(), {}).probe_status()
+
+        self.assertEqual(result.status, "ready")
+        self.assertTrue(result.available)
+        self.assertEqual(result.missing_env, [])
+        checks = {check.name: check for check in result.checks}
+        self.assertEqual(checks["html_route"].status, "ok")
+        self.assertEqual(checks["pdf_fallback"].status, "ok")
 
     def test_wiley_missing_runtime_and_token_is_not_configured(self) -> None:
         result = WileyClient(DummyTransport(), {}).probe_status()

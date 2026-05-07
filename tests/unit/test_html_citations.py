@@ -84,6 +84,16 @@ class HtmlCitationsTests(unittest.TestCase):
 
         self.assertEqual(normalized, "The event is documented<sup>46, 55, 56</sup>.")
 
+    def test_normalize_inline_citation_markdown_preserves_markdown_image_boundaries(self) -> None:
+        normalized = normalize_inline_citation_markdown("sentence.\n\n![Listing 1.](x)\n\ncaption")
+
+        self.assertEqual(normalized, "sentence.\n\n![Listing 1.](x)\n\ncaption")
+
+    def test_normalize_inline_citation_markdown_still_trims_plain_exclamation_spacing(self) -> None:
+        normalized = normalize_inline_citation_markdown("word !")
+
+        self.assertEqual(normalized, "word!")
+
 
 if __name__ == "__main__":
     unittest.main()

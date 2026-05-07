@@ -1,6 +1,6 @@
 # Copernicus / MDPI / IEEE Provider TODO
 
-本清单跟踪三家待接入 provider 的实现工作；不要把这些条目合并进根目录 `todo.md`。
+本清单跟踪待接入 provider 的实现工作；不要把这些条目合并进根目录 `todo.md`。IEEE 条目保留为已完成接入记录。
 
 ## 1. Copernicus
 
@@ -27,13 +27,13 @@
 
 ## 3. IEEE
 
-- [ ] 在 provider catalog 中新增 `ieee`：domain `ieeexplore.ieee.org`、publisher aliases、DOI prefix `10.1109/`、默认 asset profile 和 status 顺序。
-- [ ] 接入 routing / preferred provider / provider status / CLI / MCP 可见 provider 列表。
-- [ ] 实现 DOI / landing URL 到 IEEE article number 的解析。
-- [ ] 实现动态全文端点请求：`/rest/document/{article_number}/?logAccess=true`。
-- [ ] 保留 publisher 页面上下文请求头：document `Referer`、`x-security-request: required`、browser UA 和兼容 `Accept`。
-- [ ] 实现 full-text HTML marker 校验，排除登录页、access gate、验证码、摘要页、空壳和错误 HTML。
-- [ ] 实现 IEEE HTML -> Markdown：章节、图表、表格、公式、参考文献和内部引用。
-- [ ] 默认 `fulltext_first`，但在无权限、无全文或校验失败时降级到 `abstract_only` / `metadata_only`。
-- [ ] 增加授权上下文 live smoke、无授权降级测试、provider routing 测试、Markdown golden 测试和 source trail 断言。
-- [ ] 同步 `docs/providers.md`、`references/api_notes.md`、`references/routing_rules.md` 和 CI live/skip 说明。
+- [x] 在 provider catalog 中新增 `ieee`：domain `ieeexplore.ieee.org`、publisher aliases、DOI prefix `10.1109/`、默认 asset profile 和 status 顺序。
+- [x] 接入 routing / preferred provider / provider status / CLI / MCP 可见 provider 列表。
+- [x] 实现 DOI / landing URL 到 IEEE article number 的解析。
+- [x] 实现动态全文端点请求：`/rest/document/{article_number}/?logAccess=true`。
+- [x] 保留 publisher 页面上下文请求头：document `Referer`、`x-security-request: required`、browser UA 和兼容 `Accept`。
+- [x] 实现 full-text HTML marker 校验，排除登录页、access gate、验证码、摘要页、空壳和错误 HTML。
+- [x] 实现 IEEE HTML -> Markdown：章节、图表、表格、公式、参考文献和内部引用。
+- [x] 默认 `fulltext_first`，但在无权限、无全文或校验失败时降级到 `abstract_only` / `metadata_only`。
+- [x] 增加授权上下文 live smoke、无授权降级测试、provider routing 测试、Markdown golden 测试和 source trail 断言。
+- [x] 同步 `docs/providers.md`、`references/api_notes.md`、`references/routing_rules.md` 和 CI live/skip 说明。

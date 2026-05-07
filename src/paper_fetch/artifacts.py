@@ -12,6 +12,7 @@ from .utils import (
     extension_from_content_type,
     extend_unique,
     normalize_text,
+    provider_display_name,
     safe_text,
     sanitize_filename,
     save_payload,
@@ -53,7 +54,7 @@ class ArtifactStore:
         if content is None or not content.needs_local_copy:
             return [], []
         provider_slug = safe_text(provider_name or "provider").lower().replace(" ", "_") or "provider"
-        provider_label = provider_slug.replace("_", " ").title()
+        provider_label = provider_display_name(provider_slug)
         if self.download_dir is None:
             return [f"{provider_label} official PDF/binary was not written to disk because --no-download was set."], [
                 f"download:{provider_slug}_skipped"
@@ -151,7 +152,7 @@ class ArtifactStore:
                     warnings,
                     [
                         (
-                            f"{provider_name.replace('_', ' ').title()} figure downloads used preview images for "
+                            f"{provider_display_name(provider_name)} figure downloads used preview images for "
                             f"{preview_accepted_count} asset(s), but their saved dimensions met the acceptance threshold."
                         )
                     ],
@@ -162,7 +163,7 @@ class ArtifactStore:
                     warnings,
                     [
                         (
-                            f"{provider_name.replace('_', ' ').title()} figure downloads fell back to preview images for "
+                            f"{provider_display_name(provider_name)} figure downloads fell back to preview images for "
                             f"{preview_fallback_count} asset(s) because full-size/original downloads were unavailable."
                         )
                     ],
@@ -173,7 +174,7 @@ class ArtifactStore:
                 warnings,
                 [
                     (
-                        f"{provider_name.replace('_', ' ').title()} related assets were only partially downloaded "
+                        f"{provider_display_name(provider_name)} related assets were only partially downloaded "
                         f"({len(artifacts.asset_failures)} failed)."
                     )
                 ],

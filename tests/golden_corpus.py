@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import json
 from pathlib import Path
+import tempfile
 from typing import Any
 
 from paper_fetch.extraction.html._metadata import parse_html_metadata
@@ -17,6 +18,7 @@ from paper_fetch.providers import (
     _wiley_html,
     _science_pnas_profiles,
     elsevier as elsevier_provider,
+    ieee as ieee_provider,
     pnas as pnas_provider,
     science as science_provider,
     springer as springer_provider,
@@ -35,6 +37,7 @@ REPRESENTATIVE_GOLDEN_CORPUS_DOIS = (
     "10.1126/science.adp0212",
     "10.1111/gcb.16414",
     "10.1073/pnas.2309123120",
+    "10.1109/TIM.2024.3509573",
 )
 
 
@@ -223,6 +226,100 @@ def _build_browser_workflow_article(fixture: GoldenCorpusFixture):
     return client.to_article_model(metadata, raw_payload)
 
 
+def _ieee_fixture_metadata(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    article_number = str(fixture.sample.get("article_number") or "")
+    landing_metadata = ieee_provider._parse_landing_metadata(
+        golden_criteria_asset(fixture.doi, "landing.html").read_text(encoding="utf-8", errors="ignore")
+    )
+    metadata = ieee_provider._merge_ieee_metadata(
+        _base_metadata(fixture),
+        landing_metadata,
+        fixture.landing_url,
+    )
+    references_path = golden_criteria_asset(fixture.doi, "references.json")
+    if references_path.exists():
+        references_payload = json.loads(references_path.read_text(encoding="utf-8"))
+        references = ieee_provider._references_from_ieee_reference_payload(references_payload)
+        if references:
+            metadata["references"] = ieee_provider._merge_ieee_reference_lists(
+                references,
+                metadata.get("references"),
+            )
+    if not metadata.get("doi"):
+        metadata["doi"] = fixture.doi
+    if article_number:
+        metadata["article_number"] = article_number
+        metadata["articleNumber"] = article_number
+    return metadata
+
+
+def _ieee_downloaded_body_assets(
+    extracted_assets: list[dict[str, Any]],
+    tmpdir: Path,
+) -> list[dict[str, Any]]:
+    downloaded_assets: list[dict[str, Any]] = []
+    for index, item in enumerate(extracted_assets, start=1):
+        if item.get("kind") not in {"figure", "table"} or item.get("section") != "body":
+            continue
+        asset_url = item.get("url") or item.get("full_size_url") or item.get("preview_url")
+        if not asset_url:
+            continue
+        path = tmpdir / f"ieee-asset-{index}.gif"
+        path.write_bytes(b"GIF89a\x01\x00\x01\x00\x00\x00;")
+        downloaded = dict(item)
+        downloaded.update(
+            {
+                "path": str(path),
+                "download_url": asset_url,
+                "source_url": asset_url,
+                "content_type": "image/gif",
+                "download_tier": "full_size",
+            }
+        )
+        downloaded_assets.append(downloaded)
+    return downloaded_assets
+
+
+def _build_ieee_article(fixture: GoldenCorpusFixture):
+    metadata = _ieee_fixture_metadata(fixture)
+    html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+    extraction = ieee_provider._extract_ieee_html(
+        html_text,
+        fixture.source_url,
+        metadata=metadata,
+    )
+    body = extraction.html_text.encode("utf-8")
+    raw_payload = RawFulltextPayload(
+        provider="ieee",
+        source_url=fixture.source_url,
+        content_type=fixture.content_type or "text/html",
+        body=body,
+        content=ProviderContent(
+            route_kind="html",
+            source_url=fixture.source_url,
+            content_type=fixture.content_type or "text/html",
+            body=body,
+            markdown_text=extraction.markdown_text,
+            merged_metadata=metadata,
+            diagnostics={
+                "extraction": {
+                    "abstract_sections": extraction.abstract_sections,
+                    "section_hints": extraction.section_hints,
+                    "marker_counts": extraction.marker_counts,
+                }
+            },
+            reason="Loaded IEEE real HTML fixture.",
+            extracted_assets=extraction.extracted_assets,
+        ),
+        trace=trace_from_markers(["fulltext:ieee_html_ok"]),
+        merged_metadata=metadata,
+    )
+    client = ieee_provider.IeeeClient(HttpTransport(), {})
+    with tempfile.TemporaryDirectory() as tmpdir:
+        downloaded_assets = _ieee_downloaded_body_assets(extraction.extracted_assets, Path(tmpdir))
+        return client.to_article_model({"doi": fixture.doi}, raw_payload, downloaded_assets=downloaded_assets)
+
+
 def build_article_from_fixture(fixture: GoldenCorpusFixture):
     if fixture.provider == "elsevier":
         return _build_elsevier_article(fixture)
@@ -230,6 +327,8 @@ def build_article_from_fixture(fixture: GoldenCorpusFixture):
         return _build_springer_article(fixture)
     if fixture.provider in {"science", "pnas", "wiley"}:
         return _build_browser_workflow_article(fixture)
+    if fixture.provider == "ieee":
+        return _build_ieee_article(fixture)
     raise ValueError(f"Unsupported golden fixture provider: {fixture.provider}")
 
 
@@ -304,6 +403,27 @@ def lightweight_positive_summary_from_fixture(fixture: GoldenCorpusFixture) -> d
             "validated_fields": ("title", "authors"),
             "blocking_fallback_signals": tuple(blocking_fallback_signals(html_text)),
             "source_candidate_hit": fixture.source_url in candidate_urls or fixture.landing_url in candidate_urls,
+        }
+
+    if fixture.provider == "ieee":
+        metadata = _ieee_fixture_metadata(fixture)
+        html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+        extraction = ieee_provider._extract_ieee_html(
+            html_text,
+            fixture.source_url,
+            metadata=metadata,
+        )
+        return {
+            "doi": fixture.doi,
+            "has": {
+                "title": bool(normalize_text(metadata.get("title"))),
+                "authors": bool(metadata.get("authors")),
+                "abstract": bool(normalize_text(metadata.get("abstract"))) or bool(extraction.abstract_sections),
+                "body": bool(extraction.section_hints) or bool(normalize_text(extraction.markdown_text)),
+            },
+            "validated_fields": ("title", "authors", "abstract", "body"),
+            "blocking_fallback_signals": (),
+            "source_candidate_hit": True,
         }
 
     raise ValueError(f"Unsupported golden fixture provider: {fixture.provider}")

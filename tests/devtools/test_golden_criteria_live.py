@@ -83,6 +83,15 @@ def _provider_status_payload(**kwargs):
                 "notes": [],
                 "checks": [],
             },
+            {
+                "provider": "ieee",
+                "status": "ready",
+                "available": True,
+                "official_provider": True,
+                "missing_env": [],
+                "notes": [],
+                "checks": [],
+            },
         ]
     }
 
@@ -335,6 +344,45 @@ class GoldenCriteriaLiveTests(unittest.TestCase):
             rendered = (sample_dir / "extracted.md").read_text(encoding="utf-8")
             self.assertIn("](body_assets/figure_one.png)", rendered)
 
+    def test_materialize_fetch_artifacts_rewrites_ieee_large_link_to_preview_asset(self) -> None:
+        large_url = "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg7-0932570-large.gif"
+        preview_url = "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg7-0932570-small.gif"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            source_asset_dir = root / "downloads"
+            source_asset_dir.mkdir()
+            source_asset = source_asset_dir / "garg7-0932570-small.gif"
+            source_asset.write_bytes(b"GIF89a\x01\x00\x01\x00\x00\x00;")
+
+            article = sample_article()
+            article.sections[0].text = f"![Fig. 7]({large_url})\n\n**Fig. 7.** Preview fallback."
+            article.assets = [
+                Asset(
+                    kind="figure",
+                    heading="Fig. 7",
+                    caption="Preview fallback.",
+                    path=str(source_asset),
+                    section="body",
+                    original_url=large_url,
+                    download_url=preview_url,
+                    download_tier="preview",
+                )
+            ]
+            envelope = build_envelope(article)
+            sample_dir = root / "sample"
+
+            count = materialize_fetch_artifacts(
+                envelope=envelope,
+                sample_dir=sample_dir,
+                render=RenderOptions(include_refs="all", asset_profile="body", max_tokens="full_text"),
+            )
+
+            self.assertEqual(count, 1)
+            self.assertTrue((sample_dir / "body_assets" / "garg7-0932570-small.gif").exists())
+            rendered = (sample_dir / "extracted.md").read_text(encoding="utf-8")
+            self.assertIn("![Fig. 7](body_assets/garg7-0932570-small.gif)", rendered)
+            self.assertNotIn(large_url, rendered)
+
     def test_review_template_and_parser_cover_all_review_statuses(self) -> None:
         for status, review_status, categories in [
             ("fulltext", "ok", []),
@@ -364,6 +412,34 @@ class GoldenCriteriaLiveTests(unittest.TestCase):
         categories = issue_categories_for_result(status="fulltext", envelope=envelope)
 
         self.assertNotIn("asset_download_failure", categories)
+
+    def test_unlocalized_ieee_mediastore_link_with_local_asset_is_asset_issue(self) -> None:
+        large_url = "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg7-0932570-large.gif"
+        preview_url = "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/10932570/garg7-0932570-small.gif"
+        with tempfile.TemporaryDirectory() as tmpdir:
+            asset_path = Path(tmpdir) / "garg7-0932570-small.gif"
+            asset_path.write_bytes(b"GIF89a\x01\x00\x01\x00\x00\x00;")
+            article = sample_article()
+            article.assets = [
+                Asset(
+                    kind="figure",
+                    heading="Fig. 7",
+                    path=str(asset_path),
+                    original_url=large_url,
+                    download_url=preview_url,
+                    download_tier="preview",
+                )
+            ]
+            envelope = build_envelope(article)
+            envelope.markdown = f"![Fig. 7]({large_url})"
+            envelope.source_trail = [
+                "download:ieee_assets_saved_profile_body",
+                "download:ieee_assets_preview_accepted",
+            ]
+
+            categories = issue_categories_for_result(status="fulltext", envelope=envelope)
+
+        self.assertIn("asset_download_failure", categories)
 
     def test_formula_only_preview_fallback_is_not_an_asset_issue(self) -> None:
         article = sample_article()
@@ -410,6 +486,55 @@ class GoldenCriteriaLiveTests(unittest.TestCase):
         categories = issue_categories_for_result(status="fulltext", envelope=envelope)
 
         self.assertIn("asset_download_failure", categories)
+
+    def test_references_block_mixed_numbered_and_bullet_items_is_reference_loss(self) -> None:
+        """rule: rule-fulltext-reference-priority"""
+        article = sample_article()
+        envelope = build_envelope(article)
+        envelope.markdown = (
+            "# Example Article\n\n"
+            "## Methods\n\n"
+            "Body text.\n\n"
+            "## References (3 total, showing 3)\n\n"
+            "1. First publisher reference.\n"
+            "2. Second publisher reference.\n"
+            "- Metadata fallback reference that should not be appended.\n"
+        )
+
+        categories = issue_categories_for_result(status="fulltext", envelope=envelope)
+
+        self.assertIn("reference_loss", categories)
+
+    def test_body_bullets_do_not_trigger_reference_loss_when_references_are_numbered(self) -> None:
+        article = sample_article()
+        envelope = build_envelope(article)
+        envelope.markdown = (
+            "# Example Article\n\n"
+            "## Methods\n\n"
+            "- Body bullet item.\n"
+            "- Another body bullet item.\n\n"
+            "## References (2 total, showing 2)\n\n"
+            "1. First publisher reference.\n"
+            "2. Second publisher reference.\n"
+        )
+
+        categories = issue_categories_for_result(status="fulltext", envelope=envelope)
+
+        self.assertNotIn("reference_loss", categories)
+
+    def test_pure_fallback_bullet_references_do_not_trigger_reference_loss(self) -> None:
+        article = sample_article()
+        envelope = build_envelope(article)
+        envelope.markdown = (
+            "# Example Article\n\n"
+            "## References (2 total, showing 2)\n\n"
+            "- Metadata fallback reference one.\n"
+            "- Metadata fallback reference two.\n"
+        )
+
+        categories = issue_categories_for_result(status="fulltext", envelope=envelope)
+
+        self.assertNotIn("reference_loss", categories)
 
     def test_review_template_marks_accepted_science_preview_as_non_issue(self) -> None:
         result = GoldenCriteriaLiveResult(

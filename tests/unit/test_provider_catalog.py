@@ -102,10 +102,19 @@ class ProviderCatalogTests(unittest.TestCase):
     def test_catalog_preserves_publisher_doi_domain_inference(self) -> None:
         self.assertEqual(publisher_identity.infer_provider_from_doi("10.1038/nphys1170"), "springer")
         self.assertEqual(publisher_identity.infer_provider_from_doi("10.1016/j.solener.2024.01.001"), "elsevier")
+        self.assertEqual(publisher_identity.infer_provider_from_doi("10.1109/ACCESS.2024.3352924"), "ieee")
         self.assertEqual(publisher_identity.infer_provider_from_publisher("John Wiley & Sons"), "wiley")
+        self.assertEqual(
+            publisher_identity.infer_provider_from_publisher("Institute of Electrical and Electronics Engineers"),
+            "ieee",
+        )
         self.assertEqual(
             publisher_identity.infer_provider_from_url("https://linkinghub.elsevier.com/retrieve/pii/S0021863496900852"),
             "elsevier",
+        )
+        self.assertEqual(
+            publisher_identity.infer_provider_from_url("https://ieeexplore.ieee.org/document/10388355/"),
+            "ieee",
         )
         self.assertEqual(
             publisher_identity.ordered_provider_candidates(

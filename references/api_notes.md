@@ -1,6 +1,6 @@
 # Publisher Route Notes
 
-This file is a human-maintained route reference for v1. Runtime behavior is authoritative in `src/paper_fetch/providers/`, `src/paper_fetch/publisher_identity.py`, and `src/paper_fetch/workflow/`. Provider fallback order is now composed through the internal `_waterfall` runner, while provider steps keep their own payloads, warnings, and source markers. Elsevier is the primary structured XML/API full-text route; Wiley additionally has an optional TDM API PDF lane. Springer, Wiley HTML/browser PDF, Science, and PNAS are provider-managed routes with the constraints below.
+This file is a human-maintained route reference for v1. Runtime behavior is authoritative in `src/paper_fetch/providers/`, `src/paper_fetch/publisher_identity.py`, and `src/paper_fetch/workflow/`. Provider fallback order is now composed through the internal `_waterfall` runner, while provider steps keep their own payloads, warnings, and source markers. Elsevier is the primary structured XML/API full-text route; Wiley additionally has an optional TDM API PDF lane. Springer, Wiley HTML/browser PDF, Science, PNAS, and IEEE are provider-managed routes with the constraints below.
 
 ## Elsevier
 
@@ -113,25 +113,32 @@ This file is a human-maintained route reference for v1. Runtime behavior is auth
 
 ## IEEE
 
-- Runtime status: planned design note only; not currently wired into the provider catalog, router, registry, CLI, MCP status surface, or tests.
-- Intended default behavior:
+- Runtime status: supported via provider-managed IEEE Xplore dynamic HTML plus direct HTTP PDF fallback, with seeded-browser PDF fallback after non-PDF wrappers or access pages.
+- Default behavior:
   - Use `fulltext_first` when the route resolves to IEEE.
   - Assume the operator already has lawful IEEE Xplore access in the current environment, such as institution IP/VPN, authenticated browser cookies, or a personal subscription.
   - Treat full-text retrieval as a best-effort default attempt, not as a guarantee.
   - Fall back to provider-managed `abstract_only` or generic `metadata_only` when access, response shape, validation, extraction, or network checks fail.
-- Proposed implementation:
+- Implementation:
   - Metadata still starts from Crossref merge and landing-page signals.
   - Route by `ieeexplore.ieee.org`, Crossref publisher names such as `IEEE` / `Institute of Electrical and Electronics Engineers`, and DOI prefix `10.1109/`.
-  - Resolve the IEEE article number from the landing URL or page metadata.
+  - Resolve the IEEE article number from DOI redirects, `/document/{article_number}/`, or landing metadata such as `xplGlobal.document.metadata.articleNumber`.
   - Fetch dynamic full-text HTML from `https://ieeexplore.ieee.org/rest/document/{article_number}/?logAccess=true`.
   - Send page-context headers such as `Accept: application/json, text/plain, */*`, the document `Referer`, `x-security-request: required`, and a browser-like user agent.
   - Parse the response as HTML, even when the endpoint looks like a REST path; observed successful responses use `text/html;charset=utf-8`.
   - Validate full-text markers before extraction, for example `#article`, section containers, meaningful paragraph counts, and IEEE figure/table blocks.
   - Reject login pages, access-gate pages, challenge pages, abstract-only pages, empty shells, and unrelated error HTML before Markdown conversion.
+  - Normalize IEEE `figure-full` and `figure-full table` mediastore images as absolute Xplore body `figure` / `table` assets, preferring `*-large.*` links for full-size downloads and keeping `*-small.*` images as previews; use the article landing page as the asset download seed so mediastore image requests can reuse normal Xplore page cookies.
+  - Download body `figure` / `table` / `formula` assets from the HTML success route for `asset_profile=body|all`.
+  - For `asset_profile=all`, split supplementary assets from the body asset list and reuse the generic supplementary file downloader; supplementary payloads are not restricted to image content-types.
+  - Apply IEEE-local supplementary / multimedia link recognition for common file extensions such as PDF, DOC/DOCX, ZIP, media files, archives, and IEEE semantic labels such as supplementary, supporting information, multimedia, data, dataset, or code.
+  - Filter Xplore UI or placeholder images such as `/assets/img/icon.support.gif` during HTML cleanup and asset normalization so they do not appear in Markdown, article assets, or asset download failures.
+  - If dynamic HTML is unavailable, try `pdfUrl`, `pdfPath`, and `/stamp/stamp.jsp?arnumber={article_number}` as direct HTTP PDF candidates; only real PDF payloads are accepted.
 - Common constraints:
   - Do not bypass IEEE access controls, solve CAPTCHA flows, or fabricate entitlement state.
   - The provider may use access context already present in the operator's environment, but must degrade cleanly when that context is missing.
-  - Dynamic HTML asset URLs can later be mapped into the normal `asset_profile=body|all` behavior; Markdown success should not depend on every asset being downloadable.
+  - Dynamic HTML asset URLs are mapped into normal `asset_profile=body|all` behavior; Markdown success must not depend on every asset being downloadable.
+  - PDF fallback is text-only.
 
 ## Crossref
 

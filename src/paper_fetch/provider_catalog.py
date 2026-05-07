@@ -109,6 +109,22 @@ PROVIDER_CATALOG: dict[str, ProviderSpec] = {
         client_factory_path="paper_fetch.providers.pnas:PnasClient",
         status_order=5,
     ),
+    "ieee": ProviderSpec(
+        name="ieee",
+        display_name="IEEE",
+        official=True,
+        domains=("ieeexplore.ieee.org",),
+        doi_prefixes=("10.1109/",),
+        publisher_aliases=(
+            "ieee",
+            "institute of electrical and electronics engineers",
+        ),
+        asset_default="body",
+        probe_capability="routing_signal",
+        abstract_only_policy="provider_managed",
+        client_factory_path="paper_fetch.providers.ieee:IeeeClient",
+        status_order=6,
+    ),
 }
 
 SOURCE_PROVIDER_MAP: dict[str, str] = {
@@ -119,6 +135,8 @@ SOURCE_PROVIDER_MAP: dict[str, str] = {
     "wiley_browser": "wiley",
     "science": "science",
     "pnas": "pnas",
+    "ieee_html": "ieee",
+    "ieee_pdf": "ieee",
 }
 
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -155,6 +157,47 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(len(transport.calls), 2)
         self.assertIn("application/pdf", str(transport.calls[0]["headers"].get("Accept")))
 
+    def test_fetch_pdf_over_http_records_non_pdf_html_diagnostics_and_artifact(self) -> None:
+        pdf_url = "https://example.org/stamp/stamp.jsp?arnumber=123"
+        html = b"""
+        <html>
+          <head><title>IEEE Xplore Full-Text PDF</title></head>
+          <body><script>window.location = '/stampPDF/getPDF.jsp?arnumber=123';</script>Please wait.</body>
+        </html>
+        """
+        transport = RecordingTransport(
+            {
+                ("GET", pdf_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "text/html; charset=utf-8"},
+                    "body": html,
+                    "url": pdf_url,
+                },
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaises(_pdf_common.PdfFetchFailure) as ctx:
+                _pdf_fallback.fetch_pdf_over_http(
+                    transport,
+                    [pdf_url],
+                    artifact_dir=Path(tmpdir),
+                )
+
+            failure_html = Path(tmpdir) / "pdf.failure.html"
+            self.assertTrue(failure_html.is_file())
+            self.assertIn("IEEE Xplore Full-Text PDF", failure_html.read_text(encoding="utf-8"))
+
+        self.assertEqual(ctx.exception.kind, "downloaded_file_not_pdf")
+        details = ctx.exception.details
+        self.assertEqual(details["candidate_url"], pdf_url)
+        self.assertEqual(details["final_url"], pdf_url)
+        self.assertEqual(details["status"], 200)
+        self.assertEqual(details["content_type"], "text/html; charset=utf-8")
+        self.assertEqual(details["title_snippet"], "IEEE Xplore Full-Text PDF")
+        self.assertIn("Please wait", details["body_snippet"])
+        self.assertEqual(details["reason"], "non_pdf_html")
+
     def test_fetch_pdf_over_http_retries_after_empty_markdown(self) -> None:
         first_url = "https://example.org/empty.pdf"
         second_url = "https://example.org/article.pdf"
@@ -180,6 +223,163 @@ class PdfFallbackHelperTests(unittest.TestCase):
             "pdf_fetch_result_from_bytes",
             side_effect=[
                 _pdf_common.PdfFetchFailure("empty_pdf_markdown", "PDF fallback produced empty Markdown."),
+                _pdf_common.PdfFetchResult(
+                    source_url=second_url,
+                    final_url=second_url,
+                    pdf_bytes=b"%PDF-1.7 second",
+                    markdown_text="# Example\n\n## Results\n\nBody text",
+                    suggested_filename="article.pdf",
+                ),
+            ],
+        ):
+            result = _pdf_fallback.fetch_pdf_over_http(transport, [first_url, second_url])
+
+        self.assertEqual(result.source_url, second_url)
+        self.assertEqual(len(transport.calls), 2)
+
+    def test_render_pdf_markdown_uses_default_when_markdown_is_usable(self) -> None:
+        pdf_path = Path("article.pdf")
+        default_markdown = "# Example\n\n" + ("body text " * 140)
+
+        with (
+            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=default_markdown),
+            mock.patch.object(_pdf_common, "_pdf_text_layer_stats") as mocked_stats,
+            mock.patch.object(_pdf_common, "_render_transparent_pdf_markdown") as mocked_transparent,
+        ):
+            result = _pdf_common.render_pdf_markdown(pdf_path)
+
+        self.assertEqual(result, default_markdown)
+        mocked_stats.assert_not_called()
+        mocked_transparent.assert_not_called()
+
+    def test_render_pdf_markdown_uses_transparent_fallback_for_license_footer(self) -> None:
+        pdf_path = Path("legacy-ieee.pdf")
+        default_markdown = "\n".join(
+            [
+                "Authorized licensed use limited to: Example University. "
+                "Downloaded on January 1, 2026 from IEEE Xplore. Restrictions apply."
+            ]
+            * 3
+        )
+        legacy_markdown = "# Example\n\n" + ("transparent body text " * 260)
+
+        with (
+            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=default_markdown),
+            mock.patch.object(
+                _pdf_common,
+                "_pdf_text_layer_stats",
+                return_value=_pdf_common._PdfTextLayerStats(
+                    raw_words=900,
+                    visible_words=45,
+                    transparent_words=855,
+                ),
+            ),
+            mock.patch.object(
+                _pdf_common,
+                "_render_transparent_pdf_markdown",
+                return_value=legacy_markdown,
+            ) as mocked_transparent,
+        ):
+            result = _pdf_common.render_pdf_markdown(pdf_path)
+
+        self.assertEqual(result, legacy_markdown)
+        mocked_transparent.assert_called_once_with(pdf_path)
+
+    def test_render_pdf_markdown_does_not_use_transparent_fallback_without_transparent_text(self) -> None:
+        default_markdown = "# Example\n\n" + ("short body " * 20)
+
+        with (
+            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=default_markdown),
+            mock.patch.object(
+                _pdf_common,
+                "_pdf_text_layer_stats",
+                return_value=_pdf_common._PdfTextLayerStats(
+                    raw_words=42,
+                    visible_words=42,
+                    transparent_words=0,
+                ),
+            ),
+            mock.patch.object(_pdf_common, "_render_transparent_pdf_markdown") as mocked_transparent,
+        ):
+            with self.assertRaises(_pdf_common.PdfFetchFailure) as ctx:
+                _pdf_common.render_pdf_markdown(Path("short.pdf"))
+
+        self.assertEqual(ctx.exception.kind, "insufficient_pdf_markdown")
+        mocked_transparent.assert_not_called()
+
+    def test_render_pdf_markdown_preserves_empty_result_without_transparent_text(self) -> None:
+        with (
+            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=""),
+            mock.patch.object(
+                _pdf_common,
+                "_pdf_text_layer_stats",
+                return_value=_pdf_common._PdfTextLayerStats(
+                    raw_words=0,
+                    visible_words=0,
+                    transparent_words=0,
+                ),
+            ),
+            mock.patch.object(_pdf_common, "_render_transparent_pdf_markdown") as mocked_transparent,
+        ):
+            result = _pdf_common.render_pdf_markdown(Path("empty.pdf"))
+
+        self.assertEqual(result, "")
+        mocked_transparent.assert_not_called()
+
+    def test_render_pdf_markdown_rejects_bad_transparent_fallback_output(self) -> None:
+        default_markdown = (
+            "Authorized licensed use limited to: Example University. "
+            "Downloaded on January 1, 2026 from IEEE Xplore. Restrictions apply."
+        )
+        legacy_markdown = "Authorized licensed use limited to: Example University. Restrictions apply."
+
+        with (
+            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=default_markdown),
+            mock.patch.object(
+                _pdf_common,
+                "_pdf_text_layer_stats",
+                return_value=_pdf_common._PdfTextLayerStats(
+                    raw_words=800,
+                    visible_words=20,
+                    transparent_words=780,
+                ),
+            ),
+            mock.patch.object(_pdf_common, "_render_transparent_pdf_markdown", return_value=legacy_markdown),
+        ):
+            with self.assertRaises(_pdf_common.PdfFetchFailure) as ctx:
+                _pdf_common.render_pdf_markdown(Path("legacy-ieee.pdf"))
+
+        self.assertEqual(ctx.exception.kind, "insufficient_pdf_markdown")
+        self.assertTrue(ctx.exception.details["legacy_license_only"])
+
+    def test_fetch_pdf_over_http_retries_after_insufficient_markdown(self) -> None:
+        first_url = "https://example.org/insufficient.pdf"
+        second_url = "https://example.org/article.pdf"
+        transport = RecordingTransport(
+            {
+                ("GET", first_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/pdf"},
+                    "body": b"%PDF-1.7 first",
+                    "url": first_url,
+                },
+                ("GET", second_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/pdf"},
+                    "body": b"%PDF-1.7 second",
+                    "url": second_url,
+                },
+            }
+        )
+
+        with mock.patch.object(
+            _pdf_fallback,
+            "pdf_fetch_result_from_bytes",
+            side_effect=[
+                _pdf_common.PdfFetchFailure(
+                    "insufficient_pdf_markdown",
+                    "PDF fallback produced insufficient Markdown.",
+                ),
                 _pdf_common.PdfFetchResult(
                     source_url=second_url,
                     final_url=second_url,

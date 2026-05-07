@@ -32,14 +32,14 @@
 
 - 支持 DOI、URL 和标题查询。
 - 输出结构化论文元数据、正文 Markdown、引用信息和本地缓存资源。
-- 支持常见 provider 路由，包括 Crossref、Elsevier、Springer、Wiley、Science 和 PNAS。
+- 支持常见 provider 路由，包括 Crossref、Elsevier、Springer、Wiley、Science、PNAS 和 IEEE。
 - 在无法取得全文时返回带 warning 的 abstract-only 或 metadata-only 结果。
 
 项目边界：
 
 - 不做主题检索、文献推荐或综述生成。
 - 不绕过付费墙或访问授权；可用性取决于 provider、凭据和本机运行环境。
-- Wiley、Science、PNAS 的浏览器路径需要额外运行时组件，详见 [`docs/flaresolverr.md`](docs/flaresolverr.md)。
+- Wiley、Science、PNAS 的浏览器路径需要额外运行时组件，详见 [`docs/flaresolverr.md`](docs/flaresolverr.md)；IEEE 路线不需要额外本地浏览器运行时，但全文可用性取决于 IEEE Xplore 对当前环境的合法访问上下文。
 
 ## 效果展示
 

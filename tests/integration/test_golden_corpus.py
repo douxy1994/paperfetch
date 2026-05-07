@@ -20,6 +20,7 @@ EXPECTED_PROVIDER_ROUTE_KINDS = {
     "science": "html",
     "wiley": "html",
     "pnas": "html",
+    "ieee": "html",
 }
 EXPECTED_PROVIDER_CONTENT_PREFIXES = {
     "elsevier": "text/xml",
@@ -27,6 +28,7 @@ EXPECTED_PROVIDER_CONTENT_PREFIXES = {
     "science": "text/html",
     "wiley": "text/html",
     "pnas": "text/html",
+    "ieee": "text/html",
 }
 EXPECTED_PROVIDER_SOURCES = {
     "elsevier": "elsevier_xml",
@@ -34,6 +36,7 @@ EXPECTED_PROVIDER_SOURCES = {
     "science": "science",
     "wiley": "wiley_browser",
     "pnas": "pnas",
+    "ieee": "ieee_html",
 }
 EXPECTED_PROVIDER_PRIMARY_MARKERS = {
     "elsevier": "fulltext:elsevier_xml_ok",
@@ -41,6 +44,7 @@ EXPECTED_PROVIDER_PRIMARY_MARKERS = {
     "science": "fulltext:science_html_ok",
     "wiley": "fulltext:wiley_html_ok",
     "pnas": "fulltext:pnas_html_ok",
+    "ieee": "fulltext:ieee_html_ok",
 }
 
 
@@ -48,10 +52,10 @@ class GoldenCorpusTests(unittest.TestCase):
     def test_golden_corpus_is_balanced_across_publishers(self) -> None:
         fixtures = iter_golden_corpus_fixtures()
 
-        self.assertEqual(len(fixtures), 52)
+        self.assertEqual(len(fixtures), 59)
         self.assertEqual(
             Counter(fixture.provider for fixture in fixtures),
-            Counter({"elsevier": 10, "pnas": 10, "science": 11, "springer": 11, "wiley": 10}),
+            Counter({"elsevier": 10, "ieee": 7, "pnas": 10, "science": 11, "springer": 11, "wiley": 10}),
         )
 
     def test_golden_corpus_lightweight_contracts_hold_across_full_corpus(self) -> None:
@@ -83,10 +87,10 @@ class GoldenCorpusTests(unittest.TestCase):
     def test_golden_corpus_representative_fixtures_cover_primary_fulltext_paths(self) -> None:
         fixtures = iter_golden_corpus_representative_fixtures()
 
-        self.assertEqual(len(fixtures), 5)
+        self.assertEqual(len(fixtures), 6)
         self.assertEqual(
             Counter(fixture.provider for fixture in fixtures),
-            Counter({"elsevier": 1, "pnas": 1, "science": 1, "springer": 1, "wiley": 1}),
+            Counter({"elsevier": 1, "ieee": 1, "pnas": 1, "science": 1, "springer": 1, "wiley": 1}),
         )
 
         for fixture in fixtures:
@@ -115,7 +119,7 @@ class GoldenCorpusTests(unittest.TestCase):
 
     @unittest.skipUnless(
         os.environ.get(FULL_GOLDEN_ENV) == "1",
-        f"Set {FULL_GOLDEN_ENV}=1 to run full 52-fixture golden corpus regression.",
+        f"Set {FULL_GOLDEN_ENV}=1 to run full 59-fixture golden corpus regression.",
     )
     def test_golden_corpus_expected_summaries_match_current_extractors(self) -> None:
         for fixture in iter_golden_corpus_fixtures():

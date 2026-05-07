@@ -162,7 +162,7 @@ Date: 2026-04-28
 | 阶段 token | Canonical module / owner | 规则范围 |
 | --- | --- | --- |
 | `metadata` | `paper_fetch.extraction.html._metadata`、provider metadata adapters、`paper_fetch.metadata.crossref` | 标题、作者、摘要、provider-owned 信号和 redirect stub lookup metadata。 |
-| `provider-html-or-xml-extraction` | `paper_fetch.providers._article_markdown_elsevier_document`、`paper_fetch.providers.html_springer_nature`、`paper_fetch.providers.science_pnas`、`paper_fetch.providers._wiley_html` | publisher HTML/XML 到中间结构的提取。 |
+| `provider-html-or-xml-extraction` | `paper_fetch.providers._article_markdown_elsevier_document`、`paper_fetch.providers.html_springer_nature`、`paper_fetch.providers.science_pnas`、`paper_fetch.providers._wiley_html`、`paper_fetch.providers.ieee` | publisher HTML/XML 到中间结构的提取。 |
 | `html-cleanup` | `paper_fetch.providers.html_noise`、`paper_fetch.extraction.html.inline`、provider cleanup profiles | 站点 chrome、UI 噪声、caption fallback 和正文清洗。 |
 | `availability-quality` | `paper_fetch.quality.html_availability` | fulltext / abstract-only 判定和正文充分性度量。 |
 | `section-classification` | `paper_fetch.extraction.section_hints`、`paper_fetch.extraction.html.semantics` | section kind、frontmatter、back matter、availability 与 section hints。 |
@@ -211,7 +211,7 @@ Date: 2026-04-28
 
 能力边界通过 `paper_fetch.providers.protocols` 表达：`MetadataProvider`、`FulltextProvider`、`RawFulltextProvider`、`StatusProvider` 和 `AssetProvider` 用于 workflow typing；`ProviderClient` 仍是 provider 可继承的 convenience base class，不是 registry/runtime 的唯一抽象边界。
 
-Provider fulltext 内部链路统一接收同一个 `RuntimeContext`：workflow 调用 `FulltextProvider.fetch_result()` 时必须传入 `artifact_store=` 与 `context=`，不再做运行时签名反射或无 `artifact_store` 分支；`fetch_result` 会把 context 继续传给 raw fulltext、abstract-only recovery、related assets 和 `to_article_model`。provider 不再暴露旧 `fetch_fulltext()` dict 入口；需要原始 payload 时使用 `fetch_raw_fulltext()`，需要完整 provider 结果时使用 `fetch_result()`。这样 Elsevier XML root、Springer HTML extraction payload、Wiley/Science/PNAS browser-workflow Markdown extraction 以及资产抽取结果可以在同一次 fetch 内 memo；browser workflow 也能复用 runtime browser。缓存只保存派生 payload 或只读 XML root，不跨阶段共享可变 BeautifulSoup tree。
+Provider fulltext 内部链路统一接收同一个 `RuntimeContext`：workflow 调用 `FulltextProvider.fetch_result()` 时必须传入 `artifact_store=` 与 `context=`，不再做运行时签名反射或无 `artifact_store` 分支；`fetch_result` 会把 context 继续传给 raw fulltext、abstract-only recovery、related assets 和 `to_article_model`。provider 不再暴露旧 `fetch_fulltext()` dict 入口；需要原始 payload 时使用 `fetch_raw_fulltext()`，需要完整 provider 结果时使用 `fetch_result()`。这样 Elsevier XML root、Springer HTML extraction payload、Wiley/Science/PNAS browser-workflow Markdown extraction、IEEE dynamic HTML 清洗结果以及资产抽取结果可以在同一次 fetch 内 memo；browser workflow 也能复用 runtime browser。缓存只保存派生 payload 或只读 XML root，不跨阶段共享可变 BeautifulSoup tree。
 
 `RawFulltextPayload.metadata` 只保留为 legacy/read-only compatibility view：`route`、`markdown_text`、`warnings`、`source_trail`、diagnostics、browser seed 等结构化字段必须由 `ProviderContent`、`warnings`、`trace`、`merged_metadata` 等 typed fields 传入。新生产路径不得把结构化字段写入 legacy metadata pocket，也不得通过 `raw_payload.metadata[...]` 读取 typed 状态。构造 `RawFulltextPayload(metadata={...})` 不再把 legacy magic keys 注入结构化字段，只允许非结构化 passthrough metadata 留在导出里。
 
@@ -313,7 +313,7 @@ workflow 会尽可能拿到两类元数据：
 其中：
 
 - `elsevier` 仍会参与 publisher metadata probe
-- `springer`、`wiley`、`science`、`pnas` 不再做 publisher metadata probe
+- `springer`、`wiley`、`science`、`pnas`、`ieee` 不再做 publisher metadata probe
 
 然后执行 primary / secondary merge，得到后续正文抓取所需的统一 metadata 视图。
 
@@ -343,6 +343,9 @@ workflow 会尽可能拿到两类元数据：
   - 走 provider 自管浏览器工作流 `direct Playwright HTML preflight -> FlareSolverr HTML -> seeded-browser publisher PDF/ePDF`
   - 与 `wiley` / `science` 的 HTML / browser PDF/ePDF 路径共用浏览器工作流基座
   - 当前只剩 provider-owned 单栈；不再保留额外的 Science-only live harness 或第二套 browser-PDF 实现
+- `ieee`
+  - 走 provider 自管 `landing metadata / article number -> dynamic HTML endpoint -> direct HTTP PDF fallback -> seeded-browser PDF fallback`
+  - dynamic HTML 成功公开为 `ieee_html`；无可用 HTML 但 PDF payload 成功时公开为 `ieee_pdf`
 
 `paper_fetch.providers.browser_workflow` 是 Wiley / Science / PNAS 的 canonical browser workflow facade：它保留 `ProviderBrowserProfile`、`BrowserWorkflowClient`、bootstrap、seeded-browser PDF fallback、article conversion 和 related asset download orchestration 的稳定入口。底层职责已拆到独立包：`paper_fetch.providers.browser_workflow.profile/bootstrap/pdf_fallback/article/assets/client` 分别承载 profile、HTML bootstrap、PDF/ePDF fallback、article assembly、asset retry helper 和 client 基类；`paper_fetch.providers.browser_workflow_fetchers.context/image/file/memo/diagnostics/scripts` 承载 `_BasePlaywrightDocumentFetcher`、shared Playwright image/file fetcher、memoized fetcher、Playwright context 创建、图片 payload/失败诊断 helper 和 Playwright JS；`_browser_workflow_html_extraction.py` 继续承载 direct Playwright HTML preflight、FlareSolverr HTML payload 构造、Markdown/assets parse-cache helper 和 HTML payload helper；`paper_fetch.providers.science_pnas` 承载 Science/PNAS/Wiley browser HTML markdown、asset scopes、normalization 和 postprocess entrypoint。facade 继续 re-export 测试和 provider 已依赖的 patch 点（例如 `load_runtime_config`、`fetch_html_with_flaresolverr`、`fetch_html_with_direct_playwright`、`fetch_pdf_with_playwright`、`extract_science_pnas_markdown` 与 shared Playwright fetcher 构造器），新代码不应把这些内部模块当作稳定公开 API。旧的 `_science_pnas` 兼容模块已移除，`_browser_workflow_fetchers.py` 仅保留一轮兼容 re-export wrapper。
 
@@ -354,13 +357,13 @@ workflow 会尽可能拿到两类元数据：
 
 ### 5. abstract-only / metadata-only fallback
 
-如果命中了 `elsevier`、`springer`、`wiley`、`science`、`pnas` 五家 provider 之一：
+如果命中了 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee` 之一：
 
 - workflow.fulltext 只执行该 provider 自己管理的 HTML/PDF waterfall
 - provider 返回 `None` 后直接进入 metadata-only fallback
-- `springer` / `wiley` / `science` / `pnas` 如果只能确认摘要级内容，会直接返回 provider `abstract_only` 结果
+- `springer` / `wiley` / `science` / `pnas` / `ieee` 如果只能确认摘要级内容，会直接返回 provider `abstract_only` 结果
 
-如果没有命中这五家 provider：
+如果没有命中这些 official provider：
 
 - 系统仍允许 DOI / Crossref metadata 解析
 - 不再尝试任何通用 HTML 正文提取
@@ -489,7 +492,7 @@ workflow 会尽可能拿到两类元数据：
 
 ## 关键例外与调用方容易误解的点
 
-### `elsevier` / `springer` / `wiley` / `science` / `pnas` 不走通用 HTML fallback
+### `elsevier` / `springer` / `wiley` / `science` / `pnas` / `ieee` 不走通用 HTML fallback
 
 这些 provider 的 HTML 逻辑由 provider 内部管理，因此：
 
@@ -498,6 +501,7 @@ workflow 会尽可能拿到两类元数据：
 - `springer` 成功时公开为 `springer_html`
 - `wiley` 成功时公开为 `wiley_browser`
 - `science` / `pnas` 仍然公开为 `science` / `pnas`
+- `ieee` 成功时公开为 `ieee_html` 或 `ieee_pdf`
 - 更细的成功细节要看 `source_trail`
 
 ### `crossref` 既可能是 source，也可能只是 signal

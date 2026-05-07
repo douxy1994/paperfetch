@@ -5,17 +5,17 @@
     "abstract": true,
     "body": true,
     "figures": false,
-    "references": false,
+    "references": true,
     "data_availability": true,
     "code_availability": false
   },
   "counts": {
-    "sections": 10,
+    "sections": 12,
     "abstract_sections": 1,
-    "body_sections": 8,
+    "body_sections": 10,
     "figures": 0,
     "tables": 0,
-    "references": 0
+    "references": 59
   },
   "expected_content_kind": "fulltext"
 }

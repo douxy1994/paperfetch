@@ -201,6 +201,14 @@ def render_container_markdown(
                 section_content_selectors=section_content_selectors,
             )
             continue
+        if _is_div_section_container(child):
+            render_section_markdown(
+                child,
+                lines,
+                level=level,
+                section_content_selectors=section_content_selectors,
+            )
+            continue
         if child.name and HEADING_TAG_PATTERN.match(child.name):
             heading_text = render_heading_text_from_html(child)
             if (
@@ -302,6 +310,9 @@ def _render_formula_container(node: Any) -> str:
     mathml = _render_mathml_node(node)
     if mathml:
         return mathml
+    latex = _formula_latex_from_node(node)
+    if latex:
+        return f"\n\n$$\n{latex}\n$$\n\n" if _is_display_formula_node(node) else latex
     image_url = _first_formula_image_url(node)
     if image_url:
         rendered = f"![Formula]({image_url})"
@@ -320,6 +331,17 @@ def _is_figure_container(node: Any) -> bool:
     if "figure" not in identity:
         return False
     return node.find("figure") is not None or node.find("img") is not None or node.find("figcaption") is not None
+
+
+def _is_div_section_container(node: Any) -> bool:
+    if not isinstance(node, Tag) or normalize_text(node.name or "").lower() != "div":
+        return False
+    class_values = getattr(node, "attrs", {}).get("class") or []
+    if isinstance(class_values, str):
+        classes = {item.lower() for item in class_values.split()}
+    else:
+        classes = {normalize_text(str(item)).lower() for item in class_values}
+    return bool(classes & {"section", "section_2"}) and node.find(HEADING_TAG_PATTERN) is not None
 
 
 def _clean_figure_text_candidate(text: str) -> str:
@@ -390,6 +412,8 @@ def render_figure_markdown(node: Any, lines: list[str]) -> None:
     if not isinstance(node, Tag):
         return
 
+    inline_url = normalize_text(str(node.get("data-paper-fetch-inline-src") or ""))
+    inline_alt = normalize_text(str(node.get("data-paper-fetch-inline-alt") or "Figure"))
     figure_label = ""
     figure_parts: list[str] = []
     for text in _iter_figure_text_candidates(node):
@@ -403,6 +427,9 @@ def render_figure_markdown(node: Any, lines: list[str]) -> None:
         figure_label = _figure_label_from_node(node)
     if not figure_label and not figure_parts:
         return
+
+    if inline_url:
+        lines.extend([f"![{inline_alt or figure_label or 'Figure'}]({inline_url})", ""])
 
     if figure_label:
         line = f"**{figure_label}**"
@@ -425,6 +452,12 @@ def _has_explicit_citation_marker(node: Any) -> bool:
         return True
     if normalize_text(str(attrs.get("data-xml-rid") or "")):
         return True
+    if normalize_text(str(attrs.get("ref-type") or "")).lower() == "bibr":
+        return True
+    for key in ("anchor", "data-range", "rid"):
+        value = normalize_text(str(attrs.get(key) or ""))
+        if re.fullmatch(r"ref\d+[a-z]?", value, flags=re.IGNORECASE):
+            return True
     return False
 
 
@@ -432,7 +465,7 @@ def _numeric_citation_payload_from_html(node: Any) -> str | None:
     if not isinstance(node, Tag):
         return None
     text = normalize_text(node.get_text("", strip=True))
-    payload = numeric_citation_payload(text)
+    payload = numeric_citation_payload(text.strip("[]"))
     if payload is None:
         return None
     href = normalize_text(str(node.get("href") or ""))
@@ -521,12 +554,39 @@ def render_clean_children(node: Any) -> str:
 def _is_mathjax_tex_node(node: Any) -> bool:
     if not isinstance(node, Tag):
         return False
+    name = normalize_text(node.name or "").lower()
+    if name == "tex-math":
+        return True
     classes = getattr(node, "attrs", {}).get("class") or []
     if isinstance(classes, str):
         class_values = classes.split()
     else:
         class_values = [str(value) for value in classes]
-    return "mathjax-tex" in class_values
+    normalized_classes = {normalize_text(value).lower() for value in class_values}
+    return bool(normalized_classes & {"mathjax-tex", "tex", "tex2jax_ignore"})
+
+
+def _formula_latex_from_node(node: Any) -> str:
+    if not isinstance(node, Tag):
+        return ""
+    candidates: list[Any] = []
+    if _is_mathjax_tex_node(node):
+        candidates.append(node)
+    candidates.extend(candidate for candidate in node.find_all("tex-math") if isinstance(candidate, Tag))
+    try:
+        candidates.extend(candidate for candidate in node.select(".mathjax-tex, .tex, .tex2jax_ignore") if isinstance(candidate, Tag))
+    except Exception:
+        pass
+    seen: set[int] = set()
+    for candidate in candidates:
+        identity = id(candidate)
+        if identity in seen:
+            continue
+        seen.add(identity)
+        latex = normalize_latex_macros(candidate.get_text("", strip=False).strip())
+        if latex:
+            return latex
+    return ""
 
 
 def needs_space_between(left: str, right: str, previous_child: Any, child: Any) -> bool:

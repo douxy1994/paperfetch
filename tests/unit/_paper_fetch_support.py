@@ -96,6 +96,13 @@ class StubProvider:
                 "figure and supplementary asset downloads are not implemented yet."
             )
             skip_trace = trace_from_markers(["download:springer_assets_skipped_text_only"])
+        elif provider_name == "ieee" and route == "pdf_fallback":
+            allow_related_assets = False
+            skip_warning = (
+                "IEEE PDF fallback currently returns text-only full text; "
+                "figure and supplementary asset downloads are not implemented for PDF fallback."
+            )
+            skip_trace = trace_from_markers(["download:ieee_assets_skipped_text_only"])
         elif provider_name in {"wiley", "science", "pnas"} and route == "pdf_fallback":
             allow_related_assets = False
             provider_label = "PNAS" if provider_name == "pnas" else provider_name.title()

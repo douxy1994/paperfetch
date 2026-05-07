@@ -16,6 +16,8 @@ SourceKind = Literal[
     "wiley_browser",
     "science",
     "pnas",
+    "ieee_html",
+    "ieee_pdf",
     "crossref_meta",
 ]
 
