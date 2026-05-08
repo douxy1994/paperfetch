@@ -77,7 +77,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
         block = _job_block(workflow, "release-offline-packages")
 
-        self.assertIn("actions/download-artifact@v4", block)
+        self.assertIn("actions/download-artifact@v8", block)
         self.assertIn("pattern: paper-fetch-skill-*", block)
         self.assertIn("merge-multiple: true", block)
         self.assertIn("softprops/action-gh-release@v2", block)
