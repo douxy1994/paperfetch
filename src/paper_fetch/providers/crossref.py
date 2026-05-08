@@ -6,7 +6,7 @@ from typing import Any, Mapping
 
 from ..http import HttpTransport
 from ..metadata.crossref import CrossrefLookupClient
-from ..metadata_types import CrossrefMetadata
+from ..metadata.types import CrossrefMetadata
 from .base import (
     ProviderClient,
     ProviderStatusResult,

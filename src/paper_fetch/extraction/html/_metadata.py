@@ -9,7 +9,7 @@ from html.parser import HTMLParser
 from typing import Mapping
 
 from ...html_lookup import is_usable_html_lookup_title
-from ...metadata_types import HtmlLookupHints, HtmlMetadata, ProviderMetadata
+from ...metadata.types import HtmlLookupHints, HtmlMetadata, ProviderMetadata
 from ...utils import dedupe_authors
 from ...models import normalize_text
 from ...publisher_identity import normalize_doi

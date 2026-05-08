@@ -9,7 +9,7 @@ from typing import Any, Mapping
 from ..config import build_user_agent
 from ..errors import ProviderFailure
 from ..http import DEFAULT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
-from ..metadata_types import CrossrefMetadata, FulltextLink, ReferenceMetadata
+from ..metadata.types import CrossrefMetadata, FulltextLink, ReferenceMetadata
 from ..publisher_identity import normalize_doi
 from ..utils import (
     date_parts_to_string,

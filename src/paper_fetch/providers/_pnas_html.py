@@ -6,9 +6,8 @@ import re
 from functools import partial
 from typing import Any, Mapping
 
+from ..extraction.html.provider_rules import PNAS_SITE_RULE_OVERRIDES, provider_html_rules
 from ..quality.html_profiles import (
-    PNAS_NOISE_PROFILE,
-    PNAS_SITE_RULE_OVERRIDES,
     pnas_blocking_fallback_signals,
     pnas_positive_signals,
 )
@@ -24,7 +23,7 @@ BASE_HOSTS: tuple[str, ...] = HOSTS
 HTML_PATH_TEMPLATES: tuple[str, ...] = ("/doi/{doi}", "/doi/full/{doi}")
 PDF_PATH_TEMPLATES: tuple[str, ...] = ("/doi/epdf/{doi}", "/doi/pdf/{doi}?download=true", "/doi/pdf/{doi}")
 CROSSREF_PDF_POSITION = 0
-NOISE_PROFILE = PNAS_NOISE_PROFILE
+NOISE_PROFILE = provider_html_rules("pnas").noise_profile
 SITE_RULE_OVERRIDES: dict[str, Any] = PNAS_SITE_RULE_OVERRIDES
 PNAS_AUTHOR_COUNT_PATTERN = re.compile(r"^\+\s*\d+\s+authors?$", flags=re.IGNORECASE)
 PNAS_IGNORED_AUTHOR_TEXT = {

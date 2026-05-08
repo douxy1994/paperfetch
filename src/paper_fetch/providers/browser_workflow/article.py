@@ -6,7 +6,7 @@ from dataclasses import replace
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
 from ...extraction.html.signals import SciencePnasHtmlFailure
-from ...metadata_types import ProviderMetadata
+from ...metadata.types import ProviderMetadata
 from ...models import (
     article_from_markdown,
     coerce_asset_failure_diagnostics,
@@ -14,9 +14,9 @@ from ...models import (
 )
 from ...publisher_identity import normalize_doi
 from ...runtime import RuntimeContext
-from ...tracing import merge_trace, source_trail_from_trace, trace_from_markers
+from ...tracing import fulltext_marker, merge_trace, source_trail_from_trace, trace_from_markers
 from ...utils import dedupe_authors, extend_unique, normalize_text
-from .._browser_workflow_html_extraction import (
+from .html_extraction import (
     _cached_browser_workflow_markdown,
     rewrite_inline_figure_links,
 )
@@ -161,7 +161,7 @@ def browser_workflow_article_from_payload(
             metadata=metadata,
             doi=doi or None,
             warnings=warnings,
-            trace=[*trace, *trace_from_markers([f"fulltext:{client.name}_parse_fail"])],
+            trace=[*trace, *trace_from_markers([fulltext_marker(client.name, "fail", route="parse")])],
         )
     if asset_failures:
         warnings.append(
@@ -236,7 +236,7 @@ def _finalize_abstract_only_provider_article(
     *,
     warnings: list[str] | None = None,
 ):
-    marker = f"fulltext:{provider_name}_abstract_only"
+    marker = fulltext_marker(provider_name, "abstract_only")
     article.quality.trace = merge_trace(
         article.quality.trace, trace_from_markers([marker])
     )

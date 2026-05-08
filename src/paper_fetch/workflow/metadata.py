@@ -5,10 +5,11 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Mapping, cast
 
-from ..metadata_types import ProviderMetadata
+from ..metadata.types import ProviderMetadata
 from ..providers.base import ProviderFailure
 from ..providers.protocols import MetadataProvider
 from ..runtime import RuntimeContext
+from ..tracing import metadata_marker, route_marker
 from ..utils import choose_public_landing_page_url, dedupe_authors, extend_unique, normalize_text, safe_text
 from .routing import (
     build_official_provider_candidates,
@@ -209,9 +210,9 @@ def fetch_metadata_for_resolved_query(
         routing_metadata = crossref_result
         crossref_metadata = routing_metadata
         if crossref_is_public_source:
-            source_trail.append("metadata:crossref_ok")
+            source_trail.append(metadata_marker("crossref", "ok"))
         else:
-            source_trail.append("route:crossref_signal_ok")
+            source_trail.append(route_marker("crossref_signal", "ok"))
     elif crossref_failure is not None and crossref_is_public_source:
         source_trail.append(source_trail_for_failure("metadata", "crossref", crossref_failure))
 
@@ -238,7 +239,7 @@ def fetch_metadata_for_resolved_query(
             if probe is None:
                 probe = probe_official_provider(candidate_provider, doi=resolved.doi, clients=clients, context=context)
             probes.append(probe)
-            source_trail.append(f"route:probe_{candidate_provider}_{probe.state}")
+            source_trail.append(route_marker(f"probe_{candidate_provider}", probe.state))
             if probe.state == "positive":
                 break
 
@@ -246,16 +247,16 @@ def fetch_metadata_for_resolved_query(
     if selected_probe is not None:
         provider_name = selected_probe.provider
         official_metadata = selected_probe.metadata
-        source_trail.append(f"route:provider_selected_{provider_name}")
+        source_trail.append(route_marker(f"provider_selected_{provider_name}"))
     elif crossref_metadata:
         provider_name = "crossref"
     elif resolved.provider_hint and provider_allowed(resolved.provider_hint, strategy):
         provider_name = resolved.provider_hint
-        source_trail.append(f"route:provider_selected_{provider_name}")
+        source_trail.append(route_marker(f"provider_selected_{provider_name}"))
 
     if official_metadata or crossref_metadata:
         if official_metadata:
-            source_trail.append(f"metadata:{provider_name}_ok")
+            source_trail.append(metadata_marker(provider_name or "provider", "ok"))
         metadata = merge_primary_secondary_metadata(official_metadata, crossref_metadata)
         metadata["provider"] = (official_metadata or crossref_metadata or {}).get("provider")
         metadata["official_provider"] = (official_metadata or crossref_metadata or {}).get("official_provider")
@@ -264,6 +265,6 @@ def fetch_metadata_for_resolved_query(
         metadata = _merge_cached_landing_probe_links(metadata, resolved, context=context)
         return metadata, provider_name, source_trail
 
-    source_trail.append("metadata:resolution_only")
+    source_trail.append(metadata_marker("resolution_only"))
     metadata = _merge_cached_landing_probe_links(metadata_from_resolution(resolved), resolved, context=context)
     return metadata, provider_name, source_trail

@@ -14,13 +14,13 @@ from ...extraction.html.assets import (
     split_body_and_supplementary_assets,
 )
 from ...extraction.html.signals import SciencePnasHtmlFailure
-from ...metadata_types import ProviderMetadata
+from ...metadata.types import ProviderMetadata
 from ...models import AssetProfile
 from ...publisher_identity import normalize_doi
 from ...runtime import RuntimeContext
-from ...tracing import trace_from_markers
+from ...tracing import download_marker, fulltext_marker, trace_from_markers
 from ...utils import empty_asset_results, normalize_text
-from .._browser_workflow_shared import (
+from .shared import (
     build_browser_workflow_html_candidates,
     build_browser_workflow_pdf_candidates,
     extract_pdf_url_from_crossref,
@@ -36,7 +36,7 @@ from .._flaresolverr import (
 )
 from .._pdf_fallback import PdfFallbackFailure
 from .._waterfall import ProviderWaterfallStep, run_provider_waterfall
-from .._browser_workflow_html_extraction import (
+from .html_extraction import (
     _cached_browser_workflow_markdown,
 )
 from ..base import (
@@ -46,7 +46,7 @@ from ..base import (
     ProviderFailure,
     RawFulltextPayload,
 )
-from ..browser_workflow_fetchers import (
+from .fetchers import (
     _MemoizedFigurePageFetcher,
     _MemoizedImageDocumentFetcher,
     _build_shared_playwright_file_fetcher as _default_build_shared_playwright_file_fetcher,
@@ -181,9 +181,9 @@ class BrowserWorkflowClient(ProviderClient):
             html_failure_message=html_failure_message,
             warnings=[*raw_payload.warnings, recovery_warning],
             success_source_trail=[
-                f"fulltext:{self.name}_html_ok",
-                f"fulltext:{self.name}_abstract_only",
-                f"fulltext:{self.name}_pdf_fallback_ok",
+                fulltext_marker(self.name, "ok", route="html"),
+                fulltext_marker(self.name, "abstract_only"),
+                fulltext_marker(self.name, "ok", route="pdf_fallback"),
             ],
             context=context,
         )
@@ -265,7 +265,7 @@ class BrowserWorkflowClient(ProviderClient):
                 warnings=[
                     f"{self.name} HTML route was not usable; skipping PDF fallback."
                 ],
-                source_trail=[f"fulltext:{self.name}_html_fail"],
+                source_trail=[fulltext_marker(self.name, "fail", route="html")],
             )
 
         initial_warning = (
@@ -309,11 +309,11 @@ class BrowserWorkflowClient(ProviderClient):
                 ProviderWaterfallStep(
                     label="pdf",
                     run=run_pdf_fallback,
-                    success_markers=(f"fulltext:{self.name}_pdf_fallback_ok",),
+                    success_markers=(fulltext_marker(self.name, "ok", route="pdf_fallback"),),
                 )
             ],
             initial_warnings=[*bootstrap.warnings, initial_warning],
-            initial_source_trail=[f"fulltext:{self.name}_html_fail"],
+            initial_source_trail=[fulltext_marker(self.name, "fail", route="html")],
         )
 
     def html_to_markdown(
@@ -899,6 +899,6 @@ class BrowserWorkflowClient(ProviderClient):
                 "figure and supplementary asset downloads are not implemented yet."
             ),
             skip_trace=trace_from_markers(
-                [f"download:{self.name}_assets_skipped_text_only"]
+                [download_marker(f"{self.name}_assets_skipped_text_only")]
             ),
         )

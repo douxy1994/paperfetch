@@ -24,7 +24,7 @@ from paper_fetch.models import (
     metadata_only_article,
     normalize_markdown_text,
 )
-from paper_fetch.providers import _springer_html
+import paper_fetch.providers.springer_html as springer_html
 from tests.golden_criteria import golden_criteria_asset, golden_criteria_scenario_asset
 
 from ._paper_fetch_support import sample_article
@@ -1199,7 +1199,7 @@ class ModelsRenderTests(unittest.TestCase):
             encoding="utf-8",
             errors="ignore",
         )
-        extraction_payload = _springer_html.extract_html_payload(
+        extraction_payload = springer_html.extract_html_payload(
             html,
             "https://www.nature.com/articles/nature12915",
         )
@@ -1232,7 +1232,7 @@ class ModelsRenderTests(unittest.TestCase):
             encoding="utf-8",
             errors="ignore",
         )
-        extraction_payload = _springer_html.extract_html_payload(
+        extraction_payload = springer_html.extract_html_payload(
             html,
             "https://www.nature.com/articles/nature12915",
         )

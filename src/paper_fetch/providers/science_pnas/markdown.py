@@ -5,13 +5,14 @@ from __future__ import annotations
 import copy
 from typing import Any, Mapping
 
-from ...metadata_types import ProviderMetadata
+from ...metadata.types import ProviderMetadata
 from ...extraction.html.parsing import choose_parser
+from ...extraction.html.renderer import clean_rendered_markdown, render_html_markdown
 from ...extraction.html.semantics import collect_html_section_hints
 from ...extraction.html.signals import SciencePnasHtmlFailure
 from ...quality.html_availability import (
     HTML_CONTAINER_DROP_BROWSER_WORKFLOW,
-    assess_html_fulltext_availability,
+    HtmlQualityAssessor,
     availability_failure_message,
     clean_container,
     select_best_container,
@@ -33,8 +34,6 @@ from .postprocess import (
     _postprocess_browser_workflow_markdown,
 )
 from .profile import (
-    clean_markdown,
-    extract_article_markdown,
     extract_page_title,
     _container_selection_policy,
     _content_fragment_html,
@@ -88,20 +87,17 @@ def extract_browser_workflow_markdown(
     )
     container_html = _content_fragment_html(body_container, publisher=publisher)
     noise_profile = _noise_profile_for_publisher(publisher)
-    markdown = clean_markdown(
-        extract_article_markdown(
-            container_html,
-            source_url,
-            trafilatura_backend=None,
-            noise_profile=noise_profile,
-        ),
+    markdown = render_html_markdown(
+        container_html,
+        source_url,
+        trafilatura_backend=None,
         noise_profile=noise_profile,
     )
     if abstract_sections:
         markdown = _ensure_body_markdown_heading(markdown, title=title)
     abstract_markdown = _missing_abstract_markdown(container, markdown, publisher=publisher)
     if abstract_markdown:
-        markdown = clean_markdown(f"{abstract_markdown}\n\n{markdown}", noise_profile=noise_profile)
+        markdown = clean_rendered_markdown(f"{abstract_markdown}\n\n{markdown}", noise_profile=noise_profile)
     if title and f"# {title}" not in markdown:
         markdown = f"# {title}\n\n{markdown}".strip() + "\n"
     markdown = _inject_inline_table_blocks(markdown, table_entries=table_entries, publisher=publisher)
@@ -117,10 +113,9 @@ def extract_browser_workflow_markdown(
     quality_metadata = dict(metadata or {})
     if title and not quality_metadata.get("title"):
         quality_metadata["title"] = title
-    diagnostics = assess_html_fulltext_availability(
+    diagnostics = HtmlQualityAssessor(publisher).assess(
         markdown,
         quality_metadata,
-        provider=publisher,
         html_text=html_text,
         title=title,
         final_url=source_url,

@@ -7,6 +7,13 @@ from .assets import download_figure_assets, extract_html_assets
 from ._metadata import merge_html_metadata, parse_html_metadata
 from ._runtime import clean_markdown, decode_html, extract_article_markdown
 from .landing import LandingHtmlFetchResult, fetch_landing_html
+from .renderer import (
+    HtmlMarkdownRenderer,
+    RenderedHtmlFragment,
+    clean_rendered_markdown,
+    render_html_markdown,
+    render_provider_html_fragment,
+)
 from .shared import (
     append_text_block,
     class_tokens,
@@ -33,9 +40,14 @@ __all__ = [
     "html_text_snippet",
     "html_title_snippet",
     "image_magic_type",
+    "HtmlMarkdownRenderer",
+    "RenderedHtmlFragment",
     "LandingHtmlFetchResult",
     "merge_html_metadata",
     "parse_html_metadata",
+    "clean_rendered_markdown",
+    "render_html_markdown",
+    "render_provider_html_fragment",
     "short_text",
     "soup_root",
 ]

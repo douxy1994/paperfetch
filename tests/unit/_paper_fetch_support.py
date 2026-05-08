@@ -6,7 +6,7 @@ from dataclasses import replace
 import fitz
 
 from paper_fetch import service as paper_fetch
-from paper_fetch.http import HttpTransport, RequestFailure
+from paper_fetch.http import DEFAULT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
 from paper_fetch.models import ArticleModel, FetchEnvelope, Metadata, Quality, RenderOptions, Section, TokenEstimateBreakdown
 from paper_fetch.providers.base import ProviderArtifacts, ProviderFailure, ProviderFetchResult
 from paper_fetch.tracing import trace_from_markers
@@ -191,6 +191,54 @@ class FixtureHtmlTransport(HttpTransport):
         response.setdefault("status_code", 200)
         response.setdefault("headers", {})
         response.setdefault("url", url)
+        return response
+
+
+class RecordingTransport(HttpTransport):
+    def __init__(self, responses: dict[tuple[str, str], object]) -> None:
+        self.responses = responses
+        self.calls: list[dict[str, object]] = []
+
+    def request(
+        self,
+        method,
+        url,
+        *,
+        headers=None,
+        query=None,
+        timeout=DEFAULT_TIMEOUT_SECONDS,
+        retry_on_rate_limit=False,
+        rate_limit_retries=1,
+        max_rate_limit_wait_seconds=5,
+        retry_on_transient=False,
+        transient_retries=2,
+        transient_backoff_base_seconds=0.5,
+    ):
+        self.calls.append(
+            {
+                "method": method,
+                "url": url,
+                "headers": dict(headers or {}),
+                "query": dict(query or {}),
+                "timeout": timeout,
+                "retry_on_rate_limit": retry_on_rate_limit,
+                "rate_limit_retries": rate_limit_retries,
+                "max_rate_limit_wait_seconds": max_rate_limit_wait_seconds,
+                "retry_on_transient": retry_on_transient,
+                "transient_retries": transient_retries,
+                "transient_backoff_base_seconds": transient_backoff_base_seconds,
+            }
+        )
+        key = (method, url)
+        if key not in self.responses:
+            raise AssertionError(f"Missing fake response for {method} {url}")
+        response = self.responses[key]
+        if isinstance(response, list):
+            if not response:
+                raise AssertionError(f"No queued fake response left for {method} {url}")
+            response = response.pop(0)
+        if isinstance(response, Exception):
+            raise response
         return response
 
 

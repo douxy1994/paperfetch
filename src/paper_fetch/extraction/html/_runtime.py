@@ -19,6 +19,12 @@ from ...extraction.html.signals import contains_access_gate_text
 from ...models import normalize_markdown_text, normalize_text
 from ...publisher_identity import normalize_doi
 from ...publisher_identity import extract_doi as extract_doi_from_text
+from .provider_rules import (
+    extraction_cleanup_selectors_for_profile,
+    extraction_drop_keywords_for_profile,
+    markdown_promo_tokens_for_profile,
+    normalize_noise_profile,
+)
 
 try:
     import trafilatura
@@ -131,26 +137,6 @@ MARKDOWN_CHROME_SECTION_HEADINGS = frozenset(
     }
 )
 MARKDOWN_PROMO_TOKENS: tuple[str, ...] = ()
-PROFILE_MARKDOWN_PROMO_TOKENS = {
-    "pnas": (
-        "sign up for pnas alerts",
-        "get alerts for new articles, or get an alert when an article is cited",
-    ),
-    "springer_nature": (
-        "sign up for alerts",
-        "download citation",
-        "reprints and permissions",
-        "similar content being viewed by others",
-    ),
-    "ieee": (
-        "download pdf",
-        "export citation",
-        "show all",
-        "view references",
-        "view all authors",
-    ),
-}
-DEFAULT_NOISE_PROFILE = "generic"
 HTML_BODY_MIN_CHARS = 800
 HTML_SHORT_BODY_MIN_CHARS = 300
 HTML_SHORT_BODY_MIN_WORDS = 60
@@ -251,15 +237,12 @@ def count_words(text: str) -> int:
 
 
 def _normalize_noise_profile(noise_profile: str | None) -> str:
-    normalized = normalize_text(noise_profile or DEFAULT_NOISE_PROFILE).lower().replace("-", "_")
-    if normalized in {DEFAULT_NOISE_PROFILE, *PROFILE_MARKDOWN_PROMO_TOKENS}:
-        return normalized
-    return DEFAULT_NOISE_PROFILE
+    return normalize_noise_profile(noise_profile)
 
 
 def _markdown_promo_tokens(noise_profile: str | None) -> tuple[str, ...]:
     active_noise_profile = _normalize_noise_profile(noise_profile)
-    return MARKDOWN_PROMO_TOKENS + PROFILE_MARKDOWN_PROMO_TOKENS.get(active_noise_profile, ())
+    return MARKDOWN_PROMO_TOKENS + markdown_promo_tokens_for_profile(active_noise_profile)
 
 
 def select_html_content_root(root: Any):
@@ -315,6 +298,9 @@ def prune_html_tree(root: Any, *, noise_profile: str | None = None) -> None:
     for selector in HTML_DROP_SELECTORS:
         for element in root.select(selector):
             element.decompose()
+    for selector in extraction_cleanup_selectors_for_profile(noise_profile):
+        for element in root.select(selector):
+            element.decompose()
     for element in list(root.find_all(href=re.compile(r"orcid\.org", re.IGNORECASE))):
         element.decompose()
     for element in list(root.find_all(True)):
@@ -323,7 +309,6 @@ def prune_html_tree(root: Any, *, noise_profile: str | None = None) -> None:
 
 
 def should_drop_html_element(element: Any, *, noise_profile: str | None = None) -> bool:
-    del noise_profile
     if BeautifulSoup is None:
         return False
     if element.name and re.compile(r"^h[1-6]$").match(element.name):
@@ -356,7 +341,8 @@ def should_drop_html_element(element: Any, *, noise_profile: str | None = None) 
             attr_tokens.extend(str(item).lower() for item in value)
     if attr_tokens:
         joined = " ".join(attr_tokens)
-        if any(token in joined for token in HTML_NOISE_ATTR_TOKENS):
+        profile_drop_keywords = extraction_drop_keywords_for_profile(noise_profile)
+        if any(token in joined for token in (*HTML_NOISE_ATTR_TOKENS, *profile_drop_keywords)):
             return count_words(text) <= 80
     return False
 

@@ -8,7 +8,8 @@ from pathlib import Path
 from bs4 import BeautifulSoup
 
 from paper_fetch.http import HttpTransport
-from paper_fetch.providers import _springer_html, html_springer_nature, springer as springer_provider
+import paper_fetch.providers.springer_html as springer_html
+from paper_fetch.providers import html_springer_nature, springer as springer_provider
 from paper_fetch.markdown.citations import normalize_inline_citation_markdown
 from paper_fetch.quality.html_availability import assess_html_fulltext_availability
 from paper_fetch.providers._html_references import extract_numbered_references_from_html
@@ -76,7 +77,7 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         </html>
         """
 
-        payload = _springer_html.extract_html_payload(
+        payload = springer_html.extract_html_payload(
             html,
             "https://www.nature.com/articles/example-article",
         )
@@ -148,16 +149,16 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
             "fulltext_links": [],
             "references": [],
         }
-        html_metadata = _springer_html.parse_html_metadata(html_text, source_url)
-        merged_metadata = _springer_html.merge_html_metadata(base_metadata, html_metadata)
+        html_metadata = springer_html.parse_html_metadata(html_text, source_url)
+        merged_metadata = springer_html.merge_html_metadata(base_metadata, html_metadata)
         if not merged_metadata.get("doi"):
             merged_metadata["doi"] = doi
-        extraction_payload = _springer_html.extract_html_payload(
+        extraction_payload = springer_html.extract_html_payload(
             html_text,
             source_url,
             title=str(merged_metadata.get("title") or ""),
         )
-        extracted_assets = _springer_html.extract_html_assets(
+        extracted_assets = springer_html.extract_html_assets(
             html_text,
             source_url,
             asset_profile="body",
@@ -311,18 +312,18 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
 </html>
 """
 
-        body_html, supplementary_html = _springer_html.extract_asset_html_scopes(
+        body_html, supplementary_html = springer_html.extract_asset_html_scopes(
             html_text,
             source_url,
             title="Example Article",
         )
-        body_assets = _springer_html.extract_scoped_html_assets(
+        body_assets = springer_html.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile="body",
             supplementary_html_text=supplementary_html,
         )
-        all_assets = _springer_html.extract_scoped_html_assets(
+        all_assets = springer_html.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile="all",
@@ -339,7 +340,8 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         )
 
     def test_extract_asset_html_scopes_leave_empty_supplementary_scope_without_supplementary_sections(self) -> None:
-        """rule: rule-springer-supplementary-scope"""
+        """rule: rule-springer-supplementary-scope
+        rule: rule-supplementary-discovery-explicit-scope"""
         source_url = "https://www.nature.com/articles/no-supplementary"
         html_text = """
 <html>
@@ -362,17 +364,17 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
 </html>
 """
 
-        body_html, supplementary_html = _springer_html.extract_asset_html_scopes(
+        body_html, supplementary_html = springer_html.extract_asset_html_scopes(
             html_text,
             source_url,
             title="Example Article",
         )
-        source_data_html = _springer_html.extract_source_data_html_scope(
+        source_data_html = springer_html.extract_source_data_html_scope(
             html_text,
             source_url,
             title="Example Article",
         )
-        all_assets = _springer_html.extract_scoped_html_assets(
+        all_assets = springer_html.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile="all",
@@ -390,9 +392,9 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         source_url = "https://www.nature.com/articles/s41561-022-00912-7"
         html_text = golden_criteria_asset("10.1038/s41561-022-00912-7", "original.html").read_text(encoding="utf-8")
 
-        body_html, supplementary_html = _springer_html.extract_asset_html_scopes(html_text, source_url)
-        source_data_html = _springer_html.extract_source_data_html_scope(html_text, source_url)
-        assets = _springer_html.extract_scoped_html_assets(
+        body_html, supplementary_html = springer_html.extract_asset_html_scopes(html_text, source_url)
+        source_data_html = springer_html.extract_source_data_html_scope(html_text, source_url)
+        assets = springer_html.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile="all",
@@ -419,9 +421,9 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         source_url = "https://www.nature.com/articles/s41558-022-01584-2"
         html_text = golden_criteria_asset("10.1038/s41558-022-01584-2", "original.html").read_text(encoding="utf-8")
 
-        body_html, supplementary_html = _springer_html.extract_asset_html_scopes(html_text, source_url)
-        source_data_html = _springer_html.extract_source_data_html_scope(html_text, source_url)
-        assets = _springer_html.extract_scoped_html_assets(
+        body_html, supplementary_html = springer_html.extract_asset_html_scopes(html_text, source_url)
+        source_data_html = springer_html.extract_source_data_html_scope(html_text, source_url)
+        assets = springer_html.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile="all",
@@ -444,9 +446,9 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         source_url = "https://www.nature.com/articles/s43247-024-01270-5"
         html_text = golden_criteria_asset("10.1038/s43247-024-01270-5", "original.html").read_text(encoding="utf-8")
 
-        body_html, supplementary_html = _springer_html.extract_asset_html_scopes(html_text, source_url)
-        source_data_html = _springer_html.extract_source_data_html_scope(html_text, source_url)
-        assets = _springer_html.extract_scoped_html_assets(
+        body_html, supplementary_html = springer_html.extract_asset_html_scopes(html_text, source_url)
+        source_data_html = springer_html.extract_source_data_html_scope(html_text, source_url)
+        assets = springer_html.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile="all",
@@ -528,7 +530,7 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
 
     def test_old_nature_fixture_preserves_inline_equation_images(self) -> None:
         html_path = golden_criteria_asset("10.1038/nature13376", "original.html")
-        markdown_text = _springer_html.extract_html_payload(
+        markdown_text = springer_html.extract_html_payload(
             html_path.read_text(encoding="utf-8", errors="ignore"),
             "https://www.nature.com/articles/nature13376",
         )["markdown_text"]
@@ -547,10 +549,10 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
             "fulltext_links": [],
             "references": [],
         }
-        html_metadata = _springer_html.parse_html_metadata(html_text, source_url)
-        merged_metadata = _springer_html.merge_html_metadata(base_metadata, html_metadata)
-        extracted_assets = _springer_html.extract_html_assets(html_text, source_url, asset_profile="body")
-        extraction_payload = _springer_html.extract_html_payload(
+        html_metadata = springer_html.parse_html_metadata(html_text, source_url)
+        merged_metadata = springer_html.merge_html_metadata(base_metadata, html_metadata)
+        extracted_assets = springer_html.extract_html_assets(html_text, source_url, asset_profile="body")
+        extraction_payload = springer_html.extract_html_payload(
             html_text,
             source_url,
             title=str(merged_metadata.get("title") or ""),
@@ -619,10 +621,10 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
             "fulltext_links": [],
             "references": [],
         }
-        html_metadata = _springer_html.parse_html_metadata(html_text, source_url)
-        merged_metadata = _springer_html.merge_html_metadata(base_metadata, html_metadata)
-        extracted_assets = _springer_html.extract_html_assets(html_text, source_url, asset_profile="body")
-        extraction_payload = _springer_html.extract_html_payload(
+        html_metadata = springer_html.parse_html_metadata(html_text, source_url)
+        merged_metadata = springer_html.merge_html_metadata(base_metadata, html_metadata)
+        extracted_assets = springer_html.extract_html_assets(html_text, source_url, asset_profile="body")
+        extraction_payload = springer_html.extract_html_payload(
             html_text,
             source_url,
             title=str(merged_metadata.get("title") or title),
@@ -682,7 +684,7 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         title = str(sample["title"])
         html_text = golden_criteria_asset(doi, "original.html").read_text(encoding="utf-8", errors="ignore")
 
-        extraction_payload = _springer_html.extract_html_payload(
+        extraction_payload = springer_html.extract_html_payload(
             html_text,
             source_url,
             title=title,
@@ -703,7 +705,7 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
             "springer_main_content_direct_children", "original.html"
         ).read_text(encoding="utf-8")
 
-        extraction_payload = _springer_html.extract_html_payload(
+        extraction_payload = springer_html.extract_html_payload(
             html_text,
             "https://www.nature.com/articles/springer-main-content-scenario",
             title="Springer Main Content Scenario",
@@ -835,7 +837,7 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
             errors="ignore",
         )
 
-        markdown = _springer_html.extract_html_payload(
+        markdown = springer_html.extract_html_payload(
             html,
             "https://link.springer.com/article/10.1007/s13158-025-00473-x",
             title="Multilingual summaries in restoration field studies",

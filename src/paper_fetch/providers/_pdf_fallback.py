@@ -6,8 +6,9 @@ import http.cookiejar
 import urllib.error
 import urllib.parse
 import urllib.request
+from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
 from ..extraction.html.shared import html_text_snippet, html_title_snippet
@@ -26,6 +27,29 @@ from ._pdf_common import (
 
 PdfFallbackResult = PdfFetchResult
 PdfFallbackFailure = PdfFetchFailure
+
+
+@dataclass(frozen=True)
+class PdfFallbackStrategy:
+    transport: HttpTransport
+    headers: Mapping[str, str] | None = None
+    timeout: int = DEFAULT_FULLTEXT_TIMEOUT_SECONDS
+    artifact_dir: Path | None = None
+    seed_urls: list[str] | None = None
+    browser_cookies: list[dict[str, Any]] | None = None
+    fetcher: Callable[..., PdfFetchResult] | None = None
+
+    def fetch(self, candidate_urls: list[str]) -> PdfFetchResult:
+        fetcher = self.fetcher or fetch_pdf_over_http
+        return fetcher(
+            self.transport,
+            candidate_urls,
+            headers=self.headers,
+            timeout=self.timeout,
+            artifact_dir=self.artifact_dir,
+            seed_urls=self.seed_urls,
+            browser_cookies=self.browser_cookies,
+        )
 
 
 def _header_value(headers: Mapping[str, Any] | None, key: str) -> str:

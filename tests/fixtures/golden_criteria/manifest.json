@@ -308,6 +308,28 @@
       "content_type": "text/html;charset=utf-8",
       "expected_live_status": "fulltext"
     },
+    "10.1109_RITA.2026.3668995": {
+      "doi": "10.1109/RITA.2026.3668995",
+      "publisher": "ieee",
+      "source_url": "https://ieeexplore.ieee.org/rest/document/11417163/?logAccess=true",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.1109_RITA.2026.3668995/original.html",
+        "landing.html": "tests/fixtures/golden_criteria/10.1109_RITA.2026.3668995/landing.html",
+        "multimedia.json": "tests/fixtures/golden_criteria/10.1109_RITA.2026.3668995/multimedia.json"
+      },
+      "fixture_family": "golden",
+      "title": "IEEE RITA supplementary multimedia sample",
+      "landing_url": "https://ieeexplore.ieee.org/document/11417163/",
+      "article_number": "11417163",
+      "route_kind": "html",
+      "expected_route": "dynamic_html",
+      "expected_source": "ieee_html",
+      "expected_content_kind": "fulltext",
+      "content_type": "text/html;charset=utf-8",
+      "expected_live_status": "fulltext"
+    },
     "10.1109_MPER.1985.5526567": {
       "doi": "10.1109/MPER.1985.5526567",
       "publisher": "ieee",
@@ -2040,14 +2062,14 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_science_provider_rewrites_inline_figure_links_to_downloaded_local_assets",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_science_provider_rewrites_inline_figure_links_to_downloaded_local_assets",
       "anchors": [
         "rule-rewrite-inline-figure-links"
       ],
       "samples": []
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_science_provider_uses_extracted_dom_abstract_and_restores_lead_body_text",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_science_provider_uses_extracted_dom_abstract_and_restores_lead_body_text",
       "anchors": [
         "rule-provider-owned-authors"
       ],
@@ -2056,7 +2078,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_provider_owned_html_signals_populate_final_article_authors",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_provider_owned_html_signals_populate_final_article_authors",
       "anchors": [
         "rule-provider-owned-authors"
       ],
@@ -2067,7 +2089,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_science_provider_falls_back_to_dom_authors_when_datalayer_is_missing",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_science_provider_falls_back_to_dom_authors_when_datalayer_is_missing",
       "anchors": [
         "rule-provider-owned-authors"
       ],
@@ -2076,7 +2098,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_pnas_provider_renders_headingless_commentary_without_synthetic_title_section",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_pnas_provider_renders_headingless_commentary_without_synthetic_title_section",
       "anchors": [
         "rule-keep-headingless-body-flat"
       ],
@@ -2085,7 +2107,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_science_provider_keeps_frontmatter_sections_but_only_one_abstract_in_final_article",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_science_provider_keeps_frontmatter_sections_but_only_one_abstract_in_final_article",
       "anchors": [
         "rule-stable-frontmatter-order"
       ],
@@ -2094,7 +2116,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_science_provider_replay_for_adl6155_keeps_materials_and_methods_wrapper_heading",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_science_provider_replay_for_adl6155_keeps_materials_and_methods_wrapper_heading",
       "anchors": [
         "rule-keep-semantic-parent-heading"
       ],
@@ -2103,7 +2125,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_wiley_provider_deduplicates_near_matching_abstract_in_final_article_render",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_wiley_provider_deduplicates_near_matching_abstract_in_final_article_render",
       "anchors": [
         "rule-stable-frontmatter-order"
       ],
@@ -2112,7 +2134,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_wiley_provider_replay_for_2004gb002273_body_assets_avoid_trailing_figures_noise",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_wiley_provider_replay_for_2004gb002273_body_assets_avoid_trailing_figures_noise",
       "anchors": [
         "rule-no-trailing-figures-appendix",
         "rule-filter-publisher-ui-noise"
@@ -2122,7 +2144,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_pnas_provider_keeps_frontmatter_once_and_filters_collateral_noise_in_final_render",
+      "test": "tests/unit/test_science_pnas_provider_html.py::test_pnas_provider_keeps_frontmatter_once_and_filters_collateral_noise_in_final_render",
       "anchors": [
         "rule-filter-publisher-ui-noise",
         "rule-stable-frontmatter-order"
@@ -2132,7 +2154,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_science_pnas_provider.py::test_science_provider_replay_for_adz3492_saves_svg_body_asset",
+      "test": "tests/unit/test_science_pnas_provider_asset_failures.py::test_science_provider_replay_for_adz3492_saves_svg_body_asset",
       "anchors": [
         "rule-image-download-validates-real-images"
       ],
@@ -2311,7 +2333,7 @@
       ]
     },
     {
-      "test": "tests/unit/test_mcp.py::test_article_payload_preserves_asset_download_diagnostics",
+      "test": "tests/unit/test_mcp_payload_cache.py::test_article_payload_preserves_asset_download_diagnostics",
       "anchors": [
         "rule-asset-download-diagnostic-fields"
       ],

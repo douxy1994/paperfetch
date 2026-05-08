@@ -19,50 +19,7 @@ from paper_fetch.providers.elsevier import ElsevierClient, download_elsevier_rel
 from paper_fetch.providers.springer import SpringerClient
 from paper_fetch.providers.wiley import WileyClient
 from paper_fetch.runtime import RuntimeContext
-
-
-class RecordingTransport:
-    def __init__(self, responses: dict[tuple[str, str], dict[str, object]]) -> None:
-        self.responses = responses
-        self.calls: list[dict[str, object]] = []
-
-    def request(
-        self,
-        method,
-        url,
-        *,
-        headers=None,
-        query=None,
-        timeout=DEFAULT_TIMEOUT_SECONDS,
-        retry_on_rate_limit=False,
-        rate_limit_retries=1,
-        max_rate_limit_wait_seconds=5,
-        retry_on_transient=False,
-        transient_retries=2,
-        transient_backoff_base_seconds=0.5,
-    ):
-        self.calls.append(
-            {
-                "method": method,
-                "url": url,
-                "headers": dict(headers or {}),
-                "query": dict(query or {}),
-                "timeout": timeout,
-                "retry_on_rate_limit": retry_on_rate_limit,
-                "rate_limit_retries": rate_limit_retries,
-                "max_rate_limit_wait_seconds": max_rate_limit_wait_seconds,
-                "retry_on_transient": retry_on_transient,
-                "transient_retries": transient_retries,
-                "transient_backoff_base_seconds": transient_backoff_base_seconds,
-            }
-        )
-        key = (method, url)
-        if key not in self.responses:
-            raise AssertionError(f"Missing fake response for {method} {url}")
-        response = self.responses[key]
-        if isinstance(response, Exception):
-            raise response
-        return response
+from tests.unit._paper_fetch_support import RecordingTransport
 
 
 class _FakeImagePage:
@@ -1078,6 +1035,156 @@ class ProviderRequestOptionsTests(unittest.TestCase):
 
         self.assertGreaterEqual(fetcher.max_active, 2)
         self.assertEqual([asset["heading"] for asset in result["assets"]], ["Figure 1", "Figure 2", "Figure 3"])
+
+    def test_download_figure_assets_with_image_document_fetcher_runs_single_asset_in_worker_thread(self) -> None:
+        image_url = "https://example.test/single-figure.png"
+        main_thread_id = threading.get_ident()
+        thread_ids: list[int] = []
+
+        def fetcher(current_url: str, _asset: dict[str, object]) -> dict[str, object]:
+            thread_ids.append(threading.get_ident())
+            return {
+                "status_code": 200,
+                "headers": {"content-type": "image/png"},
+                "body": b"\x89PNG\r\n\x1a\nsingle-worker",
+                "url": current_url,
+            }
+
+        fetcher.failure_for = lambda _image_url: None  # type: ignore[attr-defined]
+        assets = [
+            {
+                "kind": "figure",
+                "heading": "Figure 1",
+                "caption": "Single",
+                "url": image_url,
+                "preview_url": image_url,
+                "section": "body",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = asset_impl.download_figure_assets_with_image_document_fetcher(
+                RecordingTransport({}),
+                article_id="10.1000/example",
+                assets=assets,
+                output_dir=Path(tmpdir),
+                user_agent="unit-test",
+                asset_profile="body",
+                candidate_builder=lambda *_args, **kwargs: [kwargs["asset"]["url"]],
+                image_document_fetcher=fetcher,
+                asset_download_concurrency=1,
+            )
+
+        self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(len(result["assets"]), 1)
+        self.assertEqual(len(thread_ids), 1)
+        self.assertNotEqual(thread_ids[0], main_thread_id)
+
+    def test_download_figure_assets_with_image_document_fetcher_single_asset_survives_main_thread_conflict(self) -> None:
+        image_url = "https://example.test/playwright-conflict.png"
+
+        class MainThreadFailingFetcher:
+            def __init__(self) -> None:
+                self.main_thread_id = threading.get_ident()
+                self.thread_ids: list[int] = []
+                self.failed_on_main_thread = False
+
+            def __call__(self, current_url: str, _asset: dict[str, object]) -> dict[str, object] | None:
+                current_thread_id = threading.get_ident()
+                self.thread_ids.append(current_thread_id)
+                if current_thread_id == self.main_thread_id:
+                    self.failed_on_main_thread = True
+                    return None
+                return {
+                    "status_code": 200,
+                    "headers": {"content-type": "image/png"},
+                    "body": b"\x89PNG\r\n\x1a\nworker-success",
+                    "url": current_url,
+                }
+
+            def failure_for(self, _image_url: str) -> dict[str, object] | None:
+                if not self.failed_on_main_thread:
+                    return None
+                return {
+                    "reason": "playwright_context_error",
+                    "error_type": "RuntimeError",
+                    "error_message": "sync Playwright context already active",
+                }
+
+        fetcher = MainThreadFailingFetcher()
+        assets = [
+            {
+                "kind": "figure",
+                "heading": "Figure 1",
+                "caption": "Conflict",
+                "url": image_url,
+                "preview_url": image_url,
+                "section": "body",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = asset_impl.download_figure_assets_with_image_document_fetcher(
+                RecordingTransport({}),
+                article_id="10.1000/example",
+                assets=assets,
+                output_dir=Path(tmpdir),
+                user_agent="unit-test",
+                asset_profile="body",
+                candidate_builder=lambda *_args, **kwargs: [kwargs["asset"]["url"]],
+                image_document_fetcher=fetcher,
+                asset_download_concurrency=1,
+            )
+
+        self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(len(result["assets"]), 1)
+        self.assertFalse(fetcher.failed_on_main_thread)
+        self.assertTrue(fetcher.thread_ids)
+        self.assertNotEqual(fetcher.thread_ids[0], fetcher.main_thread_id)
+
+    def test_download_figure_assets_with_image_document_fetcher_preserves_context_error_diagnostic(self) -> None:
+        image_url = "https://example.test/context-error.png"
+
+        class FailingFetcher:
+            def __call__(self, _image_url: str, _asset: dict[str, object]) -> dict[str, object] | None:
+                return None
+
+            def failure_for(self, _image_url: str) -> dict[str, object]:
+                return {
+                    "reason": "playwright_context_error",
+                    "error_type": "RuntimeError",
+                    "error_message": "sync Playwright context already active",
+                }
+
+        assets = [
+            {
+                "kind": "figure",
+                "heading": "Figure 1",
+                "caption": "Context error",
+                "url": image_url,
+                "preview_url": image_url,
+                "section": "body",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = asset_impl.download_figure_assets_with_image_document_fetcher(
+                RecordingTransport({}),
+                article_id="10.1000/example",
+                assets=assets,
+                output_dir=Path(tmpdir),
+                user_agent="unit-test",
+                asset_profile="body",
+                candidate_builder=lambda *_args, **kwargs: [kwargs["asset"]["url"]],
+                image_document_fetcher=FailingFetcher(),
+                asset_download_concurrency=1,
+            )
+
+        self.assertEqual(len(result["asset_failures"]), 1)
+        failure = result["asset_failures"][0]
+        self.assertEqual(failure["reason"], "playwright_context_error")
+        self.assertEqual(failure["error_type"], "RuntimeError")
+        self.assertEqual(failure["error_message"], "sync Playwright context already active")
 
     def test_download_figure_assets_with_image_document_fetcher_saves_svg_payload(self) -> None:
         svg_body = b"<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0h1v1H0z'/></svg>"

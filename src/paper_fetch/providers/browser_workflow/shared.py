@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import urllib.parse
 
-from ..quality import html_profiles as _html_profiles
-from ..utils import normalize_text
-from ._pdf_candidates import extract_pdf_url_from_crossref as extract_pdf_url_from_crossref
+from ...quality import html_profiles as _html_profiles
+from ...utils import normalize_text
+from .._pdf_candidates import extract_pdf_url_from_crossref as extract_pdf_url_from_crossref
 
 HTML_STRONG_FULLTEXT_MARKERS = _html_profiles.HTML_STRONG_FULLTEXT_MARKERS
 HTML_STRUCTURE_MARKERS = _html_profiles.HTML_STRUCTURE_MARKERS

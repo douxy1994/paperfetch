@@ -38,6 +38,7 @@ from .http import (
     DEFAULT_DISK_CACHE_MAX_ENTRIES,
     HttpTransport,
 )
+from .runtime_playwright import PlaywrightContextManager
 
 RUNTIME_UNSET = object()
 _PARSE_CACHE_MISSING = object()
@@ -112,10 +113,8 @@ class RuntimeContext:
     stage_timings: dict[str, float] = field(default_factory=dict)
     _session_cache_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _stage_timing_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
-    _playwright_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
-    _playwright_manager: Any | None = field(default=None, init=False, repr=False)
-    _playwright_browser: Any | None = field(default=None, init=False, repr=False)
-    _playwright_headless: bool | None = field(default=None, init=False, repr=False)
+    _playwright_context_manager_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+    _playwright_context_manager: PlaywrightContextManager | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.env = build_runtime_env() if self.env is None else dict(self.env)
@@ -144,55 +143,26 @@ class RuntimeContext:
     def playwright_browser(self, *, headless: bool = True) -> Any:
         """Return a lazily started shared Playwright Chromium browser."""
 
-        active_headless = bool(headless)
-        with self._playwright_lock:
-            if self._playwright_browser is not None and self._playwright_headless == active_headless:
-                return self._playwright_browser
-            if self._playwright_browser is not None or self._playwright_manager is not None:
-                self.close_playwright()
-
-            from playwright.sync_api import sync_playwright
-
-            manager = sync_playwright().start()
-            try:
-                browser = manager.chromium.launch(headless=active_headless)
-            except Exception:
-                try:
-                    manager.stop()
-                finally:
-                    pass
-                raise
-            self._playwright_manager = manager
-            self._playwright_browser = browser
-            self._playwright_headless = active_headless
-            return browser
+        return self._playwright_lifecycle().browser(headless=headless)
 
     def new_playwright_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any:
         """Create an isolated browser context from the shared Playwright browser."""
 
-        with self._playwright_lock:
-            browser = self.playwright_browser(headless=headless)
-            return browser.new_context(**context_kwargs)
+        return self._playwright_lifecycle().new_context(headless=headless, **context_kwargs)
 
     def close_playwright(self) -> None:
         """Close any Playwright browser/manager owned by this runtime context."""
 
-        with self._playwright_lock:
-            browser = self._playwright_browser
-            manager = self._playwright_manager
-            self._playwright_browser = None
-            self._playwright_manager = None
-            self._playwright_headless = None
-            if browser is not None:
-                try:
-                    browser.close()
-                except Exception:
-                    pass
-            if manager is not None:
-                try:
-                    manager.stop()
-                except Exception:
-                    pass
+        with self._playwright_context_manager_lock:
+            manager = self._playwright_context_manager
+        if manager is not None:
+            manager.close()
+
+    def _playwright_lifecycle(self) -> PlaywrightContextManager:
+        with self._playwright_context_manager_lock:
+            if self._playwright_context_manager is None:
+                self._playwright_context_manager = PlaywrightContextManager()
+            return self._playwright_context_manager
 
     def close(self) -> None:
         self.close_playwright()

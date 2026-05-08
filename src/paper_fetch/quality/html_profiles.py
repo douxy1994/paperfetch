@@ -8,6 +8,11 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, Callable, Mapping
 
+from ..extraction.html.provider_rules import (
+    DEFAULT_SITE_RULE,
+    PROVIDER_HTML_RULES,
+    provider_html_rules,
+)
 from ..utils import normalize_text
 
 try:
@@ -29,170 +34,10 @@ HTML_STRUCTURE_MARKERS = (
     'id="bodymatter"',
     "id='bodymatter'",
 )
-DEFAULT_SITE_RULE: dict[str, Any] = {
-    "candidate_selectors": [
-        "article",
-        "main article",
-        "[role='main'] article",
-        "[itemprop='articleBody']",
-        "[property='articleBody']",
-        "[itemprop='mainEntity']",
-        ".article",
-        ".article__body",
-        ".article__content",
-        ".article-body",
-        ".main-content",
-        "#main-content",
-        "main",
-        "[role='main']",
-        "body",
-    ],
-    "remove_selectors": [
-        "script",
-        "style",
-        "noscript",
-        "iframe",
-        "svg",
-        ".social-share",
-        ".article-tools",
-        ".article-metrics",
-        ".metrics-widget",
-        ".recommended-articles",
-        ".related-content",
-        ".breadcrumbs",
-        ".toc",
-        ".tab__nav",
-        ".accessDenialWidget",
-        ".cookie-banner",
-        ".cookie-consent",
-    ],
-    "drop_keywords": {
-        "metrics",
-        "metric",
-        "share",
-        "social",
-        "recommend",
-        "related",
-        "toolbar",
-        "breadcrumb",
-        "download",
-        "cookie",
-        "promo",
-        "banner",
-        "citation-tool",
-        "nav",
-        "access-widget",
-        "rightslink",
-    },
-    "drop_text": {
-        "Check for updates",
-        "View Metrics",
-        "Share",
-        "Cite",
-    },
-}
-SCIENCE_NOISE_PROFILE = "generic"
-SCIENCE_SITE_RULE_OVERRIDES: dict[str, Any] = {
-    "candidate_selectors": [
-        ".article__fulltext",
-        ".article-view",
-    ],
-    "remove_selectors": [
-        "header .social-share",
-        ".jump-to-nav",
-        ".article-access-info",
-        ".references-tab",
-        ".permissions",
-        ".issue-item__citation",
-        ".article-header__access",
-        "#article_collateral_menu",
-        "#core-collateral-fulltext-options",
-        "#core-collateral-metrics",
-        "#core-collateral-share",
-        "#core-collateral-media",
-        "#core-collateral-figures",
-        "#core-collateral-tables",
-    ],
-    "drop_keywords": {"advert", "tab-nav", "jump-to"},
-    "drop_text": {"Permissions"},
-}
-PNAS_NOISE_PROFILE = "pnas"
-PNAS_SITE_RULE_OVERRIDES: dict[str, Any] = {
-    "candidate_selectors": [
-        ".article__fulltext",
-        ".core-container",
-        ".article-content",
-    ],
-    "remove_selectors": [
-        ".article__access",
-        ".article__footer",
-        ".article__reference-links",
-        ".core-collateral",
-        ".card",
-        ".signup-alert-ad",
-    ],
-    "drop_keywords": {"tab-nav"},
-}
-WILEY_NOISE_PROFILE = "generic"
-WILEY_SITE_RULE_OVERRIDES: dict[str, Any] = {
-    "candidate_selectors": [
-        ".article-section__content",
-        ".issue-item__body",
-        ".epub-section",
-        ".doi-access",
-    ],
-    "remove_selectors": [
-        ".citation-tools",
-        ".epub-reference",
-        ".article-section__tableofcontents",
-        ".publicationHistory",
-    ],
-    "drop_text": {"Recommended articles"},
-}
-IEEE_NOISE_PROFILE = "ieee"
-IEEE_SITE_RULE_OVERRIDES: dict[str, Any] = {
-    "candidate_selectors": [
-        "#article",
-        "#BodyWrapper",
-        ".ArticlePage",
-    ],
-    "remove_selectors": [
-        "accessType",
-        "accesstype",
-        "script",
-        "style",
-        "noscript",
-        "iframe",
-        "button",
-        "input",
-        "select",
-        "textarea",
-        ".zoom-container",
-        ".document-actions",
-        ".article-toolbar",
-        ".stats-document-abstract-view",
-        "button[data-docId]",
-        "a[data-docId][href^='javascript:']",
-        "[href^='javascript:']",
-    ],
-    "drop_keywords": {
-        "access-type",
-        "article-toolbar",
-        "document-actions",
-        "download",
-        "metrics",
-        "recommend",
-        "references-modal",
-        "rightslink",
-        "show-all",
-        "zoom",
-    },
-    "drop_text": {
-        "Show All",
-        "View References",
-        "Download PDF",
-    },
-}
+SCIENCE_NOISE_PROFILE = provider_html_rules("science").noise_profile
+PNAS_NOISE_PROFILE = provider_html_rules("pnas").noise_profile
+WILEY_NOISE_PROFILE = provider_html_rules("wiley").noise_profile
+IEEE_NOISE_PROFILE = provider_html_rules("ieee").noise_profile
 AAAS_DATALAYER_PATTERN = re.compile(r"AAASdataLayer=(\{.*?\});(?:if\(|</script>)", flags=re.DOTALL)
 PNAS_DATALAYER_PATTERN = re.compile(r"PNASdataLayer\s*=(\{.*?\});", flags=re.DOTALL)
 WILEY_DATALAYER_PATTERN = re.compile(r"window\.adobeDataLayer\.push\((\{.*?\})\);", flags=re.DOTALL)
@@ -354,18 +199,7 @@ def wiley_positive_signals(html_text: str) -> tuple[list[str], list[str], list[s
 def ieee_blocking_fallback_signals(html_text: str) -> list[str]:
     lowered = normalize_text(html_text).lower()
     signals: list[str] = []
-    if any(
-        token in lowered
-        for token in (
-            "unable to complete your request",
-            "your request has been blocked",
-            "verify you are human",
-            "captcha",
-            "access denied",
-            "institutional sign in",
-            "purchase access",
-        )
-    ):
+    if any(token in lowered for token in provider_html_rules("ieee").access_block_text_tokens):
         signals.append("ieee_access_or_challenge_page")
     if BeautifulSoup is not None:
         soup = BeautifulSoup(html_text, "html.parser")
@@ -403,37 +237,45 @@ class HtmlAvailabilityProfile:
 
 
 GENERIC_AVAILABILITY_PROFILE = HtmlAvailabilityProfile()
+PROVIDER_SIGNAL_HANDLERS: dict[
+    str,
+    tuple[
+        Callable[[str], tuple[list[str], list[str], list[str]]],
+        Callable[[str], list[str]],
+    ],
+] = {
+    "science": (science_positive_signals, science_blocking_fallback_signals),
+    "pnas": (pnas_positive_signals, pnas_blocking_fallback_signals),
+    "wiley": (wiley_positive_signals, wiley_blocking_fallback_signals),
+    "ieee": (ieee_positive_signals, ieee_blocking_fallback_signals),
+}
+
+
+def _availability_profile_from_rules(provider_name: str) -> HtmlAvailabilityProfile:
+    rules = provider_html_rules(provider_name)
+    positive_signals, blocking_fallback_signals = PROVIDER_SIGNAL_HANDLERS.get(
+        rules.name,
+        (default_positive_signals, lambda _html_text: []),
+    )
+    return HtmlAvailabilityProfile(
+        noise_profile=rules.noise_profile,
+        site_rule_overrides=copy.deepcopy(dict(rules.availability_site_rule_overrides)),
+        positive_signals=positive_signals,
+        blocking_fallback_signals=blocking_fallback_signals,
+    )
+
+
 PUBLISHER_AVAILABILITY_PROFILES: dict[str, HtmlAvailabilityProfile] = {
-    "science": HtmlAvailabilityProfile(
-        noise_profile=SCIENCE_NOISE_PROFILE,
-        site_rule_overrides=SCIENCE_SITE_RULE_OVERRIDES,
-        positive_signals=science_positive_signals,
-        blocking_fallback_signals=science_blocking_fallback_signals,
-    ),
-    "pnas": HtmlAvailabilityProfile(
-        noise_profile=PNAS_NOISE_PROFILE,
-        site_rule_overrides=PNAS_SITE_RULE_OVERRIDES,
-        positive_signals=pnas_positive_signals,
-        blocking_fallback_signals=pnas_blocking_fallback_signals,
-    ),
-    "wiley": HtmlAvailabilityProfile(
-        noise_profile=WILEY_NOISE_PROFILE,
-        site_rule_overrides=WILEY_SITE_RULE_OVERRIDES,
-        positive_signals=wiley_positive_signals,
-        blocking_fallback_signals=wiley_blocking_fallback_signals,
-    ),
-    "ieee": HtmlAvailabilityProfile(
-        noise_profile=IEEE_NOISE_PROFILE,
-        site_rule_overrides=IEEE_SITE_RULE_OVERRIDES,
-        positive_signals=ieee_positive_signals,
-        blocking_fallback_signals=ieee_blocking_fallback_signals,
-    ),
+    name: _availability_profile_from_rules(name)
+    for name in PROVIDER_HTML_RULES
 }
 
 
 def availability_profile_for_publisher(publisher: str | None) -> HtmlAvailabilityProfile:
-    normalized = normalize_text(publisher or "").lower()
-    return PUBLISHER_AVAILABILITY_PROFILES.get(normalized, GENERIC_AVAILABILITY_PROFILE)
+    rules = provider_html_rules(normalize_text(publisher or "").lower())
+    if rules.name == "generic":
+        return GENERIC_AVAILABILITY_PROFILE
+    return PUBLISHER_AVAILABILITY_PROFILES.get(rules.name, GENERIC_AVAILABILITY_PROFILE)
 
 
 def site_rule_for_publisher(publisher: str | None) -> dict[str, Any]:

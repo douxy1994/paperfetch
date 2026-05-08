@@ -8,6 +8,7 @@ BUILD_DIR="${PAPER_FETCH_OFFLINE_BUILD_DIR:-$REPO_DIR/.offline-build}"
 OUTPUT_DIR="$REPO_DIR/dist"
 PACKAGE_NAME=""
 PYTHON_BIN="${PYTHON_BIN:-python3}"
+INSTALLER_MANIFEST_FILE="$REPO_DIR/installer/manifest.json"
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
@@ -83,6 +84,19 @@ check_target() {
 
 project_version() {
   "$PYTHON_BIN" -c 'import pathlib, sys, tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["project"]["version"])' "$REPO_DIR/pyproject.toml"
+}
+
+installer_manifest_value() {
+  "$PYTHON_BIN" -c '
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+value = data
+for part in sys.argv[2].split("."):
+    value = value[part]
+print(value)
+' "$INSTALLER_MANIFEST_FILE" "$1"
 }
 
 copy_source_snapshot() {
@@ -230,7 +244,7 @@ write_manifest_and_checksums() {
   git_revision="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
 
   log "Writing manifest and checksums"
-  "$PYTHON_BIN" - "$staging" "$version" "$git_revision" "$python_tag" <<'PY'
+  "$PYTHON_BIN" - "$staging" "$version" "$git_revision" "$python_tag" "$INSTALLER_MANIFEST_FILE" <<'PY'
 from __future__ import annotations
 
 import json
@@ -243,6 +257,7 @@ staging = Path(sys.argv[1])
 version = sys.argv[2]
 git_revision = sys.argv[3] or None
 python_tag = sys.argv[4]
+installer_manifest = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
 
 project_wheels = sorted(path.name for path in (staging / "dist").glob("paper_fetch_skill-*.whl"))
 wheelhouse = sorted(path.name for path in (staging / "wheelhouse").glob("*.whl"))
@@ -250,8 +265,8 @@ flaresolverr_wheelhouse = sorted(path.name for path in (staging / "vendor/flares
 
 payload = {
     "schema_version": 1,
-    "name": "paper-fetch-skill-offline",
-    "project": "paper-fetch-skill",
+    "name": installer_manifest["packages"]["linux_manifest_name"],
+    "project": installer_manifest["project"],
     "version": version,
     "built_at_utc": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     "git_revision": git_revision,
@@ -263,6 +278,7 @@ payload = {
     "entrypoint": "install-offline.sh",
     "components": {
         "source_snapshot": ".",
+        "installer_manifest": "installer/manifest.json",
         "project_wheels": [f"dist/{name}" for name in project_wheels],
         "wheelhouse_count": len(wheelhouse),
         "playwright_browsers": "ms-playwright",
@@ -302,10 +318,12 @@ create_archive() {
 }
 
 main() {
-  local package_name python_tag staging version build_python
+  local package_name package_prefix python_tag staging version build_python
 
+  [ -f "$INSTALLER_MANIFEST_FILE" ] || die "Missing installer manifest: $INSTALLER_MANIFEST_FILE"
   python_tag="$(check_target)"
-  package_name="${PACKAGE_NAME:-paper-fetch-skill-offline-linux-x86_64-$python_tag}"
+  package_prefix="$(installer_manifest_value packages.linux_offline_name_prefix)"
+  package_name="${PACKAGE_NAME:-$package_prefix-$python_tag}"
   staging="$BUILD_DIR/$package_name"
   version="$(project_version)"
   rm -rf "$staging"

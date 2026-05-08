@@ -8,11 +8,11 @@ import time
 from typing import Any, Mapping
 
 from ..artifacts import ArtifactStore
-from ..extraction.html import extract_article_markdown
+from ..extraction.html import render_html_markdown
 from ..http import RequestFailure
 from ..models import ArticleModel, AssetProfile
 from ..runtime import RuntimeContext
-from ..tracing import TraceEvent, source_trail_from_trace, trace_from_markers
+from ..tracing import TraceEvent, download_marker, source_trail_from_trace, trace_from_markers
 from ..utils import empty_asset_results, normalize_text, provider_display_name
 
 
@@ -437,10 +437,10 @@ class ProviderClient:
                 asset_failures = list(asset_results.get("asset_failures") or [])
             except ProviderFailure as exc:
                 warnings.append(self.asset_download_failure_warning(exc))
-                trace.extend(trace_from_markers([f"download:{self.name}_assets_failed"]))
+                trace.extend(trace_from_markers([download_marker(f"{self.name}_assets_failed")]))
             except (RequestFailure, OSError) as exc:
                 warnings.append(self.asset_download_failure_warning(exc))
-                trace.extend(trace_from_markers([f"download:{self.name}_assets_failed"]))
+                trace.extend(trace_from_markers([download_marker(f"{self.name}_assets_failed")]))
         if prepared.provisional_article is not None and not downloaded_assets and not asset_failures:
             article = prepared.provisional_article
         else:
@@ -495,7 +495,7 @@ class ProviderClient:
         context: RuntimeContext,
     ) -> tuple[str, Mapping[str, Any]]:
         del metadata, context
-        return extract_article_markdown(html_text, source_url), {
+        return render_html_markdown(html_text, source_url), {
             "html_to_markdown": {
                 "provider": self.name,
                 "parser": "generic",

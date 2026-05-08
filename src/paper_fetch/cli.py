@@ -10,8 +10,9 @@ from pathlib import Path
 from .config import build_runtime_env, resolve_cli_download_dir
 from .models import FetchEnvelope, RenderOptions
 from .providers.base import ProviderFailure
-from .runtime import RuntimeContext
 from .service import FetchStrategy, PaperFetchFailure, fetch_paper
+from .workflow.pipeline import FetchPipeline, MarkdownSaveSpec
+from .workflow.request_builder import build_fetch_pipeline_request
 from .workflow.rendering import rewrite_markdown_asset_links
 from .workflow.rendering import save_markdown_to_disk as save_markdown_to_disk_for_target
 
@@ -135,25 +136,30 @@ def main() -> int:
             asset_profile=args.asset_profile,
             max_tokens=args.max_tokens,
         )
-        context = RuntimeContext(
-            env=runtime_env,
-            download_dir=None if args.no_download else output_dir,
-        )
-        try:
-            envelope = fetch_paper(
-                args.query,
+        result = FetchPipeline(fetch_paper).run(
+            build_fetch_pipeline_request(
+                query=args.query,
                 modes=modes,
                 strategy=FetchStrategy(
                     allow_metadata_only_fallback=True,
                     asset_profile=args.asset_profile,
                 ),
                 render=render_options,
-                context=context,
+                env=runtime_env,
+                download_dir=output_dir,
+                no_download=args.no_download,
+                markdown_save=(
+                    MarkdownSaveSpec(
+                        output_dir=output_dir,
+                        render=render_options,
+                        request_label="--save-markdown",
+                    )
+                    if args.save_markdown
+                    else None
+                ),
             )
-        finally:
-            context.close()
-        if args.save_markdown:
-            save_markdown_to_disk(envelope, output_dir=output_dir, render=render_options)
+        )
+        envelope = result.envelope
         markdown_override = (
             rewrite_markdown_asset_links(
                 envelope.markdown or "",

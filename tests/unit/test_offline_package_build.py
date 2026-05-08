@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import unittest
 from pathlib import Path
 
@@ -7,14 +8,32 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BUILD_OFFLINE_PACKAGE = REPO_ROOT / "scripts" / "build-offline-package.sh"
 BUILD_OFFLINE_PACKAGE_WINDOWS = REPO_ROOT / "scripts" / "build-offline-package-windows.ps1"
+INSTALLER_MANIFEST = REPO_ROOT / "installer" / "manifest.json"
 VERIFY_OFFLINE_PACKAGE = REPO_ROOT / "scripts" / "verify-offline-package.sh"
 
 
 class OfflinePackageBuildTests(unittest.TestCase):
+    def test_installer_manifest_owns_cross_platform_names_and_mcp_env_keys(self) -> None:
+        manifest = json.loads(INSTALLER_MANIFEST.read_text(encoding="utf-8"))
+
+        self.assertEqual(manifest["skill"]["name"], "paper-fetch-skill")
+        self.assertEqual(manifest["mcp"]["name"], "paper-fetch")
+        self.assertIn("PAPER_FETCH_ENV_FILE", manifest["mcp"]["env_keys"])
+        self.assertIn("PLAYWRIGHT_BROWSERS_PATH", manifest["mcp"]["env_keys"])
+        self.assertEqual(
+            manifest["managed_blocks"]["offline"]["begin"],
+            "# BEGIN paper-fetch offline managed",
+        )
+        self.assertEqual(
+            manifest["packages"]["windows_setup_base_name"],
+            "paper-fetch-skill-windows-x86_64-setup",
+        )
+
     def test_default_package_name_uses_detected_python_tag(self) -> None:
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
-        self.assertIn('package_name="${PACKAGE_NAME:-paper-fetch-skill-offline-linux-x86_64-$python_tag}"', script)
+        self.assertIn('package_prefix="$(installer_manifest_value packages.linux_offline_name_prefix)"', script)
+        self.assertIn('package_name="${PACKAGE_NAME:-$package_prefix-$python_tag}"', script)
         self.assertNotIn('PACKAGE_NAME="paper-fetch-skill-offline-linux-x86_64-cp311"', script)
 
     def test_supported_cpython_tags_are_whitelisted(self) -> None:
@@ -87,7 +106,8 @@ class OfflinePackageBuildTests(unittest.TestCase):
         script = BUILD_OFFLINE_PACKAGE_WINDOWS.read_text(encoding="utf-8")
 
         self.assertIn('if ($pythonTag -ne "cp313")', script)
-        self.assertIn('paper-fetch-skill-windows-x86_64-setup', script)
+        self.assertIn('$WindowsSetupBaseName = [string]$InstallerManifest.packages.windows_setup_base_name', script)
+        self.assertIn("$PackageName = $WindowsSetupBaseName", script)
         self.assertIn("$SetupBaseName.exe", script)
         self.assertIn("Build-InnoInstaller", script)
         self.assertNotIn("$ArchiveName.zip", script)
@@ -156,8 +176,9 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertIn('arch = "x86_64"', block)
         self.assertIn("python_tag = $PythonTag", block)
         self.assertIn("python_runtime", block)
-        self.assertIn('entrypoint = "paper-fetch-skill-windows-x86_64-setup.exe"', script)
+        self.assertIn('entrypoint = "$SetupBaseName.exe"', script)
         self.assertIn('runtime = "runtime"', script)
+        self.assertIn('installer_manifest = "installer/manifest.json"', script)
         self.assertIn('post_install_helper = "scripts/windows-installer-helper.ps1"', script)
 
     def test_windows_build_writes_cli_and_flaresolverr_wrappers(self) -> None:
@@ -181,7 +202,8 @@ class OfflinePackageBuildTests(unittest.TestCase):
 
         self.assertIn("agents", block)
         self.assertIn("openai.yaml", block)
-        self.assertIn("Paper Fetch Skill", block)
+        self.assertIn("$InstallerManifest.skill.display_name", block)
+        self.assertIn("$InstallerManifest.skill.default_prompt", block)
 
     def test_windows_inno_installer_script_is_used(self) -> None:
         script = BUILD_OFFLINE_PACKAGE_WINDOWS.read_text(encoding="utf-8")

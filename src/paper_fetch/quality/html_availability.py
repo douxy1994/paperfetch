@@ -1125,6 +1125,20 @@ def assess_html_fulltext_availability(
     )
 
 
+@dataclass(frozen=True)
+class HtmlQualityAssessor:
+    provider: str | None = None
+
+    def assess(
+        self,
+        markdown_text: str,
+        metadata: Mapping[str, Any] | None,
+        **kwargs: Any,
+    ) -> FulltextAvailabilityDiagnostics:
+        kwargs.setdefault("provider", self.provider)
+        return assess_html_fulltext_availability(markdown_text, metadata, **kwargs)
+
+
 def assess_plain_text_fulltext_availability(
     markdown_text: str,
     metadata: Mapping[str, Any] | None,

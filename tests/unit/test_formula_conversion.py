@@ -100,6 +100,75 @@ class FormulaConversionTests(unittest.TestCase):
 
         self.assertEqual(normalized, r"\mkern6mu x + \mkern-1.5mu y + \mspace{2pt}z")
 
+    def test_backend_registry_preserves_public_backend_groups(self) -> None:
+        self.assertEqual(
+            formula_conversion.SUPPORTED_BACKENDS,
+            {"auto", "texmath", "mathml-to-latex", "mml2tex", "legacy"},
+        )
+        self.assertEqual(
+            formula_conversion.BENCHMARK_BACKENDS,
+            ("texmath", "mathml-to-latex", "mml2tex"),
+        )
+        self.assertEqual(formula_conversion.AUTO_BACKENDS, ("texmath", "mathml-to-latex"))
+
+    def test_backend_registry_resolves_aliases_and_legacy_strategy(self) -> None:
+        self.assertEqual(
+            formula_conversion.resolve_backend(backend="mathml_to_latex"),
+            "mathml-to-latex",
+        )
+        with self.assertRaisesRegex(RuntimeError, "Legacy conversion is not available"):
+            formula_conversion.convert_mathml_string(
+                '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>',
+                display_mode=False,
+                env={},
+                backend="legacy",
+            )
+
+    def test_auto_backend_uses_registry_order_without_texmath_default_fallback(self) -> None:
+        raw_mathml = '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
+        calls: list[str] = []
+        original_texmath = formula_conversion.convert_with_texmath
+        original_mathml = formula_conversion.convert_with_mathml_to_latex
+        try:
+            formula_conversion.convert_with_texmath = lambda *args, **kwargs: (
+                calls.append("texmath")
+                or formula_conversion.FormulaConversionResult(
+                    backend="texmath",
+                    status="failed",
+                    latex="",
+                    raw_mathml=raw_mathml,
+                    error="texmath missing",
+                    duration_ms=1,
+                    display_mode=False,
+                )
+            )
+            formula_conversion.convert_with_mathml_to_latex = lambda *args, **kwargs: (
+                calls.append("mathml-to-latex")
+                or formula_conversion.FormulaConversionResult(
+                    backend="mathml-to-latex",
+                    status="ok",
+                    latex="x",
+                    raw_mathml=raw_mathml,
+                    error=None,
+                    duration_ms=2,
+                    display_mode=False,
+                )
+            )
+
+            result = formula_conversion.convert_mathml_string(
+                raw_mathml,
+                display_mode=False,
+                env={},
+                backend="auto",
+            )
+        finally:
+            formula_conversion.convert_with_texmath = original_texmath
+            formula_conversion.convert_with_mathml_to_latex = original_mathml
+
+        self.assertEqual(calls, ["texmath", "mathml-to-latex"])
+        self.assertEqual(result.backend, "mathml-to-latex")
+        self.assertEqual(result.status, "ok")
+
     def test_default_texmath_falls_back_to_mathml_to_latex(self) -> None:
         raw_mathml = '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
         original_texmath = formula_conversion.convert_with_texmath

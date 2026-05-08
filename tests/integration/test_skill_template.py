@@ -47,6 +47,7 @@ def copy_installer_fixture(repo_dir: Path) -> None:
     (repo_dir / "scripts").mkdir(parents=True, exist_ok=True)
     shutil.copy2(REPO_ROOT / "install.sh", repo_dir / "install.sh")
     shutil.copy2(REPO_ROOT / "install-formula-tools.sh", repo_dir / "install-formula-tools.sh")
+    shutil.copy2(REPO_ROOT / "scripts" / "_skill_install_common.sh", repo_dir / "scripts" / "_skill_install_common.sh")
     shutil.copy2(REPO_ROOT / "scripts" / "install-claude-skill.sh", repo_dir / "scripts" / "install-claude-skill.sh")
     shutil.copy2(REPO_ROOT / "scripts" / "install-codex-skill.sh", repo_dir / "scripts" / "install-codex-skill.sh")
     shutil.copy2(
@@ -235,7 +236,10 @@ class InstallerSmokeTests(unittest.TestCase):
     def test_skill_installers_prompt_for_elsevier_api_key(self) -> None:
         for script_name in ("install-claude-skill.sh", "install-codex-skill.sh"):
             with self.subTest(script_name=script_name):
-                script = (REPO_ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+                script = (
+                    (REPO_ROOT / "scripts" / script_name).read_text(encoding="utf-8")
+                    + (REPO_ROOT / "scripts" / "_skill_install_common.sh").read_text(encoding="utf-8")
+                )
                 self.assertIn("ELSEVIER_API_KEY", script)
                 self.assertIn("https://dev.elsevier.com/", script)
                 self.assertIn("--env-file", script)

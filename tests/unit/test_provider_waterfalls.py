@@ -6,13 +6,14 @@ from pathlib import Path
 from unittest import mock
 
 from paper_fetch.http import RequestFailure
+import paper_fetch.providers.springer_html as springer_html
 from paper_fetch.providers import _flaresolverr, browser_workflow, elsevier as elsevier_provider, springer as springer_provider, wiley as wiley_provider
 from paper_fetch.providers.base import ProviderContent, ProviderFailure, RawFulltextPayload
 from paper_fetch.runtime import RuntimeContext
 from tests.golden_criteria import golden_criteria_scenario_asset
 from tests.provider_benchmark_samples import WILEY_PDF_FALLBACK_SAMPLE, provider_benchmark_sample
 from tests.paths import FIXTURE_DIR
-from tests.unit._paper_fetch_support import fulltext_pdf_bytes
+from tests.unit._paper_fetch_support import RecordingTransport, fulltext_pdf_bytes
 
 
 ELSEVIER_SAMPLE = provider_benchmark_sample("elsevier")
@@ -309,38 +310,26 @@ class PublisherWaterfallTests(unittest.TestCase):
             "fulltext_links": [],
         }
 
-        class RecordingTransport:
-            def __init__(self, xml_status_code: int) -> None:
-                self.xml_status_code = xml_status_code
-                self.calls: list[dict[str, object]] = []
-
-            def request(self, method, url, *, headers=None, query=None, **_kwargs):
-                call = {
-                    "method": method,
-                    "url": url,
-                    "headers": dict(headers or {}),
-                    "query": dict(query or {}),
-                }
-                self.calls.append(call)
-                accept = str((headers or {}).get("Accept") or "")
-                if accept == "text/xml":
-                    raise RequestFailure(self.xml_status_code, f"HTTP {self.xml_status_code} for {url}?view=FULL")
-                if accept == "application/pdf":
-                    return {
-                        "status_code": 200,
-                        "headers": {"content-type": "application/pdf"},
-                        "body": fulltext_pdf_bytes(),
-                        "url": f"{url}?view=FULL",
-                    }
-                raise AssertionError(f"Unexpected Accept header: {accept}")
-
         for status_code in (404, 406, 415):
             with self.subTest(status_code=status_code):
-                transport = RecordingTransport(status_code)
+                api_url = "https://api.elsevier.com/content/article/doi/10.1016%2Ftest-old-paper"
+                transport = RecordingTransport(
+                    {
+                        ("GET", api_url): [
+                            RequestFailure(status_code, f"HTTP {status_code} for {api_url}?view=FULL"),
+                            {
+                                "status_code": 200,
+                                "headers": {"content-type": "application/pdf"},
+                                "body": fulltext_pdf_bytes(),
+                                "url": f"{api_url}?view=FULL",
+                            },
+                        ]
+                    }
+                )
                 client = elsevier_provider.ElsevierClient(transport=transport, env={"ELSEVIER_API_KEY": "secret"})
                 with mock.patch.object(
                     elsevier_provider,
-                    "pdf_fetch_result_from_bytes",
+                    "pdf_fetch_result_from_response",
                     return_value=mock.Mock(
                         final_url=f"https://api.elsevier.com/content/article/doi/{doi}?view=FULL",
                         pdf_bytes=fulltext_pdf_bytes(),
@@ -428,7 +417,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         with (
             mock.patch.object(client, "_fetch_html_response", return_value=(response, landing_url)),
             mock.patch.object(
-                springer_provider._springer_html,
+                springer_html,
                 "extract_article_markdown",
                 return_value=f"# {SPRINGER_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
             ),
@@ -469,7 +458,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         with (
             mock.patch.object(client, "_fetch_html_response", return_value=(response, landing_url)),
             mock.patch.object(
-                springer_provider._springer_html,
+                springer_html,
                 "parse_html_metadata",
                 return_value={
                     "title": SPRINGER_SAMPLE.title,
@@ -480,7 +469,7 @@ class PublisherWaterfallTests(unittest.TestCase):
                 },
             ),
             mock.patch.object(
-                springer_provider._springer_html,
+                springer_html,
                 "extract_article_markdown",
                 return_value=f"# {SPRINGER_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
             ),
@@ -514,7 +503,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         </html>
         """
 
-        authors = springer_provider._springer_html.extract_authors(html)
+        authors = springer_html.extract_authors(html)
 
         self.assertEqual(authors, ["Ada Example", "Bruno Example"])
 
@@ -529,7 +518,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         </html>
         """
 
-        authors = springer_provider._springer_html.extract_authors(html)
+        authors = springer_html.extract_authors(html)
 
         self.assertEqual(authors, ["Yang Li", "Celso von Randow"])
 
@@ -544,7 +533,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         </html>
         """
 
-        authors = springer_provider._springer_html.extract_authors(html)
+        authors = springer_html.extract_authors(html)
 
         self.assertEqual(authors, ["The ENCODE Project Consortium, et al.", "Smith, John, Jr."])
 
@@ -561,7 +550,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         </html>
         """
 
-        authors = springer_provider._springer_html.extract_authors(html)
+        authors = springer_html.extract_authors(html)
 
         self.assertEqual(authors, [])
 
@@ -670,7 +659,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         with (
             mock.patch.object(client, "_fetch_html_response", return_value=(response, landing_url)),
             mock.patch.object(
-                springer_provider._springer_html,
+                springer_html,
                 "extract_article_markdown",
                 return_value=f"# {SPRINGER_SAMPLE.title}\n\nShort abstract only.",
             ),
@@ -728,7 +717,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         with (
             mock.patch.object(client, "_fetch_html_response", return_value=(response, landing_url)),
             mock.patch.object(
-                springer_provider._springer_html,
+                springer_html,
                 "extract_html_payload",
                 return_value={
                     "markdown_text": f"# {SPRINGER_SAMPLE.title}\n\n## Abstract\n\nHTML abstract only.",
@@ -777,7 +766,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         with (
             mock.patch.object(client, "_fetch_html_response", return_value=(response, landing_url)),
             mock.patch.object(
-                springer_provider._springer_html,
+                springer_html,
                 "extract_html_payload",
                 return_value={
                     "markdown_text": f"# {SPRINGER_SAMPLE.title}\n\nAccess restricted.",
@@ -822,7 +811,7 @@ class PublisherWaterfallTests(unittest.TestCase):
         with (
             mock.patch.object(client, "_fetch_html_response", return_value=(response, landing_url)),
             mock.patch.object(
-                springer_provider._springer_html,
+                springer_html,
                 "extract_html_payload",
                 return_value={
                     "markdown_text": f"# {SPRINGER_SAMPLE.title}\n\n## Abstract\n\nHTML abstract only.",

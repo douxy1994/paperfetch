@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
-from ...config import build_user_agent
-from ...runtime import RuntimeContext
-from ...utils import normalize_text
+from ....config import build_user_agent
+from ....runtime import RuntimeContext
+from ....utils import normalize_text
 from .diagnostics import _compact_failure_diagnostic
 
 
@@ -109,6 +109,7 @@ class _BasePlaywrightDocumentFetcher:
         self._page = None
         self._warmed_seed_urls: set[str] = set()
         self._last_failure_by_url: dict[str, dict[str, Any]] = {}
+        self._last_context_failure: dict[str, Any] = {}
         self._recovery_attempts_by_url: dict[str, list[dict[str, Any]]] = {}
 
     def failure_for(self, source_url: str) -> dict[str, Any] | None:
@@ -145,7 +146,7 @@ class _BasePlaywrightDocumentFetcher:
         seed = self._browser_context_seed_getter()
         return seed if isinstance(seed, Mapping) else {}
 
-    def _ensure_context(self):
+    def _ensure_context(self, source_url: str | None = None):
         if self._context is not None:
             return self._context
 
@@ -165,15 +166,19 @@ class _BasePlaywrightDocumentFetcher:
             )
             self._sync_context_cookies()
             self._page = self._context.new_page()
-        except Exception:
+            self._last_context_failure = {}
+        except Exception as exc:
+            self._last_context_failure = self._context_failure_diagnostic(exc)
+            if source_url:
+                self._record_failure(source_url, **self._last_context_failure)
             self.close()
             return None
         return self._context
 
-    def _ensure_page(self):
+    def _ensure_page(self, source_url: str | None = None):
         if self._page is not None:
             return self._page
-        if self._ensure_context() is None:
+        if self._ensure_context(source_url) is None:
             return None
         return self._page
 
@@ -223,6 +228,16 @@ class _BasePlaywrightDocumentFetcher:
             diagnostic["recovery_attempts"] = list(recovery_attempts)
         if diagnostic:
             self._last_failure_by_url[normalized_url] = diagnostic
+
+    def _context_failure_diagnostic(self, exc: Exception) -> dict[str, Any]:
+        message = normalize_text(str(exc))
+        return _compact_failure_diagnostic(
+            {
+                "reason": "playwright_context_error",
+                "error_type": exc.__class__.__name__,
+                "error_message": message[:240] if message else exc.__class__.__name__,
+            }
+        )
 
     def _record_recovery_payload(
         self, source_url: str, recovery: Mapping[str, Any]

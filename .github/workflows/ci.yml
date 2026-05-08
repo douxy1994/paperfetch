@@ -11,7 +11,7 @@ on:
         default: false
         type: boolean
       run_full_golden:
-        description: "Run full 52-fixture golden corpus regression"
+        description: "Run full 59-fixture golden corpus regression"
         required: false
         default: false
         type: boolean
@@ -492,7 +492,7 @@ jobs:
         env:
           PAPER_FETCH_RUN_FULL_GOLDEN: "1"
           PAPER_FETCH_FORMULA_TOOLS_DIR: ${{ github.workspace }}/.formula-tools
-        run: pytest tests/integration/test_golden_corpus.py
+        run: python -m pytest tests/integration/test_golden_corpus.py -q
 
   live-mcp:
     if: ${{ github.event_name == 'workflow_dispatch' && inputs.run_live_mcp && !inputs.run_offline_windows_only }}

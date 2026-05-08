@@ -15,7 +15,7 @@ from ..provider_catalog import is_official_provider, provider_managed_abstract_o
 from ..providers.base import ProviderArtifacts, ProviderFailure, ProviderFetchResult
 from ..providers.protocols import AssetProvider, FulltextProvider, RawFulltextProvider
 from ..runtime import RUNTIME_UNSET, RuntimeContext, resolve_runtime_context
-from ..tracing import trace_from_markers
+from ..tracing import fallback_marker, fulltext_marker, resolve_marker, trace_from_markers
 from ..utils import (
     extend_unique,
     safe_text,
@@ -195,7 +195,7 @@ def _try_official_provider(
     if not doi or not provider_name or provider_name == "crossref":
         return None
     if not provider_allowed(provider_name, strategy):
-        extend_unique(source_trail, [f"fulltext:{provider_name}_skipped"])
+        extend_unique(source_trail, [fulltext_marker(provider_name, "skipped")])
         return None
 
     provider_client = clients.get(provider_name)
@@ -203,7 +203,7 @@ def _try_official_provider(
         return None
     resolved_asset_profile = strategy.effective_asset_profile_for_provider(provider_name)
 
-    extend_unique(source_trail, [f"fulltext:{provider_name}_attempt"])
+    extend_unique(source_trail, [fulltext_marker(provider_name, "attempt")])
     attempt_started_at = time.monotonic()
     emit_structured_log(
         logger,
@@ -261,7 +261,7 @@ def _try_official_provider(
                 elapsed_ms=round((time.monotonic() - attempt_started_at) * 1000, 3),
                 attempt=1,
             )
-            extend_unique(source_trail, [f"fulltext:{provider_name}_article_ok"])
+            extend_unique(source_trail, [fulltext_marker(provider_name, "article_ok")])
             return finalize_article(article, warnings=warnings, source_trail=source_trail)
         if article.quality.content_kind == "abstract_only":
             emit_structured_log(
@@ -274,7 +274,7 @@ def _try_official_provider(
                 elapsed_ms=round((time.monotonic() - attempt_started_at) * 1000, 3),
                 attempt=1,
             )
-            extend_unique(source_trail, [f"fulltext:{provider_name}_abstract_only"])
+            extend_unique(source_trail, [fulltext_marker(provider_name, "abstract_only")])
             if provider_name in PROVIDER_MANAGED_ABSTRACT_ONLY_PROVIDERS:
                 warnings.append("Official full text only contained abstract-level content; returning abstract-only provider result.")
                 return finalize_article(article, warnings=warnings, source_trail=source_trail)
@@ -290,7 +290,7 @@ def _try_official_provider(
                 elapsed_ms=round((time.monotonic() - attempt_started_at) * 1000, 3),
                 attempt=1,
             )
-            extend_unique(source_trail, [f"fulltext:{provider_name}_not_usable"])
+            extend_unique(source_trail, [fulltext_marker(provider_name, "not_usable")])
         extend_unique(warnings, article.quality.warnings)
     except ProviderFailure as exc:
         extend_unique(warnings, exc.warnings)
@@ -323,7 +323,7 @@ def _fallback_to_metadata_only(
     if not strategy.allow_metadata_only_fallback:
         raise PaperFetchFailure("error", "Full text was not available and metadata-only fallback is disabled.")
     warnings.append("Full text was not available; returning metadata and abstract only.")
-    extend_unique(source_trail, ["fallback:metadata_only"])
+    extend_unique(source_trail, [fallback_marker("metadata_only")])
     return build_metadata_only_result(metadata, resolved=resolved, warnings=warnings, source_trail=source_trail)
 
 
@@ -363,9 +363,9 @@ def fetch_article(
             context=runtime,
         )
         _record_stage_timing(runtime, "resolve_seconds", resolve_started_at)
-        source_trail: list[str] = [f"resolve:{resolved.query_kind}"]
+        source_trail: list[str] = [resolve_marker(resolved.query_kind)]
         if resolved.doi:
-            source_trail.append("resolve:doi_selected")
+            source_trail.append(resolve_marker("doi_selected"))
         if resolved.candidates and not resolved.doi:
             raise PaperFetchFailure(
                 "ambiguous",
@@ -404,7 +404,7 @@ def fetch_article(
             return article
 
         if is_official_provider(provider_name):
-            extend_unique(source_trail, [f"fallback:{provider_name}_html_managed_by_provider"])
+            extend_unique(source_trail, [fallback_marker(f"{provider_name}_html_managed_by_provider")])
 
         return _fallback_to_metadata_only(
             metadata=metadata,

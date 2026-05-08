@@ -8,9 +8,10 @@ import urllib.parse
 from pathlib import Path
 from typing import Any, Mapping
 
+from ..artifacts import ArtifactStore
 from ..models import ArticleModel, FetchEnvelope, OutputMode, RenderOptions
 from ..provider_catalog import known_article_source_names
-from ..tracing import merge_trace, source_trail_from_trace, trace_from_markers
+from ..tracing import download_marker, fallback_marker, merge_trace, source_trail_from_trace, trace_from_markers
 from ..utils import extend_unique, normalize_text, sanitize_filename
 from .types import effective_asset_profile
 
@@ -29,7 +30,7 @@ def finalize_article(
 
 
 def public_source_for_article(article: ArticleModel) -> str:
-    if "fallback:metadata_only" in article.quality.source_trail:
+    if fallback_marker("metadata_only") in article.quality.source_trail:
         return "metadata_only"
     if article.source in known_article_source_names():
         return article.source
@@ -259,13 +260,13 @@ def save_markdown_to_disk(
             warnings=[
                 f"{request_label} was set but full text was not available; nothing written to disk."
             ],
-            source_trail=["download:markdown_skipped_no_fulltext"],
+            source_trail=[download_marker("markdown_skipped_no_fulltext")],
         )
         return None
 
-    output_dir.mkdir(parents=True, exist_ok=True)
     target = output_dir / _markdown_filename(envelope, markdown_filename=markdown_filename)
-    target.write_text(
+    ArtifactStore.from_download_dir(output_dir).write_text_file(
+        target,
         rewrite_markdown_asset_links(envelope.markdown or "", envelope, target_path=target, render=render),
         encoding="utf-8",
     )
@@ -273,7 +274,7 @@ def save_markdown_to_disk(
     _extend_envelope_status(
         envelope,
         warnings=[message],
-        source_trail=["download:markdown_saved"],
+        source_trail=[download_marker("markdown", "saved")],
     )
     return target
 

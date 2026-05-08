@@ -12,17 +12,17 @@ from paper_fetch.extraction.html._metadata import parse_html_metadata
 from paper_fetch.http import HttpTransport
 from paper_fetch.publisher_identity import normalize_doi
 from paper_fetch.providers import (
-    _pnas_html,
-    _science_html,
-    _springer_html,
-    _wiley_html,
-    _science_pnas_profiles,
     elsevier as elsevier_provider,
     ieee as ieee_provider,
     pnas as pnas_provider,
+    pnas_html,
     science as science_provider,
+    science_html,
+    science_pnas_profiles,
     springer as springer_provider,
+    springer_html,
     wiley as wiley_provider,
+    wiley_html,
 )
 from paper_fetch.quality.html_availability import assess_html_fulltext_availability
 from paper_fetch.providers.base import ProviderContent, RawFulltextPayload
@@ -141,11 +141,11 @@ def _build_elsevier_article(fixture: GoldenCorpusFixture):
 def _build_springer_article(fixture: GoldenCorpusFixture):
     metadata = _base_metadata(fixture)
     html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
-    html_metadata = _springer_html.parse_html_metadata(html_text, fixture.source_url)
-    merged_metadata = _springer_html.merge_html_metadata(metadata, html_metadata)
+    html_metadata = springer_html.parse_html_metadata(html_text, fixture.source_url)
+    merged_metadata = springer_html.merge_html_metadata(metadata, html_metadata)
     if not merged_metadata.get("doi"):
         merged_metadata["doi"] = fixture.doi
-    extraction_payload = _springer_html.extract_html_payload(
+    extraction_payload = springer_html.extract_html_payload(
         html_text,
         title=str(merged_metadata.get("title") or fixture.title),
         source_url=fixture.source_url,
@@ -349,8 +349,8 @@ def lightweight_positive_summary_from_fixture(fixture: GoldenCorpusFixture) -> d
 
     if fixture.provider == "springer":
         html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
-        metadata = _springer_html.parse_html_metadata(html_text, fixture.source_url)
-        extraction_payload = _springer_html.extract_html_payload(
+        metadata = springer_html.parse_html_metadata(html_text, fixture.source_url)
+        extraction_payload = springer_html.extract_html_payload(
             html_text,
             fixture.source_url,
             title=str(metadata.get("title") or fixture.title),
@@ -373,20 +373,20 @@ def lightweight_positive_summary_from_fixture(fixture: GoldenCorpusFixture) -> d
         metadata = parse_html_metadata(html_text, fixture.source_url)
         browser_helpers = {
             "science": (
-                _science_html.extract_authors,
-                _science_html.blocking_fallback_signals,
+                science_html.extract_authors,
+                science_html.blocking_fallback_signals,
             ),
             "pnas": (
-                _pnas_html.extract_authors,
-                _pnas_html.blocking_fallback_signals,
+                pnas_html.extract_authors,
+                pnas_html.blocking_fallback_signals,
             ),
             "wiley": (
-                _wiley_html.extract_authors,
-                _wiley_html.blocking_fallback_signals,
+                wiley_html.extract_authors,
+                wiley_html.blocking_fallback_signals,
             ),
         }
         extract_authors, blocking_fallback_signals = browser_helpers[fixture.provider]
-        candidate_urls = _science_pnas_profiles.build_html_candidates(
+        candidate_urls = science_pnas_profiles.build_html_candidates(
             fixture.provider,
             fixture.doi,
             fixture.landing_url,

@@ -13,11 +13,11 @@ from typing import Any, Mapping
 
 from ..config import build_user_agent, resolve_asset_download_concurrency
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure, is_xml_content_type
-from ..metadata_types import ProviderMetadata
+from ..metadata.types import ProviderMetadata
 from ..models import AssetProfile, article_from_markdown, article_from_structure, metadata_only_article
 from ..publisher_identity import normalize_doi
 from ..runtime import RuntimeContext
-from ..tracing import trace_from_markers
+from ..tracing import download_marker, fulltext_marker, trace_from_markers
 from ..utils import (
     build_asset_output_path,
     choose_public_landing_page_url,
@@ -37,10 +37,9 @@ from ._elsevier_xml_rules import (
 )
 from ._pdf_common import (
     PdfFetchFailure,
-    filename_from_headers,
-    looks_like_pdf_payload,
-    pdf_fetch_result_from_bytes,
+    pdf_fetch_result_from_response,
 )
+from ._payloads import build_provider_payload
 from ._waterfall import ProviderWaterfallStep, ProviderWaterfallState, run_provider_waterfall
 from ..quality.html_availability import (
     assess_plain_text_fulltext_availability,
@@ -50,7 +49,6 @@ from ..extraction.html.assets import download_supplementary_assets as download_g
 from .base import (
     ProviderArtifacts,
     ProviderClient,
-    ProviderContent,
     ProviderFailure,
     ProviderStatusResult,
     RawFulltextPayload,
@@ -525,19 +523,14 @@ class ElsevierClient(ProviderClient):
                 "no_result",
                 f"Elsevier official XML route returned unsupported content type: {content_type}",
             )
-        return RawFulltextPayload(
+        return build_provider_payload(
             provider="elsevier",
+            route_kind="official",
             source_url=response["url"],
             content_type=content_type,
             body=response["body"],
-            content=ProviderContent(
-                route_kind="official",
-                source_url=response["url"],
-                content_type=content_type,
-                body=response["body"],
-                reason="Downloaded full text from the official Elsevier API.",
-            ),
-            trace=trace_from_markers(["fulltext:elsevier_xml_ok"]),
+            reason="Downloaded full text from the official Elsevier API.",
+            trace_markers=[fulltext_marker("elsevier", "ok", route="xml")],
             needs_local_copy=False,
         )
 
@@ -563,50 +556,32 @@ class ElsevierClient(ProviderClient):
                 ) from exc
             raise map_request_failure(exc) from exc
 
-        response_headers = {
-            str(key).lower(): str(value)
-            for key, value in (response.get("headers") or {}).items()
-        }
         final_url = str(response.get("url") or url)
-        pdf_bytes = bytes(response.get("body") or b"")
-        content_type = str(response_headers.get("content-type") or "application/pdf")
-        if not looks_like_pdf_payload(content_type, pdf_bytes, final_url):
-            raise ProviderFailure(
-                "no_result",
-                "Elsevier official PDF fallback did not return a PDF file.",
-            )
         try:
-            pdf_result = pdf_fetch_result_from_bytes(
+            pdf_result = pdf_fetch_result_from_response(
+                response,
                 artifact_dir=None,
                 source_url=url,
                 final_url=final_url,
-                pdf_bytes=pdf_bytes,
-                suggested_filename=filename_from_headers(response_headers),
+                not_pdf_message="Elsevier official PDF fallback did not return a PDF file.",
             )
         except PdfFetchFailure as exc:
             message = str(exc) if str(exc).strip() else "Elsevier official PDF fallback was not usable."
             raise ProviderFailure("no_result", message) from exc
 
-        return RawFulltextPayload(
+        return build_provider_payload(
             provider="elsevier",
+            route_kind="pdf_fallback",
             source_url=pdf_result.final_url,
             content_type="application/pdf",
             body=pdf_result.pdf_bytes,
-            content=ProviderContent(
-                route_kind="pdf_fallback",
-                source_url=pdf_result.final_url,
-                content_type="application/pdf",
-                body=pdf_result.pdf_bytes,
-                markdown_text=pdf_result.markdown_text,
-                reason="Downloaded full text from the official Elsevier API PDF fallback.",
-                suggested_filename=pdf_result.suggested_filename,
-            ),
-            trace=trace_from_markers(
-                [
-                    "fulltext:elsevier_pdf_api_ok",
-                    "fulltext:elsevier_pdf_fallback_ok",
-                ]
-            ),
+            markdown_text=pdf_result.markdown_text,
+            reason="Downloaded full text from the official Elsevier API PDF fallback.",
+            suggested_filename=pdf_result.suggested_filename,
+            trace_markers=[
+                fulltext_marker("elsevier", "ok", route="pdf_api"),
+                fulltext_marker("elsevier", "ok", route="pdf_fallback"),
+            ],
             needs_local_copy=True,
         )
 
@@ -752,16 +727,16 @@ class ElsevierClient(ProviderClient):
                 ProviderWaterfallStep(
                     label="xml",
                     run=run_xml,
-                    failure_marker="fulltext:elsevier_xml_fail",
+                    failure_marker=fulltext_marker("elsevier", "fail", route="xml"),
                     failure_warning=xml_failure_warning,
                 ),
                 ProviderWaterfallStep(
                     label="pdf",
                     run=lambda _state: self._fetch_official_pdf_payload(normalized_doi),
-                    failure_marker="fulltext:elsevier_pdf_api_fail",
+                    failure_marker=fulltext_marker("elsevier", "fail", route="pdf_api"),
                     success_markers=(
-                        "fulltext:elsevier_pdf_api_ok",
-                        "fulltext:elsevier_pdf_fallback_ok",
+                        fulltext_marker("elsevier", "ok", route="pdf_api"),
+                        fulltext_marker("elsevier", "ok", route="pdf_fallback"),
                     ),
                     success_warning="Full text was extracted from the Elsevier API PDF fallback after the XML route was not usable.",
                 ),
@@ -795,7 +770,7 @@ class ElsevierClient(ProviderClient):
                     metadata=article_metadata,
                     doi=doi or None,
                     warnings=warnings,
-                    trace=[*trace, *trace_from_markers(["fulltext:elsevier_parse_fail"])],
+                    trace=[*trace, *trace_from_markers([fulltext_marker("elsevier", "fail", route="parse")])],
                 )
             return article_from_markdown(
                 source="elsevier_pdf",
@@ -906,5 +881,5 @@ class ElsevierClient(ProviderClient):
                 "Elsevier PDF fallback currently returns text-only full text; "
                 "figure and supplementary asset downloads are not implemented yet."
             ),
-            skip_trace=trace_from_markers(["download:elsevier_assets_skipped_text_only"]),
+            skip_trace=trace_from_markers([download_marker("elsevier_assets_skipped_text_only")]),
         )

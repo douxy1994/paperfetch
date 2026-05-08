@@ -10,11 +10,12 @@ import urllib.parse
 from ..config import build_user_agent
 from ..extraction.html.landing import fetch_landing_html
 from ..http import HttpTransport, RequestFailure
-from ..metadata_types import ProviderMetadata
+from ..metadata.types import ProviderMetadata
 from ..provider_catalog import official_provider_names
 from ..providers.base import ProviderFailure
 from ..providers.protocols import MetadataProvider
 from ..runtime import RUNTIME_UNSET, RuntimeContext, resolve_runtime_context
+from ..tracing import route_marker
 from ..publisher_identity import (
     infer_provider_from_doi,
     infer_provider_from_publisher,
@@ -60,14 +61,14 @@ def route_signal_markers(
     for url in landing_urls or []:
         provider = infer_provider_from_url(url)
         if provider:
-            extend_unique(markers, [f"route:signal_domain_{provider}"])
+            extend_unique(markers, [route_marker(f"signal_domain_{provider}")])
     for publisher in publishers or []:
         provider = infer_provider_from_publisher(publisher)
         if provider:
-            extend_unique(markers, [f"route:signal_publisher_{provider}"])
+            extend_unique(markers, [route_marker(f"signal_publisher_{provider}")])
     provider = infer_provider_from_doi(doi)
     if provider:
-        extend_unique(markers, [f"route:signal_doi_{provider}"])
+        extend_unique(markers, [route_marker(f"signal_doi_{provider}")])
     return markers
 
 

@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
+from ..artifacts import ArtifactStore
 from ..models import (
     ArticleModel,
     Asset,
@@ -290,11 +291,13 @@ class FetchCache:
         self,
         download_dir: Path | None,
         *,
+        artifact_store: ArtifactStore | None = None,
         refresh_cache_index_for_doi_fn: Callable[[Path, str], list[dict[str, Any]]] = refresh_cache_index_for_doi,
         list_cache_entries_fn: Callable[[Path], list[dict[str, Any]]] = list_cache_entries,
         preferred_cached_entries_fn: Callable[[list[dict[str, Any]]], dict[str, Any]] = preferred_cached_entries,
     ) -> None:
-        self.download_dir = download_dir
+        self._artifact_store = artifact_store or ArtifactStore.from_download_dir(download_dir)
+        self.download_dir = self._artifact_store.download_dir
         self._refresh_cache_index_for_doi = refresh_cache_index_for_doi_fn
         self._list_cache_entries = list_cache_entries_fn
         self._preferred_cached_entries = preferred_cached_entries_fn
@@ -357,7 +360,6 @@ class FetchCache:
         doi = normalize_text(envelope.doi)
         if not doi:
             return
-        self.download_dir.mkdir(parents=True, exist_ok=True)
         cache_path = fetch_envelope_cache_path(self.download_dir, doi)
         payload = {
             "version": FETCH_ENVELOPE_CACHE_VERSION,
@@ -366,9 +368,7 @@ class FetchCache:
             "payload": payload_from_envelope(envelope, request),
         }
         with cache_file_lock(fetch_envelope_lock_path(self.download_dir, doi)):
-            tmp_path = cache_path.with_suffix(cache_path.suffix + ".part")
-            tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-            tmp_path.replace(cache_path)
+            self._artifact_store.write_json_file(cache_path, payload)
         self._refresh_cache_index_for_doi(self.download_dir, doi)
 
     def refresh_for_doi(self, doi: str) -> list[dict[str, Any]]:

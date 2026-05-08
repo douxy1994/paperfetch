@@ -24,9 +24,9 @@ from ..extraction.html._metadata import merge_html_metadata as merge_generic_htm
 from ..extraction.html._metadata import parse_html_metadata as parse_generic_html_metadata
 from ..extraction.html._runtime import (
     clean_markdown,
-    extract_article_markdown_from_cleaned_html,
     prune_html_tree,
 )
+from ..extraction.html.renderer import render_html_markdown
 from ..extraction.html.language import collect_html_abstract_blocks, html_node_language_hint
 from ..extraction.html.parsing import choose_parser
 from ..extraction.html.semantics import collect_html_section_hints, heading_category, normalize_section_title
@@ -389,10 +389,18 @@ def extract_html_extraction_sidecars(
 
 
 def extract_article_markdown(cleaned_html: str, source_url: str) -> str:
-    custom_markdown = extract_springer_nature_markdown(cleaned_html, source_url)
+    def render_springer_html(html_text: str, active_source_url: str) -> str:
+        return extract_springer_nature_markdown(html_text, active_source_url) or ""
+
+    custom_markdown = render_html_markdown(
+        cleaned_html,
+        source_url,
+        cleaned_html=True,
+        renderer=render_springer_html,
+    )
     if custom_markdown:
         return custom_markdown
-    return extract_article_markdown_from_cleaned_html(cleaned_html, source_url)
+    return render_html_markdown(cleaned_html, source_url, cleaned_html=True)
 
 
 def extract_html_payload(
@@ -403,7 +411,7 @@ def extract_html_payload(
 ) -> dict[str, Any]:
     extraction_sidecars = extract_html_extraction_sidecars(html_text, source_url, title=title)
     markdown_text = _clean_springer_preview_markdown(
-        clean_markdown(extract_article_markdown(extraction_sidecars["cleaned_html"], source_url))
+        extract_article_markdown(extraction_sidecars["cleaned_html"], source_url)
     )
     extracted_authors = extract_authors(html_text)
     extracted_references = extract_numbered_references_from_html(html_text)

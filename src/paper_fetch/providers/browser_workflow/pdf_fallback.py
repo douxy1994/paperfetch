@@ -12,7 +12,7 @@ from .._flaresolverr import (
 )
 from .._pdf_fallback import fetch_pdf_with_playwright as _fetch_pdf_with_playwright
 from ..base import ProviderContent, RawFulltextPayload
-from ..browser_workflow_fetchers import _choose_playwright_seed_url
+from .fetchers import _choose_playwright_seed_url
 
 
 def _facade_attr(name: str, fallback):

@@ -1,4 +1,4 @@
-"""Internal metadata type definitions for provider payloads."""
+"""Typed metadata payload schemas shared by metadata and provider adapters."""
 
 from __future__ import annotations
 
@@ -57,3 +57,13 @@ class HtmlMetadata(ProviderMetadata, total=False):
     lookup_title: str | None
     lookup_redirect_url: str | None
     identifier_value: str | None
+
+
+__all__ = [
+    "CrossrefMetadata",
+    "FulltextLink",
+    "HtmlLookupHints",
+    "HtmlMetadata",
+    "ProviderMetadata",
+    "ReferenceMetadata",
+]

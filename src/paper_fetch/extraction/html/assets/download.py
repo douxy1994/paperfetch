@@ -2,16 +2,11 @@
 
 from __future__ import annotations
 
-from concurrent.futures import ThreadPoolExecutor
-from dataclasses import dataclass
-import http.cookiejar
-import urllib.error
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Mapping, TypeVar
+from typing import Any, Callable, Mapping
 
-from ....config import DEFAULT_ASSET_DOWNLOAD_CONCURRENCY
 from ....http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
 from ....models import AssetProfile, normalize_text
 from ....utils import build_asset_output_path, empty_asset_results, sanitize_filename, save_payload
@@ -29,6 +24,21 @@ from .dom import (
 )
 from .figures import FigurePageFetcher, figure_download_candidates
 from .identity import html_asset_is_supplementary
+from .requester import (
+    build_cookie_seeded_opener as _build_cookie_seeded_opener,
+    cookie_header_for_url as _cookie_header_for_url,
+    request_with_opener as _request_with_opener,
+)
+from .state import (
+    AssetDownloadAttempt as _AssetDownloadAttempt,
+    AssetDownloadCandidate as _AssetDownloadCandidate,
+    AssetDownloadFailure as _AssetDownloadFailure,
+    AssetDownloadResolution as _AssetDownloadResolution,
+    asset_failure as _asset_failure,
+    collect_downloads_from_resolutions as _collect_downloads_from_resolutions,
+    resolution_from_attempt as _resolution_from_attempt,
+    resolve_asset_downloads_in_order as _resolve_asset_downloads_in_order,
+)
 
 _CLOUDFLARE_CHALLENGE_TOKENS = (
     "just a moment",
@@ -63,120 +73,6 @@ ImageDocumentFetcher = Callable[[str, Mapping[str, Any]], dict[str, Any] | None]
 
 
 FileDocumentFetcher = Callable[[str, Mapping[str, Any]], dict[str, Any] | None]
-
-
-_AssetWorkItem = TypeVar("_AssetWorkItem")
-
-
-@dataclass(frozen=True)
-class _AssetDownloadCandidate:
-    url: str
-
-
-@dataclass(frozen=True)
-class _AssetDownloadFailure:
-    diagnostic: dict[str, Any]
-
-
-@dataclass(frozen=True)
-class _AssetDownloadAttempt:
-    candidate: _AssetDownloadCandidate
-    response: Mapping[str, Any] | None = None
-    source_url: str = ""
-    failure: _AssetDownloadFailure | None = None
-    download_tier_override: str = ""
-
-
-@dataclass(frozen=True)
-class _AssetDownloadResolution:
-    asset: dict[str, Any]
-    response: Mapping[str, Any] | None = None
-    source_url: str = ""
-    failure: _AssetDownloadFailure | None = None
-    preview_url: str = ""
-    full_size_url: str = ""
-    download_tier_override: str = ""
-
-
-def _asset_download_worker_count(total: int, configured_concurrency: int | None) -> int:
-    if total <= 0:
-        return 0
-    try:
-        concurrency = int(configured_concurrency or DEFAULT_ASSET_DOWNLOAD_CONCURRENCY)
-    except (TypeError, ValueError):
-        concurrency = DEFAULT_ASSET_DOWNLOAD_CONCURRENCY
-    return min(max(1, concurrency), total)
-
-
-def _asset_failure(diagnostic: Mapping[str, Any] | None) -> _AssetDownloadFailure | None:
-    if not diagnostic:
-        return None
-    return _AssetDownloadFailure(dict(diagnostic))
-
-
-def _resolution_from_attempt(
-    *,
-    asset: Mapping[str, Any],
-    attempt: _AssetDownloadAttempt | None,
-    preview_url: str = "",
-    full_size_url: str = "",
-) -> _AssetDownloadResolution:
-    if attempt is None:
-        return _AssetDownloadResolution(
-            asset=dict(asset),
-            preview_url=preview_url,
-            full_size_url=full_size_url,
-        )
-    return _AssetDownloadResolution(
-        asset=dict(asset),
-        response=attempt.response,
-        source_url=attempt.source_url or attempt.candidate.url,
-        failure=attempt.failure,
-        preview_url=preview_url,
-        full_size_url=full_size_url,
-        download_tier_override=attempt.download_tier_override,
-    )
-
-
-def _resolve_asset_downloads_in_order(
-    work_items: list[_AssetWorkItem],
-    *,
-    resolver: Callable[[_AssetWorkItem], _AssetDownloadResolution | None],
-    asset_download_concurrency: int | None,
-) -> list[_AssetDownloadResolution | None]:
-    if not work_items:
-        return []
-    max_workers = _asset_download_worker_count(len(work_items), asset_download_concurrency)
-    if max_workers <= 1:
-        return [resolver(item) for item in work_items]
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        futures = [executor.submit(resolver, item) for item in work_items]
-        return [future.result() for future in futures]
-
-
-def _collect_downloads_from_resolutions(
-    resolutions: list[_AssetDownloadResolution | None],
-    *,
-    saver: Callable[[_AssetDownloadResolution], dict[str, Any] | _AssetDownloadFailure | None],
-) -> dict[str, list[dict[str, Any]]]:
-    downloads: list[dict[str, Any]] = []
-    failures: list[dict[str, Any]] = []
-    for resolved in resolutions:
-        if resolved is None:
-            continue
-        if resolved.response is None:
-            if resolved.failure is not None:
-                failures.append(dict(resolved.failure.diagnostic))
-            continue
-        saved = saver(resolved)
-        if isinstance(saved, _AssetDownloadFailure):
-            failures.append(dict(saved.diagnostic))
-        elif saved is not None:
-            downloads.append(saved)
-    return {
-        "assets": downloads,
-        "asset_failures": failures,
-    }
 
 
 def _looks_like_image_payload(content_type: str | None, body: bytes | bytearray | None, source_url: str | None) -> bool:
@@ -244,6 +140,8 @@ def _figure_asset_failure(
     body_snippet: str | None = None,
     recovery_attempts: list[dict[str, Any]] | None = None,
     canvas_error: str | None = None,
+    error_type: str | None = None,
+    error_message: str | None = None,
 ) -> dict[str, Any]:
     failure: dict[str, Any] = {
         "kind": asset.get("kind", "figure"),
@@ -267,6 +165,10 @@ def _figure_asset_failure(
         failure["recovery_attempts"] = list(recovery_attempts)
     if canvas_error:
         failure["canvas_error"] = canvas_error
+    if error_type:
+        failure["error_type"] = error_type
+    if error_message:
+        failure["error_message"] = error_message
     return failure
 
 
@@ -367,6 +269,12 @@ def _resolve_figure_asset_with_image_document_fetcher(
                         else None
                     ),
                     canvas_error=normalize_text(str(fetch_failure.get("canvas_error") or "")),
+                    error_type=normalize_text(
+                        str(fetch_failure.get("error_type") or fetch_failure.get("exception_type") or "")
+                    ),
+                    error_message=normalize_text(
+                        str(fetch_failure.get("error_message") or fetch_failure.get("message") or "")
+                    ),
                 )
             ),
         )
@@ -377,108 +285,6 @@ def _resolve_figure_asset_with_image_document_fetcher(
         preview_url=preview_url,
         full_size_url=full_size_url,
     )
-
-
-def _build_cookie_seeded_opener(
-    seed_urls: list[str] | None,
-    *,
-    headers: Mapping[str, str],
-    timeout: int,
-    browser_cookies: list[dict[str, Any]] | None = None,
-) -> urllib.request.OpenerDirector | None:
-    normalized_seed_urls = [normalize_text(url) for url in seed_urls or [] if normalize_text(url)]
-    if not normalized_seed_urls and not any(isinstance(cookie, dict) for cookie in browser_cookies or []):
-        return None
-
-    opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()))
-    seed_headers = {
-        key: value
-        for key, value in dict(headers).items()
-        if str(key).lower() != "accept"
-    }
-    seed_headers.setdefault("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-
-    for seed_url in normalized_seed_urls:
-        request_headers = dict(seed_headers)
-        cookie_header = _cookie_header_for_url(browser_cookies, seed_url)
-        if cookie_header:
-            request_headers["Cookie"] = cookie_header
-        request = urllib.request.Request(seed_url, headers=request_headers)
-        try:
-            with opener.open(request, timeout=timeout) as response:
-                response.read(1024)
-        except Exception:
-            continue
-
-    return opener
-
-
-def _request_with_opener(
-    opener: urllib.request.OpenerDirector,
-    url: str,
-    *,
-    headers: Mapping[str, str],
-    timeout: int,
-) -> dict[str, Any]:
-    request = urllib.request.Request(url, headers=dict(headers))
-    try:
-        with opener.open(request, timeout=timeout) as response:
-            return {
-                "status_code": int(getattr(response, "status", response.getcode())),
-                "headers": {str(key).lower(): str(value) for key, value in response.headers.items()},
-                "body": response.read(),
-                "url": str(response.geturl() or url),
-            }
-    except urllib.error.HTTPError as exc:
-        raise RequestFailure(
-            exc.code,
-            f"HTTP {exc.code} for {url}",
-            body=exc.read(),
-            headers={str(key).lower(): str(value) for key, value in exc.headers.items()},
-            url=str(exc.geturl() or url),
-        ) from exc
-    except urllib.error.URLError as exc:
-        raise RequestFailure(
-            None,
-            f"Failed to download asset candidate: {exc.reason or exc}",
-            url=url,
-        ) from exc
-
-
-def _cookie_header_for_url(browser_cookies: list[dict[str, Any]] | None, url: str) -> str | None:
-    parsed_url = urllib.parse.urlparse(normalize_text(url))
-    host = normalize_text(parsed_url.hostname).lower()
-    path = normalize_text(parsed_url.path) or "/"
-    scheme = normalize_text(parsed_url.scheme).lower()
-    if not host:
-        return None
-
-    matched_pairs: list[str] = []
-    for cookie in browser_cookies or []:
-        if not isinstance(cookie, dict):
-            continue
-        name = normalize_text(str(cookie.get("name") or ""))
-        value = str(cookie.get("value") or "")
-        if not name:
-            continue
-
-        cookie_domain = normalize_text(str(cookie.get("domain") or "")).lower().lstrip(".")
-        if not cookie_domain:
-            cookie_url = normalize_text(str(cookie.get("url") or ""))
-            cookie_domain = normalize_text(urllib.parse.urlparse(cookie_url).hostname).lower()
-        if cookie_domain and host != cookie_domain and not host.endswith(f".{cookie_domain}"):
-            continue
-
-        cookie_path = normalize_text(str(cookie.get("path") or "")) or "/"
-        if not path.startswith(cookie_path):
-            continue
-
-        if bool(cookie.get("secure")) and scheme != "https":
-            continue
-
-        matched_pairs.append(f"{name}={value}")
-
-    return "; ".join(matched_pairs) if matched_pairs else None
 
 
 def _supplementary_candidate_urls(asset: Mapping[str, Any]) -> list[str]:
@@ -1336,6 +1142,7 @@ def download_figure_assets_with_image_document_fetcher(
             image_document_fetcher=image_document_fetcher,
         ),
         asset_download_concurrency=asset_download_concurrency,
+        force_worker_thread=image_document_fetcher is not None,
     )
     resolved_by_index: dict[int, _AssetDownloadResolution | None] = {
         index: resolved

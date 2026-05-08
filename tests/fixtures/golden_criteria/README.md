@@ -12,4 +12,4 @@ Contract:
 
 - Rule tests should read positive article-content fixtures from this directory, and negative article-content fixtures from `tests/fixtures/block/`, not from scattered top-level files, `live-downloads/`, or `md_for_lc_body/`.
 - `docs/extraction-rules.md` links should point here.
-- The golden corpus now keeps both canonical raw HTML/XML and `expected.json` side by side in each DOI directory.
+- Samples included in the golden corpus regression keep canonical raw HTML/XML and `expected.json` side by side in each DOI directory; fixture-only replay assets may omit `expected.json`.

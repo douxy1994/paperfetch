@@ -5,33 +5,33 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
-from ..config import build_user_agent
-from ..extraction.html.signals import SciencePnasHtmlFailure, detect_html_block, summarize_html
-from ..metadata_types import ProviderMetadata
-from ..models import AssetProfile
-from ..runtime import RuntimeContext
-from ..tracing import trace_from_markers
-from ..utils import normalize_text
-from .browser_workflow_fetchers import _normalized_response_headers
-from ._flaresolverr import (
+from ...config import build_user_agent
+from ...extraction.html.assets import extract_scoped_html_assets
+from ...extraction.html.signals import SciencePnasHtmlFailure, detect_html_block, summarize_html
+from ...metadata.types import ProviderMetadata
+from ...models import AssetProfile
+from ...runtime import RuntimeContext
+from ...tracing import fulltext_marker, trace_from_markers
+from ...utils import normalize_text
+from .fetchers import _normalized_response_headers
+from .._flaresolverr import (
     DEFAULT_FLARESOLVERR_WAIT_SECONDS,
     DEFAULT_FLARESOLVERR_WARM_WAIT_SECONDS,
     FetchedPublisherHtml,
     FlareSolverrFailure,
     fetch_html_with_flaresolverr,
 )
-from .science_pnas import (
+from ..science_pnas import (
     extract_browser_workflow_asset_html_scopes,
     extract_science_pnas_markdown,
     rewrite_inline_figure_links,
 )
-from .base import ProviderContent, RawFulltextPayload
-from ..extraction.html.assets import extract_scoped_html_assets
+from ..base import ProviderContent, RawFulltextPayload
 
 logger = logging.getLogger("paper_fetch.providers.browser_workflow")
 
 if TYPE_CHECKING:
-    from .browser_workflow import BrowserWorkflowClient
+    from .client import BrowserWorkflowClient
 
 _DIRECT_PLAYWRIGHT_HTML_TIMEOUT_MS = 15000
 _FAST_FLARESOLVERR_HTML_WAIT_SECONDS = 0
@@ -307,7 +307,7 @@ def _browser_workflow_html_payload(
             browser_context_seed=dict(html_result.browser_context_seed or {}),
         ),
         warnings=list(warnings or []),
-        trace=trace_from_markers([f"fulltext:{client.name}_html_ok"]),
+        trace=trace_from_markers([fulltext_marker(client.name, "ok", route="html")]),
         needs_local_copy=False,
     )
 

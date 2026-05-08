@@ -18,7 +18,7 @@ from ..extraction.html.landing import fetch_landing_html
 from ..html_lookup import is_usable_html_lookup_title
 from ..http import HttpTransport, RequestFailure
 from ..metadata.crossref import CrossrefLookupClient
-from ..metadata_types import CrossrefMetadata
+from ..metadata.types import CrossrefMetadata
 from ..publisher_identity import extract_doi, infer_provider_from_signals, normalize_doi
 CONFIDENT_SCORE_MIN = 0.90
 CONFIDENT_MARGIN_MIN = 0.05

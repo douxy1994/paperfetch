@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+import json
 from pathlib import Path
 from typing import Any, Mapping
 
 from .models import AssetProfile
+from .tracing import download_marker
 from .utils import (
     build_output_path,
     extension_from_content_type,
@@ -15,7 +17,6 @@ from .utils import (
     provider_display_name,
     safe_text,
     sanitize_filename,
-    save_payload,
 )
 
 ACCEPTABLE_PREVIEW_MIN_WIDTH = 300
@@ -43,6 +44,41 @@ class ArtifactStore:
     def download_dir(self) -> Path | None:
         return self.policy.download_dir
 
+    def write_text_file(self, path: Path, text: str, *, encoding: str = "utf-8") -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".part")
+        try:
+            tmp_path.write_text(text, encoding=encoding)
+            tmp_path.replace(path)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        return path
+
+    def write_bytes_file(self, path: Path, body: bytes) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp_path = path.with_suffix(path.suffix + ".part")
+        try:
+            tmp_path.write_bytes(body)
+            tmp_path.replace(path)
+        except Exception:
+            try:
+                tmp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+            raise
+        return path
+
+    def write_json_file(self, path: Path, payload: Mapping[str, Any]) -> Path:
+        return self.write_text_file(
+            path,
+            json.dumps(dict(payload), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
     def save_provider_payload(
         self,
         provider_name: str,
@@ -57,24 +93,22 @@ class ArtifactStore:
         provider_label = provider_display_name(provider_slug)
         if self.download_dir is None:
             return [f"{provider_label} official PDF/binary was not written to disk because --no-download was set."], [
-                f"download:{provider_slug}_skipped"
+                download_marker(provider_slug, "skipped")
             ]
-        saved_path = save_payload(
-            build_output_path(
-                self.download_dir,
-                doi,
-                safe_text(metadata.get("title")),
-                content.content_type,
-                content.source_url,
-            ),
-            content.body,
+        output_path = build_output_path(
+            self.download_dir,
+            doi,
+            safe_text(metadata.get("title")),
+            content.content_type,
+            content.source_url,
         )
-        if saved_path:
+        if output_path is not None:
+            saved_path = self.write_bytes_file(output_path, content.body)
             return [f"{provider_label} official full text was downloaded as PDF/binary to {saved_path}."], [
-                f"download:{provider_slug}_saved"
+                download_marker(provider_slug, "saved")
             ]
         return [f"{provider_label} official full text was available only as PDF/binary and could not be written to disk."], [
-            f"download:{provider_slug}_save_failed"
+            download_marker(f"{provider_slug}_save_failed")
         ]
 
     def provider_html_output_path(
@@ -117,8 +151,8 @@ class ArtifactStore:
         )
         if output_path is None or content is None:
             return [], []
-        save_payload(output_path, content.body)
-        return [], [f"download:{normalize_text(provider_name).lower()}_html_saved"]
+        self.write_bytes_file(output_path, content.body)
+        return [], [download_marker(f"{normalize_text(provider_name).lower()}_html", "saved")]
 
     def apply_provider_artifacts(
         self,
@@ -132,14 +166,14 @@ class ArtifactStore:
         if self.download_dir is None:
             return
         if asset_profile == "none":
-            extend_unique(source_trail, [f"download:{provider_name}_assets_skipped_profile_none"])
+            extend_unique(source_trail, [download_marker(f"{provider_name}_assets_skipped_profile_none")])
             return
         if artifacts.skip_warning:
             extend_unique(warnings, [artifacts.skip_warning])
             extend_unique(source_trail, [event.marker() for event in artifacts.skip_trace if event.marker()])
             return
         if artifacts.assets:
-            extend_unique(source_trail, [f"download:{provider_name}_assets_saved_profile_{asset_profile}"])
+            extend_unique(source_trail, [download_marker(f"{provider_name}_assets_saved_profile_{asset_profile}")])
             preview_assets = [
                 asset
                 for asset in artifacts.assets
@@ -157,7 +191,7 @@ class ArtifactStore:
                         )
                     ],
                 )
-                extend_unique(source_trail, [f"download:{provider_name}_assets_preview_accepted"])
+                extend_unique(source_trail, [download_marker(f"{provider_name}_assets_preview", "accepted")])
             if preview_fallback_count:
                 extend_unique(
                     warnings,
@@ -168,7 +202,7 @@ class ArtifactStore:
                         )
                     ],
                 )
-                extend_unique(source_trail, [f"download:{provider_name}_assets_preview_fallback"])
+                extend_unique(source_trail, [download_marker(f"{provider_name}_assets_preview_fallback")])
         if artifacts.asset_failures:
             extend_unique(
                 warnings,
@@ -179,7 +213,7 @@ class ArtifactStore:
                     )
                 ],
             )
-            extend_unique(source_trail, [f"download:{provider_name}_asset_failures"])
+            extend_unique(source_trail, [download_marker(f"{provider_name}_asset_failures")])
 
 
 def _preview_asset_accepted(asset: Mapping[str, Any]) -> bool:

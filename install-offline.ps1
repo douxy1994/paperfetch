@@ -13,8 +13,23 @@ if ([string]::IsNullOrWhiteSpace($PythonBin)) {
 }
 
 $BundleRoot = [System.IO.Path]::GetFullPath($PSScriptRoot)
+$InstallerManifestPath = Join-Path $BundleRoot "installer/manifest.json"
 $ManagedBegin = "# BEGIN paper-fetch offline managed"
 $ManagedEnd = "# END paper-fetch offline managed"
+$SkillName = "paper-fetch-skill"
+$McpName = "paper-fetch"
+$McpEnvKeys = @(
+    "PYTHONUTF8",
+    "PYTHONIOENCODING",
+    "PAPER_FETCH_ENV_FILE",
+    "PAPER_FETCH_MCP_PYTHON_BIN",
+    "PAPER_FETCH_DOWNLOAD_DIR",
+    "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "FLARESOLVERR_URL",
+    "FLARESOLVERR_ENV_FILE",
+    "FLARESOLVERR_SOURCE_DIR"
+)
 
 function Write-Log {
     param([string]$Message)
@@ -24,6 +39,26 @@ function Write-Log {
 function Fail {
     param([string]$Message)
     throw $Message
+}
+
+function Import-InstallerManifest {
+    if (-not (Test-Path -LiteralPath $InstallerManifestPath -PathType Leaf)) {
+        Fail "Missing installer manifest: $InstallerManifestPath"
+    }
+    $manifest = Get-Content -LiteralPath $InstallerManifestPath -Raw | ConvertFrom-Json
+    $script:ManagedBegin = [string]$manifest.managed_blocks.offline.begin
+    $script:ManagedEnd = [string]$manifest.managed_blocks.offline.end
+    $script:SkillName = [string]$manifest.skill.name
+    $script:McpName = [string]$manifest.mcp.name
+    $script:McpEnvKeys = @($manifest.mcp.env_keys | ForEach-Object { [string]$_ })
+
+    if ([string]::IsNullOrWhiteSpace($script:ManagedBegin) -or
+        [string]::IsNullOrWhiteSpace($script:ManagedEnd) -or
+        [string]::IsNullOrWhiteSpace($script:SkillName) -or
+        [string]::IsNullOrWhiteSpace($script:McpName) -or
+        $script:McpEnvKeys.Count -eq 0) {
+        Fail "installer manifest is missing required installer constants."
+    }
 }
 
 function Require-File {
@@ -384,6 +419,7 @@ if ($UserConfig -and $NoUserConfig) {
     Fail "Use only one of -UserConfig or -NoUserConfig."
 }
 
+Import-InstallerManifest
 Check-Platform
 Check-PythonAndManifest
 Verify-Checksums

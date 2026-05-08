@@ -22,11 +22,32 @@ CANONICAL_FIXTURE_PREFIXES = (
     "tests/fixtures/golden_criteria/",
     "tests/fixtures/block/",
 )
-PROVIDER_SECTIONS = ("Springer", "Elsevier", "Wiley", "Science", "PNAS")
+PROVIDER_SECTIONS = ("Springer", "Elsevier", "Wiley", "Science", "PNAS", "IEEE")
 SHARED_RULE_SECTIONS = ("Generic", "Models", "Service", "CLI")
 UNLINKED_FIXTURES_START = "<!-- extraction-rules-unlinked-fixtures:start -->"
 UNLINKED_FIXTURES_END = "<!-- extraction-rules-unlinked-fixtures:end -->"
 LOW_COVERAGE_MARKERS = ("测试覆盖度低", "单测试规则")
+PROVIDER_RULE_REQUIREMENTS = {
+    "science": {
+        "availability_site_rule_overrides",
+    },
+    "pnas": {
+        "availability_site_rule_overrides",
+        "markdown_promo_tokens",
+    },
+    "springer_nature": {
+        "markdown_promo_tokens",
+    },
+    "wiley": {
+        "availability_site_rule_overrides",
+    },
+    "ieee": {
+        "access_block_text_tokens",
+        "availability_site_rule_overrides",
+        "extraction_cleanup_selectors",
+        "markdown_promo_tokens",
+    },
+}
 
 ANCHOR_RE = re.compile(r'<a\s+id="(rule-[A-Za-z0-9_-]+)"></a>')
 RULE_HEADING_RE = re.compile(r'<a\s+id="(rule-[A-Za-z0-9_-]+)"></a>\s*\n### ([^\n]+)')
@@ -48,6 +69,7 @@ PROVIDER_INFERENCE_PATTERNS = {
     "Wiley": re.compile(r"(?<![A-Za-z])wiley(?![A-Za-z])", flags=re.IGNORECASE),
     "Science": re.compile(r"(?<![A-Za-z])(?:science|sciadv)(?![A-Za-z])", flags=re.IGNORECASE),
     "PNAS": re.compile(r"(?<![A-Za-z])pnas(?![A-Za-z])", flags=re.IGNORECASE),
+    "IEEE": re.compile(r"(?<![A-Za-z])ieee(?![A-Za-z])", flags=re.IGNORECASE),
 }
 
 
@@ -117,6 +139,13 @@ def _subsection_body(markdown: str, name: str) -> str | None:
     if next_match is None:
         return markdown[start_match.end() :]
     return markdown[start_match.end() : start_match.end() + next_match.start()]
+
+
+def _low_stability_summary_rule_ids(markdown: str) -> set[str]:
+    section = _subsection_body(markdown, "无稳定 DOI 样本规则汇总表")
+    if section is None:
+        return set()
+    return set(RULE_LINK_RE.findall(section))
 
 
 def _rule_top_level_sections(markdown: str) -> dict[str, str]:
@@ -256,6 +285,20 @@ def validate_single_test_rule_risk_markers(markdown: str) -> list[str]:
         if len(test_names) == 1 and not any(marker in block for marker in LOW_COVERAGE_MARKERS):
             errors.append(
                 f"single-test rule #{anchor} at line {line} must mark low coverage risk"
+            )
+    return errors
+
+
+def validate_unstable_sample_summary(markdown: str) -> list[str]:
+    errors: list[str] = []
+    summary_rule_ids = _low_stability_summary_rule_ids(markdown)
+    for anchor, title, block, line in _iter_rule_blocks(markdown):
+        if _is_redirect_rule(title, block):
+            continue
+        if "当前无稳定 DOI 样本" in block and anchor not in summary_rule_ids:
+            errors.append(
+                f"rule #{anchor} at line {line} declares no stable DOI sample but is missing "
+                "from the low-stability summary table"
             )
     return errors
 
@@ -404,6 +447,33 @@ def validate_manifest_anchors(anchors: set[str]) -> list[str]:
     return errors
 
 
+def validate_provider_rule_registry() -> list[str]:
+    from paper_fetch.extraction.html.provider_rules import PROVIDER_HTML_RULES, provider_html_rules
+
+    errors: list[str] = []
+    for provider, required_fields in PROVIDER_RULE_REQUIREMENTS.items():
+        rules = PROVIDER_HTML_RULES.get(provider)
+        if rules is None:
+            errors.append(f"provider HTML rules registry is missing provider: {provider}")
+            continue
+        if provider_html_rules(provider).name != provider:
+            errors.append(f"provider HTML rules registry does not resolve canonical provider: {provider}")
+        if not rules.noise_profile:
+            errors.append(f"provider HTML rules registry has empty noise profile for provider: {provider}")
+        for alias in rules.aliases:
+            if provider_html_rules(alias).name != provider:
+                errors.append(
+                    f"provider HTML rules registry alias `{alias}` does not resolve to provider: {provider}"
+                )
+        for field_name in sorted(required_fields):
+            value = getattr(rules, field_name)
+            if not value:
+                errors.append(
+                    f"provider HTML rules registry provider `{provider}` is missing required `{field_name}`"
+                )
+    return errors
+
+
 def _section_body(markdown: str, name: str) -> str | None:
     start_match = re.search(rf"^## {re.escape(name)}\s*$", markdown, flags=re.MULTILINE)
     if start_match is None:
@@ -502,12 +572,14 @@ def main() -> int:
     errors.extend(validate_rule_phases(markdown))
     errors.extend(validate_rule_owners(markdown))
     errors.extend(validate_single_test_rule_risk_markers(markdown))
+    errors.extend(validate_unstable_sample_summary(markdown))
     errors.extend(validate_fixtures(markdown))
     errors.extend(validate_canonical_fixture_manifest())
     errors.extend(validate_manifest_fixture_reverse_index(markdown))
     errors.extend(validate_test_names(markdown))
     errors.extend(validate_test_docstring_markers(markdown))
     errors.extend(validate_manifest_anchors(anchors))
+    errors.extend(validate_provider_rule_registry())
     errors.extend(validate_provider_shared_lists(markdown, anchors))
     errors.extend(validate_provider_shared_applicability(markdown))
 

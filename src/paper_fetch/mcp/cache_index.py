@@ -10,6 +10,7 @@ from typing import Any
 
 from filelock import FileLock
 
+from ..artifacts import ArtifactStore
 from ..utils import sanitize_filename
 
 INDEX_FILENAME = ".paper-fetch-mcp-cache.json"
@@ -138,9 +139,7 @@ def _write_index_unlocked(download_dir: Path, entries: list[dict[str, Any]]) -> 
         "version": INDEX_VERSION,
         "entries": _dedupe_entries(entries),
     }
-    tmp_path = index_path.with_suffix(index_path.suffix + ".part")
-    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-    tmp_path.replace(index_path)
+    ArtifactStore.from_download_dir(download_dir).write_json_file(index_path, payload)
 
 
 def _write_index(download_dir: Path, entries: list[dict[str, Any]]) -> None:

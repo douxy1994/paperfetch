@@ -5,7 +5,8 @@ import unittest
 
 from bs4 import BeautifulSoup
 
-from paper_fetch.providers import _springer_html, springer as springer_provider
+import paper_fetch.providers.springer_html as springer_html
+from paper_fetch.providers import springer as springer_provider
 from paper_fetch.extraction.html.tables import render_table_markdown
 from paper_fetch.runtime import RuntimeContext
 from tests.golden_criteria import golden_criteria_asset
@@ -128,7 +129,7 @@ class SpringerHtmlTableTests(unittest.TestCase):
     def test_springer_classic_fixture_strips_chrome_and_spaces_numbered_headings(self) -> None:
         html = SPRINGER_CLASSIC_ARTICLE_FIXTURE.read_text(encoding="utf-8", errors="ignore")
 
-        markdown = _springer_html.extract_html_payload(html, SPRINGER_CLASSIC_LANDING_URL, title=SPRINGER_CLASSIC_TITLE)[
+        markdown = springer_html.extract_html_payload(html, SPRINGER_CLASSIC_LANDING_URL, title=SPRINGER_CLASSIC_TITLE)[
             "markdown_text"
         ]
 

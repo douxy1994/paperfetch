@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
-from ...utils import normalize_text
-from .._flaresolverr import FetchedPublisherHtml
+from ....utils import normalize_text
+from ..._flaresolverr import FetchedPublisherHtml
 
 _CLOUDFLARE_CHALLENGE_TITLE_TOKENS = (
     "just a moment",

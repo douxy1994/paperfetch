@@ -31,6 +31,15 @@ REMOVED_PROVIDER_COMPATIBILITY_MODULES = frozenset(
         "paper_fetch.resolve.crossref",
     }
 )
+PRIVATE_PROVIDER_HTML_MODULES = frozenset(
+    {
+        "paper_fetch.providers._pnas_html",
+        "paper_fetch.providers._science_html",
+        "paper_fetch.providers._science_pnas_profiles",
+        "paper_fetch.providers._springer_html",
+        "paper_fetch.providers._wiley_html",
+    }
+)
 
 
 def _module_name_for_path(path: Path) -> str:
@@ -88,6 +97,13 @@ def _uses_removed_compatibility_module(imported_module: str) -> bool:
     )
 
 
+def _uses_private_provider_html_module(imported_module: str) -> bool:
+    return any(
+        imported_module == private or imported_module.startswith(f"{private}.")
+        for private in PRIVATE_PROVIDER_HTML_MODULES
+    )
+
+
 class ImportBoundaryTests(unittest.TestCase):
     def test_provider_neutral_modules_do_not_import_provider_private_helpers(self) -> None:
         offenders: list[str] = []
@@ -106,6 +122,18 @@ class ImportBoundaryTests(unittest.TestCase):
             )
             for imported_module, lineno in _imported_modules(path, module_name=module_name):
                 if _uses_removed_compatibility_module(imported_module):
+                    offenders.append(
+                        f"{path.relative_to(REPO_ROOT)}:{lineno} imports {imported_module}"
+                    )
+
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
+    def test_tests_use_public_provider_html_facades(self) -> None:
+        offenders: list[str] = []
+        for path in _iter_python_files(TESTS_ROOT):
+            module_name = ".".join(path.relative_to(REPO_ROOT).with_suffix("").parts)
+            for imported_module, lineno in _imported_modules(path, module_name=module_name):
+                if _uses_private_provider_html_module(imported_module):
                     offenders.append(
                         f"{path.relative_to(REPO_ROOT)}:{lineno} imports {imported_module}"
                     )

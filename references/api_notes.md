@@ -1,155 +1,64 @@
-# Publisher Route Notes
+# Publisher API Notes
 
-This file is a human-maintained route reference for v1. Runtime behavior is authoritative in `src/paper_fetch/providers/`, `src/paper_fetch/publisher_identity.py`, and `src/paper_fetch/workflow/`. Provider fallback order is now composed through the internal `_waterfall` runner, while provider steps keep their own payloads, warnings, and source markers. Elsevier is the primary structured XML/API full-text route; Wiley additionally has an optional TDM API PDF lane. Springer, Wiley HTML/browser PDF, Science, PNAS, and IEEE are provider-managed routes with the constraints below.
+This file is a compact API and endpoint constraint reference. It is not the canonical source for provider routing or waterfall order.
+
+Canonical runtime behavior lives in [`docs/providers.md`](../docs/providers.md), `paper_fetch.provider_catalog.PROVIDER_CATALOG`, and `src/paper_fetch/providers/`. Planned Copernicus and MDPI provider designs live only in [`docs/providers.md`](../docs/providers.md#待接入设计copernicus) and [`docs/providers.md`](../docs/providers.md#待接入设计mdpi).
 
 ## Elsevier
 
-- Official source: Elsevier Developer Portal and related Search/Article APIs.
-- Status: the primary publisher XML/API full-text route in this runtime.
-- Current implementation:
+- Official source: Elsevier Developer Portal and related Search / Article APIs.
+- Runtime role: primary structured XML/API full-text provider.
+- Endpoints:
   - Metadata: `https://api.elsevier.com/content/abstract/doi/{doi}`
   - Full text: `https://api.elsevier.com/content/article/doi/{doi}`
-  - Full-text retrieval requests `text/xml` first so the fetcher can parse Elsevier `objects` and `attachment-metadata-doc` sections.
-  - When Elsevier XML contains object or attachment metadata and an output directory is provided, the fetcher also downloads linked figures and supplementary files.
-  - Structured Elsevier bibliography is preferred over Crossref reference fallback when available; numbered labels, authors, titles, source, pages, year, and DOI are preserved as far as the XML provides them.
-  - Complex table spans are semantically expanded into rectangular Markdown cells; layout degradation is reported separately from semantic content loss.
-  - Formula LaTeX is normalized after conversion, including upright Greek aliases and `\mspace{Nmu}` spacing macros.
-  - Required env: `ELSEVIER_API_KEY`
-  - Optional entitlement env: `ELSEVIER_INSTTOKEN`, `ELSEVIER_AUTHTOKEN`, `ELSEVIER_CLICKTHROUGH_TOKEN`
-- Route when:
-  - The landing-page domain or Crossref publisher-name signal maps to `elsevier`, or
-  - The DOI uses the strongly indicative prefix `10.1016/`.
-- Common constraints:
-  - API key is typically required.
-  - Some endpoints are entitlement-gated.
-- Reference URL:
-  - `https://dev.elsevier.com/`
+- Required env: `ELSEVIER_API_KEY`
+- Optional entitlement env: `ELSEVIER_INSTTOKEN`, `ELSEVIER_AUTHTOKEN`, `ELSEVIER_CLICKTHROUGH_TOKEN`
+- Constraints:
+  - Full-text retrieval requests `text/xml` first so the fetcher can parse article XML, object metadata, attachments, figures, supplementary files, bibliography, tables, and formula nodes.
+  - Structured Elsevier bibliography is preferred over metadata fallback when present.
+  - Some endpoints are entitlement-gated even with an API key.
+- Reference URL: `https://dev.elsevier.com/`
 
-## Springer
+## Wiley TDM API
 
-- Runtime status: supported, but not through Springer Nature publisher APIs.
-- Current implementation:
-  - Metadata comes from Crossref merge and landing-page signals.
-  - Full text is fetched from the publisher landing page HTML.
-  - Preferred landing URL comes from merged metadata; if missing, the runtime resolves `https://doi.org/{doi}` and follows the final landing page.
-  - HTML extraction is provider-owned and reuses the existing HTML parsing stack internally.
-  - Springer / Nature HTML cleanup removes site chrome such as save actions, aims/scope blocks, duplicate title headings, preview notices, and figure download-control text.
-  - Nature / Springer inline table pages are injected back into the body; known image-only Extended Data Tables can be retained as table image assets or explicit `[Table body unavailable: ...]` placeholders.
-  - Raw `span.mathjax-tex` content is normalized through the shared LaTeX macro normalizer before Markdown rendering.
-- Route when:
-  - The landing-page domain or Crossref publisher-name signal maps to `springer`, or
-  - The DOI uses a supported Springer-pattern prefix such as `10.1038/`, `10.1007/`, or `10.1186/`.
-- Common constraints:
-  - The runtime does not use Springer publisher endpoints or credentials.
-  - Springer full-text success depends on the landing HTML being directly readable enough for extraction.
+- Official source: Wiley TDM API.
+- Runtime role: optional Wiley PDF lane; Wiley HTML and browser PDF/ePDF behavior is documented in [`docs/providers.md`](../docs/providers.md#wiley).
+- Env: `WILEY_TDM_CLIENT_TOKEN`
+- Constraints:
+  - Absence of this token does not disable Wiley HTML or browser PDF/ePDF attempts when local browser workflow prerequisites are ready.
+  - When configured, the TDM API lane may still be attempted after publisher PDF/ePDF fallback failure or when the local browser runtime is not ready.
 
-## Wiley
+## IEEE Xplore Endpoints
 
-- Runtime status: supported via provider-managed HTML plus an optional Wiley TDM API PDF lane.
-- Current implementation:
-  - Metadata comes from Crossref merge and landing-page signals.
-  - Full text uses provider-managed `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF -> abstract-only / metadata-only`.
-  - Candidate URLs prefer Crossref or landing-page URLs and fall back to DOI resolution when needed.
-  - HTML is fetched through repo-local FlareSolverr; publisher PDF/ePDF fallback uses Playwright; the optional Wiley TDM API lane uses `WILEY_TDM_CLIENT_TOKEN`.
-- Route when:
-  - The landing-page domain or Crossref publisher-name signal maps to `wiley`, or
-  - The DOI uses a strongly indicative Wiley prefix such as `10.1002/` or `10.1111/`.
-- Common constraints:
-  - The HTML and browser PDF/ePDF paths depend on repo-local FlareSolverr readiness and explicit local rate-limit settings.
-  - The Wiley TDM API PDF lane is optional; if no token is configured, the runtime can still attempt browser PDF/ePDF when the local runtime is ready.
-  - If `WILEY_TDM_CLIENT_TOKEN` is configured, the TDM API PDF lane can still be attempted after browser PDF/ePDF fallback failure or when the local browser runtime is not ready.
+- Runtime status: supported through provider-managed IEEE Xplore dynamic HTML plus PDF fallback; no IEEE API key is required.
+- Endpoint shapes:
+  - Dynamic article HTML: `https://ieeexplore.ieee.org/rest/document/{article_number}/?logAccess=true`
+  - References payload: `/rest/document/{article_number}/references`
+  - Multimedia payload: `/rest/document/{article_number}/multimedia`
+  - PDF candidates include `pdfUrl`, `pdfPath`, and `/stamp/stamp.jsp?arnumber={article_number}`.
+- Constraints:
+  - The dynamic article endpoint is parsed as HTML even though it looks like a REST path; successful responses have been observed as `text/html;charset=utf-8`.
+  - Requests keep page-context headers such as document `Referer`, browser-like UA, `x-security-request: required`, and compatible `Accept`.
+  - Full-text validation must reject login pages, challenge pages, access gates, abstract-only pages, empty shells, and unrelated error HTML before Markdown conversion.
+  - Do not bypass access controls, solve CAPTCHA flows, automate login, or fabricate entitlement state.
+  - IEEE supplementary / multimedia files are recognized only from explicit attachment scope or landing metadata plus multimedia payload; body data/code/repository links and file suffixes are not enough.
 
-## Science / PNAS
+## Springer / Science / PNAS / Browser Workflow Providers
 
-- Runtime status: supported via the same local browser workflow family as Wiley.
-- Current implementation:
-  - Metadata comes from Crossref merge and landing-page signals.
-  - Full text uses provider-managed `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> abstract-only / metadata-only`.
-  - HTML is fetched through repo-local FlareSolverr; publisher PDF/ePDF fallback uses Playwright.
-  - HTML asset downloads prefer full-size/original images. Browser-workflow providers now cache repeated figure-page / image-candidate URLs per download attempt and fetch image payloads with fixed limited parallelism before writing files in input order.
-  - If direct image fetch returns challenge HTML or a browser image shell, Science / PNAS may use Playwright image-document export before accepting preview fallback; FlareSolverr recovery only accepts recognizable `solution.imagePayload` values, including browser-exported PNG pixels and raw top-level SVG, not screenshot cropping or challenge HTML.
-  - Preview images are only treated as acceptable degradation when saved dimensions meet the runtime threshold; otherwise they remain asset-download issues in warnings/source trail.
-- Common constraints:
-  - The runtime does not use publisher APIs for these providers.
-  - These routes depend on repo-local FlareSolverr readiness and explicit local rate-limit settings.
-
-## Copernicus
-
-- Runtime status: planned design note only; not currently wired into the provider catalog, router, registry, CLI, MCP status surface, or tests.
-- Intended default behavior:
-  - Use `fulltext_first` when the route resolves to Copernicus.
-  - Treat Copernicus as an open-access direct HTTP provider.
-  - Fall back to provider-managed `abstract_only` or generic `metadata_only` when XML/HTML/PDF discovery or extraction fails.
-- Proposed implementation:
-  - Metadata starts from Crossref merge and landing-page signals.
-  - Route by Copernicus journal domains, publisher names such as `Copernicus Publications`, and DOI prefix `10.5194/`.
-  - Fetch the landing page first and discover `citation_xml_url` or article XML download links.
-  - Prefer article XML as the primary full-text source; Copernicus XML is typically NLM/JATS style and may include OASIS tables, MathML, references, figures, and supplementary links.
-  - Use direct full-text HTML as the first fallback when XML is absent or malformed.
-  - Use PDF only as an opportunistic text-only fallback; publisher-side PDF throttling must not fail an otherwise successful XML/HTML article.
-  - Consider OAI-PMH as a future bulk/discovery aid, not as the mandatory first step for a single DOI fetch.
-- Common constraints:
-  - This route should not depend on FlareSolverr or a seeded browser workflow by default.
-  - Validation should distinguish XML/HTML full text from publisher status pages, temporary PDF restriction pages, and metadata-only pages.
-
-## MDPI
-
-- Runtime status: planned design note only; not currently wired into the provider catalog, router, registry, CLI, MCP status surface, or tests.
-- Intended default behavior:
-  - Use `fulltext_first` when the route resolves to MDPI.
-  - Treat MDPI as an open-access provider whose article XML/HTML/PDF are public, while allowing CDN transport failures to degrade cleanly.
-  - Fall back to provider-managed `abstract_only` or generic `metadata_only` when public article retrieval, validation, or extraction fails.
-- Proposed implementation:
-  - Metadata starts from Crossref merge and landing-page signals.
-  - Route by `mdpi.com`, publisher names such as `MDPI` / `MDPI AG`, and DOI prefix `10.3390/`.
-  - Discover article XML from landing-page links or article notes; use fixed `/xml` route construction only as a secondary candidate.
-  - Prefer XML -> Markdown as the primary path, then provider-cleaned article HTML, then direct Playwright HTML if plain direct HTTP is blocked by CDN behavior.
-  - Use PDF only as a text-only fallback.
-  - Download body assets and supplementary files from XML/HTML-discovered links according to `asset_profile=body|all`.
-- Common constraints:
-  - Plain HTTP `403` or CDN denial on a public article should be treated as transport failure, not as publisher entitlement failure.
-  - Direct Playwright fallback is acceptable for public MDPI pages; FlareSolverr should not be introduced unless a concrete Cloudflare challenge exists.
-  - Validation should reject CDN error pages, bot-block pages, empty shells, menu-only pages, and abstract-only fragments before Markdown conversion.
-
-## IEEE
-
-- Runtime status: supported via provider-managed IEEE Xplore dynamic HTML plus direct HTTP PDF fallback, with seeded-browser PDF fallback after non-PDF wrappers or access pages.
-- Default behavior:
-  - Use `fulltext_first` when the route resolves to IEEE.
-  - Assume the operator already has lawful IEEE Xplore access in the current environment, such as institution IP/VPN, authenticated browser cookies, or a personal subscription.
-  - Treat full-text retrieval as a best-effort default attempt, not as a guarantee.
-  - Fall back to provider-managed `abstract_only` or generic `metadata_only` when access, response shape, validation, extraction, or network checks fail.
-- Implementation:
-  - Metadata still starts from Crossref merge and landing-page signals.
-  - Route by `ieeexplore.ieee.org`, Crossref publisher names such as `IEEE` / `Institute of Electrical and Electronics Engineers`, and DOI prefix `10.1109/`.
-  - Resolve the IEEE article number from DOI redirects, `/document/{article_number}/`, or landing metadata such as `xplGlobal.document.metadata.articleNumber`.
-  - Fetch dynamic full-text HTML from `https://ieeexplore.ieee.org/rest/document/{article_number}/?logAccess=true`.
-  - Send page-context headers such as `Accept: application/json, text/plain, */*`, the document `Referer`, `x-security-request: required`, and a browser-like user agent.
-  - Parse the response as HTML, even when the endpoint looks like a REST path; observed successful responses use `text/html;charset=utf-8`.
-  - Validate full-text markers before extraction, for example `#article`, section containers, meaningful paragraph counts, and IEEE figure/table blocks.
-  - Reject login pages, access-gate pages, challenge pages, abstract-only pages, empty shells, and unrelated error HTML before Markdown conversion.
-  - Normalize IEEE `figure-full` and `figure-full table` mediastore images as absolute Xplore body `figure` / `table` assets, preferring `*-large.*` links for full-size downloads and keeping `*-small.*` images as previews; use the article landing page as the asset download seed so mediastore image requests can reuse normal Xplore page cookies.
-  - Download body `figure` / `table` / `formula` assets from the HTML success route for `asset_profile=body|all`.
-  - For `asset_profile=all`, split supplementary assets from the body asset list and reuse the generic supplementary file downloader; supplementary payloads are not restricted to image content-types.
-  - Apply IEEE-local supplementary / multimedia link recognition for common file extensions such as PDF, DOC/DOCX, ZIP, media files, archives, and IEEE semantic labels such as supplementary, supporting information, multimedia, data, dataset, or code.
-  - Filter Xplore UI or placeholder images such as `/assets/img/icon.support.gif` during HTML cleanup and asset normalization so they do not appear in Markdown, article assets, or asset download failures.
-  - If dynamic HTML is unavailable, try `pdfUrl`, `pdfPath`, and `/stamp/stamp.jsp?arnumber={article_number}` as direct HTTP PDF candidates; only real PDF payloads are accepted.
-- Common constraints:
-  - Do not bypass IEEE access controls, solve CAPTCHA flows, or fabricate entitlement state.
-  - The provider may use access context already present in the operator's environment, but must degrade cleanly when that context is missing.
-  - Dynamic HTML asset URLs are mapped into normal `asset_profile=body|all` behavior; Markdown success must not depend on every asset being downloadable.
-  - PDF fallback is text-only.
+- Springer is supported through publisher landing HTML and direct HTTP PDF fallback, not through Springer Nature publisher APIs.
+- Science and PNAS are supported through the shared browser workflow family documented in [`docs/providers.md`](../docs/providers.md#elsevier--springer--wiley--science--pnas--ieee-的特殊语义).
+- These routes do not have publisher API credentials in this runtime.
+- Asset downloads, supplementary scopes, image validation, and PDF text-only fallback behavior are canonical in [`docs/providers.md`](../docs/providers.md#默认输出策略) and [`docs/extraction-rules.md`](../docs/extraction-rules.md).
 
 ## Crossref
 
-- Official source: Crossref REST API documentation.
-- Role in this skill: universal metadata provider, routing signal source, and metadata-only fallback provider.
-- Current implementation:
-  - Metadata: `https://api.crossref.org/works/{doi}` or `https://api.crossref.org/works`
-  - Recommended env: `CROSSREF_MAILTO`
-  - Crossref metadata links may be used for routing and provider handoff; unsupported publishers do not fall through to a generic full-text downloader.
-- Route when:
-  - No supported publisher route can be chosen with enough confidence.
-  - A metadata-only or abstract-level degraded result is still useful after publisher full-text retrieval fails.
-- Reference URL:
-  - `https://www.crossref.org/documentation/retrieve-metadata/rest-api/`
+- Official source: Crossref REST API.
+- Runtime role: universal metadata provider, routing signal source, and metadata-only fallback provider.
+- Endpoints:
+  - DOI lookup: `https://api.crossref.org/works/{doi}`
+  - Search: `https://api.crossref.org/works`
+- Recommended env: `CROSSREF_MAILTO`
+- Constraints:
+  - Crossref metadata links may be used for routing and provider handoff.
+  - Unsupported publishers do not fall through to a generic full-text downloader.
+- Reference URL: `https://www.crossref.org/documentation/retrieve-metadata/rest-api/`

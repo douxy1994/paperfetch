@@ -50,6 +50,7 @@ class HtmlCitationsTests(unittest.TestCase):
         self.assertEqual(cleaned, "## Results")
 
     def test_normalize_inline_citation_markdown_renders_numeric_sentinels_as_superscripts(self) -> None:
+        """rule: rule-markdown-inline-citation-normalization"""
         sentinel = make_numeric_citation_sentinel("2, 43")
 
         self.assertEqual(
@@ -63,6 +64,7 @@ class HtmlCitationsTests(unittest.TestCase):
         self.assertEqual(normalized, "See ref. 21 and refs. 12-14 for details.")
 
     def test_normalize_inline_citation_markdown_rewrites_marked_ref_prefixes(self) -> None:
+        """rule: rule-markdown-inline-citation-normalization"""
         sentinel = make_numeric_citation_sentinel("21")
 
         normalized = normalize_inline_citation_markdown(f"See ref. {sentinel} for details.")
@@ -85,11 +87,13 @@ class HtmlCitationsTests(unittest.TestCase):
         self.assertEqual(normalized, "The event is documented<sup>46, 55, 56</sup>.")
 
     def test_normalize_inline_citation_markdown_preserves_markdown_image_boundaries(self) -> None:
+        """rule: rule-markdown-inline-citation-normalization"""
         normalized = normalize_inline_citation_markdown("sentence.\n\n![Listing 1.](x)\n\ncaption")
 
         self.assertEqual(normalized, "sentence.\n\n![Listing 1.](x)\n\ncaption")
 
     def test_normalize_inline_citation_markdown_still_trims_plain_exclamation_spacing(self) -> None:
+        """rule: rule-markdown-inline-citation-normalization"""
         normalized = normalize_inline_citation_markdown("word !")
 
         self.assertEqual(normalized, "word!")

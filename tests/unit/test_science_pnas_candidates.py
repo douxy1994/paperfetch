@@ -2,8 +2,8 @@ from __future__ import annotations
 
 import unittest
 
-from paper_fetch.providers import _pnas_html, _science_html, _script_json, _wiley_html, browser_workflow
-from paper_fetch.providers._science_pnas_profiles import (
+from paper_fetch.providers import _script_json, browser_workflow
+from paper_fetch.providers.science_pnas_profiles import (
     build_html_candidates,
     build_pdf_candidates,
     extract_pdf_url_from_crossref,
@@ -200,10 +200,17 @@ class SciencePnasCandidateTests(unittest.TestCase):
         </body></html>
         """
 
-        self.assertEqual(_science_html.extract_authors(science_html), ["Ada Lovelace", "Grace Hopper"])
-        self.assertEqual(_pnas_html.extract_authors(pnas_html), ["PNAS DOM"])
-        self.assertEqual(_pnas_html.extract_authors(pnas_meta_only_html), ["Edward Example", "Dana Creator"])
-        self.assertEqual(_wiley_html.extract_authors(wiley_html), ["Meta Author"])
+        science_extract_authors = ScienceClient(None, {}).profile.fallback_author_extractor
+        pnas_extract_authors = PnasClient(None, {}).profile.fallback_author_extractor
+        wiley_extract_authors = WileyClient(None, {}).profile.fallback_author_extractor
+        assert science_extract_authors is not None
+        assert pnas_extract_authors is not None
+        assert wiley_extract_authors is not None
+
+        self.assertEqual(science_extract_authors(science_html), ["Ada Lovelace", "Grace Hopper"])
+        self.assertEqual(pnas_extract_authors(pnas_html), ["PNAS DOM"])
+        self.assertEqual(pnas_extract_authors(pnas_meta_only_html), ["Edward Example", "Dana Creator"])
+        self.assertEqual(wiley_extract_authors(wiley_html), ["Meta Author"])
 
     def test_script_json_helpers_extract_balanced_payloads(self) -> None:
         html = """
@@ -213,7 +220,9 @@ class SciencePnasCandidateTests(unittest.TestCase):
         </script></html>
         """
 
-        self.assertEqual(_science_html.extract_authors(html), ["Ada Lovelace", "Grace Hopper"])
+        science_extract_authors = ScienceClient(None, {}).profile.fallback_author_extractor
+        assert science_extract_authors is not None
+        self.assertEqual(science_extract_authors(html), ["Ada Lovelace", "Grace Hopper"])
         self.assertEqual(
             _script_json.extract_function_call_json(html, "dataLayer.push"),
             {"event": "article", "authors": ["Ada Lovelace"]},

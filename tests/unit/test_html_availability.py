@@ -5,8 +5,10 @@ from types import SimpleNamespace
 
 from paper_fetch.extraction.html._metadata import parse_html_metadata
 from paper_fetch.extraction.html._runtime import body_metrics
-from paper_fetch.providers import _springer_html, browser_workflow
+import paper_fetch.providers.springer_html as springer_html
+from paper_fetch.providers import browser_workflow
 from paper_fetch.quality.html_availability import (
+    HtmlQualityAssessor,
     assess_html_fulltext_availability,
     assess_plain_text_fulltext_availability,
     assess_structured_article_fulltext_availability,
@@ -131,6 +133,38 @@ def _extract_browser_workflow_markdown(
 
 
 class HtmlAvailabilityTests(unittest.TestCase):
+    def test_html_quality_assessor_matches_direct_provider_assessment(self) -> None:
+        html = """
+        <html><body><article id="article">
+          <h2>Introduction</h2>
+          <p>This body paragraph describes methods and results with enough repeated narrative text to be accepted.</p>
+          <p>This second paragraph adds more narrative evidence for full text detection and provider scoring.</p>
+          <figure><figcaption>Figure 1. Example.</figcaption></figure>
+        </article></body></html>
+        """
+        markdown = (
+            "## Introduction\n\n"
+            "This body paragraph describes methods and results with enough repeated narrative text to be accepted.\n\n"
+            "This second paragraph adds more narrative evidence for full text detection and provider scoring."
+        )
+        metadata = {"title": "IEEE Example", "doi": "10.1109/example"}
+
+        direct = assess_html_fulltext_availability(
+            markdown,
+            metadata,
+            provider="ieee",
+            html_text=html,
+            title="IEEE Example",
+        )
+        via_assessor = HtmlQualityAssessor("ieee").assess(
+            markdown,
+            metadata,
+            html_text=html,
+            title="IEEE Example",
+        )
+
+        self.assertEqual(via_assessor.to_dict(), direct.to_dict())
+
     def _assert_rejected_browser_workflow_case(self, case_name: str) -> None:
         case = BROWSER_WORKFLOW_REJECT_CASES[case_name]
         html = block_asset(case["doi"], case["html_asset"]).read_text(encoding="utf-8")
@@ -588,8 +622,8 @@ class HtmlAvailabilityTests(unittest.TestCase):
             with self.subTest(doi=doi):
                 html = block_asset(doi, "raw.html").read_text(encoding="utf-8")
                 source_url = f"https://link.springer.com/article/{doi}"
-                metadata = _springer_html.parse_html_metadata(html, source_url)
-                extraction_payload = _springer_html.extract_html_payload(
+                metadata = springer_html.parse_html_metadata(html, source_url)
+                extraction_payload = springer_html.extract_html_payload(
                     html,
                     source_url,
                     title=str(metadata.get("title") or ""),
@@ -700,7 +734,7 @@ class HtmlAvailabilityTests(unittest.TestCase):
         self.assertTrue("acknowledgements" in nature_html_text)
         self.assertTrue("rights and permissions" in nature_html_text)
         self.assertTrue("open access" in nature_html_text)
-        nature_payload = _springer_html.extract_html_payload(
+        nature_payload = springer_html.extract_html_payload(
             nature_html,
             "https://www.nature.com/articles/nature13376",
         )

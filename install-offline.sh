@@ -12,6 +12,7 @@ RUN_SMOKE=1
 UNINSTALL=0
 OFFLINE_ENV_FILE="$BUNDLE_ROOT/offline.env"
 REUSE_ENV_FILE=0
+INSTALLER_MANIFEST_FILE="$BUNDLE_ROOT/installer/manifest.json"
 
 MANAGED_BEGIN="# BEGIN paper-fetch offline managed"
 MANAGED_END="# END paper-fetch offline managed"
@@ -35,6 +36,51 @@ MCP_ENV_KEYS=(
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
+
+load_installer_manifest() {
+  if [ ! -f "$INSTALLER_MANIFEST_FILE" ]; then
+    [ "$UNINSTALL" = "1" ] && return 0
+    die "Missing installer manifest: $INSTALLER_MANIFEST_FILE"
+  fi
+  if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
+    [ "$UNINSTALL" = "1" ] && return 0
+    die "$PYTHON_BIN was not found on PATH; cannot read installer manifest."
+  fi
+
+  local values
+  mapfile -t values < <("$PYTHON_BIN" -c '
+import json
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+print("installer_manifest_values")
+print(manifest["managed_blocks"]["offline"]["begin"])
+print(manifest["managed_blocks"]["offline"]["end"])
+print(manifest["managed_blocks"]["codex"]["begin"])
+print(manifest["managed_blocks"]["codex"]["end"])
+print(manifest["skill"]["name"])
+print(manifest["mcp"]["name"])
+for key in manifest["mcp"]["env_keys"]:
+    print(key)
+' "$INSTALLER_MANIFEST_FILE")
+
+  [ "${values[0]:-}" = "installer_manifest_values" ] || die "Invalid installer manifest payload from $INSTALLER_MANIFEST_FILE"
+  MANAGED_BEGIN="${values[1]:-}"
+  MANAGED_END="${values[2]:-}"
+  CODEX_MANAGED_BEGIN="${values[3]:-}"
+  CODEX_MANAGED_END="${values[4]:-}"
+  SKILL_NAME="${values[5]:-}"
+  MCP_NAME="${values[6]:-}"
+  MCP_ENV_KEYS=("${values[@]:7}")
+
+  [ -n "$MANAGED_BEGIN" ] || die "installer manifest is missing managed_blocks.offline.begin"
+  [ -n "$MANAGED_END" ] || die "installer manifest is missing managed_blocks.offline.end"
+  [ -n "$CODEX_MANAGED_BEGIN" ] || die "installer manifest is missing managed_blocks.codex.begin"
+  [ -n "$CODEX_MANAGED_END" ] || die "installer manifest is missing managed_blocks.codex.end"
+  [ -n "$SKILL_NAME" ] || die "installer manifest is missing skill.name"
+  [ -n "$MCP_NAME" ] || die "installer manifest is missing mcp.name"
+  [ "${#MCP_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing mcp.env_keys"
+}
 
 usage() {
   cat <<'EOF'
@@ -148,6 +194,10 @@ quote_toml_value() {
   value="${value//\\/\\\\}"
   value="${value//\"/\\\"}"
   printf '"%s"' "$value"
+}
+
+mcp_name_regex() {
+  printf '%s' "$MCP_NAME" | sed 's/[][\\.^$*+?{}|()]/\\&/g'
 }
 
 check_platform() {
@@ -418,16 +468,17 @@ write_codex_config_toml() {
 
   local codex_home="$HOME/.codex"
   local config_path="$codex_home/config.toml"
-  local tmp key
+  local tmp key mcp_table_re
   tmp="$(mktemp)"
+  mcp_table_re="^[[:space:]]*[[]mcp_servers[.]$(mcp_name_regex)([.].*)?[]][[:space:]]*$"
   mkdir -p "$codex_home"
 
   if [ -f "$config_path" ]; then
-    awk -v begin="$CODEX_MANAGED_BEGIN" -v end="$CODEX_MANAGED_END" -v old_begin="$MANAGED_BEGIN" -v old_end="$MANAGED_END" '
+    awk -v begin="$CODEX_MANAGED_BEGIN" -v end="$CODEX_MANAGED_END" -v old_begin="$MANAGED_BEGIN" -v old_end="$MANAGED_END" -v mcp_table_re="$mcp_table_re" '
       $0 == begin || $0 == old_begin { skip_block = 1; next }
       $0 == end || $0 == old_end { skip_block = 0; next }
       skip_block { next }
-      $0 ~ /^[[:space:]]*\[mcp_servers\.paper-fetch(\..*)?\][[:space:]]*$/ { skip_table = 1; next }
+      $0 ~ mcp_table_re { skip_table = 1; next }
       skip_table && $0 ~ /^[[:space:]]*\[/ { skip_table = 0 }
       !skip_table { print }
     ' "$config_path" > "$tmp"
@@ -437,10 +488,10 @@ write_codex_config_toml() {
 
   {
     printf '\n%s\n' "$CODEX_MANAGED_BEGIN"
-    printf '[mcp_servers.paper-fetch]\n'
+    printf '[mcp_servers.%s]\n' "$MCP_NAME"
     printf 'command = %s\n' "$(quote_toml_value "$(mcp_python_bin)")"
     printf 'args = ["-X", "utf8", "-m", "paper_fetch.mcp.server"]\n'
-    printf '\n[mcp_servers.paper-fetch.env]\n'
+    printf '\n[mcp_servers.%s.env]\n' "$MCP_NAME"
     for key in "${MCP_ENV_KEYS[@]}"; do
       printf '%s = %s\n' "$key" "$(quote_toml_value "$(mcp_env_value "$key")")"
     done
@@ -548,16 +599,17 @@ remove_codex_config_toml() {
   [ -n "${HOME:-}" ] || die "HOME is required for --uninstall."
 
   local config_path="$HOME/.codex/config.toml"
-  local tmp mode
+  local tmp mode mcp_table_re
   [ -f "$config_path" ] || return 0
 
   tmp="$(mktemp)"
   mode="$(stat -c '%a' "$config_path" 2>/dev/null || true)"
-  awk -v begin="$CODEX_MANAGED_BEGIN" -v end="$CODEX_MANAGED_END" -v old_begin="$MANAGED_BEGIN" -v old_end="$MANAGED_END" '
+  mcp_table_re="^[[:space:]]*[[]mcp_servers[.]$(mcp_name_regex)([.].*)?[]][[:space:]]*$"
+  awk -v begin="$CODEX_MANAGED_BEGIN" -v end="$CODEX_MANAGED_END" -v old_begin="$MANAGED_BEGIN" -v old_end="$MANAGED_END" -v mcp_table_re="$mcp_table_re" '
     $0 == begin || $0 == old_begin { skip_block = 1; next }
     $0 == end || $0 == old_end { skip_block = 0; next }
     skip_block { next }
-    $0 ~ /^[[:space:]]*\[mcp_servers\.paper-fetch(\..*)?\][[:space:]]*$/ { skip_table = 1; next }
+    $0 ~ mcp_table_re { skip_table = 1; next }
     skip_table && $0 ~ /^[[:space:]]*\[/ { skip_table = 0 }
     !skip_table { print }
   ' "$config_path" > "$tmp"
@@ -707,25 +759,22 @@ check_playwright_browser() {
 run_smoke_checks() {
   [ "$RUN_SMOKE" = "1" ] || return 0
 
+  local key env_args=()
+
   log "Running local smoke checks"
   "$BUNDLE_ROOT/.venv/bin/paper-fetch" --help >/dev/null
   "$BUNDLE_ROOT/formula-tools/bin/texmath" --help >/dev/null
   check_playwright_browser
-  PYTHONUTF8=1 \
-  PYTHONIOENCODING=utf-8 \
-  PAPER_FETCH_ENV_FILE="$OFFLINE_ENV_FILE" \
-  PAPER_FETCH_MCP_PYTHON_BIN="$BUNDLE_ROOT/.venv/bin/python" \
-  PAPER_FETCH_DOWNLOAD_DIR="$BUNDLE_ROOT/downloads" \
-  PAPER_FETCH_FORMULA_TOOLS_DIR="$BUNDLE_ROOT/formula-tools" \
-  PLAYWRIGHT_BROWSERS_PATH="$BUNDLE_ROOT/ms-playwright" \
-  FLARESOLVERR_URL="http://127.0.0.1:8191/v1" \
-  FLARESOLVERR_ENV_FILE="$BUNDLE_ROOT/vendor/flaresolverr/.env.flaresolverr-source-$PRESET" \
-  FLARESOLVERR_SOURCE_DIR="$BUNDLE_ROOT/vendor/flaresolverr" \
-    "$BUNDLE_ROOT/.venv/bin/python" -c 'from paper_fetch.mcp.tools import provider_status_payload; payload = provider_status_payload(); assert "providers" in payload'
+  for key in "${MCP_ENV_KEYS[@]}"; do
+    env_args+=("$key=$(mcp_env_value "$key")")
+  done
+  env "${env_args[@]}" "$BUNDLE_ROOT/.venv/bin/python" -c 'from paper_fetch.mcp.tools import provider_status_payload; payload = provider_status_payload(); assert "providers" in payload'
 }
 
 main() {
   local project_wheel
+
+  load_installer_manifest
 
   if [ "$UNINSTALL" = "1" ]; then
     uninstall_user_integrations

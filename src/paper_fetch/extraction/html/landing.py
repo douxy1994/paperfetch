@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
 from ...http import DEFAULT_TIMEOUT_SECONDS, HttpTransport
-from ...metadata_types import HtmlMetadata
+from ...metadata.types import HtmlMetadata
 from ._metadata import parse_html_metadata
 from ._runtime import decode_html
 

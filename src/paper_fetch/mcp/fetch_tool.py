@@ -23,6 +23,8 @@ from ..service import fetch_paper as _service_fetch_paper
 from ..service import probe_has_fulltext as _service_probe_has_fulltext
 from ..service import resolve_paper as _service_resolve_paper
 from ..utils import extend_unique, normalize_text
+from ..workflow.pipeline import FetchPipeline, FetchPipelineCacheHooks
+from ..workflow.request_builder import build_fetch_pipeline_request
 from ..workflow.rendering import save_markdown_to_disk
 from ..workflow.types import effective_asset_profile
 from .batch import report_progress, run_blocking_call
@@ -180,34 +182,33 @@ def _fetch_paper_envelope(
         _resolve_download_dir(runtime_env, download_dir) if _needs_download_dir_for_fetch(request) else None
     )
     service_download_dir = None if request.no_download else cache_download_dir
-    runtime_context = RuntimeContext(
-        env=runtime_env,
-        transport=(context.transport if context is not None else transport),
-        clients=(context.clients if context is not None else None),
-        download_dir=service_download_dir,
-        cancel_check=(context.cancel_check if context is not None else None),
-        fetch_cache=FetchCache(service_download_dir),
-    )
-    try:
-        cached_envelope = _load_cached_fetch_envelope(
+
+    def load_cached(runtime_context: RuntimeContext) -> FetchEnvelope | None:
+        return _load_cached_fetch_envelope(
             request,
             download_dir=cache_download_dir,
             context=runtime_context,
         )
-        if cached_envelope is not None:
-            return cached_envelope
-        envelope = _call_service_fetch_paper(
-            request.query,
+
+    def write_cached(envelope: FetchEnvelope) -> None:
+        if not request.no_download and service_download_dir is not None and envelope.doi:
+            _write_cached_fetch_envelope(service_download_dir, envelope, request)
+
+    return FetchPipeline(service_fetch_paper).run(
+        build_fetch_pipeline_request(
+            query=request.query,
             modes=_service_modes_for_fetch_request(request, include_article_for_assets=include_article_for_assets),
             strategy=request.strategy.to_service_strategy(),
             render=request.to_render_options(),
-            context=runtime_context,
+            env=runtime_env,
+            transport=transport,
+            context=context,
+            download_dir=cache_download_dir,
+            no_download=request.no_download,
+            fetch_cache=FetchCache(service_download_dir),
+            cache_hooks=FetchPipelineCacheHooks(load=load_cached, write=write_cached),
         )
-        if not request.no_download and service_download_dir is not None and envelope.doi:
-            _write_cached_fetch_envelope(service_download_dir, envelope, request)
-        return envelope
-    finally:
-        runtime_context.close()
+    ).envelope
 
 
 def _fetch_envelope_cache_path(download_dir: Path, doi: str) -> Path:

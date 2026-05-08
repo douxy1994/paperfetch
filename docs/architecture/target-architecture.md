@@ -54,7 +54,7 @@ Date: 2026-04-28
 
 - 解析命令行参数
 - 组装 `FetchStrategy` 与 `RenderOptions`
-- 调用 service 层
+- 通过 `FetchPipeline` 创建/关闭 `RuntimeContext` 并调用 service 层
 - 控制 stdout / stderr / 输出文件 / 退出码
 
 不负责：
@@ -73,6 +73,7 @@ Date: 2026-04-28
 - 校验工具参数
 - 把 service 结果序列化成 JSON-safe payload
 - 通过 `FetchCache` 管理 fetch-envelope sidecar / cache resources
+- 通过 `FetchPipeline` cache hooks 复用 CLI/MCP 共享的 fetch lifecycle
 - 管理 progress、structured log、cancellation
 
 实现边界：
@@ -138,8 +139,12 @@ Date: 2026-04-28
   - 负责 provider 主链与 abstract-only / metadata-only fallback，并通过 `ArtifactStore` 应用 provider artifact 写盘策略与诊断
 - `rendering`
   - 负责 `FetchEnvelope`、`source_trail` 派生、最终结果组装
+- `pipeline`
+  - 负责 CLI/MCP 共享的 `RuntimeContext` 生命周期、service 调用、可选 cache hook 与 Markdown 保存 hook
+- `request_builder`
+  - 负责 CLI/MCP 共享的 `FetchPipelineRequest` 装配，统一 context 派生的 env、transport、clients 与 cancel_check 应用规则
 
-`RuntimeContext` 是 service/workflow 的显式运行时依赖容器，持有 `env`、`transport`、`clients`、`download_dir`、`cancel_check`、`artifact_store`、adapter 可选 `fetch_cache`，以及单次 fetch 生命周期内的 `parse_cache`、`session_cache` 和 `stage_timings`。它还按需 lazy 持有共享 Playwright Chromium browser；PNAS direct HTML preflight、browser-workflow 资产 fetcher 与 PDF/ePDF fallback 可复用同一个 browser，但仍按阶段创建隔离 context/page。公开 service API 不再接受旧 `env` / `transport` / `clients` / `download_dir` keyword；调用方必须先构造 `RuntimeContext` 并通过 `context=` 传入。CLI、MCP 与 devtools 都在自己的 facade 层解析外部参数，再调用 service。
+`RuntimeContext` 是 service/workflow 的显式运行时依赖容器，持有 `env`、`transport`、`clients`、`download_dir`、`cancel_check`、`artifact_store`、adapter 可选 `fetch_cache`，以及单次 fetch 生命周期内的 `parse_cache`、`session_cache` 和 `stage_timings`。Playwright 生命周期由 `paper_fetch.runtime_playwright.PlaywrightContextManager` 管理；`RuntimeContext` 只保留 `playwright_browser()`、`new_playwright_context()` 和 `close_playwright()` 委托方法。PNAS direct HTML preflight、browser-workflow 资产 fetcher 与 PDF/ePDF fallback 可复用同一个 browser，但仍按阶段创建隔离 context/page。公开 service API 不再接受旧 `env` / `transport` / `clients` / `download_dir` keyword；调用方必须先构造 `RuntimeContext` 并通过 `context=` 传入。CLI、MCP 与 devtools 都在自己的 facade 层解析外部参数；CLI/MCP 的 fetch 入口通过 `paper_fetch.workflow.request_builder.build_fetch_pipeline_request()` 统一装配 request，再交给 `paper_fetch.workflow.pipeline.FetchPipeline` 创建运行时、调用 service、关闭运行时，并把 MCP sidecar cache 保留为 adapter hook。
 
 ### 6. Extraction 层
 
@@ -162,18 +167,18 @@ Date: 2026-04-28
 | 阶段 token | Canonical module / owner | 规则范围 |
 | --- | --- | --- |
 | `metadata` | `paper_fetch.extraction.html._metadata`、provider metadata adapters、`paper_fetch.metadata.crossref` | 标题、作者、摘要、provider-owned 信号和 redirect stub lookup metadata。 |
-| `provider-html-or-xml-extraction` | `paper_fetch.providers._article_markdown_elsevier_document`、`paper_fetch.providers.html_springer_nature`、`paper_fetch.providers.science_pnas`、`paper_fetch.providers._wiley_html`、`paper_fetch.providers.ieee` | publisher HTML/XML 到中间结构的提取。 |
-| `html-cleanup` | `paper_fetch.providers.html_noise`、`paper_fetch.extraction.html.inline`、provider cleanup profiles | 站点 chrome、UI 噪声、caption fallback 和正文清洗。 |
+| `provider-html-or-xml-extraction` | `paper_fetch.extraction.html.renderer`、`paper_fetch.providers._article_markdown_elsevier_document`、`paper_fetch.providers.springer_html`、`paper_fetch.providers.html_springer_nature`、`paper_fetch.providers.science_html`、`paper_fetch.providers.pnas_html`、`paper_fetch.providers.science_pnas`、`paper_fetch.providers.science_pnas_profiles`、`paper_fetch.providers.wiley_html`、`paper_fetch.providers.ieee` | publisher HTML/XML 到中间结构的提取；HTML provider 通过 renderer facade 复用 Markdown 渲染 / sidecar 编排，provider 层只保留 container/profile/postprocess 差异。 |
+| `html-cleanup` | `paper_fetch.extraction.html._runtime`、`paper_fetch.extraction.html.inline`、provider cleanup profiles | 站点 chrome、UI 噪声、caption fallback 和正文清洗。 |
 | `availability-quality` | `paper_fetch.quality.html_availability` | fulltext / abstract-only 判定和正文充分性度量。 |
 | `section-classification` | `paper_fetch.extraction.section_hints`、`paper_fetch.extraction.html.semantics` | section kind、frontmatter、back matter、availability 与 section hints。 |
 | `article-assembly` | `paper_fetch.models`、`paper_fetch.models.builders`、`paper_fetch.models.schema` | 中间结构合并成 `ArticleModel`。 |
 | `asset-discovery` | `paper_fetch.extraction.html.assets`、`paper_fetch.providers._html_asset_engine`、`paper_fetch.extraction.html.figure_links`、provider asset policies | figure、table、formula、supplementary 等资产候选识别。 |
-| `asset-download` | `paper_fetch.extraction.html.assets.download`、`paper_fetch.providers.browser_workflow_fetchers`、provider asset clients | 资产候选下载和 provider-owned 下载链路。 |
+| `asset-download` | `paper_fetch.extraction.html.assets.download`、`paper_fetch.extraction.html.assets.state`、`paper_fetch.extraction.html.assets.requester`、`paper_fetch.providers.browser_workflow.fetchers`、provider asset clients | 资产候选下载、candidate/attempt/resolution 状态机、cookie-aware opener/request 和 provider-owned 下载链路。 |
 | `asset-validation` | `paper_fetch.extraction.image_payloads`、`paper_fetch.extraction.html.assets`、`paper_fetch.models.Quality` | 真实图片校验、尺寸阈值、preview acceptance 和失败诊断。 |
 | `asset-link-rewrite` | `paper_fetch.extraction.html.figure_links`、CLI / model asset link rewrite helpers | 远程 / 绝对资产链接改写为本地 Markdown 可用链接。 |
 | `table-rendering` | `paper_fetch.extraction.html.tables`、`paper_fetch.providers._article_markdown_elsevier_document` | HTML/XML 表格展平、降级和语义损失标记。 |
 | `formula-rendering` | `paper_fetch.extraction.html.formula_rules`、`paper_fetch.providers._article_markdown_math`、`paper_fetch.formula.convert` | MathML / LaTeX / 公式图片 fallback 渲染。 |
-| `markdown-normalization` | `paper_fetch.models.markdown`、`paper_fetch.providers._science_pnas_postprocess`、`paper_fetch.providers.html_noise` | Markdown 块边界、空白、行内语义和去重。 |
+| `markdown-normalization` | `paper_fetch.models.markdown`、`paper_fetch.providers._science_pnas_postprocess`、`paper_fetch.extraction.html._runtime`、`paper_fetch.extraction.html.renderer` | Markdown 块边界、空白、行内语义和去重。 |
 | `references-rendering` | `paper_fetch.providers._html_references`、`paper_fetch.providers._article_markdown_elsevier_document`、`paper_fetch.markdown.citations` | 参考文献抽取与渲染。 |
 | `final-rendering` | `paper_fetch.models.render`、`paper_fetch.models.ArticleModel.to_ai_markdown`、`paper_fetch.mcp.schemas` | 最终 Markdown / MCP payload 输出。 |
 | `artifact-storage` | `paper_fetch.artifacts.ArtifactStore`、`paper_fetch.mcp.fetch_cache` | 原始 payload、publisher HTML、下载资产和 fetch-envelope sidecar 落盘。 |
@@ -182,6 +187,7 @@ Date: 2026-04-28
 
 - `resolve/query.py` 不再 import `providers.*`
 - HTML parsing / markdown extraction 不应再通过 provider 模块向上泄漏
+- HTML-to-Markdown 的通用编排入口是 `paper_fetch.extraction.html.renderer`；provider-specific 模块只能传入已经选定的 HTML fragment、noise profile、renderer/postprocess hook 和 sidecar 策略
 - provider-neutral HTML access signals、section semantics、language filtering 已固定在 `paper_fetch.extraction.html.signals`、`paper_fetch.extraction.html.semantics`、`paper_fetch.extraction.html.language`
 - landing fetch helper 是 provider-neutral；Springer 仍在 provider 层定义自己的 redirect policy、headers 和 failure mapping，只复用 fetch/decode/metadata extraction
 - 图片 payload helper 使用 `filetype` 做 MIME 识别，使用 `imagesize` 做 JPEG/PNG/GIF/WebP 尺寸读取；识别失败时继续表现为 unknown
@@ -219,7 +225,7 @@ Provider 身份与能力配置统一来自 `paper_fetch.provider_catalog.PROVIDE
 
 Crossref 的 provider adapter 位于 `paper_fetch.providers.crossref.CrossrefClient`，继续保留 public import path；resolve 与 provider adapter 共同依赖 `paper_fetch.metadata.crossref.CrossrefLookupClient`，避免 resolution 层反向复用 provider 层。
 
-架构测试会阻止已删除的 legacy surface 回流：service 不得重新接收旧 runtime keyword，provider 不得重新定义 `fetch_fulltext()` dict 入口，生产代码不得读取 `raw_payload.metadata[...]` magic keys，provider-neutral 层不得 import `paper_fetch.providers._*`，测试不得重新 import 旧 `_html_*`、`_language_filter`、`_science_pnas`、`_science_pnas_html`、`paper_fetch.extraction.html._assets` 或 `paper_fetch.providers.html_assets` compatibility modules。provider catalog 仍是 provider 身份、状态顺序和 registry client factory 的单一事实来源。
+架构测试会阻止已删除的 legacy surface 回流：service 不得重新接收旧 runtime keyword，provider 不得重新定义 `fetch_fulltext()` dict 入口，生产代码不得读取 `raw_payload.metadata[...]` magic keys，provider-neutral 层不得 import `paper_fetch.providers._*`，测试不得重新 import 旧 `_html_*`、`_language_filter`、`_science_pnas`、`_science_pnas_html`、`_science_pnas_profiles`、`paper_fetch.extraction.html._assets` 或 `paper_fetch.providers.html_assets` compatibility modules。provider catalog 仍是 provider 身份、状态顺序和 registry client factory 的单一事实来源。
 
 ### 8. Runtime / Artifact / Cache 边界
 
@@ -230,8 +236,8 @@ Crossref 的 provider adapter 位于 `paper_fetch.providers.crossref.CrossrefCli
 - `RuntimeContext` 显式承载 env、transport、clients、download_dir、cancel_check 等运行时依赖。
 - `RuntimeContext.parse_cache` 是进程内、单 context 生命周期的解析 memo：key 包含 provider、role、source、body sha256、parser 和配置指纹；dict/list 读取时返回拷贝，XML root 仅作为只读对象复用。
 - MCP `fetch_paper` 和 batch 工具必须复用同一个 `RuntimeContext` 派生出的 env、transport、provider clients、download_dir 与 cancel_check；调用 service 时只传入完整 context，不再向 service 传旧 `transport` / `env` / `clients` / `download_dir` 回退参数。
-- `ArtifactStore` / `DownloadPolicy` 管理 provider PDF/binary local copy、Springer HTML `original.html` copy，以及 provider asset warning/source-trail 诊断。
-- `FetchCache` 管理 MCP fetch-envelope sidecar reuse/write 和 cache index refresh；sidecar version、`EXTRACTION_REVISION` 校验、resource URI 与 scoped cache resource 语义保持稳定。
+- `ArtifactStore` / `DownloadPolicy` 管理 provider PDF/binary local copy、Springer HTML `original.html` copy、Markdown 保存、provider asset warning/source-trail 诊断，以及 fetch-envelope/cache-index JSON 的原子写入。
+- `FetchCache` 管理 MCP fetch-envelope sidecar reuse/write 语义和 cache index refresh；sidecar version、`EXTRACTION_REVISION` 校验、resource URI 与 scoped cache resource 语义保持稳定，实际 JSON materialization 委托给 `ArtifactStore`。
 
 ### 9. Transport 层
 
@@ -347,7 +353,7 @@ workflow 会尽可能拿到两类元数据：
   - 走 provider 自管 `landing metadata / article number -> dynamic HTML endpoint -> direct HTTP PDF fallback -> seeded-browser PDF fallback`
   - dynamic HTML 成功公开为 `ieee_html`；无可用 HTML 但 PDF payload 成功时公开为 `ieee_pdf`
 
-`paper_fetch.providers.browser_workflow` 是 Wiley / Science / PNAS 的 canonical browser workflow facade：它保留 `ProviderBrowserProfile`、`BrowserWorkflowClient`、bootstrap、seeded-browser PDF fallback、article conversion 和 related asset download orchestration 的稳定入口。底层职责已拆到独立包：`paper_fetch.providers.browser_workflow.profile/bootstrap/pdf_fallback/article/assets/client` 分别承载 profile、HTML bootstrap、PDF/ePDF fallback、article assembly、asset retry helper 和 client 基类；`paper_fetch.providers.browser_workflow_fetchers.context/image/file/memo/diagnostics/scripts` 承载 `_BasePlaywrightDocumentFetcher`、shared Playwright image/file fetcher、memoized fetcher、Playwright context 创建、图片 payload/失败诊断 helper 和 Playwright JS；`_browser_workflow_html_extraction.py` 继续承载 direct Playwright HTML preflight、FlareSolverr HTML payload 构造、Markdown/assets parse-cache helper 和 HTML payload helper；`paper_fetch.providers.science_pnas` 承载 Science/PNAS/Wiley browser HTML markdown、asset scopes、normalization 和 postprocess entrypoint。facade 继续 re-export 测试和 provider 已依赖的 patch 点（例如 `load_runtime_config`、`fetch_html_with_flaresolverr`、`fetch_html_with_direct_playwright`、`fetch_pdf_with_playwright`、`extract_science_pnas_markdown` 与 shared Playwright fetcher 构造器），新代码不应把这些内部模块当作稳定公开 API。旧的 `_science_pnas` 兼容模块已移除，`_browser_workflow_fetchers.py` 仅保留一轮兼容 re-export wrapper。
+`paper_fetch.providers.browser_workflow` 是 Wiley / Science / PNAS 的 canonical browser workflow facade：它保留 `ProviderBrowserProfile`、`BrowserWorkflowClient`、bootstrap、seeded-browser PDF fallback、article conversion 和 related asset download orchestration 的稳定入口。底层职责已拆到独立包：`paper_fetch.providers.browser_workflow.profile/bootstrap/pdf_fallback/article/assets/client/shared/html_extraction/fetchers` 分别承载 profile、HTML bootstrap、PDF/ePDF fallback、article assembly、asset retry helper、client 基类、URL/signal helper、HTML payload/cache helper 和 Playwright fetcher helper。旧 `paper_fetch.providers.browser_workflow_fetchers.*`、`_browser_workflow_html_extraction.py`、`_browser_workflow_shared.py` 和 `_browser_workflow_fetchers.py` 兼容入口已删除；新代码只能从 `paper_fetch.providers.browser_workflow.*` 引入。`paper_fetch.providers.science_html`、`paper_fetch.providers.pnas_html` 与 `paper_fetch.providers.wiley_html` 暴露 provider-owned HTML 作者提取和 blocking fallback 信号；`paper_fetch.providers.science_pnas_profiles` 暴露 Science/PNAS/Wiley candidate routing helper。`paper_fetch.providers.science_pnas` 承载 Science/PNAS/Wiley browser HTML markdown、asset scopes、normalization 和 postprocess entrypoint。facade 继续 re-export 测试和 provider 已依赖的 patch 点（例如 `load_runtime_config`、`fetch_html_with_flaresolverr`、`fetch_html_with_direct_playwright`、`fetch_pdf_with_playwright`、`extract_science_pnas_markdown` 与 shared Playwright fetcher 构造器）。
 
 `wiley` / `science` / `pnas` 的 HTML 正文图片资产下载也属于这套 provider-owned browser workflow：每个 asset download attempt 内，单个 worker 线程会复用自己的 seeded Playwright browser context，先尝试 full-size/original，全部失败后再用同一线程私有 context 尝试 preview；并发 worker 之间不复用 `RuntimeContext` 持有的共享 browser。PNAS direct Playwright HTML preflight 和 PDF/ePDF fallback 同样通过 `RuntimeContext` 复用 browser，但这只适用于非 threaded 的主流程 Playwright 步骤。通用 HTTP-first 资产下载仍保留给非目标 provider，并由 `paper_fetch.extraction.html.assets.download` 的私有 candidate/attempt/resolution 模型和共享 executor 统一处理 figure、table/formula image 与 supplementary 的 resolve/fallback 流程；网络解析阶段进入 bounded worker pool，文件写入、文件名去重、`source_data/` 分流和失败诊断收集仍按原 asset 顺序串行执行。
 
@@ -397,8 +403,8 @@ workflow 会尽可能拿到两类元数据：
 随后：
 
 - `ArtifactStore` 已在 workflow 阶段处理 provider payload、Springer HTML copy 和 provider asset 诊断
-- CLI 仍决定是否写 Markdown 文件、是否改写相对资源链接
-- MCP 通过 `FetchCache` 决定是否复用/写入 fetch-envelope sidecar、是否暴露 resources、是否附带 inline images
+- CLI 仍决定是否请求写 Markdown 文件、是否改写相对资源链接；实际保存动作通过 `FetchPipeline` 的 `MarkdownSaveSpec` 执行
+- MCP 通过 `FetchCache` hooks 决定是否复用/写入 fetch-envelope sidecar、是否暴露 resources、是否附带 inline images
 
 ## 数据契约与角色边界
 
@@ -565,7 +571,7 @@ MCP 层会把缓存暴露成 resources：
 - 默认共享缓存条目
 - 显式 `download_dir` 时的 scoped cache resources
 
-`FetchCache` 负责匹配 `prefer_cache=true` 的请求：先 resolve DOI，再按 request modes、strategy、`include_refs`、`max_tokens`、sidecar version 和 `EXTRACTION_REVISION` 复用本地 fetch-envelope。资源 URI、sidecar JSON shape 和 scoped download_dir entries 保持兼容，让 host 不需要重复抓取相同论文。
+`FetchCache` 负责匹配 `prefer_cache=true` 的请求：先 resolve DOI，再按 request modes、strategy、`include_refs`、`max_tokens`、sidecar version 和 `EXTRACTION_REVISION` 复用本地 fetch-envelope；写入时只负责 sidecar payload 语义和 index refresh，文件 materialization 走 `ArtifactStore` 的原子 JSON writer。资源 URI、sidecar JSON shape 和 scoped download_dir entries 保持兼容，让 host 不需要重复抓取相同论文。
 
 `prefer_cache=false` 是 MCP 默认值，因此普通 `fetch_paper` 不会读取本地 fetch-envelope sidecar。`no_download=true` 时，MCP facade 调用 service 前会把运行时下载目录降为 `RuntimeContext(download_dir=None)`，从而关闭 provider payload、PDF、HTML、资产和 fetch-envelope sidecar 写入；如果同时 `save_markdown=true`，只在 facade 的 Markdown 保存步骤落盘，并在结构化 payload 中返回 `saved_markdown_path`。
 

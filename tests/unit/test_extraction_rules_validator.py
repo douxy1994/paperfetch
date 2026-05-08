@@ -130,6 +130,53 @@ class ExtractionRulesValidatorUnitTests(unittest.TestCase):
             ],
         )
 
+    def test_rules_declaring_no_stable_doi_sample_must_be_in_summary_table(self) -> None:
+        markdown = """
+### 无稳定 DOI 样本规则汇总表
+
+| 规则 | 当前证据状态 | 后续补样本触发 | 下一步候选 fixture |
+| --- | --- | --- | --- |
+
+## Generic
+
+<a id="rule-needs-sample"></a>
+### Needs sample
+
+- Owner：`paper_fetch.models.ArticleModel`。
+- 代表性 HTML / XML：
+  - 当前无稳定 DOI 样本，直接见对应测试。
+"""
+
+        errors = validator.validate_unstable_sample_summary(markdown)
+
+        self.assertEqual(
+            errors,
+            [
+                "rule #rule-needs-sample at line 9 declares no stable DOI sample but is missing "
+                "from the low-stability summary table"
+            ],
+        )
+
+    def test_rules_declaring_no_stable_doi_sample_pass_when_summary_lists_anchor(self) -> None:
+        markdown = """
+### 无稳定 DOI 样本规则汇总表
+
+| 规则 | 当前证据状态 | 后续补样本触发 | 下一步候选 fixture |
+| --- | --- | --- | --- |
+| [Needs sample](#rule-needs-sample) | 无 DOI 级 replay。 | 新 fixture。 | 候选。 |
+
+## Generic
+
+<a id="rule-needs-sample"></a>
+### Needs sample
+
+- Owner：`paper_fetch.models.ArticleModel`。
+- 代表性 HTML / XML：
+  - 当前无稳定 DOI 样本，直接见对应测试。
+"""
+
+        self.assertEqual(validator.validate_unstable_sample_summary(markdown), [])
+
     def test_owner_validation_rejects_unrecognized_backtick_tokens(self) -> None:
         markdown = """
 ## Generic
@@ -181,6 +228,25 @@ class ExtractionRulesValidatorUnitTests(unittest.TestCase):
             errors = validator.validate_provider_shared_applicability(markdown)
 
         self.assertEqual(errors, [])
+
+    def test_provider_rule_registry_contains_required_provider_rules(self) -> None:
+        self.assertEqual(validator.validate_provider_rule_registry(), [])
+
+    def test_provider_rule_registry_reports_missing_required_rule_field(self) -> None:
+        with mock.patch.dict(
+            validator.PROVIDER_RULE_REQUIREMENTS,
+            {"science": {"markdown_promo_tokens"}},
+            clear=True,
+        ):
+            errors = validator.validate_provider_rule_registry()
+
+        self.assertEqual(
+            errors,
+            [
+                "provider HTML rules registry provider `science` is missing required "
+                "`markdown_promo_tokens`"
+            ],
+        )
 
 
 if __name__ == "__main__":

@@ -11,8 +11,8 @@ from ...extraction.html.assets import (
     looks_like_full_size_asset_url,
 )
 from ...utils import normalize_text
-from .. import _browser_workflow_html_extraction as _html_extraction
 from .. import _wiley_html
+from . import html_extraction as _html_extraction
 
 
 def _cached_browser_workflow_assets(*args, **kwargs):

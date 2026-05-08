@@ -46,8 +46,9 @@
 
 1. [`architecture/target-architecture.md`](architecture/target-architecture.md)
 2. [`providers.md`](providers.md)
-3. [`extraction-rules.md`](extraction-rules.md)
-4. [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
+3. [`provider-development.md`](provider-development.md)
+4. [`extraction-rules.md`](extraction-rules.md)
+5. [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
 
 ## 文档分工
 
@@ -55,6 +56,8 @@
   - 首页。讲项目动机、核心能力、边界和部署入口。
 - [`providers.md`](providers.md)
   - 讲 provider 能力矩阵、路由规则、默认输出、环境变量、缓存和限速。
+- [`provider-development.md`](provider-development.md)
+  - 讲新增出版社 provider 的标准开发流程、typed contract、waterfall、资产语义、测试和文档验收标准。
 - [`extraction-rules.md`](extraction-rules.md)
   - 讲当前提取 / 组装 / 渲染规则、真实样本证据和对应测试，不负责运行时路由和部署说明。
   - 修改后运行 `python3 scripts/validate_extraction_rules.py` 校验 anchor、Owner、fixture、测试名、manifest 引用和未挂规则 fixture 清单。
@@ -149,7 +152,7 @@
 
 - 抓取时的落盘目录。
 - 可覆盖默认下载目录，也会影响 MCP scoped cache resources。
-- Provider PDF/binary、Springer `original.html` 和 asset 诊断由 `RuntimeContext` / `ArtifactStore` 应用；MCP 内部通过 `RuntimeContext` 调用 service，fetch-envelope sidecar 和 cache index 由 `FetchCache` 管理。
+- Provider PDF/binary、Springer `original.html`、Markdown 保存和 asset 诊断由 `RuntimeContext` / `ArtifactStore` 应用；CLI/MCP fetch 入口通过 `FetchPipeline` 创建运行时并调用 service，MCP 的 fetch-envelope sidecar 和 cache index 仍由 `FetchCache` 管理语义，但原子 JSON 写入复用 `ArtifactStore`。
 - Python service API 不再接收 `download_dir` / `env` / `transport` / `clients` keyword；外层调用方需要先构造 `RuntimeContext(...)`，再传 `context=`。
 - 未显式设置时，CLI / MCP 优先使用用户数据目录下的 `paper-fetch/downloads`；CLI 创建失败才退回 `live-downloads`。
 - `download_dir` 派生的 HTTP textual disk cache 默认按 `4096` 条、`512 MiB`、`30` 天清理；详见 provider 文档中的 HTTP 缓存环境变量。

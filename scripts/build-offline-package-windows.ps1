@@ -10,6 +10,12 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $RepoDir = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
+$InstallerManifestPath = Join-Path $RepoDir "installer/manifest.json"
+$InstallerManifest = Get-Content -LiteralPath $InstallerManifestPath -Raw | ConvertFrom-Json
+$SkillName = [string]$InstallerManifest.skill.name
+$OfflineManagedBegin = [string]$InstallerManifest.managed_blocks.offline.begin
+$OfflineManagedEnd = [string]$InstallerManifest.managed_blocks.offline.end
+$WindowsSetupBaseName = [string]$InstallerManifest.packages.windows_setup_base_name
 $BuildDir = if ($env:PAPER_FETCH_OFFLINE_BUILD_DIR) {
     [System.IO.Path]::GetFullPath($env:PAPER_FETCH_OFFLINE_BUILD_DIR)
 } else {
@@ -375,14 +381,14 @@ exit /b %ERRORLEVEL%
 function Add-SkillAgentManifest {
     param([string]$Staging)
 
-    $agentDir = Join-Path (Join-Path (Join-Path $Staging "skills") "paper-fetch-skill") "agents"
+    $agentDir = Join-Path (Join-Path (Join-Path $Staging "skills") $SkillName) "agents"
     New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
-    $content = @'
+    $content = @"
 interface:
-  display_name: "Paper Fetch Skill"
-  short_description: "Fetch AI-friendly paper text by DOI, URL, or title"
-  default_prompt: "Use $paper-fetch-skill whenever you need the text, readability, or full-text availability of a specific paper or a citation list of identifiable papers."
-'@
+  display_name: "$($InstallerManifest.skill.display_name)"
+  short_description: "$($InstallerManifest.skill.short_description)"
+  default_prompt: "$($InstallerManifest.skill.default_prompt)"
+"@
     [System.IO.File]::WriteAllText((Join-Path $agentDir "openai.yaml"), $content, [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -392,7 +398,7 @@ function Write-DefaultOfflineEnv {
     $content = @"
 ELSEVIER_API_KEY=""
 
-# BEGIN paper-fetch offline managed
+$OfflineManagedBegin
 PAPER_FETCH_DOWNLOAD_DIR='$($Staging.Replace("\", "/"))/downloads'
 PAPER_FETCH_FORMULA_TOOLS_DIR='$($Staging.Replace("\", "/"))/formula-tools'
 PLAYWRIGHT_BROWSERS_PATH='$($Staging.Replace("\", "/"))/ms-playwright'
@@ -401,7 +407,7 @@ FLARESOLVERR_ENV_FILE='$($Staging.Replace("\", "/"))/vendor/flaresolverr/.env.fl
 FLARESOLVERR_SOURCE_DIR='$($Staging.Replace("\", "/"))/vendor/flaresolverr'
 PYTHONUTF8='1'
 PYTHONIOENCODING='utf-8'
-# END paper-fetch offline managed
+$OfflineManagedEnd
 "@
     [System.IO.File]::WriteAllText((Join-Path $Staging "offline.env"), $content, [System.Text.UTF8Encoding]::new($false))
 }
@@ -410,7 +416,8 @@ function Write-ManifestAndChecksums {
     param(
         [string]$Staging,
         [string]$Version,
-        [string]$PythonTag
+        [string]$PythonTag,
+        [string]$SetupBaseName
     )
 
     Write-Log "Writing standalone manifest and checksums"
@@ -423,8 +430,8 @@ function Write-ManifestAndChecksums {
 
     $payload = [ordered]@{
         schema_version = 2
-        name = "paper-fetch-skill-windows-setup"
-        project = "paper-fetch-skill"
+        name = [string]$InstallerManifest.packages.windows_manifest_name
+        project = [string]$InstallerManifest.project
         version = $Version
         built_at_utc = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
         git_revision = $gitRevision
@@ -434,11 +441,12 @@ function Write-ManifestAndChecksums {
             python_tag = $PythonTag
             python_runtime = "cpython-$EmbeddedPythonVersion-embed-amd64"
         }
-        entrypoint = "paper-fetch-skill-windows-x86_64-setup.exe"
+        entrypoint = "$SetupBaseName.exe"
         components = [ordered]@{
             runtime = "runtime"
             bin = "bin"
-            skills = "skills/paper-fetch-skill"
+            skills = "skills/$SkillName"
+            installer_manifest = "installer/manifest.json"
             project_wheels = @()
             wheelhouse_count = 0
             playwright_browsers = "ms-playwright"
@@ -518,7 +526,7 @@ function Build-InnoInstaller {
 
 $pythonTag = Assert-Target
 if ([string]::IsNullOrWhiteSpace($PackageName)) {
-    $PackageName = "paper-fetch-skill-windows-x86_64-setup"
+    $PackageName = $WindowsSetupBaseName
 }
 $staging = Join-Path $BuildDir "paper-fetch-standalone"
 $version = Get-ProjectVersion
@@ -538,5 +546,5 @@ Add-FlareSolverrBundle $staging
 Write-CmdWrappers $staging
 Add-SkillAgentManifest $staging
 Write-DefaultOfflineEnv $staging
-Write-ManifestAndChecksums -Staging $staging -Version $version -PythonTag $pythonTag
+Write-ManifestAndChecksums -Staging $staging -Version $version -PythonTag $pythonTag -SetupBaseName $PackageName
 Build-InnoInstaller -Staging $staging -Version $version -SetupBaseName $PackageName

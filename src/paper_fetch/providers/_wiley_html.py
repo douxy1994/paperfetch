@@ -8,9 +8,8 @@ from functools import partial
 from typing import Any, Mapping
 
 from ..extraction.html.parsing import choose_parser
+from ..extraction.html.provider_rules import WILEY_SITE_RULE_OVERRIDES, provider_html_rules
 from ..quality.html_profiles import (
-    WILEY_NOISE_PROFILE,
-    WILEY_SITE_RULE_OVERRIDES,
     wiley_blocking_fallback_signals,
     wiley_positive_signals,
 )
@@ -35,7 +34,7 @@ PDF_PATH_TEMPLATES: tuple[str, ...] = (
     "/wol1/doi/{doi}/fullpdf",
 )
 CROSSREF_PDF_POSITION = 1
-NOISE_PROFILE = WILEY_NOISE_PROFILE
+NOISE_PROFILE = provider_html_rules("wiley").noise_profile
 SITE_RULE_OVERRIDES: dict[str, Any] = WILEY_SITE_RULE_OVERRIDES
 WILEY_IGNORED_AUTHOR_TEXT = {
     "orcid",

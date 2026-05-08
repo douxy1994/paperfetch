@@ -7,17 +7,17 @@ import sys
 from typing import TYPE_CHECKING
 
 from ...extraction.html.signals import SciencePnasHtmlFailure
-from ...metadata_types import ProviderMetadata
+from ...metadata.types import ProviderMetadata
 from ...publisher_identity import normalize_doi
 from ...runtime import RuntimeContext
 from ...utils import normalize_text
-from .. import _browser_workflow_html_extraction as _html_extraction
-from .._browser_workflow_html_extraction import (
+from . import html_extraction as _html_extraction
+from .html_extraction import (
     _browser_workflow_html_payload,
     _cached_browser_workflow_markdown,
     fetch_html_with_direct_playwright as _fetch_html_with_direct_playwright,
 )
-from .._browser_workflow_shared import (
+from .shared import (
     preferred_html_candidate_from_landing_page as _preferred_html_candidate_from_landing_page,
 )
 from .._flaresolverr import (

@@ -1,7 +1,30 @@
-"""Metadata lookup clients shared by resolve and provider adapters."""
+"""Metadata lookup clients and payload schemas shared by provider adapters."""
 
 from __future__ import annotations
 
-from .crossref import CrossrefLookupClient
+from .types import (
+    CrossrefMetadata,
+    FulltextLink,
+    HtmlLookupHints,
+    HtmlMetadata,
+    ProviderMetadata,
+    ReferenceMetadata,
+)
 
-__all__ = ["CrossrefLookupClient"]
+
+def __getattr__(name: str):
+    if name == "CrossrefLookupClient":
+        from .crossref import CrossrefLookupClient
+
+        return CrossrefLookupClient
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+__all__ = [
+    "CrossrefLookupClient",
+    "CrossrefMetadata",
+    "FulltextLink",
+    "HtmlLookupHints",
+    "HtmlMetadata",
+    "ProviderMetadata",
+    "ReferenceMetadata",
+]

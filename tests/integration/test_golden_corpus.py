@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 import os
-import unittest
+
+import pytest
 
 from tests.golden_corpus import (
+    GoldenCorpusFixture,
     build_article_from_fixture,
     expected_summary_from_article,
     iter_golden_corpus_fixtures,
@@ -14,124 +17,134 @@ from tests.golden_corpus import (
 
 
 FULL_GOLDEN_ENV = "PAPER_FETCH_RUN_FULL_GOLDEN"
-EXPECTED_PROVIDER_ROUTE_KINDS = {
-    "elsevier": "official",
-    "springer": "html",
-    "science": "html",
-    "wiley": "html",
-    "pnas": "html",
-    "ieee": "html",
+
+
+@dataclass(frozen=True)
+class ProviderGoldenContract:
+    route_kind: str
+    content_prefix: str
+    source: str
+    primary_marker: str
+
+
+PROVIDER_GOLDEN_CONTRACTS = {
+    "elsevier": ProviderGoldenContract(
+        route_kind="official",
+        content_prefix="text/xml",
+        source="elsevier_xml",
+        primary_marker="fulltext:elsevier_xml_ok",
+    ),
+    "springer": ProviderGoldenContract(
+        route_kind="html",
+        content_prefix="text/html",
+        source="springer_html",
+        primary_marker="fulltext:springer_html_ok",
+    ),
+    "science": ProviderGoldenContract(
+        route_kind="html",
+        content_prefix="text/html",
+        source="science",
+        primary_marker="fulltext:science_html_ok",
+    ),
+    "wiley": ProviderGoldenContract(
+        route_kind="html",
+        content_prefix="text/html",
+        source="wiley_browser",
+        primary_marker="fulltext:wiley_html_ok",
+    ),
+    "pnas": ProviderGoldenContract(
+        route_kind="html",
+        content_prefix="text/html",
+        source="pnas",
+        primary_marker="fulltext:pnas_html_ok",
+    ),
+    "ieee": ProviderGoldenContract(
+        route_kind="html",
+        content_prefix="text/html",
+        source="ieee_html",
+        primary_marker="fulltext:ieee_html_ok",
+    ),
 }
-EXPECTED_PROVIDER_CONTENT_PREFIXES = {
-    "elsevier": "text/xml",
-    "springer": "text/html",
-    "science": "text/html",
-    "wiley": "text/html",
-    "pnas": "text/html",
-    "ieee": "text/html",
-}
-EXPECTED_PROVIDER_SOURCES = {
-    "elsevier": "elsevier_xml",
-    "springer": "springer_html",
-    "science": "science",
-    "wiley": "wiley_browser",
-    "pnas": "pnas",
-    "ieee": "ieee_html",
-}
-EXPECTED_PROVIDER_PRIMARY_MARKERS = {
-    "elsevier": "fulltext:elsevier_xml_ok",
-    "springer": "fulltext:springer_html_ok",
-    "science": "fulltext:science_html_ok",
-    "wiley": "fulltext:wiley_html_ok",
-    "pnas": "fulltext:pnas_html_ok",
-    "ieee": "fulltext:ieee_html_ok",
-}
 
 
-class GoldenCorpusTests(unittest.TestCase):
-    def test_golden_corpus_is_balanced_across_publishers(self) -> None:
-        fixtures = iter_golden_corpus_fixtures()
+GOLDEN_CORPUS_FIXTURES = iter_golden_corpus_fixtures()
+REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES = iter_golden_corpus_representative_fixtures()
 
-        self.assertEqual(len(fixtures), 59)
-        self.assertEqual(
-            Counter(fixture.provider for fixture in fixtures),
-            Counter({"elsevier": 10, "ieee": 7, "pnas": 10, "science": 11, "springer": 11, "wiley": 10}),
-        )
 
-    def test_golden_corpus_lightweight_contracts_hold_across_full_corpus(self) -> None:
-        for fixture in iter_golden_corpus_fixtures():
-            with self.subTest(provider=fixture.provider, doi=fixture.doi):
-                expected = fixture.load_expected()
-                actual = lightweight_positive_summary_from_fixture(fixture)
+def _fixture_id(fixture: GoldenCorpusFixture) -> str:
+    return f"{fixture.provider}:{fixture.doi}"
 
-                self.assertEqual(fixture.route_kind, EXPECTED_PROVIDER_ROUTE_KINDS[fixture.provider])
-                self.assertTrue(fixture.content_type.startswith(EXPECTED_PROVIDER_CONTENT_PREFIXES[fixture.provider]))
-                self.assertTrue(fixture.source_url)
-                self.assertEqual(actual["doi"], fixture.doi)
 
-                for field_name in actual["validated_fields"]:
-                    if expected["has"][field_name]:
-                        self.assertTrue(actual["has"][field_name], msg=f"Expected {field_name} for {fixture.doi}")
-
-                if fixture.provider in {"science", "pnas", "wiley"}:
-                    self.assertEqual(
-                        list(actual["blocking_fallback_signals"]),
-                        [],
-                        msg=f"Positive fixture leaked paywall signals for {fixture.doi}",
-                    )
-                    self.assertTrue(
-                        actual["source_candidate_hit"],
-                        msg=f"Expected generated HTML candidates to include source URL for {fixture.doi}",
-                    )
-
-    def test_golden_corpus_representative_fixtures_cover_primary_fulltext_paths(self) -> None:
-        fixtures = iter_golden_corpus_representative_fixtures()
-
-        self.assertEqual(len(fixtures), 6)
-        self.assertEqual(
-            Counter(fixture.provider for fixture in fixtures),
-            Counter({"elsevier": 1, "ieee": 1, "pnas": 1, "science": 1, "springer": 1, "wiley": 1}),
-        )
-
-        for fixture in fixtures:
-            with self.subTest(provider=fixture.provider, doi=fixture.doi):
-                article = build_article_from_fixture(fixture)
-                actual = expected_summary_from_article(article)
-                expected = fixture.load_expected()
-
-                self.assertEqual(article.source, EXPECTED_PROVIDER_SOURCES[fixture.provider])
-                self.assertIn(EXPECTED_PROVIDER_PRIMARY_MARKERS[fixture.provider], article.quality.source_trail)
-                self.assertEqual(article.quality.content_kind, "fulltext")
-                self.assertEqual(actual["expected_content_kind"], "fulltext")
-                self.assertEqual(expected["expected_content_kind"], "fulltext")
-
-                for field_name, expected_present in expected["has"].items():
-                    if expected_present:
-                        self.assertTrue(actual["has"][field_name], msg=f"Expected {field_name} for {fixture.doi}")
-
-                for count_name, expected_count in expected["counts"].items():
-                    if expected_count > 0:
-                        self.assertGreater(
-                            actual["counts"][count_name],
-                            0,
-                            msg=f"Expected positive {count_name} count for {fixture.doi}",
-                        )
-
-    @unittest.skipUnless(
-        os.environ.get(FULL_GOLDEN_ENV) == "1",
-        f"Set {FULL_GOLDEN_ENV}=1 to run full 59-fixture golden corpus regression.",
+def test_golden_corpus_is_balanced_across_publishers() -> None:
+    assert len(GOLDEN_CORPUS_FIXTURES) == 59
+    assert Counter(fixture.provider for fixture in GOLDEN_CORPUS_FIXTURES) == Counter(
+        {"elsevier": 10, "ieee": 7, "pnas": 10, "science": 11, "springer": 11, "wiley": 10}
     )
-    def test_golden_corpus_expected_summaries_match_current_extractors(self) -> None:
-        for fixture in iter_golden_corpus_fixtures():
-            with self.subTest(provider=fixture.provider, doi=fixture.doi):
-                article = build_article_from_fixture(fixture)
-                actual = expected_summary_from_article(article)
-                expected = fixture.load_expected()
-
-                self.assertEqual(actual["expected_content_kind"], "fulltext")
-                self.assertEqual(expected["expected_content_kind"], "fulltext")
-                self.assertEqual(actual, expected)
 
 
-if __name__ == "__main__":
-    unittest.main()
+@pytest.mark.parametrize("fixture", GOLDEN_CORPUS_FIXTURES, ids=_fixture_id)
+def test_golden_corpus_lightweight_contracts_hold_across_full_corpus(fixture: GoldenCorpusFixture) -> None:
+    expected = fixture.load_expected()
+    actual = lightweight_positive_summary_from_fixture(fixture)
+    contract = PROVIDER_GOLDEN_CONTRACTS[fixture.provider]
+
+    assert fixture.route_kind == contract.route_kind
+    assert fixture.content_type.startswith(contract.content_prefix)
+    assert fixture.source_url
+    assert actual["doi"] == fixture.doi
+
+    for field_name in actual["validated_fields"]:
+        if expected["has"][field_name]:
+            assert actual["has"][field_name], f"Expected {field_name} for {fixture.doi}"
+
+    if fixture.provider in {"science", "pnas", "wiley"}:
+        assert list(actual["blocking_fallback_signals"]) == [], (
+            f"Positive fixture leaked paywall signals for {fixture.doi}"
+        )
+        assert actual["source_candidate_hit"], (
+            f"Expected generated HTML candidates to include source URL for {fixture.doi}"
+        )
+
+
+def test_golden_corpus_representative_fixtures_cover_primary_fulltext_paths_by_provider() -> None:
+    assert len(REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES) == 6
+    assert Counter(fixture.provider for fixture in REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES) == Counter(
+        {"elsevier": 1, "ieee": 1, "pnas": 1, "science": 1, "springer": 1, "wiley": 1}
+    )
+
+
+@pytest.mark.parametrize("fixture", REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES, ids=_fixture_id)
+def test_golden_corpus_representative_fixture_matches_primary_fulltext_path(fixture: GoldenCorpusFixture) -> None:
+    article = build_article_from_fixture(fixture)
+    actual = expected_summary_from_article(article)
+    expected = fixture.load_expected()
+    contract = PROVIDER_GOLDEN_CONTRACTS[fixture.provider]
+
+    assert article.source == contract.source
+    assert contract.primary_marker in article.quality.source_trail
+    assert article.quality.content_kind == "fulltext"
+    assert actual["expected_content_kind"] == "fulltext"
+    assert expected["expected_content_kind"] == "fulltext"
+
+    for field_name, expected_present in expected["has"].items():
+        if expected_present:
+            assert actual["has"][field_name], f"Expected {field_name} for {fixture.doi}"
+
+    for count_name, expected_count in expected["counts"].items():
+        if expected_count > 0:
+            assert actual["counts"][count_name] > 0, f"Expected positive {count_name} count for {fixture.doi}"
+
+
+@pytest.mark.skipif(
+    os.environ.get(FULL_GOLDEN_ENV) != "1",
+    reason=f"Set {FULL_GOLDEN_ENV}=1 to run full 59-fixture golden corpus regression.",
+)
+@pytest.mark.parametrize("fixture", GOLDEN_CORPUS_FIXTURES, ids=_fixture_id)
+def test_golden_corpus_expected_summary_matches_current_extractor(fixture: GoldenCorpusFixture) -> None:
+    article = build_article_from_fixture(fixture)
+    actual = expected_summary_from_article(article)
+    expected = fixture.load_expected()
+
+    assert actual["expected_content_kind"] == "fulltext"
+    assert expected["expected_content_kind"] == "fulltext"
+    assert actual == expected

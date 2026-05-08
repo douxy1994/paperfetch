@@ -5,9 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
+from ..extraction.html.provider_rules import SCIENCE_SITE_RULE_OVERRIDES, provider_html_rules
 from ..quality.html_profiles import (
-    SCIENCE_NOISE_PROFILE,
-    SCIENCE_SITE_RULE_OVERRIDES,
     science_blocking_fallback_signals,
     science_positive_signals,
 )
@@ -25,7 +24,7 @@ BASE_HOSTS: tuple[str, ...] = HOSTS
 HTML_PATH_TEMPLATES: tuple[str, ...] = ("/doi/full/{doi}", "/doi/{doi}")
 PDF_PATH_TEMPLATES: tuple[str, ...] = ("/doi/epdf/{doi}", "/doi/pdf/{doi}", "/doi/pdf/{doi}?download=true")
 CROSSREF_PDF_POSITION = 0
-NOISE_PROFILE = SCIENCE_NOISE_PROFILE
+NOISE_PROFILE = provider_html_rules("science").noise_profile
 SITE_RULE_OVERRIDES: dict[str, Any] = SCIENCE_SITE_RULE_OVERRIDES
 AAAS_DATALAYER_PATTERN = re.compile(r"\bAAASdataLayer\s*=")
 SCIENCE_AUTHOR_COUNT_PATTERN = re.compile(r"^\+\s*\d+\s+authors?$", flags=re.IGNORECASE)

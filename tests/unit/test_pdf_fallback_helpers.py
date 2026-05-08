@@ -6,41 +6,51 @@ import unittest
 from unittest import mock
 
 from paper_fetch.providers import _pdf_candidates, _pdf_common, _pdf_fallback
-
-
-class RecordingTransport:
-    def __init__(self, responses: dict[tuple[str, str], dict[str, object]]) -> None:
-        self.responses = responses
-        self.calls: list[dict[str, object]] = []
-
-    def request(
-        self,
-        method,
-        url,
-        *,
-        headers=None,
-        query=None,
-        timeout=20,
-        retry_on_rate_limit=False,
-        rate_limit_retries=1,
-        max_rate_limit_wait_seconds=5,
-        retry_on_transient=False,
-        transient_retries=2,
-        transient_backoff_base_seconds=0.5,
-    ):
-        self.calls.append(
-            {
-                "method": method,
-                "url": url,
-                "headers": dict(headers or {}),
-                "timeout": timeout,
-                "retry_on_transient": retry_on_transient,
-            }
-        )
-        return self.responses[(method, url)]
+from tests.unit._paper_fetch_support import RecordingTransport
 
 
 class PdfFallbackHelperTests(unittest.TestCase):
+    def test_pdf_fallback_strategy_delegates_http_fetch_options(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def fake_fetcher(transport, candidate_urls, **kwargs):
+            calls.append(
+                {
+                    "transport": transport,
+                    "candidate_urls": list(candidate_urls),
+                    **kwargs,
+                }
+            )
+            return _pdf_common.PdfFetchResult(
+                source_url="https://example.org/article.pdf",
+                final_url="https://example.org/article.pdf",
+                pdf_bytes=b"%PDF-1.7 strategy",
+                markdown_text="# Example\n\n## Results\n\nBody text",
+                suggested_filename="article.pdf",
+            )
+
+        transport = RecordingTransport({})
+        strategy = _pdf_fallback.PdfFallbackStrategy(
+            transport=transport,
+            headers={"User-Agent": "UnitTest/1.0"},
+            timeout=42,
+            artifact_dir=Path("artifacts/pdf"),
+            seed_urls=["https://example.org/article"],
+            browser_cookies=[{"name": "token", "value": "abc", "domain": ".example.org"}],
+            fetcher=fake_fetcher,
+        )
+
+        result = strategy.fetch(["https://example.org/article.pdf"])
+
+        self.assertEqual(result.final_url, "https://example.org/article.pdf")
+        self.assertEqual(calls[0]["transport"], transport)
+        self.assertEqual(calls[0]["candidate_urls"], ["https://example.org/article.pdf"])
+        self.assertEqual(calls[0]["headers"], {"User-Agent": "UnitTest/1.0"})
+        self.assertEqual(calls[0]["timeout"], 42)
+        self.assertEqual(calls[0]["artifact_dir"], Path("artifacts/pdf"))
+        self.assertEqual(calls[0]["seed_urls"], ["https://example.org/article"])
+        self.assertEqual(calls[0]["browser_cookies"], [{"name": "token", "value": "abc", "domain": ".example.org"}])
+
     def test_extract_pdf_candidate_urls_from_html_finds_meta_and_download_links(self) -> None:
         html = """
         <html><head>

@@ -74,6 +74,28 @@ def _fake_python_script(version: str) -> str:
         fi
         exit 0
       fi
+      if [[ "$code" == *'installer_manifest_values'* ]]; then
+        cat <<'OUT'
+    installer_manifest_values
+    # BEGIN paper-fetch offline managed
+    # END paper-fetch offline managed
+    # BEGIN paper-fetch installer managed
+    # END paper-fetch installer managed
+    paper-fetch-skill
+    paper-fetch
+    PYTHONUTF8
+    PYTHONIOENCODING
+    PAPER_FETCH_ENV_FILE
+    PAPER_FETCH_MCP_PYTHON_BIN
+    PAPER_FETCH_DOWNLOAD_DIR
+    PAPER_FETCH_FORMULA_TOOLS_DIR
+    PLAYWRIGHT_BROWSERS_PATH
+    FLARESOLVERR_URL
+    FLARESOLVERR_ENV_FILE
+    FLARESOLVERR_SOURCE_DIR
+    OUT
+        exit 0
+      fi
       if [[ "$code" == *'playwright.sync_api'* ]]; then
         echo "${{PLAYWRIGHT_BROWSERS_PATH}}/chromium-123/chrome-linux/chrome"
         exit 0
@@ -132,6 +154,7 @@ class OfflineInstallTests(unittest.TestCase):
         bundle.mkdir()
         shutil.copy2(REPO_ROOT / "install-offline.sh", bundle / "install-offline.sh")
         (bundle / "install-offline.sh").chmod(0o755)
+        shutil.copytree(REPO_ROOT / "installer", bundle / "installer")
 
         manifest_python_tag = manifest_python_tag or _python_tag(python_version)
         _write_file(
@@ -673,8 +696,9 @@ class OfflineInstallTests(unittest.TestCase):
     def test_windows_installer_writes_managed_env_skills_and_path(self) -> None:
         script = WINDOWS_INSTALLER_HELPER.read_text(encoding="utf-8")
 
-        self.assertIn("# BEGIN paper-fetch offline managed", script)
-        self.assertIn("# END paper-fetch offline managed", script)
+        self.assertIn("Import-InstallerManifest", script)
+        self.assertIn("$script:OfflineManagedBegin", script)
+        self.assertIn("$script:OfflineManagedEnd", script)
         self.assertIn("PAPER_FETCH_FORMULA_TOOLS_DIR", script)
         self.assertIn("PLAYWRIGHT_BROWSERS_PATH", script)
         self.assertIn("FLARESOLVERR_SOURCE_DIR", script)
@@ -700,8 +724,8 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn('"mcp", "remove", $McpName', script)
         self.assertIn('"mcp", "add"', script)
         self.assertIn("Write-CodexConfigToml", script)
-        self.assertIn("[mcp_servers.paper-fetch]", script)
-        self.assertIn("[mcp_servers.paper-fetch.env]", script)
+        self.assertIn("[mcp_servers.$McpName]", script)
+        self.assertIn("[mcp_servers.$McpName.env]", script)
         self.assertIn("claude", script)
         self.assertIn('"mcp", "add", "-s", "user"', script)
         self.assertIn("PYTHONUTF8", script)

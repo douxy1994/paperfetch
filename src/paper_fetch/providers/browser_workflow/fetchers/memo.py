@@ -7,8 +7,8 @@ import threading
 from concurrent.futures import Future
 from typing import Any, Callable, Mapping
 
-from ...logging_utils import emit_structured_log
-from ...utils import normalize_text
+from ....logging_utils import emit_structured_log
+from ....utils import normalize_text
 from .diagnostics import _copy_failure_diagnostic
 from .image import _copy_image_payload
 

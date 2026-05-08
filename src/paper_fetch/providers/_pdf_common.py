@@ -250,6 +250,55 @@ def looks_like_pdf_payload(content_type: str | None, payload: bytes, final_url: 
     return payload.startswith(b"%PDF-") or "application/pdf" in normalized_content_type or normalized_final_url.endswith(".pdf")
 
 
+def _normalized_response_headers(response: Mapping[str, Any]) -> dict[str, str]:
+    return {
+        str(key).lower(): str(value)
+        for key, value in (response.get("headers") or {}).items()
+    }
+
+
+def pdf_fetch_result_from_response(
+    response: Mapping[str, Any],
+    *,
+    artifact_dir: Path | None,
+    source_url: str,
+    not_pdf_message: str,
+    final_url: str | None = None,
+) -> PdfFetchResult:
+    response_headers = _normalized_response_headers(response)
+    resolved_final_url = normalize_text(str(final_url or response.get("url") or source_url)) or source_url
+    try:
+        status = int(response.get("status_code") or 0) or None
+    except (TypeError, ValueError):
+        status = None
+    raw_body = response.get("body", b"")
+    pdf_bytes = bytes(raw_body) if isinstance(raw_body, (bytes, bytearray)) else b""
+    content_type = str(response_headers.get("content-type") or "")
+    if not isinstance(raw_body, (bytes, bytearray)) or not looks_like_pdf_payload(
+        content_type,
+        pdf_bytes,
+        resolved_final_url,
+    ):
+        raise PdfFetchFailure(
+            "downloaded_file_not_pdf",
+            not_pdf_message,
+            details={
+                "source_url": source_url,
+                "final_url": resolved_final_url,
+                "status": status,
+                "content_type": content_type or None,
+            },
+        )
+
+    return pdf_fetch_result_from_bytes(
+        artifact_dir=artifact_dir,
+        source_url=source_url,
+        final_url=resolved_final_url,
+        pdf_bytes=pdf_bytes,
+        suggested_filename=filename_from_headers(response_headers),
+    )
+
+
 def pdf_fetch_result_from_bytes(
     *,
     artifact_dir: Path | None,

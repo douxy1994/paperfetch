@@ -20,6 +20,18 @@ class ProviderWaterfallState:
     def source_trail(self) -> list[str]:
         return [*self.initial_source_trail, *self.failure_source_trail]
 
+    def failure(self, label: str) -> ProviderFailure | None:
+        for failure_label, failure in reversed(self.failures):
+            if failure_label == label:
+                return failure
+        return None
+
+    def last_failure(self) -> ProviderFailure | None:
+        return self.failures[-1][1] if self.failures else None
+
+    def source_markers(self) -> list[str]:
+        return self.source_trail
+
 
 WarningFactory = Callable[[ProviderFailure, ProviderWaterfallState], str | None]
 StepRunner = Callable[[ProviderWaterfallState], RawFulltextPayload]

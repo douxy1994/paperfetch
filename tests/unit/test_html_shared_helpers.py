@@ -19,7 +19,8 @@ from paper_fetch.extraction.html.formula_rules import (
 )
 from paper_fetch.extraction.html.inline import normalize_html_inline_text
 from paper_fetch.http import HttpTransport
-from paper_fetch.providers import _springer_html, _wiley_html
+import paper_fetch.providers.springer_html as springer_html
+import paper_fetch.providers.wiley_html as wiley_html
 from paper_fetch.providers.science_pnas import asset_scopes as science_pnas_asset_scopes
 from tests.block_fixtures import block_asset
 from tests.golden_criteria import golden_criteria_asset, golden_criteria_scenario_asset
@@ -241,7 +242,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
             source_url,
             "wiley",
         )
-        assets = _wiley_html.extract_scoped_html_assets(
+        assets = wiley_html.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile="all",
@@ -271,7 +272,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
             source_url,
             "wiley",
         )
-        assets = _wiley_html.extract_scoped_html_assets(
+        assets = wiley_html.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile="all",
@@ -431,7 +432,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
             self.assertEqual(root_entries, ["source_data"])
 
     def test_wiley_body_figures_are_not_promoted_to_supplementary_without_supporting_information(self) -> None:
-        """rule: rule-wiley-supporting-information-assets"""
+        """rule: rule-wiley-supporting-information-assets
+        rule: rule-supplementary-discovery-explicit-scope"""
         body_html = """
 <section class="article-section__content">
   <figure class="figure" id="example-fig-0001">
@@ -443,7 +445,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
 </section>
 """
 
-        assets = _wiley_html.extract_scoped_html_assets(
+        assets = wiley_html.extract_scoped_html_assets(
             body_html,
             "https://onlinelibrary.wiley.com/doi/full/10.1111/example",
             asset_profile="all",
@@ -454,7 +456,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
         self.assertFalse(any(asset["kind"] == "supplementary" for asset in assets))
 
     def test_extract_scoped_html_assets_empty_supplementary_scope_does_not_scan_body(self) -> None:
-        """rule: rule-science-pnas-supplementary-sections"""
+        """rule: rule-science-pnas-supplementary-sections
+        rule: rule-supplementary-discovery-explicit-scope"""
         body_html = """
 <html>
   <body>
@@ -799,7 +802,7 @@ Important body text.
         )
         self.assertTrue("source data fig." in source_data_html.casefold())
 
-        source_data_markdown = _springer_html.extract_html_payload(
+        source_data_markdown = springer_html.extract_html_payload(
             source_data_html,
             "https://www.nature.com/articles/s41561-022-00912-7",
         )["markdown_text"]
@@ -814,7 +817,7 @@ Important body text.
         self.assertTrue("rights and permissions" in chrome_html_text)
         self.assertTrue("open access" in chrome_html_text)
 
-        chrome_markdown = _springer_html.extract_html_payload(
+        chrome_markdown = springer_html.extract_html_payload(
             chrome_html,
             "https://www.nature.com/articles/nature13376",
         )["markdown_text"]

@@ -14,12 +14,51 @@ $OfflineManagedBegin = "# BEGIN paper-fetch offline managed"
 $OfflineManagedEnd = "# END paper-fetch offline managed"
 $CodexManagedBegin = "# BEGIN paper-fetch installer managed"
 $CodexManagedEnd = "# END paper-fetch installer managed"
+$McpEnvKeys = @(
+    "PYTHONUTF8",
+    "PYTHONIOENCODING",
+    "PAPER_FETCH_ENV_FILE",
+    "PAPER_FETCH_MCP_PYTHON_BIN",
+    "PAPER_FETCH_DOWNLOAD_DIR",
+    "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "PLAYWRIGHT_BROWSERS_PATH",
+    "FLARESOLVERR_URL",
+    "FLARESOLVERR_ENV_FILE",
+    "FLARESOLVERR_SOURCE_DIR"
+)
 
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
     $InstallRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
 } else {
     $InstallRoot = [System.IO.Path]::GetFullPath($InstallRoot)
 }
+
+function Import-InstallerManifest {
+    $manifestPath = Join-Path $InstallRoot "installer/manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Missing installer manifest: $manifestPath"
+    }
+    $manifest = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+    $script:SkillName = [string]$manifest.skill.name
+    $script:McpName = [string]$manifest.mcp.name
+    $script:OfflineManagedBegin = [string]$manifest.managed_blocks.offline.begin
+    $script:OfflineManagedEnd = [string]$manifest.managed_blocks.offline.end
+    $script:CodexManagedBegin = [string]$manifest.managed_blocks.codex.begin
+    $script:CodexManagedEnd = [string]$manifest.managed_blocks.codex.end
+    $script:McpEnvKeys = @($manifest.mcp.env_keys | ForEach-Object { [string]$_ })
+
+    if ([string]::IsNullOrWhiteSpace($script:SkillName) -or
+        [string]::IsNullOrWhiteSpace($script:McpName) -or
+        [string]::IsNullOrWhiteSpace($script:OfflineManagedBegin) -or
+        [string]::IsNullOrWhiteSpace($script:OfflineManagedEnd) -or
+        [string]::IsNullOrWhiteSpace($script:CodexManagedBegin) -or
+        [string]::IsNullOrWhiteSpace($script:CodexManagedEnd) -or
+        $script:McpEnvKeys.Count -eq 0) {
+        throw "installer manifest is missing required installer constants."
+    }
+}
+
+Import-InstallerManifest
 
 function Write-Log {
     param([string]$Message)
@@ -74,7 +113,7 @@ function Get-McpEnv {
     $flaresolverrSource = Join-Path (Join-Path $InstallRoot "vendor") "flaresolverr"
     $flaresolverrEnv = Join-Path $flaresolverrSource ".env.flaresolverr-source-windows"
 
-    return [ordered]@{
+    $values = @{
         PYTHONUTF8 = "1"
         PYTHONIOENCODING = "utf-8"
         PAPER_FETCH_ENV_FILE = (ConvertTo-FullPath $offlineEnv)
@@ -86,6 +125,14 @@ function Get-McpEnv {
         FLARESOLVERR_ENV_FILE = (ConvertTo-FullPath $flaresolverrEnv)
         FLARESOLVERR_SOURCE_DIR = (ConvertTo-FullPath $flaresolverrSource)
     }
+    $ordered = [ordered]@{}
+    foreach ($key in $McpEnvKeys) {
+        if (-not $values.ContainsKey($key)) {
+            throw "Unknown MCP env key in installer manifest: $key"
+        }
+        $ordered[$key] = $values[$key]
+    }
+    return $ordered
 }
 
 function Set-ProcessRuntimeEnv {
@@ -248,6 +295,7 @@ function Remove-CodexMcpTables {
 
     $result = New-Object System.Collections.Generic.List[string]
     $skip = $false
+    $mcpTablePattern = '^\s*\[mcp_servers\.' + [regex]::Escape($McpName) + '(?:\..*)?\]\s*$'
     foreach ($line in $Lines) {
         if ($line -eq $CodexManagedBegin) {
             $skip = $true
@@ -257,7 +305,7 @@ function Remove-CodexMcpTables {
             $skip = $false
             continue
         }
-        if ($line -match '^\s*\[mcp_servers\.paper-fetch(?:\..*)?\]\s*$') {
+        if ($line -match $mcpTablePattern) {
             $skip = $true
             continue
         }
@@ -289,11 +337,11 @@ function Write-CodexConfigToml {
     $python = ConvertTo-FullPath (Get-RuntimePython)
     $lines.Add("")
     $lines.Add($CodexManagedBegin)
-    $lines.Add("[mcp_servers.paper-fetch]")
+    $lines.Add("[mcp_servers.$McpName]")
     $lines.Add("command = $(ConvertTo-TomlString $python)")
     $lines.Add('args = ["-X", "utf8", "-m", "paper_fetch.mcp.server"]')
     $lines.Add("")
-    $lines.Add("[mcp_servers.paper-fetch.env]")
+    $lines.Add("[mcp_servers.$McpName.env]")
     foreach ($entry in (Get-McpEnv).GetEnumerator()) {
         $lines.Add("$($entry.Key) = $(ConvertTo-TomlString ([string]$entry.Value))")
     }

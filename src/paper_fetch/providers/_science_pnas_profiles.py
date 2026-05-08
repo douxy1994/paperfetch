@@ -9,7 +9,7 @@ from typing import Any, Callable, Mapping
 from ..quality import html_profiles as _html_profiles
 from ..utils import normalize_text
 from . import _pnas_html, _science_html, _wiley_html
-from ._browser_workflow_shared import (
+from .browser_workflow.shared import (
     build_browser_workflow_html_candidates,
     build_browser_workflow_pdf_candidates,
     extract_pdf_url_from_crossref,

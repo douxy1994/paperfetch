@@ -4,47 +4,7 @@ import json
 import unittest
 
 from paper_fetch.resolve import query as resolve_query
-
-
-class RecordingTransport(resolve_query.HttpTransport):
-    def __init__(self, responses):
-        self.responses = responses
-        self.calls = []
-
-    def request(
-        self,
-        method,
-        url,
-        *,
-        headers=None,
-        query=None,
-        timeout=20,
-        retry_on_rate_limit=False,
-        rate_limit_retries=1,
-        max_rate_limit_wait_seconds=5,
-        retry_on_transient=False,
-        transient_retries=2,
-        transient_backoff_base_seconds=0.5,
-    ):
-        self.calls.append(
-            {
-                "method": method,
-                "url": url,
-                "headers": dict(headers or {}),
-                "query": dict(query or {}),
-                "timeout": timeout,
-                "retry_on_rate_limit": retry_on_rate_limit,
-                "rate_limit_retries": rate_limit_retries,
-                "max_rate_limit_wait_seconds": max_rate_limit_wait_seconds,
-                "retry_on_transient": retry_on_transient,
-                "transient_retries": transient_retries,
-                "transient_backoff_base_seconds": transient_backoff_base_seconds,
-            }
-        )
-        key = (method, url)
-        if key not in self.responses:
-            raise AssertionError(f"Missing fake response for {url}")
-        return self.responses[key]
+from tests.unit._paper_fetch_support import RecordingTransport
 
 
 class ResolveQueryTests(unittest.TestCase):

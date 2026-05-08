@@ -8,19 +8,20 @@ import threading
 import time
 from typing import Any, Callable, Mapping
 
-from ...extraction.html.shared import (
+from ....extraction.html.shared import (
     html_text_snippet as _html_text_snippet,
     html_title_snippet as _html_title_snippet,
     image_magic_type as _image_magic_type,
 )
-from ...logging_utils import emit_structured_log
-from ...runtime import RuntimeContext
-from ...utils import normalize_text
-from .._flaresolverr import FetchedPublisherHtml
+from ....logging_utils import emit_structured_log
+from ....runtime import RuntimeContext
+from ....utils import normalize_text
+from ..._flaresolverr import FetchedPublisherHtml
 from .context import _BasePlaywrightDocumentFetcher, _normalized_response_headers
 from .diagnostics import (
     _CLOUDFLARE_CHALLENGE_TITLE_TOKENS,
     _compact_failure_diagnostic,
+    _copy_failure_diagnostic,
     _image_fetch_failure_reason,
     _looks_like_cloudflare_challenge_failure,
     _looks_like_cloudflare_challenge_title,
@@ -172,7 +173,7 @@ class _SharedPlaywrightImageDocumentFetcher(_BasePlaywrightDocumentFetcher):
         normalized_url = normalize_text(image_url)
         if not normalized_url:
             return None
-        page = self._ensure_page()
+        page = self._ensure_page(normalized_url)
         if page is None:
             return None
 
@@ -660,6 +661,7 @@ class _ThreadLocalSharedPlaywrightImageDocumentFetcher:
         self._thread_local = threading.local()
         self._lock = threading.Lock()
         self._fetchers: list[_SharedPlaywrightImageDocumentFetcher] = []
+        self._failure_by_url: dict[str, dict[str, Any]] = {}
 
     def _get_fetcher(self) -> _SharedPlaywrightImageDocumentFetcher:
         fetcher = getattr(self._thread_local, "fetcher", None)
@@ -690,13 +692,47 @@ class _ThreadLocalSharedPlaywrightImageDocumentFetcher:
     def __call__(
         self, image_url: str, asset: Mapping[str, Any]
     ) -> dict[str, Any] | None:
-        return self._get_fetcher()(image_url, asset)
+        normalized_url = normalize_text(image_url)
+        fetcher = self._get_fetcher()
+        try:
+            payload = fetcher(image_url, asset)
+            if normalized_url:
+                if payload is None:
+                    failure = fetcher.failure_for(normalized_url)
+                    if isinstance(failure, Mapping):
+                        with self._lock:
+                            self._failure_by_url[normalized_url] = _copy_failure_diagnostic(failure)
+                else:
+                    with self._lock:
+                        self._failure_by_url.pop(normalized_url, None)
+            return payload
+        finally:
+            # Playwright sync objects must be closed from their owning worker
+            # thread. Closing these thread-local fetchers later from the caller
+            # thread can leave Chromium subprocesses behind.
+            self._close_fetcher_for_current_thread(fetcher)
 
     def failure_for(self, image_url: str) -> dict[str, Any] | None:
         fetcher = getattr(self._thread_local, "fetcher", None)
         if not isinstance(fetcher, _SharedPlaywrightImageDocumentFetcher):
-            return None
-        return fetcher.failure_for(image_url)
+            normalized_url = normalize_text(image_url)
+            with self._lock:
+                cached_failure = self._failure_by_url.get(normalized_url)
+            return _copy_failure_diagnostic(cached_failure) if cached_failure else None
+        failure = fetcher.failure_for(image_url)
+        return _copy_failure_diagnostic(failure) if isinstance(failure, Mapping) else None
+
+    def _close_fetcher_for_current_thread(self, fetcher: _SharedPlaywrightImageDocumentFetcher) -> None:
+        try:
+            fetcher.close()
+        finally:
+            with self._lock:
+                self._fetchers = [item for item in self._fetchers if item is not fetcher]
+            if getattr(self._thread_local, "fetcher", None) is fetcher:
+                try:
+                    delattr(self._thread_local, "fetcher")
+                except AttributeError:
+                    pass
 
     def close(self) -> None:
         with self._lock:

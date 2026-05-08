@@ -16,7 +16,7 @@ import threading
 import time
 import xml.etree.ElementTree as ET
 from copy import deepcopy
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Iterable, Iterator, Mapping
@@ -35,22 +35,6 @@ BACKEND_TEXMATH = "texmath"
 BACKEND_MATHML_TO_LATEX = "mathml-to-latex"
 BACKEND_MML2TEX = "mml2tex"
 BACKEND_LEGACY = "legacy"
-SUPPORTED_BACKENDS = {
-    BACKEND_AUTO,
-    BACKEND_TEXMATH,
-    BACKEND_MATHML_TO_LATEX,
-    BACKEND_MML2TEX,
-    BACKEND_LEGACY,
-}
-BENCHMARK_BACKENDS = (
-    BACKEND_TEXMATH,
-    BACKEND_MATHML_TO_LATEX,
-    BACKEND_MML2TEX,
-)
-AUTO_BACKENDS = (
-    BACKEND_TEXMATH,
-    BACKEND_MATHML_TO_LATEX,
-)
 DEFAULT_BACKEND = BACKEND_TEXMATH
 DEFAULT_TIMEOUT_SECONDS = 5.0
 DEFAULT_CONVERSION_CACHE_SIZE = 1024
@@ -138,6 +122,153 @@ class FormulaConversionResult:
     error: str | None
     duration_ms: int
     display_mode: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FormulaBackendStrategy:
+    name: str
+    aliases: tuple[str, ...] = ()
+    converter_name: str | None = None
+    benchmark: bool = False
+    fallback_backends: tuple[str, ...] = ()
+    fallback_failure_labels: Mapping[str, str] = field(default_factory=dict)
+    unavailable_message: str | None = None
+    all_failed_message: str | None = None
+
+    def convert(
+        self,
+        raw_mathml: str,
+        *,
+        display_mode: bool,
+        env: Mapping[str, str],
+        explicitly_selected: bool,
+    ) -> FormulaConversionResult:
+        if self.unavailable_message:
+            raise RuntimeError(self.unavailable_message)
+        if self.converter_name:
+            return self._convert_with_primary_backend(
+                raw_mathml,
+                display_mode=display_mode,
+                env=env,
+                explicitly_selected=explicitly_selected,
+            )
+        return self._convert_with_fallback_order(
+            raw_mathml,
+            display_mode=display_mode,
+            env=env,
+        )
+
+    def _convert_with_primary_backend(
+        self,
+        raw_mathml: str,
+        *,
+        display_mode: bool,
+        env: Mapping[str, str],
+        explicitly_selected: bool,
+    ) -> FormulaConversionResult:
+        converter = globals()[self.converter_name or ""]
+        result = converter(raw_mathml, display_mode=display_mode, env=env)
+        if result.status == "ok" or explicitly_selected or not self.fallback_backends:
+            return result
+
+        failed_fallbacks: list[FormulaConversionResult] = []
+        for fallback_name in self.fallback_backends:
+            fallback = backend_strategy(fallback_name).convert(
+                raw_mathml,
+                display_mode=display_mode,
+                env=env,
+                explicitly_selected=True,
+            )
+            if fallback.status == "ok":
+                return fallback
+            failed_fallbacks.append(fallback)
+
+        return _completed_result(
+            backend=self.name,
+            raw_mathml=raw_mathml,
+            display_mode=display_mode,
+            started_at=time.monotonic(),
+            status="failed",
+            error=self._fallback_error(result, failed_fallbacks),
+        )
+
+    def _convert_with_fallback_order(
+        self,
+        raw_mathml: str,
+        *,
+        display_mode: bool,
+        env: Mapping[str, str],
+    ) -> FormulaConversionResult:
+        for candidate in self.fallback_backends:
+            result = convert_mathml_string(raw_mathml, display_mode=display_mode, env=env, backend=candidate)
+            if result.status == "ok":
+                return result
+        return _completed_result(
+            backend=self.name,
+            raw_mathml=raw_mathml,
+            display_mode=display_mode,
+            started_at=time.monotonic(),
+            status="failed",
+            error=self.all_failed_message or "All formula backends failed",
+        )
+
+    def _fallback_error(
+        self,
+        primary: FormulaConversionResult,
+        fallbacks: list[FormulaConversionResult],
+    ) -> str:
+        parts = [f"{self.name} failed: {primary.error}"]
+        for fallback in fallbacks:
+            label = self.fallback_failure_labels.get(fallback.backend, f"{fallback.backend} fallback failed")
+            parts.append(f"{label}: {fallback.error}")
+        return "; ".join(parts)
+
+
+FORMULA_BACKEND_REGISTRY: dict[str, FormulaBackendStrategy] = {
+    BACKEND_AUTO: FormulaBackendStrategy(
+        name=BACKEND_AUTO,
+        fallback_backends=(BACKEND_TEXMATH, BACKEND_MATHML_TO_LATEX),
+        all_failed_message="All external formula backends failed",
+    ),
+    BACKEND_TEXMATH: FormulaBackendStrategy(
+        name=BACKEND_TEXMATH,
+        converter_name="convert_with_texmath",
+        benchmark=True,
+        fallback_backends=(BACKEND_MATHML_TO_LATEX,),
+        fallback_failure_labels={
+            BACKEND_MATHML_TO_LATEX: "mathml-to-latex fallback failed",
+        },
+    ),
+    BACKEND_MATHML_TO_LATEX: FormulaBackendStrategy(
+        name=BACKEND_MATHML_TO_LATEX,
+        aliases=("mathml_to_latex",),
+        converter_name="convert_with_mathml_to_latex",
+        benchmark=True,
+    ),
+    BACKEND_MML2TEX: FormulaBackendStrategy(
+        name=BACKEND_MML2TEX,
+        converter_name="convert_with_mml2tex",
+        benchmark=True,
+    ),
+    BACKEND_LEGACY: FormulaBackendStrategy(
+        name=BACKEND_LEGACY,
+        unavailable_message="Legacy conversion is not available through formula_conversion.py",
+    ),
+}
+FORMULA_BACKEND_ALIASES = {
+    alias: strategy.name
+    for strategy in FORMULA_BACKEND_REGISTRY.values()
+    for alias in strategy.aliases
+}
+SUPPORTED_BACKENDS = set(FORMULA_BACKEND_REGISTRY)
+BENCHMARK_BACKENDS = tuple(
+    strategy.name for strategy in FORMULA_BACKEND_REGISTRY.values() if strategy.benchmark
+)
+AUTO_BACKENDS = FORMULA_BACKEND_REGISTRY[BACKEND_AUTO].fallback_backends
+
+
+def backend_strategy(name: str) -> FormulaBackendStrategy:
+    return FORMULA_BACKEND_REGISTRY[resolve_backend(backend=name)]
 
 
 @dataclass(slots=True)
@@ -317,12 +448,7 @@ def normalize_latex(value: str | None) -> str:
 
 def resolve_backend(env: Mapping[str, str] | None = None, backend: str | None = None) -> str:
     selected = (backend or (env or os.environ).get("MATHML_CONVERTER_BACKEND") or DEFAULT_BACKEND).strip().lower()
-    aliases = {
-        "mathml_to_latex": BACKEND_MATHML_TO_LATEX,
-        "mathml-to-latex": BACKEND_MATHML_TO_LATEX,
-        "legacy": BACKEND_LEGACY,
-    }
-    selected = aliases.get(selected, selected)
+    selected = FORMULA_BACKEND_ALIASES.get(selected, selected)
     if selected not in SUPPORTED_BACKENDS:
         raise ValueError(f"Unsupported formula backend: {selected}")
     return selected
@@ -860,41 +986,12 @@ def _convert_mathml_string_uncached(
 ) -> FormulaConversionResult:
     runtime_env = dict(env)
     selected_backend = resolve_backend(env=runtime_env, backend=backend)
-    if selected_backend == BACKEND_TEXMATH:
-        result = convert_with_texmath(raw_mathml, display_mode=display_mode, env=runtime_env)
-        if result.status == "ok" or explicitly_selected:
-            return result
-        fallback = convert_with_mathml_to_latex(raw_mathml, display_mode=display_mode, env=runtime_env)
-        if fallback.status == "ok":
-            return fallback
-        return _completed_result(
-            backend=BACKEND_TEXMATH,
-            raw_mathml=raw_mathml,
-            display_mode=display_mode,
-            started_at=time.monotonic(),
-            status="failed",
-            error=f"texmath failed: {result.error}; mathml-to-latex fallback failed: {fallback.error}",
-        )
-    if selected_backend == BACKEND_MATHML_TO_LATEX:
-        return convert_with_mathml_to_latex(raw_mathml, display_mode=display_mode, env=runtime_env)
-    if selected_backend == BACKEND_MML2TEX:
-        return convert_with_mml2tex(raw_mathml, display_mode=display_mode, env=runtime_env)
-    if selected_backend == BACKEND_LEGACY:
-        raise RuntimeError("Legacy conversion is not available through formula_conversion.py")
-    if selected_backend == BACKEND_AUTO:
-        for candidate in AUTO_BACKENDS:
-            result = convert_mathml_string(raw_mathml, display_mode=display_mode, env=runtime_env, backend=candidate)
-            if result.status == "ok":
-                return result
-        return _completed_result(
-            backend=BACKEND_AUTO,
-            raw_mathml=raw_mathml,
-            display_mode=display_mode,
-            started_at=time.monotonic(),
-            status="failed",
-            error="All external formula backends failed",
-        )
-    raise ValueError(f"Unsupported formula backend: {selected_backend}")
+    return backend_strategy(selected_backend).convert(
+        raw_mathml,
+        display_mode=display_mode,
+        env=runtime_env,
+        explicitly_selected=explicitly_selected,
+    )
 
 
 def convert_mathml_element_to_latex(

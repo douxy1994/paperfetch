@@ -64,6 +64,42 @@ def trace_event(
     )
 
 
+def trace_marker(stage: str, component: str, outcome: str = "info") -> str:
+    return trace_event(stage, component, outcome).marker()
+
+
+def provider_stage_marker(stage: str, provider_name: str, outcome: str = "info", *, route: str | None = None) -> str:
+    component = normalize_text(provider_name).lower()
+    route_component = normalize_text(route).lower()
+    if route_component:
+        component = f"{component}_{route_component}" if component else route_component
+    return trace_marker(stage, component, outcome)
+
+
+def fulltext_marker(provider_name: str, outcome: str = "info", *, route: str | None = None) -> str:
+    return provider_stage_marker("fulltext", provider_name, outcome, route=route)
+
+
+def download_marker(component: str, outcome: str = "info") -> str:
+    return trace_marker("download", component, outcome)
+
+
+def metadata_marker(component: str, outcome: str = "info") -> str:
+    return trace_marker("metadata", component, outcome)
+
+
+def route_marker(component: str, outcome: str = "info") -> str:
+    return trace_marker("route", component, outcome)
+
+
+def resolve_marker(component: str, outcome: str = "info") -> str:
+    return trace_marker("resolve", component, outcome)
+
+
+def fallback_marker(component: str, outcome: str = "info") -> str:
+    return trace_marker("fallback", component, outcome)
+
+
 def trace_event_from_marker(marker: str, *, code: str | None = None, message: str | None = None) -> TraceEvent:
     normalized_marker = normalize_text(marker).lower()
     if ":" not in normalized_marker:

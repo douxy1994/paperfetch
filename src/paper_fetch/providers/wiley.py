@@ -7,10 +7,11 @@ from typing import Any, Mapping
 
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, RequestFailure
 from ..runtime import RuntimeContext
+from ..tracing import fulltext_marker
 from ..utils import normalize_text
-from . import _wiley_html, browser_workflow
-from ._pdf_fallback import PdfFallbackFailure, fetch_pdf_over_http
-from ._pdf_common import PdfFetchResult, filename_from_headers, looks_like_pdf_payload, pdf_fetch_result_from_bytes
+from . import browser_workflow, wiley_html as _wiley_html
+from ._pdf_fallback import PdfFallbackFailure, PdfFallbackStrategy, fetch_pdf_over_http
+from ._pdf_common import PdfFetchResult, pdf_fetch_result_from_response
 from ._waterfall import ProviderWaterfallStep, ProviderWaterfallState, run_provider_waterfall
 from .base import (
     ProviderContent,
@@ -68,28 +69,20 @@ def _fetch_wiley_tdm_pdf_result(
     location = normalize_text(response_headers.get("location"))
     if int(response.get("status_code") or 0) in {301, 302, 303, 307, 308} and location:
         redirected_url = urllib.parse.urljoin(api_url, location)
-        return fetch_pdf_over_http(
-            transport,
-            [redirected_url],
+        return PdfFallbackStrategy(
+            transport=transport,
             headers=request_headers,
             timeout=timeout,
             artifact_dir=artifact_dir,
-        )
+            fetcher=fetch_pdf_over_http,
+        ).fetch([redirected_url])
 
-    pdf_bytes = bytes(response.get("body") or b"")
-    if not looks_like_pdf_payload(str(response_headers.get("content-type") or ""), pdf_bytes, final_url):
-        raise PdfFallbackFailure(
-            "downloaded_file_not_pdf",
-            "Wiley API PDF fallback did not return a PDF file.",
-            details={"source_url": api_url, "final_url": final_url},
-        )
-
-    return pdf_fetch_result_from_bytes(
+    return pdf_fetch_result_from_response(
+        response,
         artifact_dir=artifact_dir,
         source_url=api_url,
         final_url=final_url,
-        pdf_bytes=pdf_bytes,
-        suggested_filename=filename_from_headers(response_headers),
+        not_pdf_message="Wiley API PDF fallback did not return a PDF file.",
     )
 
 
@@ -276,9 +269,9 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
                 missing_env=missing_env,
                 warnings=state.warnings,
                 source_trail=[
-                    f"fulltext:{self.name}_html_fail",
-                    *([f"fulltext:{self.name}_pdf_browser_fail"] if bootstrap.runtime is not None else []),
-                    f"fulltext:{self.name}_pdf_api_fail",
+                    fulltext_marker(self.name, "fail", route="html"),
+                    *([fulltext_marker(self.name, "fail", route="pdf_browser")] if bootstrap.runtime is not None else []),
+                    fulltext_marker(self.name, "fail", route="pdf_api"),
                 ],
             )
 
@@ -288,10 +281,10 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
                 ProviderWaterfallStep(
                     label="browser_pdf",
                     run=run_browser_pdf,
-                    failure_marker=f"fulltext:{self.name}_pdf_browser_fail",
+                    failure_marker=fulltext_marker(self.name, "fail", route="pdf_browser"),
                     success_markers=(
-                        f"fulltext:{self.name}_pdf_browser_ok",
-                        f"fulltext:{self.name}_pdf_fallback_ok",
+                        fulltext_marker(self.name, "ok", route="pdf_browser"),
+                        fulltext_marker(self.name, "ok", route="pdf_fallback"),
                     ),
                     failure_warning=browser_failure_warning,
                 )
@@ -300,10 +293,10 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
             ProviderWaterfallStep(
                 label="pdf_api",
                 run=run_tdm_api,
-                failure_marker=f"fulltext:{self.name}_pdf_api_fail",
+                failure_marker=fulltext_marker(self.name, "fail", route="pdf_api"),
                 success_markers=(
-                    f"fulltext:{self.name}_pdf_api_ok",
-                    f"fulltext:{self.name}_pdf_fallback_ok",
+                    fulltext_marker(self.name, "ok", route="pdf_api"),
+                    fulltext_marker(self.name, "ok", route="pdf_fallback"),
                 ),
                 continue_codes=("no_result", "not_configured"),
                 failure_warning=tdm_failure_warning,
@@ -314,6 +307,6 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
         return run_provider_waterfall(
             steps,
             initial_warnings=initial_warnings,
-            initial_source_trail=[f"fulltext:{self.name}_html_fail"],
+            initial_source_trail=[fulltext_marker(self.name, "fail", route="html")],
             final_failure_factory=final_failure,
         )
