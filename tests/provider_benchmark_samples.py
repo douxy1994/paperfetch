@@ -101,6 +101,17 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         fixture_name=golden_criteria_fixture("10.1073/pnas.2406303121", "original.html"),
         fixture_kind="html",
     ),
+    "copernicus": ProviderBenchmarkSample(
+        provider="copernicus",
+        doi="10.5194/acp-24-1-2024",
+        year=2024,
+        title="Seasonal variations in photooxidant formation and light absorption in aqueous extracts of ambient particles",
+        landing_url="https://acp.copernicus.org/articles/24/1/2024/",
+        expected_source="copernicus_xml",
+        accepted_live_source_trail_groups=(("fulltext:copernicus_xml_ok",),),
+        fixture_name=golden_criteria_fixture("10.5194/acp-24-1-2024", "original.xml"),
+        fixture_kind="xml",
+    ),
 }
 
 

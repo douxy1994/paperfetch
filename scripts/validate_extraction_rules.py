@@ -22,7 +22,7 @@ CANONICAL_FIXTURE_PREFIXES = (
     "tests/fixtures/golden_criteria/",
     "tests/fixtures/block/",
 )
-PROVIDER_SECTIONS = ("Springer", "Elsevier", "Wiley", "Science", "PNAS", "IEEE")
+PROVIDER_SECTIONS = ("Springer", "Elsevier", "Wiley", "Science", "PNAS", "IEEE", "Copernicus")
 SHARED_RULE_SECTIONS = ("Generic", "Models", "Service", "CLI")
 UNLINKED_FIXTURES_START = "<!-- extraction-rules-unlinked-fixtures:start -->"
 UNLINKED_FIXTURES_END = "<!-- extraction-rules-unlinked-fixtures:end -->"
@@ -70,6 +70,7 @@ PROVIDER_INFERENCE_PATTERNS = {
     "Science": re.compile(r"(?<![A-Za-z])(?:science|sciadv)(?![A-Za-z])", flags=re.IGNORECASE),
     "PNAS": re.compile(r"(?<![A-Za-z])pnas(?![A-Za-z])", flags=re.IGNORECASE),
     "IEEE": re.compile(r"(?<![A-Za-z])ieee(?![A-Za-z])", flags=re.IGNORECASE),
+    "Copernicus": re.compile(r"(?<![A-Za-z])copernicus(?![A-Za-z])", flags=re.IGNORECASE),
 }
 
 

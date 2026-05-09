@@ -8,10 +8,11 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
-from paper_fetch.extraction.html._metadata import parse_html_metadata
+from paper_fetch.extraction.html._metadata import merge_html_metadata, parse_html_metadata
 from paper_fetch.http import HttpTransport
 from paper_fetch.publisher_identity import normalize_doi
 from paper_fetch.providers import (
+    copernicus as copernicus_provider,
     elsevier as elsevier_provider,
     ieee as ieee_provider,
     pnas as pnas_provider,
@@ -26,6 +27,7 @@ from paper_fetch.providers import (
 )
 from paper_fetch.quality.html_availability import assess_html_fulltext_availability
 from paper_fetch.providers.base import ProviderContent, RawFulltextPayload
+from paper_fetch.providers._pdf_common import pdf_fetch_result_from_bytes
 from paper_fetch.tracing import trace_from_markers
 from paper_fetch.utils import normalize_text
 from tests.golden_criteria import golden_criteria_asset, golden_criteria_sample_for_doi, iter_manifest_samples
@@ -38,6 +40,7 @@ REPRESENTATIVE_GOLDEN_CORPUS_DOIS = (
     "10.1111/gcb.16414",
     "10.1073/pnas.2309123120",
     "10.1109/TIM.2024.3509573",
+    "10.5194/acp-24-1-2024",
 )
 
 
@@ -76,13 +79,18 @@ class GoldenCorpusFixture:
 
     @property
     def raw_path(self) -> Path:
+        pdf_path = golden_criteria_asset(self.doi, "original.pdf")
+        if self.route_kind == "pdf_fallback" and pdf_path.exists():
+            return pdf_path
         html_path = golden_criteria_asset(self.doi, "original.html")
         if html_path.exists():
             return html_path
         xml_path = golden_criteria_asset(self.doi, "original.xml")
         if xml_path.exists():
             return xml_path
-        raise FileNotFoundError(f"Golden fixture is missing canonical original.html/original.xml: {self.doi}")
+        if pdf_path.exists():
+            return pdf_path
+        raise FileNotFoundError(f"Golden fixture is missing canonical original.html/original.xml/original.pdf: {self.doi}")
 
     @property
     def expected_path(self) -> Path:
@@ -317,6 +325,72 @@ def _build_ieee_article(fixture: GoldenCorpusFixture):
         return client.to_article_model({"doi": fixture.doi}, raw_payload, downloaded_assets=downloaded_assets)
 
 
+def _build_copernicus_article(fixture: GoldenCorpusFixture):
+    metadata = _base_metadata(fixture)
+    body = fixture.raw_path.read_bytes()
+    landing_path = golden_criteria_asset(fixture.doi, "landing.html")
+    if landing_path.exists():
+        landing_metadata = parse_html_metadata(
+            landing_path.read_text(encoding="utf-8", errors="ignore"),
+            fixture.landing_url,
+        )
+        metadata = merge_html_metadata(metadata, landing_metadata)
+        if not metadata.get("doi"):
+            metadata["doi"] = fixture.doi
+        if not metadata.get("landing_page_url"):
+            metadata["landing_page_url"] = fixture.landing_url
+    if fixture.route_kind == "pdf_fallback":
+        pdf_result = pdf_fetch_result_from_bytes(
+            artifact_dir=None,
+            source_url=fixture.source_url,
+            final_url=fixture.source_url,
+            pdf_bytes=body,
+        )
+        raw_payload = RawFulltextPayload(
+            provider="copernicus",
+            source_url=fixture.source_url,
+            content_type=fixture.content_type or "application/pdf",
+            body=body,
+            content=ProviderContent(
+                route_kind="pdf_fallback",
+                source_url=fixture.source_url,
+                content_type=fixture.content_type or "application/pdf",
+                body=body,
+                markdown_text=pdf_result.markdown_text,
+                merged_metadata=metadata,
+                diagnostics={"pdf_fallback": {"fixture": "golden_corpus"}},
+                reason="Loaded Copernicus PDF fallback golden fixture.",
+            ),
+            trace=trace_from_markers(
+                ["fulltext:copernicus_xml_fail", "fulltext:copernicus_pdf_fallback_ok"]
+            ),
+            merged_metadata=metadata,
+            warnings=[
+                "Full text was extracted from Copernicus PDF fallback after the XML route was not usable.",
+            ],
+        )
+        client = copernicus_provider.CopernicusClient(HttpTransport(), {})
+        return client.to_article_model(metadata, raw_payload)
+    raw_payload = RawFulltextPayload(
+        provider="copernicus",
+        source_url=fixture.source_url,
+        content_type=fixture.content_type or "application/xml",
+        body=body,
+        content=ProviderContent(
+            route_kind="xml",
+            source_url=fixture.source_url,
+            content_type=fixture.content_type or "application/xml",
+            body=body,
+            merged_metadata=metadata,
+            diagnostics={"extraction": {"fixture": "golden_corpus"}},
+        ),
+        trace=trace_from_markers(["fulltext:copernicus_xml_ok"]),
+        merged_metadata=metadata,
+    )
+    client = copernicus_provider.CopernicusClient(HttpTransport(), {})
+    return client.to_article_model(metadata, raw_payload)
+
+
 def build_article_from_fixture(fixture: GoldenCorpusFixture):
     if fixture.provider == "elsevier":
         return _build_elsevier_article(fixture)
@@ -326,6 +400,8 @@ def build_article_from_fixture(fixture: GoldenCorpusFixture):
         return _build_browser_workflow_article(fixture)
     if fixture.provider == "ieee":
         return _build_ieee_article(fixture)
+    if fixture.provider == "copernicus":
+        return _build_copernicus_article(fixture)
     raise ValueError(f"Unsupported golden fixture provider: {fixture.provider}")
 
 
@@ -417,6 +493,23 @@ def lightweight_positive_summary_from_fixture(fixture: GoldenCorpusFixture) -> d
                 "authors": bool(metadata.get("authors")),
                 "abstract": bool(normalize_text(metadata.get("abstract"))) or bool(extraction.abstract_sections),
                 "body": bool(extraction.section_hints) or bool(normalize_text(extraction.markdown_text)),
+            },
+            "validated_fields": ("title", "authors", "abstract", "body"),
+            "blocking_fallback_signals": (),
+            "source_candidate_hit": True,
+        }
+
+    if fixture.provider == "copernicus":
+        article = _build_copernicus_article(fixture)
+        abstract_sections = [section for section in article.sections if section.kind == "abstract"]
+        body_sections = [section for section in article.sections if section.kind == "body"]
+        return {
+            "doi": normalize_doi(str(article.doi or fixture.doi)),
+            "has": {
+                "title": bool(normalize_text(article.metadata.title)),
+                "authors": bool(article.metadata.authors),
+                "abstract": bool(normalize_text(article.metadata.abstract)) or bool(abstract_sections),
+                "body": bool(body_sections),
             },
             "validated_fields": ("title", "authors", "abstract", "body"),
             "blocking_fallback_signals": (),

@@ -34,6 +34,8 @@ __all__ = [
     "fallback_table_heading",
     "first_child",
     "first_descendant",
+    "iter_children",
+    "iter_descendants",
     "make_markdown_path",
     "normalize_compact_text",
     "normalize_inline_markup_text",
@@ -48,6 +50,26 @@ __all__ = [
     "render_table_block",
     "xml_local_name",
 ]
+
+
+def iter_children(element: ET.Element | None, local_name: str | None = None) -> list[ET.Element]:
+    if element is None:
+        return []
+    return [
+        child
+        for child in list(element)
+        if isinstance(child.tag, str) and (local_name is None or xml_local_name(child.tag) == local_name)
+    ]
+
+
+def iter_descendants(element: ET.Element | None, local_name: str) -> list[ET.Element]:
+    if element is None:
+        return []
+    return [
+        node
+        for node in element.iter()
+        if isinstance(node.tag, str) and xml_local_name(node.tag) == local_name
+    ]
 
 
 def normalize_inline_markup_text(value: str | None) -> str:
@@ -231,7 +253,8 @@ def render_structured_table_block(entry: Mapping[str, Any]) -> list[str]:
 def render_table_block(entry: Mapping[str, Any]) -> list[str]:
     if not entry:
         return []
-    if entry.get("kind") == "structured":
+    render_kind = normalize_text(str(entry.get("table_render_kind") or entry.get("kind") or "")).lower()
+    if render_kind == "structured":
         return render_structured_table_block(entry)
     return render_image_table_block(entry)
 

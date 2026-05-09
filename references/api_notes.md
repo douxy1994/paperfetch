@@ -2,7 +2,7 @@
 
 This file is a compact API and endpoint constraint reference. It is not the canonical source for provider routing or waterfall order.
 
-Canonical runtime behavior lives in [`docs/providers.md`](../docs/providers.md), `paper_fetch.provider_catalog.PROVIDER_CATALOG`, and `src/paper_fetch/providers/`. Planned Copernicus and MDPI provider designs live only in [`docs/providers.md`](../docs/providers.md#待接入设计copernicus) and [`docs/providers.md`](../docs/providers.md#待接入设计mdpi).
+Canonical runtime behavior lives in [`docs/providers.md`](../docs/providers.md), `paper_fetch.provider_catalog.PROVIDER_CATALOG`, and `src/paper_fetch/providers/`. Copernicus runtime behavior is documented with the supported providers; the planned MDPI design lives only in [`docs/providers.md`](../docs/providers.md#待接入设计mdpi).
 
 ## Elsevier
 
@@ -43,10 +43,11 @@ Canonical runtime behavior lives in [`docs/providers.md`](../docs/providers.md),
   - Do not bypass access controls, solve CAPTCHA flows, automate login, or fabricate entitlement state.
   - IEEE supplementary / multimedia files are recognized only from explicit attachment scope or landing metadata plus multimedia payload; body data/code/repository links and file suffixes are not enough.
 
-## Springer / Science / PNAS / Browser Workflow Providers
+## Springer / Science / PNAS / Copernicus / Browser Workflow Providers
 
 - Springer is supported through publisher landing HTML and direct HTTP PDF fallback, not through Springer Nature publisher APIs.
-- Science and PNAS are supported through the shared browser workflow family documented in [`docs/providers.md`](../docs/providers.md#elsevier--springer--wiley--science--pnas--ieee-的特殊语义).
+- Science and PNAS are supported through the shared browser workflow family documented in [`docs/providers.md`](../docs/providers.md#elsevier--springer--wiley--science--pnas--ieee--copernicus-的特殊语义).
+- Copernicus is supported through public landing HTML discovery and NLM/JATS XML, with text-only PDF fallback before metadata fallback.
 - These routes do not have publisher API credentials in this runtime.
 - Asset downloads, supplementary scopes, image validation, and PDF text-only fallback behavior are canonical in [`docs/providers.md`](../docs/providers.md#默认输出策略) and [`docs/extraction-rules.md`](../docs/extraction-rules.md).
 

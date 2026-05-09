@@ -18,6 +18,8 @@ SourceKind = Literal[
     "pnas",
     "ieee_html",
     "ieee_pdf",
+    "copernicus_xml",
+    "copernicus_pdf",
     "crossref_meta",
 ]
 

@@ -25,5 +25,6 @@ If no supported official provider is selected, Crossref remains metadata-only. I
 This note deliberately does not duplicate current provider waterfalls, supported-provider tables, or planned provider designs. In particular:
 
 - IEEE is implemented and documented in [`docs/providers.md`](../docs/providers.md#ieee).
-- Copernicus and MDPI are planned designs documented only in [`docs/providers.md`](../docs/providers.md#待接入设计copernicus) and [`docs/providers.md`](../docs/providers.md#待接入设计mdpi).
+- Copernicus is implemented and documented in [`docs/providers.md`](../docs/providers.md#copernicus).
+- MDPI is a planned design documented only in [`docs/providers.md`](../docs/providers.md#待接入设计mdpi).
 - A publisher is not treated as full-text supported until it exists in the provider catalog, router-derived surfaces, registry, status surface, and tests.

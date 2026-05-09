@@ -209,7 +209,9 @@ def _resolve_figure_asset_with_image_document_fetcher(
     if not _requires_image_payload(asset):
         return None
 
-    preview_url = normalize_text(str(asset.get("preview_url") or asset.get("url") or ""))
+    preview_url = normalize_text(
+        str(asset.get("preview_url") or asset.get("url") or asset.get("original_url") or asset.get("link") or "")
+    )
     full_size_url = normalize_text(str(asset.get("full_size_url") or ""))
     candidate_urls = candidate_builder(
         transport,
@@ -290,7 +292,15 @@ def _resolve_figure_asset_with_image_document_fetcher(
 def _supplementary_candidate_urls(asset: Mapping[str, Any]) -> list[str]:
     candidates: list[str] = []
     seen: set[str] = set()
-    for field in ("download_url", "url", "source_url", "full_size_url", "preview_url"):
+    for field in (
+        "download_url",
+        "original_url",
+        "link",
+        "url",
+        "source_url",
+        "full_size_url",
+        "preview_url",
+    ):
         candidate = normalize_text(str(asset.get(field) or ""))
         if candidate and candidate not in seen:
             seen.add(candidate)
@@ -561,7 +571,9 @@ def _resolved_full_size_url(
     direct_full_size_url = normalize_text(str(asset.get("full_size_url") or ""))
     if direct_full_size_url:
         return direct_full_size_url
-    primary_url = normalize_text(str(asset.get("url") or ""))
+    primary_url = normalize_text(
+        str(asset.get("url") or asset.get("original_url") or asset.get("link") or "")
+    )
     if primary_url and primary_url != preview_url and looks_like_full_size_asset_url(primary_url.lower()):
         return primary_url
     for candidate_url in candidate_urls:
@@ -867,7 +879,9 @@ def _resolve_figure_asset_download(
     cookie_opener_builder: Callable[..., urllib.request.OpenerDirector | None],
     opener_requester: Callable[..., dict[str, Any]],
 ) -> _AssetDownloadResolution:
-    preview_url = normalize_text(str(asset.get("preview_url") or asset.get("url") or ""))
+    preview_url = normalize_text(
+        str(asset.get("preview_url") or asset.get("url") or asset.get("original_url") or asset.get("link") or "")
+    )
     full_size_url = normalize_text(str(asset.get("full_size_url") or ""))
     candidate_urls = candidate_builder(
         transport,

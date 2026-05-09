@@ -103,7 +103,9 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertEqual(publisher_identity.infer_provider_from_doi("10.1038/nphys1170"), "springer")
         self.assertEqual(publisher_identity.infer_provider_from_doi("10.1016/j.solener.2024.01.001"), "elsevier")
         self.assertEqual(publisher_identity.infer_provider_from_doi("10.1109/ACCESS.2024.3352924"), "ieee")
+        self.assertEqual(publisher_identity.infer_provider_from_doi("10.5194/acp-24-1-2024"), "copernicus")
         self.assertEqual(publisher_identity.infer_provider_from_publisher("John Wiley & Sons"), "wiley")
+        self.assertEqual(publisher_identity.infer_provider_from_publisher("Copernicus Publications"), "copernicus")
         self.assertEqual(
             publisher_identity.infer_provider_from_publisher("Institute of Electrical and Electronics Engineers"),
             "ieee",
@@ -115,6 +117,14 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertEqual(
             publisher_identity.infer_provider_from_url("https://ieeexplore.ieee.org/document/10388355/"),
             "ieee",
+        )
+        self.assertEqual(
+            publisher_identity.infer_provider_from_url("https://acp.copernicus.org/articles/24/1/2024/"),
+            "copernicus",
+        )
+        self.assertEqual(
+            publisher_identity.infer_provider_from_url("https://cp.copernicus.org/articles/19/1/2023/"),
+            "copernicus",
         )
         self.assertEqual(
             publisher_identity.ordered_provider_candidates(

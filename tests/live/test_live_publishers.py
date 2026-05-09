@@ -19,6 +19,7 @@ RUN_LIVE = os.environ.get("PAPER_FETCH_RUN_LIVE") == "1"
 ELSEVIER_SAMPLE = provider_benchmark_sample("elsevier")
 SPRINGER_SAMPLE = provider_benchmark_sample("springer")
 WILEY_SAMPLE = provider_benchmark_sample("wiley")
+COPERNICUS_SAMPLE = provider_benchmark_sample("copernicus")
 
 
 def fetch_article(query: str, *, transport: HttpTransport, env: dict[str, str]):
@@ -109,6 +110,16 @@ class LivePublisherTests(unittest.TestCase):
         )
 
         self._assert_matches_sample(article, WILEY_SAMPLE)
+
+    def test_copernicus_doi_live_fulltext(self) -> None:
+        self._require_env(*COPERNICUS_SAMPLE.required_env)
+        article = fetch_article(
+            COPERNICUS_SAMPLE.doi,
+            transport=HttpTransport(),
+            env=self.env,
+        )
+
+        self._assert_matches_sample(article, COPERNICUS_SAMPLE)
 
     def test_elsevier_url_live_recovers_doi_and_uses_official_fulltext(self) -> None:
         self._require_env(*ELSEVIER_SAMPLE.required_env)

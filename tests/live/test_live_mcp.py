@@ -23,6 +23,7 @@ SPRINGER_SAMPLE = provider_benchmark_sample("springer")
 SCIENCE_SAMPLE = provider_benchmark_sample("science")
 WILEY_SAMPLE = provider_benchmark_sample("wiley")
 PNAS_SAMPLE = provider_benchmark_sample("pnas")
+COPERNICUS_SAMPLE = provider_benchmark_sample("copernicus")
 
 
 class LiveMcpServerTests(unittest.IsolatedAsyncioTestCase):
@@ -172,6 +173,13 @@ class LiveMcpServerTests(unittest.IsolatedAsyncioTestCase):
             expected_log_prefix="official_provider_",
             args={"modes": ["metadata"], "strategy": {}},
             needs_flaresolverr=True,
+        )
+
+    async def test_copernicus_doi_live_via_mcp_reports_progress_and_logs(self) -> None:
+        await self._assert_live_fetch(
+            sample=COPERNICUS_SAMPLE,
+            expected_log_prefix="official_provider_",
+            args={"modes": ["metadata"], "strategy": {}},
         )
 
 

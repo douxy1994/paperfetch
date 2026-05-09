@@ -1642,6 +1642,222 @@
         "extracted.md": "tests/fixtures/block/10.1126_science.aeg3511/extracted.md",
         "raw.html": "tests/fixtures/block/10.1126_science.aeg3511/raw.html"
       }
+    },
+    "10.5194_acp-1-1-2001": {
+      "doi": "10.5194/acp-1-1-2001",
+      "publisher": "copernicus",
+      "source_url": "https://acp.copernicus.org/articles/1/1/2001/acp-1-1-2001.pdf",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_acp-1-1-2001/expected.json",
+        "landing.html": "tests/fixtures/golden_criteria/10.5194_acp-1-1-2001/landing.html",
+        "original.pdf": "tests/fixtures/golden_criteria/10.5194_acp-1-1-2001/original.pdf",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_acp-1-1-2001/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "298 K rate coefficients for the reaction of OH with i-C3H7I, n-C3H7I and C3H8",
+      "landing_url": "https://acp.copernicus.org/articles/1/1/2001/",
+      "route_kind": "pdf_fallback",
+      "expected_route": "pdf_fallback",
+      "expected_source": "copernicus_pdf",
+      "expected_content_kind": "fulltext",
+      "content_type": "application/pdf",
+      "expected_live_status": "fulltext"
+    },
+    "10.5194_bg-1-1-2004": {
+      "doi": "10.5194/bg-1-1-2004",
+      "publisher": "copernicus",
+      "source_url": "https://bg.copernicus.org/articles/1/1/2004/bg-1-1-2004.pdf",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_bg-1-1-2004/expected.json",
+        "landing.html": "tests/fixtures/golden_criteria/10.5194_bg-1-1-2004/landing.html",
+        "original.pdf": "tests/fixtures/golden_criteria/10.5194_bg-1-1-2004/original.pdf",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_bg-1-1-2004/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "A field-based method for simultaneous measurements of the d18O and d13C of soil CO2 efflux",
+      "landing_url": "https://bg.copernicus.org/articles/1/1/2004/",
+      "route_kind": "pdf_fallback",
+      "expected_route": "pdf_fallback",
+      "expected_source": "copernicus_pdf",
+      "expected_content_kind": "fulltext",
+      "content_type": "application/pdf",
+      "expected_live_status": "fulltext"
+    },
+    "10.5194_cp-1-1-2005": {
+      "doi": "10.5194/cp-1-1-2005",
+      "publisher": "copernicus",
+      "source_url": "https://cp.copernicus.org/articles/1/1/2005/cp-1-1-2005.pdf",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_cp-1-1-2005/expected.json",
+        "landing.html": "tests/fixtures/golden_criteria/10.5194_cp-1-1-2005/landing.html",
+        "original.pdf": "tests/fixtures/golden_criteria/10.5194_cp-1-1-2005/original.pdf",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_cp-1-1-2005/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "Quantifying the effect of vegetation dynamics on the climate of the Last Glacial Maximum",
+      "landing_url": "https://cp.copernicus.org/articles/1/1/2005/",
+      "route_kind": "pdf_fallback",
+      "expected_route": "pdf_fallback",
+      "expected_source": "copernicus_pdf",
+      "expected_content_kind": "fulltext",
+      "content_type": "application/pdf",
+      "expected_live_status": "fulltext"
+    },
+    "10.5194_dwes-1-1-2008": {
+      "doi": "10.5194/dwes-1-1-2008",
+      "publisher": "copernicus",
+      "source_url": "https://dwes.copernicus.org/articles/1/1/2008/dwes-1-1-2008.pdf",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_dwes-1-1-2008/expected.json",
+        "landing.html": "tests/fixtures/golden_criteria/10.5194_dwes-1-1-2008/landing.html",
+        "original.pdf": "tests/fixtures/golden_criteria/10.5194_dwes-1-1-2008/original.pdf",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_dwes-1-1-2008/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "Correlations between total cell concentration, total adenosine tri-phosphate concentration and heterotrophic plate counts during microbial monitoring of drinking water",
+      "landing_url": "https://dwes.copernicus.org/articles/1/1/2008/",
+      "route_kind": "pdf_fallback",
+      "expected_route": "pdf_fallback",
+      "expected_source": "copernicus_pdf",
+      "expected_content_kind": "fulltext",
+      "content_type": "application/pdf",
+      "expected_live_status": "fulltext"
+    },
+    "10.5194_acp-24-1-2024": {
+      "doi": "10.5194/acp-24-1-2024",
+      "publisher": "copernicus",
+      "source_url": "https://acp.copernicus.org/articles/24/1/2024/acp-24-1-2024.xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_acp-24-1-2024/expected.json",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_acp-24-1-2024/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "Seasonal variations in photooxidant formation and light absorption in aqueous extracts of ambient particles",
+      "landing_url": "https://acp.copernicus.org/articles/24/1/2024/",
+      "route_kind": "xml",
+      "content_type": "application/xml"
+    },
+    "10.5194_hess-28-1-2024": {
+      "doi": "10.5194/hess-28-1-2024",
+      "publisher": "copernicus",
+      "source_url": "https://hess.copernicus.org/articles/28/1/2024/hess-28-1-2024.xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_hess-28-1-2024/expected.json",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_hess-28-1-2024/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "Water cycle changes in Czechia: a multi-source water budget perspective",
+      "landing_url": "https://hess.copernicus.org/articles/28/1/2024/",
+      "route_kind": "xml",
+      "content_type": "application/xml"
+    },
+    "10.5194_gmd-17-1-2024": {
+      "doi": "10.5194/gmd-17-1-2024",
+      "publisher": "copernicus",
+      "source_url": "https://gmd.copernicus.org/articles/17/1/2024/gmd-17-1-2024.xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_gmd-17-1-2024/expected.json",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_gmd-17-1-2024/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "Scenario setup and forcing data for impact model evaluation and impact attribution within the third round of the Inter-Sectoral Impact Model Intercomparison Project (ISIMIP3a)",
+      "landing_url": "https://gmd.copernicus.org/articles/17/1/2024/",
+      "route_kind": "xml",
+      "content_type": "application/xml"
+    },
+    "10.5194_tc-18-1-2024": {
+      "doi": "10.5194/tc-18-1-2024",
+      "publisher": "copernicus",
+      "source_url": "https://tc.copernicus.org/articles/18/1/2024/tc-18-1-2024.xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_tc-18-1-2024/expected.json",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_tc-18-1-2024/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "Assessment of rock glaciers and their water storage in Guokalariju, Tibetan Plateau",
+      "landing_url": "https://tc.copernicus.org/articles/18/1/2024/",
+      "route_kind": "xml",
+      "content_type": "application/xml"
+    },
+    "10.5194_essd-16-1-2024": {
+      "doi": "10.5194/essd-16-1-2024",
+      "publisher": "copernicus",
+      "source_url": "https://essd.copernicus.org/articles/16/1/2024/essd-16-1-2024.xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_essd-16-1-2024/expected.json",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_essd-16-1-2024/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "A merged continental planetary boundary layer height dataset based on high-resolution radiosonde measurements, ERA5 reanalysis, and GLDAS",
+      "landing_url": "https://essd.copernicus.org/articles/16/1/2024/",
+      "route_kind": "xml",
+      "content_type": "application/xml"
+    },
+    "10.5194_nhess-24-1-2024": {
+      "doi": "10.5194/nhess-24-1-2024",
+      "publisher": "copernicus",
+      "source_url": "https://nhess.copernicus.org/articles/24/1/2024/nhess-24-1-2024.xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_nhess-24-1-2024/expected.json",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_nhess-24-1-2024/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "Slope Unit Maker (SUMak): an efficient and parameter-free algorithm for delineating slope units to improve landslide modeling",
+      "landing_url": "https://nhess.copernicus.org/articles/24/1/2024/",
+      "route_kind": "xml",
+      "content_type": "application/xml"
+    },
+    "10.5194_amt-17-1-2024": {
+      "doi": "10.5194/amt-17-1-2024",
+      "publisher": "copernicus",
+      "source_url": "https://amt.copernicus.org/articles/17/1/2024/amt-17-1-2024.xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_amt-17-1-2024/expected.json",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_amt-17-1-2024/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "On the use of routine airborne observations for evaluation and monitoring of satellite observations of thermodynamic profiles",
+      "landing_url": "https://amt.copernicus.org/articles/17/1/2024/",
+      "route_kind": "xml",
+      "content_type": "application/xml"
+    },
+    "10.5194_bg-21-1-2024": {
+      "doi": "10.5194/bg-21-1-2024",
+      "publisher": "copernicus",
+      "source_url": "https://bg.copernicus.org/articles/21/1/2024/bg-21-1-2024.xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "expected.json": "tests/fixtures/golden_criteria/10.5194_bg-21-1-2024/expected.json",
+        "original.xml": "tests/fixtures/golden_criteria/10.5194_bg-21-1-2024/original.xml"
+      },
+      "fixture_family": "golden",
+      "title": "Soil priming effects and involved microbial community along salt gradients",
+      "landing_url": "https://bg.copernicus.org/articles/21/1/2024/",
+      "route_kind": "xml",
+      "content_type": "application/xml"
     }
   },
   "tests": [

@@ -319,7 +319,9 @@ def figure_download_candidates(
     figure_page_fetcher: FigurePageFetcher | None = None,
 ) -> list[str]:
     direct_full_size_url = normalize_text(str(asset.get("full_size_url") or ""))
-    primary_url = normalize_text(str(asset.get("url") or ""))
+    primary_url = normalize_text(
+        str(asset.get("url") or asset.get("original_url") or asset.get("link") or "")
+    )
     preview_url = normalize_text(str(asset.get("preview_url") or "")) or primary_url
     candidates: list[str] = []
 

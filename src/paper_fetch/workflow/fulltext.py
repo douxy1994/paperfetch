@@ -403,7 +403,7 @@ def fetch_article(
         if article is not None:
             return article
 
-        if is_official_provider(provider_name):
+        if is_official_provider(provider_name) and provider_name != "copernicus":
             extend_unique(source_trail, [fallback_marker(f"{provider_name}_html_managed_by_provider")])
 
         return _fallback_to_metadata_only(

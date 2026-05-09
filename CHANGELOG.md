@@ -2,7 +2,13 @@
 
 All notable public changes to `paper-fetch-skill` are documented in this file.
 
-## Unreleased
+## 1.3 - 2026-05-09
+
+### Added
+
+- Added the `copernicus` XML-first provider for Copernicus Publications DOI prefix `10.5194/`, publishing `copernicus_xml` on NLM/JATS XML success with text-only PDF fallback as `copernicus_pdf`.
+- Added 8 Copernicus XML golden fixtures across ACP, HESS, GMD, TC, ESSD, NHESS, AMT, and BG, plus 4 older Copernicus PDF-fallback golden fixtures whose XML is abstract-level only; live smoke sample coverage remains behind `PAPER_FETCH_RUN_LIVE=1`.
+- Hardened Copernicus fallback handling for older articles whose XML only exposes abstract-level content: those XML failures now continue directly to text-only PDF fallback, and PDF discovery includes DOI-derived `.pdf` candidates when the landing page omits PDF metadata.
 
 ### Refactor
 
@@ -11,6 +17,8 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 ### Changed
 
+- Copernicus XML extraction now reuses the parsed XML root through validation and article assembly, validates usable body paragraphs with a named threshold, and continues with DOI-derived XML/PDF URLs when landing HTML cannot be fetched.
+- Copernicus XML assets now use `original_url` as the canonical remote URL while shared asset download mirrors the compatibility URL fields after download; table assets are emitted directly as `kind="table"` with `table_render_kind`.
 - 安装器结束摘要现在会明确提示 Elsevier 全文抓取需要从 <https://dev.elsevier.com/> 申请并配置 `ELSEVIER_API_KEY`，并指向对应 `.env` 文件。
 - Windows 离线发布产物改为 `paper-fetch-skill-windows-x86_64-setup.exe`，内置 CPython 3.13 x64、Python 依赖、Playwright Chromium、formula tools、FlareSolverr runtime、Codex / Claude Code skill 和 MCP 注册 helper。
 - GitHub Actions 在 `v*` tag push 或显式手动发布时，会等常规验证、完整 Linux 离线包矩阵和 Windows x86_64 setup exe 成功后创建 GitHub Release，并上传 4 个 Linux tarball 加 1 个 Windows 安装器 release asset。
