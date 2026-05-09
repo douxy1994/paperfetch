@@ -371,6 +371,12 @@ def _build_copernicus_article(fixture: GoldenCorpusFixture):
         )
         client = copernicus_provider.CopernicusClient(HttpTransport(), {})
         return client.to_article_model(metadata, raw_payload)
+    extraction = copernicus_provider.parse_copernicus_xml(
+        body,
+        source_url=fixture.source_url,
+        base_metadata=metadata,
+    )
+    metadata = dict(extraction.metadata)
     raw_payload = RawFulltextPayload(
         provider="copernicus",
         source_url=fixture.source_url,
@@ -381,8 +387,17 @@ def _build_copernicus_article(fixture: GoldenCorpusFixture):
             source_url=fixture.source_url,
             content_type=fixture.content_type or "application/xml",
             body=body,
+            markdown_text=extraction.markdown_text,
             merged_metadata=metadata,
-            diagnostics={"extraction": {"fixture": "golden_corpus"}},
+            diagnostics={
+                "extraction": {
+                    "fixture": "golden_corpus",
+                    "abstract_sections": extraction.abstract_sections,
+                    "references": extraction.references,
+                    "semantic_losses": extraction.semantic_losses,
+                }
+            },
+            extracted_assets=extraction.assets,
         ),
         trace=trace_from_markers(["fulltext:copernicus_xml_ok"]),
         merged_metadata=metadata,

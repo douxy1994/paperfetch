@@ -241,6 +241,26 @@ SERVER_SCRIPT = textwrap.dedent(
                     ],
                 )
             ),
+            "copernicus": FakeProviderClient(
+                ProviderStatusResult(
+                    provider="copernicus",
+                    status="ready",
+                    available=True,
+                    official_provider=True,
+                    checks=[
+                        build_provider_status_check(
+                            "xml_route",
+                            "ok",
+                            "Copernicus direct NLM/JATS XML route is available.",
+                        ),
+                        build_provider_status_check(
+                            "pdf_fallback",
+                            "ok",
+                            "Copernicus PDF fallback is available.",
+                        ),
+                    ],
+                )
+            ),
         }
 
     tools.service_resolve_paper = fake_resolve
@@ -344,7 +364,7 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         self.assertFalse(provider_status.isError)
                         self.assertEqual(
                             [item["provider"] for item in provider_status.structuredContent["providers"]],
-                            ["crossref", "elsevier", "springer", "wiley", "science", "pnas", "ieee"],
+                            ["crossref", "elsevier", "springer", "wiley", "science", "pnas", "ieee", "copernicus"],
                         )
                         self.assertEqual(provider_status.structuredContent["providers"][0]["status"], "ready")
                         self.assertEqual(provider_status.structuredContent["providers"][1]["missing_env"], ["ELSEVIER_API_KEY"])
