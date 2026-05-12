@@ -370,15 +370,18 @@ copy_installed_skill() {
 }
 
 install_skills() {
-  [ -n "${HOME:-}" ] || die "HOME is required to install Codex and Claude skills."
+  [ -n "${HOME:-}" ] || die "HOME is required to install Codex, Claude, and Gemini skills."
 
   local codex_skill="$HOME/.codex/skills/$SKILL_NAME"
   local claude_skill="$HOME/.claude/skills/$SKILL_NAME"
+  local gemini_skill="$HOME/.gemini/skills/$SKILL_NAME"
 
   log "Installing Codex skill to $codex_skill"
   copy_installed_skill "$codex_skill"
   log "Installing Claude Code skill to $claude_skill"
   copy_installed_skill "$claude_skill"
+  log "Installing Gemini CLI skill to $gemini_skill"
+  copy_installed_skill "$gemini_skill"
 }
 
 select_shell_startup_file() {
@@ -548,6 +551,29 @@ register_claude_mcp() {
   fi
 }
 
+register_gemini_mcp() {
+  local gemini_bin key
+  gemini_bin="$(command -v gemini || true)"
+
+  if [ -z "$gemini_bin" ]; then
+    log "Gemini CLI not found; installed the skill and skipped Gemini MCP registration"
+    return
+  fi
+
+  log "Registering Gemini MCP server '$MCP_NAME' with Gemini CLI"
+  "$gemini_bin" mcp remove "$MCP_NAME" >/dev/null 2>&1 || true
+
+  local args=(mcp add)
+  for key in "${MCP_ENV_KEYS[@]}"; do
+    args+=(--env "$key=$(mcp_env_value "$key")")
+  done
+  args+=("$MCP_NAME" -- "$(mcp_python_bin)" -X utf8 -m paper_fetch.mcp.server)
+
+  if ! "$gemini_bin" "${args[@]}"; then
+    warn "Gemini MCP registration failed and was skipped."
+  fi
+}
+
 remove_managed_block_from_file() {
   local target="$1"
   local remove_if_empty="${2:-0}"
@@ -589,10 +615,12 @@ remove_installed_skills() {
 
   local codex_skill="$HOME/.codex/skills/$SKILL_NAME"
   local claude_skill="$HOME/.claude/skills/$SKILL_NAME"
+  local gemini_skill="$HOME/.gemini/skills/$SKILL_NAME"
 
-  rm -rf "$codex_skill" "$claude_skill"
+  rm -rf "$codex_skill" "$claude_skill" "$gemini_skill"
   log "Removed Codex skill at $codex_skill"
   log "Removed Claude Code skill at $claude_skill"
+  log "Removed Gemini CLI skill at $gemini_skill"
 }
 
 remove_codex_config_toml() {
@@ -642,11 +670,23 @@ unregister_claude_mcp() {
   fi
 }
 
+unregister_gemini_mcp() {
+  local gemini_bin
+  gemini_bin="$(command -v gemini || true)"
+  if [ -n "$gemini_bin" ]; then
+    log "Removing Gemini MCP server '$MCP_NAME' with Gemini CLI"
+    "$gemini_bin" mcp remove "$MCP_NAME" >/dev/null 2>&1 || true
+  else
+    log "Gemini CLI not found; skipped Gemini MCP removal"
+  fi
+}
+
 uninstall_user_integrations() {
   remove_installed_skills
   remove_shell_startup_blocks
   unregister_codex_mcp
   unregister_claude_mcp
+  unregister_gemini_mcp
 
   echo
   echo "Offline user-level integration removed."
@@ -809,6 +849,7 @@ main() {
   write_shell_startup_file
   register_codex_mcp
   register_claude_mcp
+  register_gemini_mcp
 
   run_smoke_checks
 
@@ -817,7 +858,7 @@ main() {
   echo "Shell startup file updated: $SHELL_STARTUP_TARGET"
   echo "Open a new shell, or activate the current one with: source $BUNDLE_ROOT/activate-offline.sh"
   echo "FlareSolverr preset: $BUNDLE_ROOT/vendor/flaresolverr/.env.flaresolverr-source-$PRESET"
-  echo "Restart Codex and Claude Code so they rescan skills and MCP registration."
+  echo "Restart Codex, Claude Code, and Gemini CLI so they rescan skills and MCP registration."
   echo "Elsevier setup: request a key at https://dev.elsevier.com/, then add ELSEVIER_API_KEY=\"...\" to $OFFLINE_ENV_FILE before fetching Elsevier papers."
 }
 

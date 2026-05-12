@@ -3,7 +3,7 @@
 > Fetch papers as agent-ready markdown — DOI/URL/title in, structured full text out. CLI · MCP · Skill.
 
 **Paper Fetch Skill** —— 已知论文的 AI 阅读层。
-你有 DOI、URL 或标题；它返回结构化元数据 + 干净 Markdown 全文 + 图表资源，直接喂给 Codex / Claude Code / 任意 MCP host。
+你有 DOI、URL 或标题；它返回结构化元数据 + 干净 Markdown 全文 + 图表资源，直接喂给 Codex / Claude Code / Gemini CLI / 任意 MCP host。
 不绕付费墙，只在你本就有访问权限的地方，把 AI 从「只能读摘要」升级到「读全文」。
 
 如果觉得有帮助，欢迎 star⭐ 支持！
@@ -25,7 +25,7 @@
 ✅项目提供三个主要入口：
 
 1. `paper-fetch`：命令行工具，适合手动大规模快速抓取文献。
-2. `paper-fetch-mcp`：stdio MCP server，适合接入 Codex、Claude Code 等支持 MCP 的 host。
+2. `paper-fetch-mcp`：stdio MCP server，适合接入 Codex、Claude Code、Gemini CLI 等支持 MCP 的 host。
 3. `skills/paper-fetch-skill/`：静态 agent skill，告诉 agent 什么时候应该调用论文抓取工具。
 
 核心能力：
@@ -131,7 +131,7 @@ notepad "$env:LOCALAPPDATA\PaperFetchSkill\offline.env"
 
 **6. 刷新 agent skill**
 
-修改 Codex / Claude Code skill 或 MCP 配置后需要重启对应 host。
+修改 Codex / Claude Code / Gemini CLI skill 或 MCP 配置后需要重启对应 host。
 
 **7. 常见问题**
 
@@ -185,7 +185,7 @@ cd /path/to/new-bundle
 source ./activate-offline.sh
 ```
 
-这会让新安装的 PATH / Skill / MCP 指向新目录，但不会修改被复用的 `offline.env`。如果后续要删除旧解压目录，先把 `offline.env` 放到不会被删除的位置，并把 `--reuse-env-file` 指向该位置。更新后重启 Codex / Claude Code。
+这会让新安装的 PATH / Skill / MCP 指向新目录，但不会修改被复用的 `offline.env`。如果后续要删除旧解压目录，先把 `offline.env` 放到不会被删除的位置，并把 `--reuse-env-file` 指向该位置。更新后重启 Codex / Claude Code / Gemini CLI。
 
 **卸载**
 
@@ -328,6 +328,28 @@ export PAPER_FETCH_ENV_FILE=/path/to/.env
 ./scripts/install-claude-skill.sh --register-mcp --env-file ~/.config/paper-fetch/.env
 ```
 
+### 接入 Gemini CLI
+
+安装 skill 并注册 MCP server：
+
+```bash
+./scripts/install-gemini-skill.sh --register-mcp
+```
+
+带配置文件注册：
+
+```bash
+./scripts/install-gemini-skill.sh --register-mcp --env-file ~/.config/paper-fetch/.env
+```
+
+只安装到当前项目：
+
+```bash
+./scripts/install-gemini-skill.sh --project --register-mcp
+```
+
+如果本机没有 `gemini` CLI，脚本会安装 skill 并跳过自动 MCP 注册；安装 Gemini CLI 后可重跑同一命令。
+
 ### 手动注册 MCP
 
 任何支持 stdio MCP 的 host 都可以直接运行：
@@ -340,6 +362,12 @@ paper-fetch-mcp
 
 ```bash
 python3 -m paper_fetch.mcp.server
+```
+
+Gemini CLI 可手动注册同一个 stdio server：
+
+```bash
+gemini mcp add paper-fetch -- python3 -m paper_fetch.mcp.server
 ```
 
 WSL 下给 Codex 挂 MCP 时，推荐使用仓库包装脚本：
@@ -365,6 +393,12 @@ Claude Code 用户对应执行：
 
 ```bash
 ./scripts/install-claude-skill.sh --register-mcp
+```
+
+Gemini CLI 用户对应执行：
+
+```bash
+./scripts/install-gemini-skill.sh --register-mcp
 ```
 
 ## 文档

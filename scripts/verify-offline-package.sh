@@ -42,7 +42,7 @@ exit 97
 EOF
   chmod +x "$GUARD_DIR/$name"
 done
-for name in codex claude; do
+for name in codex claude gemini; do
   cat > "$GUARD_DIR/$name" <<'EOF'
 #!/usr/bin/env bash
 {
@@ -69,10 +69,13 @@ grep -F -q "$EXTRACTED_ROOT/.venv/bin" "$FAKE_HOME/.bashrc"
 grep -F -q "$EXTRACTED_ROOT/formula-tools/bin" "$FAKE_HOME/.bashrc"
 [ -f "$FAKE_HOME/.codex/skills/paper-fetch-skill/SKILL.md" ] || die "Codex skill was not installed."
 [ -f "$FAKE_HOME/.claude/skills/paper-fetch-skill/SKILL.md" ] || die "Claude skill was not installed."
+[ -f "$FAKE_HOME/.gemini/skills/paper-fetch-skill/SKILL.md" ] || die "Gemini skill was not installed."
 grep -F -q "codex mcp remove paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "codex mcp add" "$FAKE_CLI_LOG"
 grep -F -q "claude mcp remove -s user paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "claude mcp add -s user" "$FAKE_CLI_LOG"
+grep -F -q "gemini mcp remove paper-fetch" "$FAKE_CLI_LOG"
+grep -F -q "gemini mcp add" "$FAKE_CLI_LOG"
 grep -F -q "PAPER_FETCH_ENV_FILE=$EXTRACTED_ROOT/offline.env" "$FAKE_CLI_LOG"
 grep -F -q "PAPER_FETCH_FORMULA_TOOLS_DIR=$EXTRACTED_ROOT/formula-tools" "$FAKE_CLI_LOG"
 grep -F -q "PLAYWRIGHT_BROWSERS_PATH=$EXTRACTED_ROOT/ms-playwright" "$FAKE_CLI_LOG"
@@ -146,8 +149,10 @@ if grep -F -q "# BEGIN paper-fetch offline managed" "$FAKE_HOME/.bashrc"; then
 fi
 [ ! -d "$FAKE_HOME/.codex/skills/paper-fetch-skill" ] || die "Codex skill was not removed."
 [ ! -d "$FAKE_HOME/.claude/skills/paper-fetch-skill" ] || die "Claude skill was not removed."
+[ ! -d "$FAKE_HOME/.gemini/skills/paper-fetch-skill" ] || die "Gemini skill was not removed."
 grep -F -q "codex mcp remove paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "claude mcp remove -s user paper-fetch" "$FAKE_CLI_LOG"
+grep -F -q "gemini mcp remove paper-fetch" "$FAKE_CLI_LOG"
 [ -f "$EXTRACTED_ROOT/offline.env" ] || die "Uninstall removed offline.env."
 [ -d "$EXTRACTED_ROOT/.venv" ] || die "Uninstall removed package venv."
 

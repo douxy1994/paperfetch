@@ -77,7 +77,7 @@ Preset 选项：
 
 Shell rc 写入策略：
 
-- Linux 安装脚本会把 CLI / MCP runtime 安装到包内 `.venv/`，复制 Codex / Claude Code skill，并注册 MCP。
+- Linux 安装脚本会把 CLI / MCP runtime 安装到包内 `.venv/`，复制 Codex / Claude Code / Gemini CLI skill，并注册 MCP。
 - Bash 写 `~/.bashrc`，Zsh 写 `~/.zshrc`，Fish 写 `~/.config/fish/conf.d/paper-fetch-offline.fish`。
 - 无法识别 `$SHELL` 时写 `~/.profile` 并打印提示。
 
@@ -85,7 +85,7 @@ Shell rc 写入策略：
 
 - 安装后新开 shell，或临时执行 `source ./activate-offline.sh`。
 
-Linux MCP 注册行为与 Windows 对齐：检测到 `codex` CLI 时执行 `codex mcp remove/add paper-fetch`，没有 CLI 或注册失败时更新 `~/.codex/config.toml` 中的 `mcp_servers.paper-fetch`；检测到 `claude` CLI 时执行 `claude mcp remove/add -s user paper-fetch`，没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。Codex / Claude Code 需要重启后才会重新扫描 skill 和 MCP 配置。
+Linux MCP 注册行为与 Windows 对齐：检测到 `codex` CLI 时执行 `codex mcp remove/add paper-fetch`，没有 CLI 或注册失败时更新 `~/.codex/config.toml` 中的 `mcp_servers.paper-fetch`；检测到 `claude` CLI 时执行 `claude mcp remove/add -s user paper-fetch`，没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册；检测到 `gemini` CLI 时执行 `gemini mcp remove/add paper-fetch`，没有 Gemini CLI 时只安装 skill 并跳过 Gemini MCP 注册，不写 `~/.gemini/settings.json` fallback。Codex / Claude Code / Gemini CLI 需要重启后才会重新扫描 skill 和 MCP 配置。
 
 Windows 目标机运行安装器即可：
 
@@ -93,7 +93,7 @@ Windows 目标机运行安装器即可：
 .\paper-fetch-skill-windows-x86_64-setup.exe
 ```
 
-Windows 安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管理员权限。安装器会复制运行组件，写入用户 PATH，复制 Codex / Claude Code skill，并执行基础 smoke check。检测到 `codex` CLI 时会用 `codex mcp remove/add` 注册 MCP；没有 Codex CLI 时会备份并更新 `%USERPROFILE%\.codex\config.toml` 中的 `mcp_servers.paper-fetch`。检测到 `claude` CLI 时会用 `claude mcp remove/add -s user` 注册；没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。
+Windows 安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管理员权限。安装器会复制运行组件，写入用户 PATH，复制 Codex / Claude Code / Gemini CLI skill，并执行基础 smoke check。检测到 `codex` CLI 时会用 `codex mcp remove/add` 注册 MCP；没有 Codex CLI 时会备份并更新 `%USERPROFILE%\.codex\config.toml` 中的 `mcp_servers.paper-fetch`。检测到 `claude` CLI 时会用 `claude mcp remove/add -s user` 注册；没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。检测到 `gemini` CLI 时会用 `gemini mcp remove/add` 注册；没有 Gemini CLI 时只安装 skill 并跳过 Gemini MCP 注册，不写 Gemini JSON fallback。
 
 离线更新：
 
@@ -106,12 +106,12 @@ cd /path/to/new-bundle
 source ./activate-offline.sh
 ```
 
-被复用的 `offline.env` 可以保留旧 managed block；运行时路径会通过 shell / MCP 进程环境覆盖为新 bundle 路径，避免继续指向旧目录。如果后续要删除旧解压目录，先把 `offline.env` 移到不会被删除的位置，并把 `--reuse-env-file` 指向该位置。更新后重启 Codex / Claude Code。
+被复用的 `offline.env` 可以保留旧 managed block；运行时路径会通过 shell / MCP 进程环境覆盖为新 bundle 路径，避免继续指向旧目录。如果后续要删除旧解压目录，先把 `offline.env` 移到不会被删除的位置，并把 `--reuse-env-file` 指向该位置。更新后重启 Codex / Claude Code / Gemini CLI。
 
 离线卸载：
 
-- Windows：在“设置 > 应用 > 已安装的应用”中卸载 `Paper Fetch Skill`，或运行 `%LOCALAPPDATA%\PaperFetchSkill\unins000.exe`。如需保留安装目录内 `offline.env` 的 API key，卸载前先备份该文件。卸载器会删除安装目录、安装器复制的 Codex / Claude Code skill、用户 PATH 中的安装目录 `bin`，并移除安装器管理的 MCP 注册；不会删除用户手写的其它 Codex / Claude 配置。
-- Linux：在原离线包解压目录运行 `./install-offline.sh --uninstall`。该路径不做 checksum、Python ABI、venv 或 bundle asset 检查，只删除 `~/.codex/skills/paper-fetch-skill`、`~/.claude/skills/paper-fetch-skill`，清理 shell 启动文件和 Codex fallback config 中的 installer managed block，并通过可用的 `codex` / `claude` CLI 移除 MCP；不会删除解压目录、包内 `.venv/`、`offline.env`、`downloads/` 或用户配置目录。
+- Windows：在“设置 > 应用 > 已安装的应用”中卸载 `Paper Fetch Skill`，或运行 `%LOCALAPPDATA%\PaperFetchSkill\unins000.exe`。如需保留安装目录内 `offline.env` 的 API key，卸载前先备份该文件。卸载器会删除安装目录、安装器复制的 Codex / Claude Code / Gemini CLI skill、用户 PATH 中的安装目录 `bin`，并移除安装器管理的 MCP 注册；不会删除用户手写的其它 Codex / Claude / Gemini 配置。
+- Linux：在原离线包解压目录运行 `./install-offline.sh --uninstall`。该路径不做 checksum、Python ABI、venv 或 bundle asset 检查，只删除 `~/.codex/skills/paper-fetch-skill`、`~/.claude/skills/paper-fetch-skill`、`~/.gemini/skills/paper-fetch-skill`，清理 shell 启动文件和 Codex fallback config 中的 installer managed block，并通过可用的 `codex` / `claude` / `gemini` CLI 移除 MCP；不会删除解压目录、包内 `.venv/`、`offline.env`、`downloads/` 或用户配置目录。
 
 离线安装约束：
 
@@ -124,7 +124,7 @@ source ./activate-offline.sh
 - Windows FlareSolverr 使用 CI 中由本项目 patch 后源码运行 upstream `src/build_package.py` 生成的 `flaresolverr_windows_x64.zip`，安装器只纳入解压后的 `vendor/flaresolverr/.flaresolverr/v3.4.6/flaresolverr/` 运行目录；目标机不运行 Python FlareSolverr venv、`git clone` 或 patch 步骤
 - FlareSolverr bundle 只包含运行所需的解压目录，不包含 upstream 原始压缩包
 - Linux 公式工具使用包内 `formula-tools/bin/texmath`，Windows 使用 `formula-tools/bin/texmath.exe`；目标机不编译 texmath，也不运行 `npm install`
-- Linux 默认写包内 `offline.env`、生成 `activate-offline.sh`、复制 `~/.codex/skills/paper-fetch-skill` 和 `~/.claude/skills/paper-fetch-skill`，并把离线 CLI PATH、formula tools PATH、`PAPER_FETCH_ENV_FILE`、`PAPER_FETCH_FORMULA_TOOLS_DIR`、`PLAYWRIGHT_BROWSERS_PATH`、`FLARESOLVERR_SOURCE_DIR`、`FLARESOLVERR_ENV_FILE`、`FLARESOLVERR_URL` 写入当前 shell 对应启动文件；只有显式传 `--user-config` 才会把受标记管理的运行时块合并到 `~/.config/paper-fetch/.env`
+- Linux 默认写包内 `offline.env`、生成 `activate-offline.sh`、复制 `~/.codex/skills/paper-fetch-skill`、`~/.claude/skills/paper-fetch-skill` 和 `~/.gemini/skills/paper-fetch-skill`，并把离线 CLI PATH、formula tools PATH、`PAPER_FETCH_ENV_FILE`、`PAPER_FETCH_FORMULA_TOOLS_DIR`、`PLAYWRIGHT_BROWSERS_PATH`、`FLARESOLVERR_SOURCE_DIR`、`FLARESOLVERR_ENV_FILE`、`FLARESOLVERR_URL` 写入当前 shell 对应启动文件；只有显式传 `--user-config` 才会把受标记管理的运行时块合并到 `~/.config/paper-fetch/.env`
 - Linux `--reuse-env-file <path>` 会把 `PAPER_FETCH_ENV_FILE` 指向现有文件且不修改该文件；其它 runtime 路径仍由新 bundle 写入 shell / MCP 环境
 - Linux 写入 shell 启动文件和 Codex fallback config 时会先替换旧的受管理 block，重复安装不会重复追加；不修改 `/etc/profile`
 - Windows 首次安装会写安装目录内 `offline.env`；升级安装会保留用户已有内容，只替换 `# BEGIN/END paper-fetch offline managed` 包围的运行时 block。MCP 注册环境固定指向安装目录内 `offline.env`、`downloads/`、`formula-tools/`、`ms-playwright/` 和 FlareSolverr 路径，并设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`
@@ -155,9 +155,9 @@ scripts/verify-offline-package.sh dist/paper-fetch-skill-offline-linux-x86_64-cp
 
 上面的验证路径按实际构建出的 `cp311`、`cp312`、`cp313` 或 `cp314` 包名替换。
 
-验证脚本会先用 guard 拦截 `curl`、`git`、`npm`、`playwright` 等命令来确认安装器没有在线下载或目标机 patch 动作，并使用临时 HOME 和 fake `codex` / `claude` CLI 验证 Linux shell 写入、skill 复制和 MCP remove/add 注册；随后检查 `paper-fetch --help`、`texmath --help`、包内 Playwright Chromium、`paper_fetch.mcp.tools.provider_status_payload` 和 FlareSolverr `sessions.list`，最后执行 `install-offline.sh --uninstall` 验证用户级集成可清理且不删除包内 `offline.env` 或 `.venv/`。
+验证脚本会先用 guard 拦截 `curl`、`git`、`npm`、`playwright` 等命令来确认安装器没有在线下载或目标机 patch 动作，并使用临时 HOME 和 fake `codex` / `claude` / `gemini` CLI 验证 Linux shell 写入、skill 复制和 MCP remove/add 注册；随后检查 `paper-fetch --help`、`texmath --help`、包内 Playwright Chromium、`paper_fetch.mcp.tools.provider_status_payload` 和 FlareSolverr `sessions.list`，最后执行 `install-offline.sh --uninstall` 验证用户级集成可清理且不删除包内 `offline.env` 或 `.venv/`。
 
-Windows CI 在 `offline-windows-x86-64` job 中执行安装器验证：通过 `Start-Process -Wait -PassThru` silent install 并检查安装器进程退出码，失败时输出安装日志；随后验证 bundled `runtime\python.exe` import 和 `provider_status_payload()`、`bin\paper-fetch.cmd --help`、`texmath.exe --help`、安装目录内 Playwright Chromium 路径检查、启动安装目录内 FlareSolverr 后调用 `sessions.list`，并用 fake `codex` / `claude` CLI 验证 MCP remove/add 命令。
+Windows CI 在 `offline-windows-x86-64` job 中执行安装器验证：通过 `Start-Process -Wait -PassThru` silent install 并检查安装器进程退出码，失败时输出安装日志；随后验证 bundled `runtime\python.exe` import 和 `provider_status_payload()`、`bin\paper-fetch.cmd --help`、`texmath.exe --help`、安装目录内 Playwright Chromium 路径检查、启动安装目录内 FlareSolverr 后调用 `sessions.list`，并用 fake `codex` / `claude` / `gemini` CLI 验证 MCP remove/add 命令。
 
 只需要复核 Windows 安装器时，可以手动触发 `CI` workflow 并设置 `run_offline_windows_only=true`；该模式只运行 `offline-windows-x86-64`，其它常规 job 会跳过。
 
@@ -335,7 +335,30 @@ python3 -m pip install .
 - `--mcp-scope local|user|project`
 - `--mcp-name <name>`
 
-## 7. 手动注册 MCP
+## 7. 部署到 Gemini CLI
+
+最常用流程：
+
+```bash
+python3 -m pip install .
+./scripts/install-gemini-skill.sh --register-mcp
+```
+
+这个脚本会：
+
+- 安装当前包
+- 复制静态 skill bundle 到 `~/.gemini/skills/paper-fetch-skill`
+- 在显式传入 `--register-mcp` 且检测到 `gemini` CLI 时，执行 `gemini mcp remove paper-fetch` 后再注册 `paper-fetch` MCP server
+- 传入 `--env-file <path>` 时，把它映射为 Gemini MCP env 参数 `PAPER_FETCH_ENV_FILE=<path>`
+- 如果没有检测到 `gemini` CLI，只安装 skill 并跳过 MCP 注册，不写 `~/.gemini/settings.json`
+
+常用选项：
+
+- `--project`
+- `--env-file <path>`
+- `--mcp-name <name>`
+
+## 8. 手动注册 MCP
 
 如果你不想使用安装脚本，也可以直接挂一个 stdio MCP server：
 
@@ -347,6 +370,12 @@ paper-fetch-mcp
 
 ```bash
 python3 -m paper_fetch.mcp.server
+```
+
+Gemini CLI 可手动注册同一个 stdio server：
+
+```bash
+gemini mcp add paper-fetch -- python3 -m paper_fetch.mcp.server
 ```
 
 如果你是在 WSL 下给 Codex 挂宿主 MCP，推荐直接用：
@@ -371,7 +400,7 @@ PAPER_FETCH_ENV_FILE=/path/to/.env
 
 常用抓取参数的默认模式、`prefer_cache`、`no_download` 和 `save_markdown` 语义见 [`providers.md`](providers.md#mcp-download-and-markdown-save)。
 
-## 8. 更新方式
+## 9. 更新方式
 
 离线 release 包的更新方式见“离线包”小节。本节只针对源码或在线安装环境。
 
@@ -381,14 +410,15 @@ PAPER_FETCH_ENV_FILE=/path/to/.env
 python3 -m pip install .
 ```
 
-如果你还在使用 Codex 或 Claude Code，推荐顺手重跑对应安装脚本，让 skill 和 MCP 一起更新：
+如果你还在使用 Codex、Claude Code 或 Gemini CLI，推荐顺手重跑对应安装脚本，让 skill 和 MCP 一起更新：
 
 ```bash
 ./scripts/install-codex-skill.sh --register-mcp
 ./scripts/install-claude-skill.sh --register-mcp
+./scripts/install-gemini-skill.sh --register-mcp
 ```
 
-## 9. 最小验证步骤
+## 10. 最小验证步骤
 
 先做一个最小 smoke test：
 

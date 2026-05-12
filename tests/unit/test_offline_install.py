@@ -258,7 +258,7 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertIn('ELSEVIER_API_KEY="..."', result.stdout)
             self.assertIn(str(bundle / "offline.env"), result.stdout)
 
-    def test_default_install_copies_codex_and_claude_skills(self) -> None:
+    def test_default_install_copies_codex_claude_and_gemini_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle, fake_bin, home = self._create_bundle(Path(tmpdir))
 
@@ -267,10 +267,13 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             codex_skill = home / ".codex" / "skills" / "paper-fetch-skill"
             claude_skill = home / ".claude" / "skills" / "paper-fetch-skill"
+            gemini_skill = home / ".gemini" / "skills" / "paper-fetch-skill"
             self.assertEqual((codex_skill / "SKILL.md").read_text(encoding="utf-8"), "# Paper fetch skill\n")
             self.assertEqual((claude_skill / "SKILL.md").read_text(encoding="utf-8"), "# Paper fetch skill\n")
+            self.assertEqual((gemini_skill / "SKILL.md").read_text(encoding="utf-8"), "# Paper fetch skill\n")
             self.assertTrue((codex_skill / "references" / "tool-contract.md").is_file())
             self.assertTrue((claude_skill / "references" / "tool-contract.md").is_file())
+            self.assertTrue((gemini_skill / "references" / "tool-contract.md").is_file())
 
     def test_bash_shell_startup_file_uses_managed_runtime_block(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -337,13 +340,14 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertIn(f'export PAPER_FETCH_ENV_FILE="{bundle / "offline.env"}"', payload)
             self.assertIn("Unrecognized SHELL=/opt/custom-shell", result.stderr)
 
-    def test_codex_and_claude_cli_registration_uses_offline_runtime_env(self) -> None:
+    def test_codex_claude_and_gemini_cli_registration_uses_offline_runtime_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bundle, fake_bin, home = self._create_bundle(root)
             cli_log = root / "cli.log"
             _write_recording_cli(fake_bin / "codex", cli_log)
             _write_recording_cli(fake_bin / "claude", cli_log)
+            _write_recording_cli(fake_bin / "gemini", cli_log)
 
             result = self._run_installer(bundle, fake_bin, home)
 
@@ -351,6 +355,7 @@ class OfflineInstallTests(unittest.TestCase):
             calls = [line.split("\t") for line in cli_log.read_text(encoding="utf-8").splitlines()]
             self.assertIn(["codex", "mcp", "remove", "paper-fetch"], calls)
             self.assertIn(["claude", "mcp", "remove", "-s", "user", "paper-fetch"], calls)
+            self.assertIn(["gemini", "mcp", "remove", "paper-fetch"], calls)
 
             codex_add = next(call for call in calls if call[:3] == ["codex", "mcp", "add"])
             self.assertIn("--env", codex_add)
@@ -387,6 +392,23 @@ class OfflineInstallTests(unittest.TestCase):
                     "paper_fetch.mcp.server",
                 ],
             )
+
+            gemini_add = next(call for call in calls if call[:3] == ["gemini", "mcp", "add"])
+            self.assertIn("--env", gemini_add)
+            self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", gemini_add)
+            self.assertIn(f"PAPER_FETCH_MCP_PYTHON_BIN={bundle / '.venv' / 'bin' / 'python'}", gemini_add)
+            self.assertEqual(
+                gemini_add[-7:],
+                [
+                    "paper-fetch",
+                    "--",
+                    str(bundle / ".venv" / "bin" / "python"),
+                    "-X",
+                    "utf8",
+                    "-m",
+                    "paper_fetch.mcp.server",
+                ],
+            )
             self.assertFalse((home / ".codex" / "config.toml").exists())
 
     def test_missing_codex_cli_writes_config_toml_fallback(self) -> None:
@@ -407,6 +429,8 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertIn(f'PLAYWRIGHT_BROWSERS_PATH = "{bundle / "ms-playwright"}"', config)
             self.assertIn(f'FLARESOLVERR_SOURCE_DIR = "{bundle / "vendor" / "flaresolverr"}"', config)
             self.assertIn("Claude CLI not found; installed the skill and skipped Claude MCP registration", result.stdout)
+            self.assertIn("Gemini CLI not found; installed the skill and skipped Gemini MCP registration", result.stdout)
+            self.assertFalse((home / ".gemini" / "settings.json").exists())
 
     def test_reuse_env_file_keeps_file_untouched_and_points_runtime_at_new_bundle(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -509,11 +533,13 @@ class OfflineInstallTests(unittest.TestCase):
             cli_log = root / "cli.log"
             _write_recording_cli(fake_bin / "codex", cli_log)
             _write_recording_cli(fake_bin / "claude", cli_log)
+            _write_recording_cli(fake_bin / "gemini", cli_log)
 
             _write_file(bundle / "offline.env", 'ELSEVIER_API_KEY="secret"\n')
             _write_file(bundle / ".venv" / "bin" / "paper-fetch", "installed\n")
             _write_file(home / ".codex" / "skills" / "paper-fetch-skill" / "SKILL.md", "codex\n")
             _write_file(home / ".claude" / "skills" / "paper-fetch-skill" / "SKILL.md", "claude\n")
+            _write_file(home / ".gemini" / "skills" / "paper-fetch-skill" / "SKILL.md", "gemini\n")
             managed = textwrap.dedent(
                 """
                 # BEGIN paper-fetch offline managed
@@ -559,6 +585,7 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertTrue((bundle / ".venv" / "bin" / "paper-fetch").exists())
             self.assertFalse((home / ".codex" / "skills" / "paper-fetch-skill").exists())
             self.assertFalse((home / ".claude" / "skills" / "paper-fetch-skill").exists())
+            self.assertFalse((home / ".gemini" / "skills" / "paper-fetch-skill").exists())
 
             self.assertEqual((home / ".bashrc").read_text(encoding="utf-8"), "keep bash before\nkeep bash after\n")
             self.assertEqual((home / ".zshrc").read_text(encoding="utf-8"), "keep zsh before\nkeep zsh after\n")
@@ -575,8 +602,10 @@ class OfflineInstallTests(unittest.TestCase):
             calls = [line.split("\t") for line in cli_log.read_text(encoding="utf-8").splitlines()]
             self.assertIn(["codex", "mcp", "remove", "paper-fetch"], calls)
             self.assertIn(["claude", "mcp", "remove", "-s", "user", "paper-fetch"], calls)
+            self.assertIn(["gemini", "mcp", "remove", "paper-fetch"], calls)
             self.assertFalse(any(call[:3] == ["codex", "mcp", "add"] for call in calls))
             self.assertFalse(any(call[:3] == ["claude", "mcp", "add"] for call in calls))
+            self.assertFalse(any(call[:3] == ["gemini", "mcp", "add"] for call in calls))
             self.assertIn("Bundle files were left in place", result.stdout)
 
     def test_uninstall_runs_without_bundle_assets_or_matching_python(self) -> None:
@@ -704,6 +733,7 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("FLARESOLVERR_SOURCE_DIR", script)
         self.assertIn(".codex", script)
         self.assertIn(".claude", script)
+        self.assertIn(".gemini", script)
         self.assertIn("Add-UserPathEntry", script)
         self.assertNotIn(".cache/ms-playwright", script)
 
@@ -717,7 +747,7 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("$lines.Add($OfflineManagedBegin)", script)
         self.assertIn("$lines.Add($OfflineManagedEnd)", script)
 
-    def test_windows_installer_helper_registers_codex_and_claude_mcp(self) -> None:
+    def test_windows_installer_helper_registers_codex_claude_and_gemini_mcp(self) -> None:
         script = WINDOWS_INSTALLER_HELPER.read_text(encoding="utf-8")
 
         self.assertIn("codex", script)
@@ -728,6 +758,10 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("[mcp_servers.$McpName.env]", script)
         self.assertIn("claude", script)
         self.assertIn('"mcp", "add", "-s", "user"', script)
+        self.assertIn("gemini", script)
+        self.assertIn("Register-GeminiMcp", script)
+        self.assertIn("Unregister-GeminiMcp", script)
+        self.assertNotIn("settings.json", script)
         self.assertIn("PYTHONUTF8", script)
         self.assertIn("PYTHONIOENCODING", script)
 
@@ -747,6 +781,7 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("Remove-UserPathEntry", script)
         self.assertIn("Unregister-CodexMcp", script)
         self.assertIn("Unregister-ClaudeMcp", script)
+        self.assertIn("Unregister-GeminiMcp", script)
         self.assertIn("Remove-CodexConfigToml", script)
 
 
