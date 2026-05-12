@@ -40,6 +40,23 @@ class FetchCommonTests(unittest.TestCase):
         self.assertIn("urllib3>=2.2,<3", dependencies)
         self.assertTrue(all("==" not in dependency for dependency in dependencies))
 
+    def test_runtime_dependencies_do_not_include_pypi_arxiv_package(self) -> None:
+        with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+            pyproject = tomllib.load(handle)
+
+        dependency_names = {
+            dependency.split(";", 1)[0]
+            .split("[", 1)[0]
+            .split("=", 1)[0]
+            .split("<", 1)[0]
+            .split(">", 1)[0]
+            .strip()
+            .lower()
+            for dependency in pyproject["project"]["dependencies"]
+        }
+
+        self.assertNotIn("arxiv", dependency_names)
+
     def test_article_markdown_common_reexports_shared_normalize_text(self) -> None:
         self.assertIs(markdown_common.normalize_text, utils.normalize_text)
 

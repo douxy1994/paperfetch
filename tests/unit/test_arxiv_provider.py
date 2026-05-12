@@ -75,6 +75,31 @@ def _response(url: str, body: bytes, content_type: str) -> dict[str, object]:
     }
 
 
+def _atom_feed(arxiv_id: str) -> bytes:
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>http://arxiv.org/abs/{arxiv_id}</id>
+    <updated>2026-05-12T10:00:00Z</updated>
+    <published>2026-05-11T09:00:00Z</published>
+    <title>Internal Atom Title</title>
+    <summary>Atom abstract with
+      line breaks.</summary>
+    <author><name>First Author</name></author>
+    <author><name>Second Author</name></author>
+    <arxiv:comment>12 pages</arxiv:comment>
+    <arxiv:journal_ref>Example Journal 1</arxiv:journal_ref>
+    <arxiv:doi>10.1234/example</arxiv:doi>
+    <arxiv:primary_category term="cs.CL" />
+    <category term="cs.CL" />
+    <category term="cs.AI" />
+    <link href="https://arxiv.org/abs/{arxiv_id}" rel="alternate" type="text/html" />
+    <link title="pdf" href="https://arxiv.org/pdf/{arxiv_id}" rel="related" type="application/pdf" />
+  </entry>
+</feed>
+""".encode("utf-8")
+
+
 class ReplayArxivResult:
     def __init__(self, raw: dict) -> None:
         self.entry_id = raw["entry_id"]
@@ -227,6 +252,58 @@ class ArxivProviderTests(unittest.TestCase):
             ["https://arxiv.org/html/2605.06663v1", "https://arxiv.org/pdf/2605.06663v1"],
         )
         self.assertEqual(api_client.queries, [["2605.06663v1"]])
+
+    def test_fetch_metadata_uses_internal_atom_api_client(self) -> None:
+        arxiv_id = "2605.06663v1"
+        transport = RecordingTransport(
+            {
+                ("GET", arxiv_provider.ARXIV_API_URL): _response(
+                    arxiv_provider.ARXIV_API_URL,
+                    _atom_feed(arxiv_id),
+                    "application/atom+xml",
+                )
+            }
+        )
+        client = ArxivClient(transport, {})
+
+        metadata = client.fetch_metadata({"arxiv_id": arxiv_id})
+
+        self.assertEqual(metadata["provider"], "arxiv")
+        self.assertEqual(metadata["doi"], _doi(arxiv_id))
+        self.assertEqual(metadata["external_doi"], "10.1234/example")
+        self.assertEqual(metadata["title"], "Internal Atom Title")
+        self.assertEqual(metadata["authors"], ["First Author", "Second Author"])
+        self.assertEqual(metadata["abstract"], "Atom abstract with line breaks.")
+        self.assertEqual(metadata["published"], "2026-05-11")
+        self.assertEqual(metadata["updated"], "2026-05-12")
+        self.assertEqual(metadata["primary_category"], "cs.CL")
+        self.assertEqual(metadata["categories"], ["cs.CL", "cs.AI"])
+        self.assertEqual(metadata["pdf_url"], canonical_arxiv_pdf_url(arxiv_id))
+        self.assertEqual(
+            transport.calls[0]["query"],
+            {"id_list": arxiv_id, "max_results": "1"},
+        )
+        self.assertEqual(transport.calls[0]["headers"]["Accept"], arxiv_provider.ARXIV_API_ACCEPT)
+        self.assertIn("User-Agent", transport.calls[0]["headers"])
+
+    def test_fetch_metadata_reports_no_result_for_empty_atom_feed(self) -> None:
+        arxiv_id = "2605.06663v1"
+        transport = RecordingTransport(
+            {
+                ("GET", arxiv_provider.ARXIV_API_URL): _response(
+                    arxiv_provider.ARXIV_API_URL,
+                    b'<feed xmlns="http://www.w3.org/2005/Atom"></feed>',
+                    "application/atom+xml",
+                )
+            }
+        )
+        client = ArxivClient(transport, {})
+
+        with self.assertRaises(ProviderFailure) as caught:
+            client.fetch_metadata({"arxiv_id": arxiv_id})
+
+        self.assertEqual(caught.exception.code, "no_result")
+        self.assertIn(arxiv_id, caught.exception.message)
 
     def test_resolve_query_recognizes_arxiv_urls_ids_and_dois_without_network(self) -> None:
         cases = {
@@ -497,6 +574,31 @@ class ArxivProviderTests(unittest.TestCase):
         self.assertEqual(
             [call["url"] for call in transport.calls],
             [canonical_arxiv_html_url(arxiv_id), canonical_arxiv_pdf_url(arxiv_id)],
+        )
+
+    def test_internal_atom_parse_failure_keeps_html_fulltext_payload(self) -> None:
+        arxiv_id = "2605.06663v1"
+        transport = _html_transport(
+            arxiv_id,
+            extra_responses={
+                ("GET", arxiv_provider.ARXIV_API_URL): _response(
+                    arxiv_provider.ARXIV_API_URL,
+                    b"<feed",
+                    "application/atom+xml",
+                )
+            },
+        )
+        api_client = arxiv_provider.InternalArxivApiClient(transport, "paper-fetch-test")
+        client = ArxivClient(transport, {}, api_client=api_client)
+
+        raw_payload = client.fetch_raw_fulltext(_doi(arxiv_id), {})
+
+        self.assertEqual(raw_payload.content.route_kind, "html")
+        self.assertEqual(raw_payload.content.merged_metadata["arxiv_id"], arxiv_id)
+        self.assertTrue(any("arXiv API metadata retrieval failed" in warning for warning in raw_payload.warnings))
+        self.assertEqual(
+            [call["url"] for call in transport.calls],
+            [canonical_arxiv_html_url(arxiv_id), arxiv_provider.ARXIV_API_URL],
         )
 
     def test_html_route_extracts_sections_abstract_formulas_and_citations_from_fixture(self) -> None:

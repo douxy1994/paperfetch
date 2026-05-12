@@ -120,6 +120,15 @@ class ImportBoundaryTests(unittest.TestCase):
 
         self.assertEqual(offenders, [], "\n".join(offenders))
 
+    def test_arxiv_provider_does_not_import_pypi_arxiv_package(self) -> None:
+        offenders = [
+            f"{imported_module}:{lineno}"
+            for imported_module, lineno in _imported_modules(PAPER_FETCH_ROOT / "providers" / "arxiv.py")
+            if imported_module == "arxiv" or imported_module.startswith("arxiv.")
+        ]
+
+        self.assertEqual(offenders, [], "\n".join(offenders))
+
     def test_html_asset_modules_do_not_import_public_models_package(self) -> None:
         offenders: list[str] = []
         for path in HTML_ASSET_IMPORT_BOUNDARY_PATHS:
