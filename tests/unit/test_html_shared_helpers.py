@@ -1452,6 +1452,31 @@ Important body text.
         )
         self.assertFalse(any("Fig1_HTML" in asset["url"] for asset in assets))
 
+    def test_wiley_formula_asset_extractor_accepts_altimg_fallback_span(self) -> None:
+        html = """
+        <div class="article-section__content">
+          <div id="gcb70901-disp-0001" class="inline-equation">
+            <span class="fallback__mathEquation"
+                  data-altimg="/cms/asset/d936e789/gcb70901-math-0001.png"></span>
+            <math display="block" location="graphic/gcb70901-math-0001.png"><mrow /></math>
+          </div>
+        </div>
+        """
+
+        assets = wiley_html.extract_scoped_html_assets(
+            html,
+            "https://onlinelibrary.wiley.com/doi/10.1111/gcb.70901",
+            asset_profile="body",
+        )
+
+        formula_assets = [asset for asset in assets if asset["kind"] == "formula"]
+        self.assertEqual(len(formula_assets), 1)
+        self.assertEqual(formula_assets[0]["heading"], "gcb70901-disp-0001")
+        self.assertEqual(
+            formula_assets[0]["url"],
+            "https://onlinelibrary.wiley.com/cms/asset/d936e789/gcb70901-math-0001.png",
+        )
+
     def test_springer_formula_asset_extractor_injects_provider_profile(self) -> None:
         html = (
             '<div id="EqCustom" class="c-article-equation">'

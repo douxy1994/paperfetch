@@ -792,12 +792,13 @@ metadata
   - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_formula_rules_detect_real_formula_image_urls`
   - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_provider_formula_container_tokens_require_explicit_profile`
   - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_extract_formula_assets_reuses_shared_formula_rules`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_wiley_formula_asset_extractor_accepts_altimg_fallback_span`
   - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_springer_formula_asset_extractor_injects_provider_profile`
   - [`../tests/unit/test_models_render.py`](../tests/unit/test_models_render.py) 中的 `test_article_from_markdown_rewrites_inline_asset_urls_to_downloaded_paths`
 - 边界说明：
   - 这条规则不是保证所有 HTML 公式都能转成 LaTeX；保留公式图片 fallback 是正确输出。
   - Nature display equation 结构 `c-article-equation` / `c-article-equation__content` 和 `_Equ1_HTML.jpg` 这类 URL 必须渲染为 `![Formula](...)` 并进入 `kind="formula"` 资产链路；其中 publisher-specific class / selector 只通过 `ProviderHtmlRules` 和显式 `noise_profile="springer_nature"` 生效，不进入 generic 默认 token。
-  - 只有看起来属于公式容器、公式 URL 或公式 alt/title 的图片才进入公式资产链路，普通 `FigN_HTML` 正文图片仍按 figure/table 处理。
+  - 只有看起来属于公式容器、公式 URL、公式 fallback 属性或公式 alt/title 的图片才进入公式资产链路，普通 `FigN_HTML` 正文图片仍按 figure/table 处理。
 
 <a id="rule-formula-latex-normalization"></a>
 ### LaTeX normalization 必须产出 KaTeX 可渲染表达
