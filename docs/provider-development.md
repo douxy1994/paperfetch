@@ -37,7 +37,7 @@ resolve
 - 每一步成功和失败的判定条件，尤其是 access gate、abstract-only、空壳 HTML、非 PDF wrapper 和正文不足。
 - 权限边界：是否需要 API key、机构授权、浏览器上下文、Playwright 或 FlareSolverr；不自动登录、不处理 CAPTCHA、不伪造授权。
 - `asset_profile` 语义：`none` / `body` / `all` 下分别下载什么，PDF fallback 是否 text-only。
-- `probe_status()` 只检查本地条件，不主动打远端 publisher 可用性探测。
+- `probe_status()` 的本地检查边界见 [`providers.md`](providers.md#provider-status-local-boundary)。
 
 如果 provider 是开放获取出版社，默认优先 direct HTTP / XML / HTML；不要为了“更稳”直接引入 browser runtime。只有明确存在动态渲染、CDN 对普通 HTTP 拦截或 challenge runtime 需求时，才考虑 Playwright 或 FlareSolverr。
 
@@ -274,7 +274,7 @@ python3 scripts/validate_extraction_rules.py
 - `CHANGELOG.md`
   - 对用户可见的新 provider 能力和限制做简短记录
 
-`references/api_notes.md` 和 `references/routing_rules.md` 只保留 API 约束或历史草图，不作为 provider/routing 事实来源。
+`references/api_notes.md` 和 `references/routing_rules.md` 的定位以 [`providers.md`](providers.md#provider-canonical-sources) 为准。
 
 ## 10. 完成定义
 

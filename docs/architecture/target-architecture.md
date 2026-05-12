@@ -1,6 +1,6 @@
 # Paper Fetch Skill 当前架构与业务流程
 
-Date: 2026-04-28
+Date: 2026-05-12
 
 ## 状态说明
 
@@ -328,7 +328,7 @@ workflow 会尽可能拿到两类元数据：
 其中：
 
 - `elsevier` 仍会参与 publisher metadata probe
-- `springer`、`wiley`、`science`、`pnas`、`ieee` 不再做 publisher metadata probe
+- `springer`、`wiley`、`science`、`pnas`、`ieee`、`copernicus` 不再做 publisher metadata probe
 
 然后执行 primary / secondary merge，得到后续正文抓取所需的统一 metadata 视图。
 
@@ -349,26 +349,35 @@ workflow 会尽可能拿到两类元数据：
 - `springer`
   - 走 provider 自管 `direct HTML -> direct HTTP PDF`
 - `wiley`
-  - 走 provider 自管混合工作流 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF`
+  - 走 provider 自管混合工作流；完整顺序见 [`providers.md` 的 Wiley / Science / PNAS 小节](../providers.md#wiley-science-pnas-browser-workflow)
   - HTML 与 seeded-browser PDF/ePDF 共用浏览器工作流基座；`WILEY_TDM_CLIENT_TOKEN` 可让官方 TDM API PDF lane 在 browser PDF/ePDF fallback 失败或 browser runtime 不可用时继续尝试
 - `science`
-  - 走 provider 自管浏览器工作流 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF`
+  - 走 provider 自管浏览器工作流；完整顺序见 [`providers.md`](../providers.md#wiley-science-pnas-browser-workflow)
   - 与 `wiley` 的 HTML / browser PDF/ePDF 路径共用浏览器工作流基座
 - `pnas`
-  - 走 provider 自管浏览器工作流 `direct Playwright HTML preflight -> FlareSolverr HTML -> seeded-browser publisher PDF/ePDF`
+  - 走 provider 自管浏览器工作流；完整顺序见 [`providers.md`](../providers.md#wiley-science-pnas-browser-workflow)
   - 与 `wiley` / `science` 的 HTML / browser PDF/ePDF 路径共用浏览器工作流基座
   - 当前只剩 provider-owned 单栈；不再保留额外的 Science-only live harness 或第二套 browser-PDF 实现
 - `ieee`
   - 走 provider 自管 `landing metadata / article number -> dynamic HTML endpoint -> direct HTTP PDF fallback -> seeded-browser PDF fallback`
   - dynamic HTML 成功公开为 `ieee_html`；无可用 HTML 但 PDF payload 成功时公开为 `ieee_pdf`
 - `arxiv`
-  - 走 provider 自管 `arXiv ID 解析 -> arXiv official HTML -> optional arXiv API / HTML metadata merge -> direct HTTP PDF fallback`
+  - 走 provider 自管 `arXiv ID 解析 -> arXiv official HTML -> direct HTTP PDF fallback`
+  - arXiv API / HTML metadata merge 只作为 enrichment，不是全文主路径节点
   - official HTML 成功公开为 `arxiv_html`；HTML 不可用、返回非 HTML、正文不足或质量检测失败时直接进入 text-only PDF fallback 并公开为 `arxiv_pdf`
 - `copernicus`
   - 走 provider 自管 `landing HTML / DOI-derived URL -> NLM/JATS XML -> direct HTTP PDF fallback`
   - XML 成功公开为 `copernicus_xml`；PDF fallback 成功公开为 `copernicus_pdf`
 
-`paper_fetch.providers.browser_workflow` 是 Wiley / Science / PNAS 的 canonical browser workflow facade：它保留 `ProviderBrowserProfile`、`BrowserWorkflowClient`、bootstrap、seeded-browser PDF fallback、article conversion 和 related asset download orchestration 的稳定入口。底层职责已拆到独立包：`paper_fetch.providers.browser_workflow.profile/bootstrap/pdf_fallback/article/assets/client/shared/html_extraction/fetchers` 分别承载 profile、HTML bootstrap、PDF/ePDF fallback、article assembly、asset retry helper、client 基类、URL/signal helper、HTML payload/cache helper 和 Playwright fetcher helper。旧 `paper_fetch.providers.browser_workflow_fetchers.*`、`_browser_workflow_html_extraction.py`、`_browser_workflow_shared.py`、`_browser_workflow_fetchers.py`、`paper_fetch.providers.science_html`、`paper_fetch.providers.pnas_html` 和 `paper_fetch.providers.wiley_html` 兼容入口已删除；新代码只能从 `paper_fetch.providers.browser_workflow.*` 引入 browser workflow orchestration，从 `paper_fetch.providers._science_html` / `_pnas_html` / `_wiley_html` 引入 provider-owned HTML 作者提取和 blocking fallback 信号。`paper_fetch.providers._atypon_browser_workflow_profiles` 是 Atypon-only candidate routing/profile dispatch helper，只支持 provider catalog 中的 `science` / `pnas` / `wiley`；候选 URL 模板来自 `ProviderSpec`，provider-owned callback 模块按 `ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES` 动态导入。`paper_fetch.providers.atypon_browser_workflow` 承载 Atypon browser HTML markdown、asset scopes、normalization 和 postprocess entrypoint，publisher 差异通过 profile callback 分派。facade 继续 re-export 测试和 provider 已依赖的 patch 点（例如 `load_runtime_config`、`fetch_html_with_flaresolverr`、`fetch_html_with_direct_playwright`、`fetch_pdf_with_playwright`、`extract_atypon_browser_workflow_markdown` 与 shared Playwright fetcher 构造器）。
+`paper_fetch.providers.browser_workflow` 是 Wiley / Science / PNAS 的 canonical browser workflow facade。它保留 `ProviderBrowserProfile`、`BrowserWorkflowClient`、bootstrap、seeded-browser PDF fallback、article conversion 和 related asset download orchestration 的稳定入口。
+
+底层职责已拆到独立包。`profile`、`bootstrap`、`pdf_fallback`、`article`、`assets`、`client`、`shared`、`html_extraction`、`fetchers` 分别承载 profile、HTML bootstrap、PDF/ePDF fallback、article assembly、asset retry helper、client 基类、URL/signal helper、HTML payload/cache helper 和 Playwright fetcher helper。
+
+旧兼容入口已删除，包括 `paper_fetch.providers.browser_workflow_fetchers.*`、`_browser_workflow_html_extraction.py`、`_browser_workflow_shared.py`、`_browser_workflow_fetchers.py`、`paper_fetch.providers.science_html`、`paper_fetch.providers.pnas_html` 和 `paper_fetch.providers.wiley_html`。新代码只能从 `paper_fetch.providers.browser_workflow.*` 引入 browser workflow orchestration，从 `paper_fetch.providers._science_html` / `_pnas_html` / `_wiley_html` 引入 provider-owned HTML 作者提取和 blocking fallback 信号。
+
+`paper_fetch.providers._atypon_browser_workflow_profiles` 是 Atypon-only candidate routing/profile dispatch helper。它只支持 provider catalog 中的 `science` / `pnas` / `wiley`；候选 URL 模板来自 `ProviderSpec`，provider-owned callback 模块按 `ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES` 动态导入。`paper_fetch.providers.atypon_browser_workflow` 承载 Atypon browser HTML markdown、asset scopes、normalization 和 postprocess entrypoint，publisher 差异通过 profile callback 分派。
+
+facade 继续 re-export 测试和 provider 已依赖的 patch 点。例如 `load_runtime_config`、`fetch_html_with_flaresolverr`、`fetch_html_with_direct_playwright`、`fetch_pdf_with_playwright`、`extract_atypon_browser_workflow_markdown` 与 shared Playwright fetcher 构造器。
 
 `wiley` / `science` / `pnas` 的 HTML 正文图片资产下载也属于这套 provider-owned browser workflow：每个 asset download attempt 内，单个 worker 线程会复用自己的 seeded Playwright browser context，先尝试 full-size/original，全部失败后再用同一线程私有 context 尝试 preview；并发 worker 之间不复用 `RuntimeContext` 持有的共享 browser。PNAS direct Playwright HTML preflight 和 PDF/ePDF fallback 同样通过 `RuntimeContext` 复用 browser，但这只适用于非 threaded 的主流程 Playwright 步骤。通用 HTTP-first 资产下载仍保留给非目标 provider，并由 `paper_fetch.extraction.html.assets.download` 的私有 candidate/attempt/resolution 模型和共享 executor 统一处理 figure、table/formula image 与 supplementary 的 resolve/fallback 流程；网络解析阶段进入 bounded worker pool，文件写入、文件名去重、`source_data/` 分流和失败诊断收集仍按原 asset 顺序串行执行。
 
@@ -378,11 +387,12 @@ workflow 会尽可能拿到两类元数据：
 
 ### 5. abstract-only / metadata-only fallback
 
-如果命中了 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee` 之一：
+如果命中了 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee`、`arxiv`、`copernicus` 之一：
 
 - workflow.fulltext 只执行该 provider 自己管理的 HTML/PDF waterfall
 - provider 返回 `None` 后直接进入 metadata-only fallback
 - `springer` / `wiley` / `science` / `pnas` / `ieee` 如果只能确认摘要级内容，会直接返回 provider `abstract_only` 结果
+- `arxiv`、`copernicus` 与 `elsevier` 保持一致，HTML/XML/PDF 都不可用时进入 metadata-only fallback
 
 如果没有命中这些 official provider：
 
@@ -496,8 +506,8 @@ workflow 会尽可能拿到两类元数据：
 
 边界：
 
-- 只检查本地条件
-- 不主动打远端 publisher 可用性探测
+- 本地检查边界与各 provider check 名称以 [`providers.md`](../providers.md#provider-status-local-boundary) 为准
+- IEEE 当前返回 `html_route` 与 `pdf_fallback` 两条 check；具体 mode 写在各 check 的 `details.mode`
 
 ### `has_fulltext`
 
@@ -513,7 +523,7 @@ workflow 会尽可能拿到两类元数据：
 
 ## 关键例外与调用方容易误解的点
 
-### `elsevier` / `springer` / `wiley` / `science` / `pnas` / `ieee` 不走通用 HTML fallback
+### `elsevier` / `springer` / `wiley` / `science` / `pnas` / `ieee` / `arxiv` / `copernicus` 不走通用 HTML fallback
 
 这些 provider 的 HTML 逻辑由 provider 内部管理，因此：
 
@@ -523,6 +533,8 @@ workflow 会尽可能拿到两类元数据：
 - `wiley` 成功时公开为 `wiley_browser`
 - `science` / `pnas` 仍然公开为 `science` / `pnas`
 - `ieee` 成功时公开为 `ieee_html` 或 `ieee_pdf`
+- `arxiv` 成功时公开为 `arxiv_html` 或 `arxiv_pdf`
+- `copernicus` 成功时公开为 `copernicus_xml` 或 `copernicus_pdf`
 - 更细的成功细节要看 `source_trail`
 
 ### `crossref` 既可能是 source，也可能只是 signal
@@ -588,9 +600,9 @@ MCP 层会把缓存暴露成 resources：
 
 `FetchCache` 负责匹配 `prefer_cache=true` 的请求：先 resolve DOI，再按 request modes、strategy、`include_refs`、`max_tokens`、sidecar version 和 `EXTRACTION_REVISION` 复用本地 fetch-envelope；写入时只负责 sidecar payload 语义和 index refresh，文件 materialization 走 `ArtifactStore` 的原子 JSON writer。资源 URI、sidecar JSON shape 和 scoped download_dir entries 保持兼容，让 host 不需要重复抓取相同论文。
 
-`prefer_cache=false` 是 MCP 默认值，因此普通 `fetch_paper` 不会读取本地 fetch-envelope sidecar。`no_download=true` 时，MCP facade 调用 service 前会把运行时下载目录降为 `RuntimeContext(download_dir=None)`，从而关闭 provider payload、PDF、HTML、资产和 fetch-envelope sidecar 写入；如果同时 `save_markdown=true`，只在 facade 的 Markdown 保存步骤落盘，并在结构化 payload 中返回 `saved_markdown_path`。
+MCP `prefer_cache`、`no_download` 与 `save_markdown` 的行为以 [`providers.md`](../providers.md#mcp-download-and-markdown-save) 为准。
 
-MCP resource sync 只在 fetch 实际使用下载目录，或 `save_markdown=true` 成功保存 Markdown 后执行；`no_download=true` 且未保存 Markdown 的 fetch 不刷新 cache resources。
+MCP resource sync 只在 fetch 实际使用下载目录，或 Markdown 保存步骤成功落盘后执行；没有新落盘产物的 fetch 不刷新 cache resources。
 
 ## 扩展点：新增能力时应改哪一层
 

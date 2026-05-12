@@ -21,9 +21,8 @@
 
 - 它们是公开 provider 名字，可能出现在 `provider_hint`、`preferred_providers` 中
 - metadata 仍由 `crossref` 提供
-- `wiley` 的正文链路是 provider 自管的 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF -> abstract-only / metadata-only`
-- `science` 的正文链路是 provider 自管的 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> abstract-only / metadata-only`
-- `pnas` 的正文链路同样会先做 direct Playwright HTML preflight；成功时跳过 FlareSolverr，失败、challenge、正文不足或抽取失败时继续走 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> abstract-only / metadata-only`
+- 正文链路顺序以 [`providers.md` 的 Wiley / Science / PNAS 小节](providers.md#wiley-science-pnas-browser-workflow) 为准
+- `pnas` 会先做 direct Playwright HTML preflight；成功时跳过 FlareSolverr，失败时继续走 provider-owned browser workflow
 - `wiley` 的 `WILEY_TDM_CLIENT_TOKEN` 只启用官方 TDM API PDF lane；这条 lane 会在 browser PDF/ePDF fallback 失败或本地 browser runtime 不可用时继续尝试，但不会下载 HTML 资产
 - `wiley` 的 HTML / browser PDF/ePDF 路径与 `science` / `pnas` 共用同一套 provider-owned 浏览器 bootstrap 与 browser-PDF executor，不再保留单独的 Science path harness
 - `source` 公开可能是 `wiley_browser`、`science` 或 `pnas`
@@ -64,7 +63,7 @@ export PAPER_FETCH_FLARESOLVERR_KEEP_SESSION=1
 - `FLARESOLVERR_ENV_FILE` 不会自动猜 preset
 - 默认每次 `FlareSolverr HTML` 抓取结束后都会调用 `sessions.destroy` 销毁本次 browser session；这只关闭 FlareSolverr 管理的浏览器 session，不会停止本地 FlareSolverr 服务进程
 - 设置 `PAPER_FETCH_FLARESOLVERR_KEEP_SESSION=1` 会恢复跨请求复用 session、cookies 和 warm wait 的行为；这可能让浏览器进程保留到 Python 进程退出的 `atexit` 清理或手动清理
-- 本地 FlareSolverr 限速变量与账本已移除；browser workflow 不再读取 `FLARESOLVERR_MIN_INTERVAL_SECONDS`、`FLARESOLVERR_MAX_REQUESTS_PER_HOUR` 或 `FLARESOLVERR_MAX_REQUESTS_PER_DAY`
+- 本地 FlareSolverr 限速变量与账本移除说明见 [`providers.md`](providers.md#flaresolverr-rate-limit-removal)
 
 ## preset 选择
 
@@ -189,10 +188,9 @@ PYTHONPATH=src pytest -n 0 \
 
 ### HTML 失败但 provider 最终成功
 
-- 对 `wiley` 来说，这可能是 `FlareSolverr HTML` 失败后继续 `Wiley TDM API PDF`，也可能继续进入 seeded-browser publisher PDF/ePDF
-- 对 `science` 来说，这可能是 `FlareSolverr HTML` 失败后继续 `seeded-browser publisher PDF/ePDF` 的正常路径；对 `pnas` 来说，也可能是 direct Playwright preflight 失败后进入相同回退链路
-- 最终成功与否以结果为准
-- 细节看 `source_trail`
+- 这通常表示 provider-owned browser workflow 已继续进入后续 fallback。
+- Wiley / Science / PNAS 的完整 fallback 顺序见 [`providers.md`](providers.md#wiley-science-pnas-browser-workflow)。
+- 最终成功与否以结果为准；细节看 `source_trail`。
 
 ### `asset_profile=body|all` 仍没有图或只有 preview
 

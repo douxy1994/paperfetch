@@ -135,7 +135,7 @@ notepad "$env:LOCALAPPDATA\PaperFetchSkill\offline.env"
 
 **7. 常见问题**
 
-Windows 安装器和 legacy 手动排障路径见 [`paper-fetch-windows-cli-mcp-skill-install.md`](paper-fetch-windows-cli-mcp-skill-install.md)，离线安装细节见 [`docs/deployment.md`](docs/deployment.md)。
+Windows 安装器和离线安装细节见 [`docs/deployment.md`](docs/deployment.md)。
 
 
 #### **II. Linux** 
@@ -221,7 +221,7 @@ Linux 在原离线包解压目录运行：
 ./install.sh --lite
 ```
 
-arXiv official HTML 是全文主路径；只要能从 DOI、URL 或裸 ID 解析出 arXiv ID，就会先请求 `https://arxiv.org/html/{id}`，再把可用的 arXiv API metadata 与 HTML front matter 合并。API 429/临时失败不会阻塞 HTML fulltext，也不会导致 HTML 成功结果退化成 `Untitled Article`。HTML 不可用、返回非 HTML、正文不足或质量检测失败时，直接进入 text-only PDF fallback。HTML 正文图片通过 direct `HttpTransport` 使用图片 `Accept` 下载，不通过 HTML seed 构造 cookie opener；单张图片的网络类失败会顺序重试并保留 per-asset 诊断。PDF fallback 只提供正文文本，不下载 figure 或 supplementary 资产。
+arXiv 路径细节见 [`docs/providers.md`](docs/providers.md#arxiv)。
 
 如果只想装进当前 Python 环境：
 
@@ -325,10 +325,7 @@ WSL 下给 Codex 挂 MCP 时，推荐使用仓库包装脚本：
 
 ### 常用抓取参数
 
-- MCP `fetch_paper` 默认返回 `article` 和 `markdown`，`prefer_cache=false`。
-- `strategy.asset_profile` 支持 `none`、`body`、`all`；默认由 provider 决定。
-- `no_download=true` 会关闭 provider payload、PDF、HTML、资产和 fetch-envelope sidecar 写入。
-- `save_markdown=true` 会把全文 Markdown 写到硬盘，成功时返回 `saved_markdown_path`。
+MCP 默认模式、`prefer_cache`、`no_download` 和 `save_markdown` 的完整语义见 [`docs/providers.md`](docs/providers.md#mcp-download-and-markdown-save)。`strategy.asset_profile` 支持 `none`、`body`、`all`，默认由 provider 决定。
 
 ### 更新
 

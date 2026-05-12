@@ -13,7 +13,10 @@
 - Wiley / Science / PNAS 的具体启动脚本与运维排障
 - 架构分层和数据契约的完整背景
 
-部署入口见 [`deployment.md`](deployment.md)，Wiley / Science / PNAS 运维细节见 [`flaresolverr.md`](flaresolverr.md)，架构说明见 [`architecture/target-architecture.md`](architecture/target-architecture.md)。`references/api_notes.md` 和 `references/routing_rules.md` 只保留 API 约束或历史草图；provider/routing/waterfall 的 canonical 事实来源是本文档和 `paper_fetch.provider_catalog.PROVIDER_CATALOG`。
+部署入口见 [`deployment.md`](deployment.md)，Wiley / Science / PNAS 运维细节见 [`flaresolverr.md`](flaresolverr.md)，架构说明见 [`architecture/target-architecture.md`](architecture/target-architecture.md)。
+
+<a id="provider-canonical-sources"></a>
+`references/api_notes.md` 和 `references/routing_rules.md` 只保留 API 约束或历史草图；provider/routing/waterfall 的 canonical 事实来源是本文档和 `paper_fetch.provider_catalog.PROVIDER_CATALOG`。
 
 ## Provider 能力矩阵
 
@@ -26,7 +29,7 @@
 | `science` | 依赖 Crossref | `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | 与 `wiley` 的 HTML / browser PDF/ePDF 路径共用浏览器工作流基座；AAAS access gate / entitlement 不满足时会停在 provider 内部并降级 `abstract_only` / `metadata_only` |
 | `pnas` | 依赖 Crossref | `direct Playwright HTML preflight -> FlareSolverr HTML -> seeded-browser publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | direct Playwright preflight 成功时跳过 FlareSolverr；失败、challenge、正文不足或抽取失败时保持原 FlareSolverr/PDF 瀑布；较老文献常见 HTML 仅摘要，再继续走 provider 内部 PDF/ePDF fallback，必要时可返回 `abstract_only` |
 | `ieee` | 依赖 Crossref merge + landing metadata | `landing/article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF -> seeded-browser PDF -> abstract/metadata fallback` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | 现代 IEEE Xplore 文章优先公开为 `ieee_html`；REST 直连不可用时会用干净 Playwright context 捕获同一全文 HTML；无动态 HTML 的老文献可经真实 PDF payload 返回 `ieee_pdf`；不处理 CAPTCHA、登录自动化或权限绕过 |
-| `arxiv` | arXiv ID + optional API enrichment | `ID 解析 -> arXiv official HTML -> API/HTML metadata 合并 -> direct HTTP PDF -> metadata fallback` | HTML 路线支持正文 figure 资产下载；PDF fallback 当前 text-only | 中 | 解析 `arxiv.org/abs|html|pdf`、`arXiv:{id}`、裸 arXiv ID 和 `10.48550/arXiv.*`；API 失败不阻塞 HTML；HTML 成功公开为 `arxiv_html`，PDF fallback 公开为 `arxiv_pdf` |
+| `arxiv` | arXiv ID + optional API enrichment | `ID 解析 -> arXiv official HTML -> direct HTTP PDF -> metadata fallback` | HTML 路线支持正文 figure 资产下载；PDF fallback 当前 text-only | 中 | HTML front matter 在主路径内合并；arXiv API enrichment 在 HTML/PDF 主链结束后才运行，失败只追加 warning、不影响已得到的 fulltext payload；HTML 成功公开为 `arxiv_html`，PDF fallback 公开为 `arxiv_pdf`；可识别的 ID 形态（含 `vN` 版本、`10.48550/arXiv.*` 等）见后文 arXiv 小节 |
 | `copernicus` | 依赖 Crossref merge + landing metadata | `landing HTML / DOI-derived URL -> NLM/JATS XML -> direct HTTP PDF -> metadata fallback` | XML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | 开放获取 direct HTTP 路线，不需要登录态、FlareSolverr 或 Playwright；XML 成功公开为 `copernicus_xml`，PDF fallback 公开为 `copernicus_pdf` |
 
 说明：
@@ -35,7 +38,9 @@
 - 尤其 `wiley` / `science` / `pnas` 的浏览器与 PDF/ePDF 路径，仍受 publisher 访问权限、paywall/challenge 与远端站点行为影响。
 - `mdpi` 仍是待接入设计，不在 provider catalog、router、registry、status surface 或测试矩阵中；计划语义只维护在本文档，不在 `references/` 中重复。
 - Provider/source/domain/API/fallback marker、候选 URL 模板、HTML artifact 持久化、XML provider 推断与正文阈值的事实来源是 `paper_fetch.provider_catalog.ProviderSpec`。`SOURCE_PROVIDER_MAP` 登记实际 envelope / `ArticleModel.source` 值；例如 Springer HTML / PDF fallback 分别公开 `springer_html` / `springer_pdf`，二者都映射到 `springer` provider。
-- `wiley` 的 HTML / browser PDF/ePDF 路径与 `science` / `pnas` 现在只保留一套 provider-owned 浏览器栈：canonical runtime 是 `paper_fetch.providers.browser_workflow` 包入口；bootstrap、PDF/ePDF fallback、article assembly、asset retry helper、client 基类和 Playwright fetchers 已收敛到 `browser_workflow/` 子包。这套 profile 明确按 Atypon browser workflow 限定在 provider catalog 中的 `science` / `pnas` / `wiley`，publisher 差异通过各 provider 模块 callback 下沉。旧 browser-workflow compatibility aliases、`_browser_workflow_*` 与 `browser_workflow_fetchers/` 兼容入口已移除，browser-PDF executor 继续共享 `_pdf_fallback`，不再存在单独的 Science path harness。
+- `wiley` / `science` / `pnas` 只保留一套 provider-owned 浏览器栈，canonical runtime 是 `paper_fetch.providers.browser_workflow` 包入口。
+- browser workflow 的 bootstrap、PDF/ePDF fallback、article assembly、asset retry helper、client 基类和 Playwright fetchers 已收敛到 `browser_workflow/` 子包；profile 只面向 provider catalog 中的 `science` / `pnas` / `wiley`。
+- publisher 差异通过各 provider 模块 callback 下沉；旧 compatibility aliases、`_browser_workflow_*` 与 `browser_workflow_fetchers/` 兼容入口已移除，browser-PDF executor 继续共享 `_pdf_fallback`。
 - browser-workflow 的 asset download Playwright fallback 在并发 worker 中使用线程私有 browser/context，不复用 `RuntimeContext` 持有的共享 browser；`RuntimeContext` 共享 browser 仍只保留给非 threaded 的主流程 Playwright 场景。
 - 2020+ live / regression 基准样本集中维护在 [`../tests/provider_benchmark_samples.py`](../tests/provider_benchmark_samples.py)。
 - 自然地理学 live-only 候选集中维护在 [`../tests/live/geography_samples.py`](../tests/live/geography_samples.py)，默认每家尝试前 `10` 条，并通过 [`../scripts/run_geography_live_report.py`](../scripts/run_geography_live_report.py) 产出 JSON/Markdown 报告。
@@ -263,7 +268,7 @@ resolve
   - PDF fallback 只返回 text-only Markdown。
   - 成功时公开 `source="ieee_html"` 或 `source="ieee_pdf"`。
 - `arxiv`
-  - 固定顺序是 `arXiv ID 解析 -> arXiv official HTML -> optional arXiv API / HTML front matter metadata merge -> direct HTTP PDF fallback -> metadata-only`。
+  - 固定顺序是 `arXiv ID 解析 -> arXiv official HTML -> direct HTTP PDF fallback -> metadata-only`。
   - resolve 支持 `https://arxiv.org/abs/{id}`、`/html/{id}`、`/pdf/{id}`、`arXiv:{id}`、裸 `{id}` / `{id}vN`，以及 `10.48550/arXiv.{id}`。
   - DOI、URL、裸 ID 或已有 metadata 中能可靠推导 arXiv ID 时，会先构造最小 metadata：`doi`、`arxiv_id`、`landing_page_url`、`html_url`、`pdf_url`、`provider=arxiv`，并立即执行 HTML -> PDF waterfall；arXiv API 只作为可选 metadata enrichment，失败或 429 只记录 warning/diagnostic，不会阻塞全文获取。
   - official HTML front matter 会补齐 `title`、`authors`、`abstract`、`published`、`primary_category`、canonical DOI、HTML/PDF URL；合并优先级是 arXiv API metadata > HTML front matter > derived arXiv URLs，因此 API 不可用时也不应出现 `Untitled Article` 或 authorless arXiv fulltext。
@@ -358,7 +363,8 @@ resolve
   - 老文献、无动态 HTML 或 clean-browser HTML 仍不可用时，可能先表现为 `fulltext:ieee_html_fail` / `fulltext:ieee_browser_html_fail`，再进入 `fulltext:ieee_pdf_fallback_ok`
   - PDF fallback 公开为 `ieee_pdf`，HTML 公开为 `ieee_html`
 - `arxiv`
-  - provider 自管 `arXiv ID 解析 -> arXiv official HTML -> optional arXiv API / HTML metadata merge -> direct HTTP PDF fallback -> metadata fallback`
+  - provider 自管 `arXiv ID 解析 -> arXiv official HTML -> direct HTTP PDF fallback -> metadata fallback`
+  - optional arXiv API / HTML metadata merge 只做 enrichment，详见 [arXiv](#arxiv)
   - HTML 成功轨迹是 `fulltext:arxiv_html_ok`
   - HTML 不可用、非 HTML、正文不足或质量门控失败时先保留 `fulltext:arxiv_html_fail`，再尝试 `fulltext:arxiv_pdf_fallback_ok`
   - PDF fallback 公开为 `arxiv_pdf`，HTML 公开为 `arxiv_html`
@@ -373,11 +379,10 @@ resolve
 - 不再存在 public HTML fallback 开关
 - 对 `elsevier` 来说，系统始终按内部 `官方 XML/API -> 官方 API PDF fallback` waterfall 执行
 - 对 `springer` 来说，系统始终按内部 `direct HTML -> direct HTTP PDF` waterfall 执行
-- 对 `wiley` 来说，系统始终按内部 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF` waterfall 执行
-- 对 `science` 来说，系统始终按内部 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF` waterfall 执行
-- 对 `pnas` 来说，系统始终按内部 `direct Playwright HTML preflight -> FlareSolverr HTML -> seeded-browser publisher PDF/ePDF` waterfall 执行；preflight 只做快速成功路径，不改变 FlareSolverr/PDF 回退语义
+- 对 `wiley` / `science` / `pnas` 来说，系统始终按上文声明的 provider-owned browser workflow 执行。
+- `pnas` preflight 只做快速成功路径，不改变 FlareSolverr/PDF 回退语义。
 - 对 `ieee` 来说，系统始终按内部 `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback -> abstract/metadata fallback` waterfall 执行
-- 对 `arxiv` 来说，系统始终按内部 `arXiv ID 解析 -> arXiv official HTML -> optional arXiv API / HTML metadata merge -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行
+- 对 `arxiv` 来说，系统始终按内部 `arXiv ID 解析 -> arXiv official HTML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行；metadata enrichment 只在主链外补充字段
 - 对 `copernicus` 来说，系统始终按内部 `landing HTML -> NLM/JATS XML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行
 
 ## 默认输出策略
@@ -412,60 +417,135 @@ CLI、Python API、MCP 当前统一采用这些默认值：
   - 在 `body` 基础上额外下载 supplementary 文件附件
   - 包含 appendix / supplementary 等非正文资产；正文已经内联消费的图表仍会通过 `render_state` 从尾部重复附录中过滤
 
-对 `elsevier` PDF fallback、`springer` PDF fallback、`ieee` PDF fallback、`arxiv` PDF fallback、`copernicus` PDF fallback、`wiley` / `science` / `pnas` 而言：
+#### PDF fallback 的 text-only 边界
 
-- `elsevier` PDF fallback 仍会把 `asset_profile=body|all` 降级成 text-only
-- `springer` PDF fallback 仍会把 `asset_profile=body|all` 降级成 text-only
-- `ieee` PDF fallback 仍会把 `asset_profile=body|all` 降级成 text-only；IEEE dynamic HTML 成功路径会从 cleaned `#article` fragment 抽取正文 figure / table / formula 资产候选，`asset_profile=all` 额外把明确附件区域或 landing multimedia payload 中的 supplementary / multimedia 文件交给通用文件下载器
-- `arxiv` HTML 成功路径会从 official HTML 正文抽取 figure 资产候选，`asset_profile=body|all` 会下载正文图片；正文渲染阶段会把匹配到的 official HTML 图片先插到原 figure caption 附近，下载后再把远程 URL 改写为 `body_assets/...`，已原位消费的 body figure 不会再进入尾部 `Figures`；图片下载使用 direct `HttpTransport` 和图片友好的 `Accept: image/avif,image/webp,image/*,*/*;q=0.8`，不使用 official HTML URL 触发 cookie-seeded opener；下载正文图片时把并发限制为 `min(PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY, 2)`，并对网络异常类失败做一次顺序重试，不重试 404 或非图片 payload；当 full-size 不可用而落到 `download_tier=preview` 时，普通 preview 仍需满足最小宽高，宽扁但面积足够的真实论文图可被标记为 `preview_accepted`，该情况只保留 source trail / asset diagnostics，不写普通 warning；小图标和占位图仍会作为 preview fallback 失败/降级信号；PDF fallback 仍会把 `asset_profile=body|all` 降级成 text-only
-- `copernicus` PDF fallback 仍会把 `asset_profile=body|all` 降级成 text-only；Copernicus XML 成功路径会从 JATS/XML 中抽取正文 figure / table / formula 与明确 supplementary links
-- 共享 PDF Markdown 转换会拒绝明显过短或主要由 IEEE 授权页脚组成的结果；当 PDF 内部存在大量透明文本层时，会使用 PyMuPDF legacy transparent-text 路径做一次二次转换，二次结果仍不足时继续走现有候选重试或 provider 降级
-- `wiley` / `science` / `pnas` 的 `FlareSolverr HTML` 成功路径支持正文 figure / table / formula 图片资产下载；这些 provider 以 shared Playwright browser context 为主链路，不再先走普通 HTTP 直连
-- `wiley` / `science` / `pnas` 的 `asset_profile=all` 会把 supplementary 从正文图片链路拆开，作为独立文件附件下载；代码层不额外限制 supplementary 文件大小；首轮失败后只重试失败的原始 asset 子集，不会因为 supplementary 失败重新下载已成功的正文 figure
-- `wiley` 的 supplementary 只从 `Supporting Information` 区块抽取，并且只接受 URL path 解析后命中 `/action/downloadSupplement`、结构化 supplementary link 属性或 `sup-*` 这类真实 supporting file 链接；正文 `<figure>` 里的 `/cms/asset/...fig-*.jpg|png|webp` 只保留为 figure 资产；`downloadSupplement` query 里的 `file` / `filename` / `attachment` / `download` 会作为真实文件名优先用于落盘，布尔型 `download=true` 不作为文件名
-- `science` / `pnas` 的 supplementary 只从 Atypon 真实 `Supplementary Material(s)` / `Supporting Information` section 子树抽取，并且只保留 publisher `/doi/suppl/.../suppl_file/...` 附件；正文 Data Availability 里的普通数据链接、页内 `#supplementary-materials` 导航或 section 内引用文献 PDF 不会再被当作 supplementary
-- `wiley` / `science` / `pnas` 的图片候选仍优先 full-size/original；full-size 候选全部失败后才尝试 preview，preview 也通过同一个 seeded browser context 下载
-- `wiley` / `science` / `pnas` 的 PDF/ePDF fallback 仍是 text-only
-- `springer` HTML 成功路径也按相同语义处理：正文图片只从 cleaned body/content scope 抽取；普通 supplementary 只允许来自 `Supplementary information` / `Supplementary material(s)` / `Supporting information` / `Electronic supplementary material` / `Extended data` / `Extended data figures and tables` 这些 section 子树；`Source Data` 会独立识别并在下载时落到 `source_data/` 子目录，`Peer Review File` / `Peer reviewer reports` 不再当作 supplementary；PDF fallback 仍是 text-only
-- `elsevier` XML 成功路径下，`body` 继续只下载 `image` / `table_asset`，`all` 会额外下载 `supplementary` references，并统一映射到 `kind="supplementary"` / `section="supplementary"` / `download_tier="supplementary_file"`；正文 `image` / `table_asset` 首轮下载遇到无 HTTP status 的 timeout、TLS、DNS、connection reset/closed 等网络失败时，会只对失败项串行重试一轮，重试成功后移除对应 `asset_failures`，明确 HTTP status、权限/认证类或非 HTTP scheme 失败不自动重试
-- 通用 HTML figure 与 supplementary 下载内部使用 `paper_fetch.extraction.html.assets.state` 的 asset download candidate/attempt/resolution 状态机和 bounded executor，并通过 `paper_fetch.extraction.html.assets.requester` 统一 cookie-aware opener/request：网络、opener 或浏览器 document fallback resolve 阶段可并发执行，结果按原 asset 顺序回收；文件写入、文件名去重、`source_data/` 分流和失败诊断收集仍串行执行。输出顺序、fallback 候选顺序、`article.assets[*]` 与 `quality.asset_failures` shape 保持稳定。Elsevier XML object references 也使用同样的“网络并发、写入串行”约束。并发 worker 上限由 `PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY` 控制，默认 `4`、最小 `1`；普通 HTTP 单资产下载仍可在调用线程解析。
-- Provider fulltext 公开契约是 `fetch_result()` / `fetch_raw_fulltext()`；旧 `fetch_fulltext()` dict 入口已经删除。
-- 同一次 provider fetch 内会复用 `RuntimeContext.parse_cache`：Elsevier XML root、Springer HTML extraction、Wiley/Science/PNAS browser-workflow Markdown extraction 和 HTML asset extraction 不跨阶段重复解析同一份 payload；IEEE dynamic HTML block-page token 判定也按 payload 缓存，避免 direct/browser/quality 路径重复扫描同一组 access-block token。
-- 同一个 `RuntimeContext` 生命周期内还会复用 `session_cache`：`has_fulltext` 与后续 `fetch_paper` 可共享 query resolution、Crossref DOI metadata、Elsevier metadata probe 和 landing page `citation_pdf_url` probe；fetch 阶段命中 landing probe 时会把 citation PDF URL 合并到 metadata `fulltext_links`。
-- 同一个 `RuntimeContext` 内会通过 `PlaywrightContextManager` lazy 复用 Playwright Chromium browser；PNAS direct HTML preflight、正文图片/文件 fetcher 与 PDF/ePDF fallback 仍按阶段创建独立 browser context/page，避免 cookie、route handler 和下载设置互相污染。
-- `RawFulltextPayload.metadata` 只是 legacy/read-only compatibility view；provider 新逻辑应读写 `ProviderContent.route_kind`、`markdown_text`、`diagnostics`、`fetcher`、`browser_context_seed`、`warnings`、`trace` 和 `merged_metadata` 等 typed fields。
+- PDF fallback 当前不下载资产。
+- 适用 provider：`elsevier`、`springer`、`ieee`、`arxiv`、`copernicus`、`wiley`、`science`、`pnas`。
+- 即使 `asset_profile=body|all`，这些 PDF / ePDF fallback 也只返回 text-only Markdown。
+- 共享 PDF Markdown 转换会拒绝明显过短或主要由 IEEE 授权页脚组成的结果。
+- PDF 内有大量透明文本层时，会用 PyMuPDF legacy transparent-text 路径二次转换。
+- 二次转换仍不足时，继续走候选重试或 provider 降级。
+
+#### Provider HTML 资产语义（wiley / science / pnas / arxiv / ieee / copernicus / springer / elsevier）
+
+- `wiley` / `science` / `pnas` 的 FlareSolverr HTML 成功路径支持正文图、表和公式图片资产。
+- 这些 provider 以 shared Playwright browser context 为主链路，不再先走普通 HTTP 直连。
+- 图片候选优先 full-size/original；全部失败后才尝试 preview。
+- preview 也通过同一个 seeded browser context 下载。
+- `arxiv` HTML 成功路径会从 official HTML 正文抽取 figure 资产候选。
+- `arxiv` 正文图片先插在原 figure caption 附近，下载后改写到 `body_assets/...`。
+- 已原位消费的 `arxiv` body figure 不会再进入尾部 `Figures`。
+- `arxiv` 图片下载用 direct `HttpTransport` 和图片友好的 `Accept` header。
+- `arxiv` 不使用 official HTML URL 触发 cookie-seeded opener。
+- `arxiv` 正文图片并发上限是 `min(PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY, 2)`。
+- `arxiv` 对网络异常类失败顺序重试一次，不重试 404 或非图片 payload。
+- `download_tier=preview` 只有满足最小宽高才视为可接受 preview。
+- 宽扁但面积足够的真实论文图可标记为 `preview_accepted`。
+- `preview_accepted` 只保留 source trail / asset diagnostics，不写普通 warning。
+- 小图标和占位图仍会作为 preview fallback 失败或降级信号。
+- IEEE dynamic HTML 成功路径从 cleaned `#article` fragment 抽取正文图、表和公式资产。
+- IEEE `asset_profile=all` 会额外下载明确附件区域或 landing multimedia payload。
+- Copernicus XML 成功路径会从 JATS/XML 抽取正文图、表、公式和明确 supplementary links。
+- Springer HTML 成功路径只从 cleaned body/content scope 抽取正文图片。
+- Elsevier XML 的 `body` 只下载 `image` / `table_asset`。
+- Elsevier XML 的 `all` 额外下载 `supplementary` references。
+- Elsevier supplementary 统一映射到 `kind="supplementary"`、`section="supplementary"` 和 `download_tier="supplementary_file"`。
+- Elsevier 正文资产遇到 timeout、TLS、DNS、connection reset/closed 等网络失败时，只对失败项串行重试一轮。
+- 明确 HTTP status、权限/认证类或非 HTTP scheme 失败不自动重试。
+
+#### Supplementary 范围与命名
+
+- `wiley` / `science` / `pnas` 的 `asset_profile=all` 会把 supplementary 作为独立文件附件下载。
+- 这条链路不因 supplementary 失败重新下载已成功的正文 figure。
+- `wiley` supplementary 只从 `Supporting Information` 区块抽取。
+- `wiley` 只接受 `/action/downloadSupplement`、结构化 supplementary link 属性或 `sup-*` supporting file 链接。
+- 正文 `<figure>` 里的 `/cms/asset/...fig-*.jpg|png|webp` 只保留为 figure 资产。
+- `downloadSupplement` query 中的 `file`、`filename`、`attachment`、`download` 优先作为真实文件名。
+- 布尔型 `download=true` 不作为文件名。
+- `science` / `pnas` supplementary 只从真实 supplementary / supporting section 子树抽取。
+- `science` / `pnas` 只保留 publisher `/doi/suppl/.../suppl_file/...` 附件。
+- Data Availability 普通数据链接、页内导航和 section 内引用文献 PDF 不归 supplementary。
+- Springer supplementary 只允许来自明确 supplementary、supporting 或 extended data section 子树。
+- Springer `Source Data` 独立落到 `source_data/` 子目录。
+- Springer `Peer Review File` / `Peer reviewer reports` 不归 supplementary。
+
+#### 资产去重与诊断前置约束
+
+- 通用 HTML figure 与 supplementary 下载使用 `paper_fetch.extraction.html.assets.state` 状态机。
+- cookie-aware opener/request 统一在 `paper_fetch.extraction.html.assets.requester` 中处理。
+- 网络、opener 或浏览器 document fallback resolve 阶段可并发执行。
+- 文件写入、文件名去重、`source_data/` 分流和失败诊断收集仍串行执行。
+- 输出顺序、fallback 候选顺序、`article.assets[*]` 与 `quality.asset_failures` shape 保持稳定。
+- Elsevier XML object references 也使用“网络并发、写入串行”约束。
+- 并发 worker 上限由 `PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY` 控制，默认 `4`，最小 `1`。
+- 普通 HTTP 单资产下载仍可在调用线程解析。
+- Provider fulltext 公开契约是 `fetch_result()` / `fetch_raw_fulltext()`。
+- 旧 `fetch_fulltext()` dict 入口已经删除。
+- 同一次 provider fetch 内会复用 `RuntimeContext.parse_cache`。
+- `parse_cache` 避免 Elsevier XML、Springer HTML、browser-workflow Markdown 和 HTML asset 重复解析。
+- IEEE dynamic HTML block-page token 判定也按 payload 缓存。
+- 同一个 `RuntimeContext` 生命周期内还会复用 `session_cache`。
+- `has_fulltext` 与 `fetch_paper` 可共享 query resolution、Crossref DOI metadata、Elsevier metadata probe 和 landing page probe。
+- fetch 阶段命中 landing probe 时，会把 citation PDF URL 合并到 metadata `fulltext_links`。
+- `PlaywrightContextManager` 会在同一 `RuntimeContext` 内 lazy 复用 Chromium browser。
+- PNAS preflight、正文图片/文件 fetcher 与 PDF/ePDF fallback 仍按阶段创建独立 browser context/page。
+- `RawFulltextPayload.metadata` 只是 legacy/read-only compatibility view。
+- provider 新逻辑应读写 `ProviderContent.route_kind`、`markdown_text`、`diagnostics`、`fetcher`、`browser_context_seed`、`warnings`、`trace` 和 `merged_metadata`。
 
 ### 资产去重与诊断
 
 - `render_state="inline"` 的资产表示正文已经渲染过，不会进入文末 `Figures` / `Tables`。
 - `render_state="appendix"` 的资产仍可进入尾部兜底块；当同类资产全是 appendix 状态时，标题会显示为 `Additional Figures` / `Additional Tables`。
-- 正文 Markdown 图片链接和资产路径会按 URL、路径、相对 `body_assets/...` 后缀和 basename 做等价比较，保存 Markdown 时也会按 `full_size_url`、`preview_url`、`download_url`、`original_url`、`source_url` 和最终 `path` 把远端图片链接改写到本地资产，避免正文图在尾部重复或导出残留可本地化远端图。
+- 正文 Markdown 图片链接和资产路径会按 URL、路径、相对 `body_assets/...` 后缀和 basename 做等价比较。
+- 保存 Markdown 时也会按 `full_size_url`、`preview_url`、`download_url`、`original_url`、`source_url` 和最终 `path` 改写远端图片链接。
+- 这可以避免正文图在尾部重复，或导出残留可本地化远端图。
 - 文章组装阶段也会用 `article.assets[*]` 把正文里的远程 figure / table / formula image 链接改写为已下载本地路径，再做 Markdown 图片块边界归一化，避免图片和标题、正文句子或公式块粘连。
 - 下载资产会保留 `download_tier`、`download_url`、`original_url`、`preview_url`、`full_size_url`、`content_type`、`downloaded_bytes`、`width`、`height`。
-- 下载失败的资产会保留到 `article.quality.asset_failures` 与顶层 `quality.asset_failures`，可见 `status`、`content_type`、`title_snippet`、`body_snippet`、`reason` 以及 asset-level recovery 轨迹。
+- 下载失败的资产会保留到 `article.quality.asset_failures` 与顶层 `quality.asset_failures`。
+- 失败诊断包含 `status`、`content_type`、`title_snippet`、`body_snippet`、`reason` 和 asset-level recovery 轨迹。
 - 图片 payload MIME 识别由 `filetype` 负责，JPEG/PNG/GIF/WebP 尺寸读取由 `imagesize` 负责；无法识别时仍按 unknown/空宽高处理，不引入 Pillow。
-- `wiley` / `science` / `pnas` 的正文图片主链路只应输出 `download_tier="full_size"` 或 `download_tier="preview"`；supplementary 文件链路输出 `download_tier="supplementary_file"`；旧的 `playwright_canvas_fallback` tier 只可能来自仍保留 HTTP-first 语义的旧通用图片下载路径。
-- `wiley` / `science` / `pnas` 的正文图片下载在单次 attempt 内会缓存重复的 figure page / 图片候选 URL，并按 `PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY` 控制的 worker 上限拉取 payload，默认 `4`；只要使用 Playwright image document fetcher，单个正文图片也会在 worker 线程执行 resolver，避免主线程已有 Playwright sync context 时再次启动独立 sync Playwright。最终输出顺序仍与输入资产顺序一致。
-- supplementary 文件下载失败时，`article.quality.asset_failures` 会保留 `status`、`content_type`、`title_snippet`、`body_snippet`、`reason` 和 recovery 轨迹，便于区分 Cloudflare challenge / login HTML / 普通网络失败；浏览器工作流的重试按失败诊断匹配 `heading`、`caption` 和 URL 字段，只重跑失败的 body 或 supplementary 资产。
+- `wiley` / `science` / `pnas` 正文图片主链路只输出 `download_tier="full_size"` 或 `download_tier="preview"`。
+- supplementary 文件链路输出 `download_tier="supplementary_file"`。
+- 旧的 `playwright_canvas_fallback` tier 只可能来自仍保留 HTTP-first 语义的旧通用图片下载路径。
+- `wiley` / `science` / `pnas` 正文图片下载会缓存重复的 figure page / 图片候选 URL。
+- 这条链路按 `PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY` 控制 worker 上限，默认 `4`。
+- 使用 Playwright image document fetcher 时，单个正文图片也会在 worker 线程执行 resolver。
+- 这样可以避免主线程已有 Playwright sync context 时再次启动独立 sync Playwright。
+- 最终输出顺序仍与输入资产顺序一致。
+- supplementary 文件下载失败时，`article.quality.asset_failures` 会保留失败诊断。
+- 诊断字段包括 `status`、`content_type`、`title_snippet`、`body_snippet`、`reason` 和 recovery 轨迹。
+- 浏览器工作流的重试按 `heading`、`caption` 和 URL 字段匹配失败诊断。
+- 重试只重跑失败的 body 或 supplementary 资产。
 - `download_tier="preview"` 只有在宽高满足当前阈值 `300x200` 时才会标记为可接受 preview；否则仍会进入 preview fallback / asset issue 诊断。
-- live review 中，公式图片是公式语义的 fallback，因此 formula-only preview fallback 不自动归类为 `asset_download_failure`；figure/table preview fallback 仍按资产问题处理，除非已有 accepted 诊断。`related assets could not be downloaded`、`assets were only partially downloaded`、`partially downloaded` warning、`asset_failures` trail 或 `quality.asset_failures` 都会归类为 `asset_download_failure`。若 `extracted.md` 仍残留 IEEE mediastore 图片链接且对应资产已经本地下载，即使 preview 被 accepted，也会归类为 `asset_download_failure`。
+- Live review 规则：公式图片是公式语义的 fallback，因此 formula-only preview fallback 不自动归类为 `asset_download_failure`；figure/table preview fallback 仍按资产问题处理，除非已有 accepted 诊断。
+- Live review 规则：相关资产下载 warning 会归类为 `asset_download_failure`。
+- 这些 warning 包括 `related assets could not be downloaded`、`assets were only partially downloaded` 和 `partially downloaded`。
+- `asset_failures` trail 或 `quality.asset_failures` 也会归类为 `asset_download_failure`。
+- Live review 规则：golden criteria live review 产物 `extracted.md` 属于内部检查输出。
+- 生成脚本见 [`../scripts/run_golden_criteria_live_review.py`](../scripts/run_golden_criteria_live_review.py)。
+- 若该文件仍残留 IEEE mediastore 图片链接，且对应资产已经本地下载，会归类为 `asset_download_failure`。
+- 即使 preview 被 accepted，上述残留远端链接仍按资产下载失败处理。
 
 ### `include_refs`
 
 - `max_tokens="full_text"` 时，默认等价于 `all`
 - `max_tokens=<整数>` 时，默认等价于 `top10`
 
+<a id="mcp-download-and-markdown-save"></a>
 ### 下载行为
 
 - `--no-download` 或 `download_dir=None` 优先级最高
-- CLI/MCP 通过 `workflow.request_builder.build_fetch_pipeline_request()` 统一装配 `FetchPipelineRequest`，再由 `FetchPipeline` 创建 `RuntimeContext`；Provider payload、Springer HTML local copy、Markdown 保存和 asset 诊断仍由 `ArtifactStore` 应用，保留既有 warning 与 `download:*` source trail marker；MCP fetch-envelope sidecar/cache-index 的 JSON 写入也复用 `ArtifactStore` 的原子 writer
+- CLI/MCP 通过 `workflow.request_builder.build_fetch_pipeline_request()` 统一装配 `FetchPipelineRequest`。
+- `FetchPipeline` 负责创建 `RuntimeContext`。
+- Provider payload、Springer HTML local copy、Markdown 保存和 asset 诊断仍由 `ArtifactStore` 应用。
+- 既有 warning 与 `download:*` source trail marker 保持不变。
+- MCP fetch-envelope sidecar/cache-index 的 JSON 写入也复用 `ArtifactStore` 的原子 writer。
 - 即使 `asset_profile` 是 `body` / `all`，也不会落盘
 - 没有本地文件时，Markdown 会自动退回 captions-only 或不展示本地资源链接
 - MCP `no_download=true` 会让 service/provider 阶段使用 `RuntimeContext(download_dir=None)`，因此不会写 provider payload、PDF、HTML、资产或 fetch-envelope sidecar；`prefer_cache=true` 仍可显式读取已存在的 fetch-envelope sidecar。
 - MCP `save_markdown=true` 是独立的 Markdown 保存步骤：成功时写 `.md` 并返回 `saved_markdown_path`，追加 `download:markdown_saved`；没有 fulltext Markdown 时不写文件，追加 `download:markdown_skipped_no_fulltext`。
 - `no_download=true` 与 `save_markdown=true` 同时使用时，只允许 Markdown 保存步骤落盘；provider payload、资产和 fetch-envelope sidecar 仍保持关闭。
 
-<a id="springer-原始-html-artifact"></a>
 <a id="provider-原始-html-artifact"></a>
 ### Provider 原始 HTML artifact
 
@@ -474,12 +554,13 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 - `*_assets/` 目录仍可以包含 figure page、table page、redirect page 或辅助 HTML；这些文件不能被当成可信的正文原文源文件。
 - 该行为由 [`../tests/unit/test_springer_html_regressions.py`](../tests/unit/test_springer_html_regressions.py) 中的 `test_springer_html_route_saves_original_html_in_article_dir` 锁定。
 
+<a id="public-output-fields"></a>
 ## 公开输出里最重要的字段
 
 这些字段最适合拿来判断结果质量和来源：
 
 - `source`
-  - 粗粒度公开来源，如 `elsevier_xml`、`elsevier_pdf`、`springer_html`、`wiley_browser`、`science`、`pnas`、`ieee_html`、`ieee_pdf`、`arxiv_html`、`arxiv_pdf`、`copernicus_xml`、`copernicus_pdf`、`crossref_meta`、`metadata_only`
+  - 粗粒度公开来源，如 `elsevier_xml`、`elsevier_pdf`、`springer_html`、`springer_pdf`、`wiley_browser`、`science`、`pnas`、`ieee_html`、`ieee_pdf`、`arxiv_html`、`arxiv_pdf`、`copernicus_xml`、`copernicus_pdf`、`crossref_meta`、`metadata_only`
 - `has_fulltext`
   - 最终抓取瀑布后的 verdict
 - `warnings`
@@ -556,7 +637,7 @@ PAPER_FETCH_ENV_FILE=/path/to/.env
 
 - 可选。
 - 支持 `texmath`、`mathml-to-latex`、`mml2tex`、`auto`。
-- `legacy` 是代码仍能识别的历史值，但当前会直接报不可用，不应在新配置中使用。
+- `legacy` 是代码仍能识别的历史值，但当前会直接报不可用，不应在新配置中使用；未来版本可能彻底移除。
 - 默认是 `texmath`；未显式指定时，如果 `texmath` 失败，会尝试 `mathml-to-latex` fallback。
 - 显式指定某个 backend 时，失败会按该 backend 返回，不会自动隐藏错误。
 - 内部后端清单由 registry 声明，`auto` 与 benchmark 顺序仍保持 `texmath` → `mathml-to-latex` → `mml2tex` 的既有约定。
@@ -628,6 +709,7 @@ Springer direct HTML / direct HTTP PDF 路线当前没有额外必填 publisher 
 - `provider_status()` 中会稳定表现为本地 `html_route` 已就绪
 - 不再需要任何 Springer publisher 凭证
 
+<a id="arxiv"></a>
 ### arXiv
 
 arXiv 路线当前不需要 publisher 凭证；official HTML 主路径不依赖本机转换器：
@@ -647,6 +729,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - 不需要 IEEE API key
 - 是否能拿到全文仍取决于 IEEE Xplore 当前对操作者运行环境的合法访问上下文，以及 endpoint/browser route 是否返回真实 full-text HTML 或 PDF
 
+<a id="wiley-science-pnas-browser-workflow"></a>
 ### Wiley / Science / PNAS
 
 #### `WILEY_TDM_CLIENT_TOKEN`
@@ -678,6 +761,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - 设为 `1` / `true` / `yes` / `on` 时，会跨请求复用 FlareSolverr session、cookies 和 warm wait；这可能让浏览器进程保留到 Python 进程退出的 `atexit` 清理或手动清理。
 - 这个变量只控制 FlareSolverr browser session 生命周期，不停止本地 FlareSolverr 服务；停止服务仍使用 `flaresolverr-down`。
 
+<a id="flaresolverr-rate-limit-removal"></a>
 本地 FlareSolverr 限速变量与账本已移除；browser workflow 不再读取 `FLARESOLVERR_MIN_INTERVAL_SECONDS`、`FLARESOLVERR_MAX_REQUESTS_PER_HOUR` 或 `FLARESOLVERR_MAX_REQUESTS_PER_DAY`。
 
 更具体的启动与排障步骤见 [`flaresolverr.md`](flaresolverr.md)。
@@ -719,6 +803,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - 底层使用 `urllib3.PoolManager` 复用连接
 - Retry policy 使用 `urllib3.util.Retry` 表达；本地 wrapper 继续保留 public request options、structured logs、cancel checks、最大等待时间和 `RequestFailure` 形状
 
+<a id="provider-status-local-boundary"></a>
 ### `provider_status()`
 
 `provider_status()` 只检查本地条件，不主动探测远端 publisher API 连通性。
@@ -730,7 +815,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - `springer`
   - 返回本地 direct HTML route 就绪状态；不依赖 FlareSolverr。
 - `ieee`
-  - 返回本地 direct REST HTML route、clean-browser HTML fallback、direct HTTP PDF fallback 和 seeded-browser PDF fallback 就绪状态；不依赖 FlareSolverr 或 IEEE API key。
+  - 返回两条本地 check：`html_route` 覆盖 direct REST HTML 与 clean-browser HTML fallback 两种 mode，`pdf_fallback` 覆盖 direct HTTP PDF 与 seeded-browser PDF fallback 两种 mode；具体 mode 名在各 check 的 `details.mode` 中体现。不依赖 FlareSolverr 或 IEEE API key。
 - `wiley`
   - 统一检查 `runtime_env`、`repo_local_workflow`、`flaresolverr_health`，以及可选的 `tdm_api_token`。
   - browser runtime ready 时，即使 `WILEY_TDM_CLIENT_TOKEN` 缺失，也应表现为 `ready`。

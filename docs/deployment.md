@@ -64,7 +64,26 @@ Linux 目标机解压后运行：
 ./install-offline.sh --preset=headless --no-user-config
 ```
 
-WSLg 或桌面显示环境可用 `./install-offline.sh --preset=wslg --no-user-config`。Linux 安装脚本会把 CLI / MCP runtime 安装到包内 `.venv/`，复制 Codex / Claude Code skill，写入当前 `$SHELL` 对应的用户 shell 启动文件，并注册 MCP。Bash 写 `~/.bashrc`，Zsh 写 `~/.zshrc`，Fish 写 `~/.config/fish/conf.d/paper-fetch-offline.fish`；无法识别 `$SHELL` 时写 `~/.profile` 并打印提示。安装后新开 shell，或临时执行 `source ./activate-offline.sh`。
+WSLg 或桌面显示环境可用：
+
+```bash
+./install-offline.sh --preset=wslg --no-user-config
+```
+
+Preset 选项：
+
+- `headless` 面向服务器或无桌面环境。
+- `wslg` 面向 WSLg 或桌面显示环境。
+
+Shell rc 写入策略：
+
+- Linux 安装脚本会把 CLI / MCP runtime 安装到包内 `.venv/`，复制 Codex / Claude Code skill，并注册 MCP。
+- Bash 写 `~/.bashrc`，Zsh 写 `~/.zshrc`，Fish 写 `~/.config/fish/conf.d/paper-fetch-offline.fish`。
+- 无法识别 `$SHELL` 时写 `~/.profile` 并打印提示。
+
+`activate-offline.sh` 入口：
+
+- 安装后新开 shell，或临时执行 `source ./activate-offline.sh`。
 
 Linux MCP 注册行为与 Windows 对齐：检测到 `codex` CLI 时执行 `codex mcp remove/add paper-fetch`，没有 CLI 或注册失败时更新 `~/.codex/config.toml` 中的 `mcp_servers.paper-fetch`；检测到 `claude` CLI 时执行 `claude mcp remove/add -s user paper-fetch`，没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。Codex / Claude Code 需要重启后才会重新扫描 skill 和 MCP 配置。
 
@@ -258,10 +277,10 @@ scripts/clean-local-artifacts.sh --days 7
 - `wiley` / `science` / `pnas` 还需要 Playwright Chromium，因为 PNAS direct HTML preflight、HTML 正文图片资产下载和 seeded-browser PDF/ePDF fallback 都会使用 browser context
 - `elsevier` 只需要 `ELSEVIER_API_KEY`
 - `ieee` 不需要额外 env；普通 fetch 在无授权或 REST/browser/PDF route 返回非全文时会降级到 provider abstract-only / metadata-only；golden criteria live review 面向具备合法 IEEE Xplore 授权上下文的机器，IEEE 样本预期为 fulltext，降级会作为 blocked live fetch 暴露；配置了 `download_dir` 时 PDF fallback 的最后一个非 PDF HTML 会保存在 `ieee_pdf_fallback/pdf.failure.html`
-- `arxiv` 不需要额外 env；golden criteria live review 已纳入 arXiv 样本。只要 DOI/URL 可推导 arXiv ID，会优先走 official HTML，再合并可用的 arXiv API metadata 与 HTML front matter；API 429/临时失败不会阻塞 HTML fulltext，也不应造成 `Untitled Article` / `metadata_loss`。HTML 成功时正文 figure 资产从 official HTML 下载；PDF fallback 保持 text-only。
+- `arxiv` 不需要额外 env；路径细节见 [`providers.md` 的 arXiv 小节](providers.md#arxiv)。
 - 如果只想启用 `wiley` 的官方 TDM API PDF lane，可以只配置 `WILEY_TDM_CLIENT_TOKEN`；这不会启用 HTML 资产下载或 seeded-browser PDF/ePDF fallback
-- `wiley` 现在走 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF -> abstract-only / metadata-only`
-- 本地 FlareSolverr 限速变量与账本已移除；browser workflow 不再读取 `FLARESOLVERR_MIN_INTERVAL_SECONDS`、`FLARESOLVERR_MAX_REQUESTS_PER_HOUR` 或 `FLARESOLVERR_MAX_REQUESTS_PER_DAY`
+- `wiley` / `science` / `pnas` 的 browser workflow 顺序见 [`providers.md`](providers.md#wiley-science-pnas-browser-workflow)。
+- 本地 FlareSolverr 限速变量与账本移除说明见 [`providers.md`](providers.md#flaresolverr-rate-limit-removal)。
 
 最常见入口是：
 
@@ -350,11 +369,7 @@ PAPER_FETCH_ENV_FILE=/path/to/.env
 
 当前 MCP server 适合挂到支持 stdio MCP 的 host。
 
-常用抓取参数：
-
-- `fetch_paper` 默认返回 `modes=["article", "markdown"]`，`prefer_cache=false`，不会主动读取本地 fetch-envelope sidecar。
-- 需要禁用 provider 下载落盘时传 `no_download=true`；这会关闭 provider payload、PDF、HTML、资产和 fetch-envelope sidecar 写入。
-- 需要把 AI Markdown 同步保存到硬盘时传 `save_markdown=true`；可用 `markdown_output_dir` 和 `markdown_filename` 覆盖保存位置和文件名，成功时返回 `saved_markdown_path`。
+常用抓取参数的默认模式、`prefer_cache`、`no_download` 和 `save_markdown` 语义见 [`providers.md`](providers.md#mcp-download-and-markdown-save)。
 
 ## 8. 更新方式
 

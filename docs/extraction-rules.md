@@ -912,7 +912,7 @@ metadata
 <a id="rule-springer-original-html-artifact"></a>
 ### 已迁出：Springer 原始 article HTML 落盘
 
-> 已迁出到 [`providers.md` 的 Springer artifact/storage 说明](providers.md#springer-原始-html-artifact)。
+> 已迁出到 [`providers.md` 的 Provider artifact/storage 说明](providers.md#provider-原始-html-artifact)。
 
 旧 anchor 保留用于历史链接。原始 HTML 文件名和下载目录形态属于 `artifact-storage`，不再作为提取 / 渲染规则维护。
 

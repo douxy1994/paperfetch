@@ -69,19 +69,19 @@ has_fulltext(query)
 
 ## 当前 v1 的状态
 
-公开契约预留了四种状态：
+公开契约层声明 4 种状态：
 
 - `confirmed_yes`
 - `likely_yes`
 - `unknown`
 - `no`
 
-但当前 v1 主动返回的主要是：
+但当前 v1 只主动返回：
 
 - `likely_yes`
 - `unknown`
 
-也就是说，当前 probe 更偏“保守给正信号”，而不是积极输出否定。
+也就是说，当前 probe 更偏“保守给正信号”，而不是积极输出否定；`confirmed_yes` 和 `no` 是契约层合法值，但 v1 实现不会主动生成。
 
 ## 当前 v1 何时返回 `likely_yes`
 

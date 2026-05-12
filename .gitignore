@@ -33,6 +33,7 @@ live-downloads/
 .paper-fetch-runs/
 figures/.paper-fetch-mcp-cache.json
 problems.md
+problems_doc.md
 agent-surface-plan.md
 docs/pm-dev-overview.local.md
 vendor/flaresolverr/.work/
