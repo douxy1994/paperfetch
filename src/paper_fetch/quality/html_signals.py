@@ -68,6 +68,45 @@ class DatalayerSchema:
 
 
 @dataclass(frozen=True)
+class DatalayerFieldMatch:
+    field: str
+    expected: str
+    negate: bool = False
+
+
+@dataclass(frozen=True)
+class DatalayerSignalRule:
+    match: DatalayerFieldMatch
+    token: str
+
+
+@dataclass(frozen=True)
+class DatalayerSignalCombo:
+    matches: tuple[DatalayerFieldMatch, ...]
+    token: str
+
+
+@dataclass(frozen=True)
+class DatalayerContainsRule:
+    field: str
+    substring: str
+    token: str
+
+
+DatalayerRule = DatalayerSignalRule | DatalayerSignalCombo | DatalayerContainsRule
+
+
+@dataclass(frozen=True)
+class DatalayerSignalSet:
+    schema: DatalayerSchema
+    blocking_rules: tuple[DatalayerRule, ...] = ()
+    strong_rules: tuple[DatalayerRule, ...] = ()
+    soft_rules: tuple[DatalayerRule, ...] = ()
+    abstract_only_rules: tuple[DatalayerRule, ...] = ()
+    presence_rules: tuple[tuple[str, str], ...] = ()
+
+
+@dataclass(frozen=True)
 class ProviderDatalayer:
     schema: DatalayerSchema
     payload: Mapping[str, Any]
@@ -137,6 +176,85 @@ DATALAYER_SCHEMAS: Mapping[str, DatalayerSchema] = {
         WILEY_DATALAYER_SCHEMA,
     )
 }
+SCIENCE_SIGNAL_SET = DatalayerSignalSet(
+    schema=AAAS_DATALAYER_SCHEMA,
+    blocking_rules=(
+        DatalayerSignalRule(
+            DatalayerFieldMatch("page_type", "journal-article-denial"),
+            "aaas_page_type_denial",
+        ),
+        DatalayerSignalRule(
+            DatalayerFieldMatch("page_type", "journal-article-abstract"),
+            "aaas_page_type_abstract",
+        ),
+        DatalayerSignalRule(
+            DatalayerFieldMatch("view_type", "abs"),
+            "aaas_view_abs",
+        ),
+        DatalayerSignalCombo(
+            (
+                DatalayerFieldMatch("user_entitled", "false"),
+                DatalayerFieldMatch("user_access", "yes", negate=True),
+            ),
+            "aaas_entitlement_denied",
+        ),
+    ),
+    strong_rules=(
+        DatalayerSignalRule(
+            DatalayerFieldMatch("user_entitled", "true"),
+            "aaas_user_entitled",
+        ),
+        DatalayerSignalRule(
+            DatalayerFieldMatch("user_access", "yes"),
+            "aaas_user_access_yes",
+        ),
+    ),
+    soft_rules=(
+        DatalayerSignalRule(
+            DatalayerFieldMatch("page_type", "journal-article-full-text"),
+            "aaas_page_type_full_text",
+        ),
+        DatalayerSignalRule(
+            DatalayerFieldMatch("view_type", "full"),
+            "aaas_view_full",
+        ),
+    ),
+    abstract_only_rules=(
+        DatalayerContainsRule("page_type", "abstract", "aaas_page_type_abstract"),
+        DatalayerContainsRule("view_type", "abstract", "aaas_view_abstract"),
+    ),
+    presence_rules=(("article_type", "aaas_article_type_present"),),
+)
+PNAS_SIGNAL_SET = DatalayerSignalSet(
+    schema=PNAS_DATALAYER_SCHEMA,
+    blocking_rules=(
+        DatalayerSignalCombo(
+            (
+                DatalayerFieldMatch("access_type", "paywall"),
+                DatalayerFieldMatch("free_access", "no"),
+                DatalayerFieldMatch("user_access", "no"),
+            ),
+            "pnas_paywall_no_access",
+        ),
+    ),
+)
+WILEY_SIGNAL_SET = DatalayerSignalSet(
+    schema=WILEY_DATALAYER_SCHEMA,
+    blocking_rules=(
+        DatalayerSignalRule(
+            DatalayerFieldMatch("item_access", "no"),
+            "wiley_access_no",
+        ),
+        DatalayerSignalRule(
+            DatalayerFieldMatch("format_viewed", "abstract"),
+            "wiley_format_viewed_abstract",
+        ),
+        DatalayerSignalRule(
+            DatalayerFieldMatch("page_tertiary_section", "abs"),
+            "wiley_page_tertiary_abs",
+        ),
+    ),
+)
 
 
 def _normalize_provider_signal_key(value: str | None) -> str:
@@ -154,6 +272,64 @@ def authorless_heading_signatures_for_provider(
 
 def dedupe_signals(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
+
+
+def _datalayer_rule_value(value: str) -> str:
+    return normalize_text(value).lower()
+
+
+def _matches_datalayer_field(
+    datalayer: ProviderDatalayer, match: DatalayerFieldMatch
+) -> bool:
+    matched = datalayer.lowered(match.field) == _datalayer_rule_value(match.expected)
+    return not matched if match.negate else matched
+
+
+def _matches_datalayer_rule(
+    datalayer: ProviderDatalayer, rule: DatalayerRule
+) -> bool:
+    if isinstance(rule, DatalayerSignalRule):
+        return _matches_datalayer_field(datalayer, rule.match)
+    if isinstance(rule, DatalayerSignalCombo):
+        return all(_matches_datalayer_field(datalayer, match) for match in rule.matches)
+    return _datalayer_rule_value(rule.substring) in datalayer.lowered(rule.field)
+
+
+def _evaluate_datalayer_rules(
+    datalayer: ProviderDatalayer, rules: tuple[DatalayerRule, ...]
+) -> list[str]:
+    return dedupe_signals(
+        [rule.token for rule in rules if _matches_datalayer_rule(datalayer, rule)]
+    )
+
+
+def evaluate_datalayer_blocking_signals(
+    html_text: str, signal_set: DatalayerSignalSet
+) -> list[str]:
+    datalayer = load_provider_datalayer(html_text, signal_set.schema)
+    if datalayer is None:
+        return []
+    return _evaluate_datalayer_rules(datalayer, signal_set.blocking_rules)
+
+
+def evaluate_datalayer_positive_signals(
+    html_text: str, signal_set: DatalayerSignalSet
+) -> tuple[list[str], list[str], list[str]]:
+    strong, soft, abstract_only = default_positive_signals(html_text)
+    datalayer = load_provider_datalayer(html_text, signal_set.schema)
+    if datalayer is None:
+        return strong, soft, abstract_only
+    strong.extend(_evaluate_datalayer_rules(datalayer, signal_set.strong_rules))
+    soft.extend(_evaluate_datalayer_rules(datalayer, signal_set.soft_rules))
+    abstract_only.extend(
+        _evaluate_datalayer_rules(datalayer, signal_set.abstract_only_rules)
+    )
+    soft.extend(
+        token
+        for field_name, token in signal_set.presence_rules
+        if datalayer.text(field_name)
+    )
+    return dedupe_signals(strong), dedupe_signals(soft), dedupe_signals(abstract_only)
 
 
 def default_positive_signals(html_text: str) -> tuple[list[str], list[str], list[str]]:
@@ -236,79 +412,19 @@ def load_wiley_datalayer(html_text: str) -> Mapping[str, Any] | None:
 
 
 def science_blocking_fallback_signals(html_text: str) -> list[str]:
-    datalayer = load_provider_datalayer(html_text, AAAS_DATALAYER_SCHEMA)
-    if datalayer is None:
-        return []
-    signals: list[str] = []
-
-    page_type = datalayer.lowered("page_type")
-    if page_type == "journal-article-denial":
-        signals.append("aaas_page_type_denial")
-    if page_type == "journal-article-abstract":
-        signals.append("aaas_page_type_abstract")
-
-    view_type = datalayer.lowered("view_type")
-    if view_type == "abs":
-        signals.append("aaas_view_abs")
-
-    user_entitled = datalayer.lowered("user_entitled")
-    user_access = datalayer.lowered("user_access")
-    if user_entitled == "false" and user_access != "yes":
-        signals.append("aaas_entitlement_denied")
-
-    return dedupe_signals(signals)
+    return evaluate_datalayer_blocking_signals(html_text, SCIENCE_SIGNAL_SET)
 
 
 def science_positive_signals(html_text: str) -> tuple[list[str], list[str], list[str]]:
-    strong, soft, abstract_only = default_positive_signals(html_text)
-    datalayer = load_provider_datalayer(html_text, AAAS_DATALAYER_SCHEMA)
-    if datalayer is None:
-        return strong, soft, abstract_only
-    page_type = datalayer.lowered("page_type")
-    view_type = datalayer.lowered("view_type")
-    if page_type == "journal-article-full-text":
-        soft.append("aaas_page_type_full_text")
-    if "abstract" in page_type:
-        abstract_only.append("aaas_page_type_abstract")
-    if view_type == "full":
-        soft.append("aaas_view_full")
-    if "abstract" in view_type:
-        abstract_only.append("aaas_view_abstract")
-    if datalayer.lowered("user_entitled") == "true":
-        strong.append("aaas_user_entitled")
-    if datalayer.lowered("user_access") == "yes":
-        strong.append("aaas_user_access_yes")
-    if datalayer.text("article_type"):
-        soft.append("aaas_article_type_present")
-    return dedupe_signals(strong), dedupe_signals(soft), dedupe_signals(abstract_only)
+    return evaluate_datalayer_positive_signals(html_text, SCIENCE_SIGNAL_SET)
 
 
 def pnas_blocking_fallback_signals(html_text: str) -> list[str]:
-    datalayer = load_provider_datalayer(html_text, PNAS_DATALAYER_SCHEMA)
-    if datalayer is None:
-        return []
-    access_type = datalayer.lowered("access_type")
-    free_access = datalayer.lowered("free_access")
-    user_access = datalayer.lowered("user_access")
-    if access_type == "paywall" and free_access == "no" and user_access == "no":
-        return ["pnas_paywall_no_access"]
-    return []
+    return evaluate_datalayer_blocking_signals(html_text, PNAS_SIGNAL_SET)
 
 
 def wiley_blocking_fallback_signals(html_text: str) -> list[str]:
-    datalayer = load_provider_datalayer(html_text, WILEY_DATALAYER_SCHEMA)
-    if datalayer is None:
-        return []
-    signals: list[str] = []
-
-    if datalayer.lowered("item_access") == "no":
-        signals.append("wiley_access_no")
-    if datalayer.lowered("format_viewed") == "abstract":
-        signals.append("wiley_format_viewed_abstract")
-    if datalayer.lowered("page_tertiary_section") == "abs":
-        signals.append("wiley_page_tertiary_abs")
-
-    return dedupe_signals(signals)
+    return evaluate_datalayer_blocking_signals(html_text, WILEY_SIGNAL_SET)
 
 
 def ams_blocking_fallback_signals(html_text: str) -> list[str]:
