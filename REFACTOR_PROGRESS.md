@@ -30,7 +30,10 @@
   - commit: dfbf682
   - 摘要: `docs/provider-development.md` 改为 bundle/scaffold 流程与 PR checklist，删除手改 catalog/rules 的旧接入说明；`target-architecture.md` 记录 ProviderBundle discovery 与 `_registry.py` 职责。
   - 验收: S6 docs grep 通过（旧 hook/signal 函数无命中，scaffold/checklist/bundle 文档存在）；`validate_extraction_rules.py` 通过；全量 unit 1171 passed + 264 subtests。
-- [ ] S7: Fixture 录制 + expected.json 工具
+- [x] S7: Fixture 录制 + expected.json 工具
+  - commit: 8e5becf
+  - 摘要: 新增 `capture_fixture.py` 与 `snapshot_expected.py`，支持 DOI replay fixture 录制、manifest pending 条目、expected.json snapshot/review；quickstart 与 provider 开发文档改用工具流程。
+  - 验收: S7 文件/help/sanity 命令通过；`test_capture_fixture.py` / `test_snapshot_expected.py` 7 passed；`validate_extraction_rules.py` 通过；全量 unit 1178 passed + 264 subtests。
 - [ ] S8: ProviderClient / Waterfall 脚手架
 - [ ] S9: 重构对齐 grep lint 测试
 - [ ] S10: docs 占位生成 + probe_status 默认实现
