@@ -29,12 +29,12 @@ from ..models import AssetProfile, article_from_markdown, metadata_only_article
 from ..runtime import RuntimeContext
 from ..tracing import download_marker, fulltext_marker, trace_from_markers
 from ..utils import empty_asset_results, normalize_text
+from ._asset_retry import assets_for_network_retry, merge_asset_failures, merge_asset_retry_results
 from ._arxiv_assets import (
+    ARXIV_ASSET_RETRY_POLICY,
     ARXIV_IMAGE_ACCEPT,
     _arxiv_asset_download_concurrency,
     _asset_has_download_candidate,
-    _assets_for_arxiv_network_retry,
-    _merge_arxiv_asset_download_results,
 )
 from ._arxiv_atom import (
     ARXIV_API_DELAY_SECONDS,
@@ -457,9 +457,10 @@ class ArxivClient(ProviderClient):
             headers=self._image_headers(),
             asset_download_concurrency=asset_download_concurrency,
         )
-        retry_assets = _assets_for_arxiv_network_retry(
+        retry_assets = assets_for_network_retry(
             extracted_assets,
             initial_result.get("asset_failures") or [],
+            policy=ARXIV_ASSET_RETRY_POLICY,
         )
         if not retry_assets:
             return initial_result
@@ -474,11 +475,19 @@ class ArxivClient(ProviderClient):
             headers=self._image_headers(),
             asset_download_concurrency=1,
         )
-        return _merge_arxiv_asset_download_results(
-            initial_result,
-            retry_result,
-            retried_assets=retry_assets,
-        )
+        return {
+            "assets": merge_asset_retry_results(
+                initial_result.get("assets") or [],
+                retry_result.get("assets") or [],
+                policy=ARXIV_ASSET_RETRY_POLICY,
+            ),
+            "asset_failures": merge_asset_failures(
+                initial_result.get("asset_failures") or [],
+                retry_result.get("asset_failures") or [],
+                policy=ARXIV_ASSET_RETRY_POLICY,
+                retried_assets=retry_assets,
+            ),
+        }
 
     def to_article_model(
         self,

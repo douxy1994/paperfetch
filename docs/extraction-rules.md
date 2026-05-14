@@ -447,6 +447,7 @@ metadata
   - Owner（models / MCP）：
     - [`../tests/unit/test_mcp_payload_cache.py`](../tests/unit/test_mcp_payload_cache.py) 中的 `test_article_payload_preserves_asset_download_diagnostics`
   - Provider 覆盖：
+    - [`../tests/unit/test_asset_retry_policy.py`](../tests/unit/test_asset_retry_policy.py) 中的 `test_provider_asset_retry_policies_round_trip_merge_and_retry`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_browser_workflow_download_related_assets_retries_after_partial_failures`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_browser_workflow_retries_only_failed_supplementary_assets`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_browser_workflow_retries_only_failed_body_assets`

@@ -33,9 +33,14 @@ from ..utils import (
 )
 from . import _springer_html
 from ..extraction.html.assets import html_asset_identity_key
+from ._asset_retry import AssetRetryPolicy, merge_asset_retry_results
 from ._pdf_candidates import build_springer_pdf_candidates
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http
 from ._payloads import build_provider_payload
+from ._retry_categories import (
+    DEFAULT_RETRYABLE_ASSET_ERROR_CATEGORIES,
+    NETWORK_RETRYABLE_REASON_TOKENS,
+)
 from ._waterfall import (
     DEFAULT_WATERFALL_CONTINUE_CODES,
     ProviderWaterfallStep,
@@ -107,32 +112,27 @@ class SpringerHtmlAttempt:
     asset_source_data_html: str = ""
 
 
-def _merge_springer_assets(
-    extracted_assets: list[Mapping[str, Any]] | None,
-    downloaded_assets: list[Mapping[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    by_identity: dict[str, dict[str, Any]] = {}
+def _springer_asset_retry_key(asset: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (normalize_text(html_asset_identity_key(asset)),)
 
-    for item in extracted_assets or []:
-        asset = dict(item)
-        merged.append(asset)
-        identity = html_asset_identity_key(asset)
-        if identity:
-            by_identity[identity] = asset
 
-    for item in downloaded_assets or []:
-        asset = dict(item)
-        identity = html_asset_identity_key(asset)
-        existing = by_identity.get(identity) if identity else None
-        if existing is not None:
-            existing.update(asset)
-            continue
-        merged.append(asset)
-        if identity:
-            by_identity[identity] = asset
+def _springer_retryable_asset_failure(failure: Mapping[str, Any]) -> bool:
+    if failure.get("status") is not None:
+        return False
+    error_category = normalize_text(str(failure.get("error_category") or "")).lower()
+    if error_category:
+        return error_category in DEFAULT_RETRYABLE_ASSET_ERROR_CATEGORIES
+    reason = normalize_text(str(failure.get("reason") or "")).lower()
+    if not reason or "unsupported asset url scheme" in reason:
+        return False
+    return any(token in reason for token in NETWORK_RETRYABLE_REASON_TOKENS)
 
-    return merged
+
+SPRINGER_ASSET_RETRY_POLICY = AssetRetryPolicy(
+    name="springer",
+    key_fn=_springer_asset_retry_key,
+    retryable_failure=_springer_retryable_asset_failure,
+)
 
 
 def _filter_springer_assets_for_profile(
@@ -1188,7 +1188,11 @@ class SpringerClient(ProviderClient):
         warnings = list(raw_payload.warnings)
         trace = list(raw_payload.trace or trace_from_markers([fulltext_marker("springer", "ok", route="html")]))
         extracted_assets = list(content.extracted_assets if content is not None else [])
-        assets = _merge_springer_assets(extracted_assets, list(downloaded_assets or []))
+        assets = merge_asset_retry_results(
+            extracted_assets,
+            list(downloaded_assets or []),
+            policy=SPRINGER_ASSET_RETRY_POLICY,
+        )
         extraction_payload = content.diagnostics.get("extraction") if content is not None else None
         if not isinstance(extraction_payload, Mapping) and "html" in normalize_text(raw_payload.content_type).lower():
             html_text = bytes(raw_payload.body or b"").decode("utf-8", errors="replace")

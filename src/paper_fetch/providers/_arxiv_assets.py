@@ -10,6 +10,7 @@ from ..common_patterns import EXTENDED_DATA_FIGURE_LABEL
 from ..config import resolve_asset_download_concurrency
 from ..extraction.html import assets as html_assets
 from ..utils import normalize_text
+from ._asset_retry import AssetRetryPolicy
 from ._arxiv_html import Tag
 from ._arxiv_references import _is_arxiv_inline_figure_container
 from ._html_asset_engine import merge_assets_by_identity
@@ -55,7 +56,15 @@ def _asset_candidate_urls(asset: Mapping[str, Any]) -> set[str]:
     }
 
 
-def _is_retryable_arxiv_asset_failure(failure: Mapping[str, Any]) -> bool:
+def _arxiv_asset_retry_key(asset: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        tuple(sorted(_asset_candidate_urls(asset))),
+        normalize_text(str(asset.get("heading") or "")),
+        normalize_text(str(asset.get("caption") or "")),
+    )
+
+
+def _arxiv_retryable_asset_failure(failure: Mapping[str, Any]) -> bool:
     if failure.get("status") is not None:
         return False
     error_category = normalize_text(str(failure.get("error_category") or "")).lower()
@@ -67,7 +76,7 @@ def _is_retryable_arxiv_asset_failure(failure: Mapping[str, Any]) -> bool:
     return any(token in reason for token in NETWORK_RETRYABLE_REASON_TOKENS)
 
 
-def _asset_matches_failure(
+def _arxiv_asset_matches_failure(
     asset: Mapping[str, Any], failure: Mapping[str, Any]
 ) -> bool:
     failure_url = normalize_text(
@@ -86,51 +95,13 @@ def _asset_matches_failure(
     )
 
 
-def _assets_for_arxiv_network_retry(
-    assets: Sequence[Mapping[str, Any]],
-    failures: Sequence[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    retry_assets: list[dict[str, Any]] = []
-    seen: set[tuple[tuple[str, ...], str, str]] = set()
-    retry_failures = [
-        failure for failure in failures if _is_retryable_arxiv_asset_failure(failure)
-    ]
-    for failure in retry_failures:
-        for asset in assets:
-            if not _asset_matches_failure(asset, failure):
-                continue
-            identity = (
-                tuple(sorted(_asset_candidate_urls(asset))),
-                normalize_text(str(asset.get("heading") or "")),
-                normalize_text(str(asset.get("caption") or "")),
-            )
-            if identity not in seen:
-                seen.add(identity)
-                retry_assets.append(dict(asset))
-            break
-    return retry_assets
+ARXIV_ASSET_RETRY_POLICY = AssetRetryPolicy(
+    name="arxiv",
+    key_fn=_arxiv_asset_retry_key,
+    retryable_failure=_arxiv_retryable_asset_failure,
+    failure_match=_arxiv_asset_matches_failure,
+)
 
-
-def _merge_arxiv_asset_download_results(
-    initial_result: Mapping[str, list[dict[str, Any]]],
-    retry_result: Mapping[str, list[dict[str, Any]]],
-    *,
-    retried_assets: Sequence[Mapping[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    initial_assets = [dict(item) for item in (initial_result.get("assets") or [])]
-    retry_assets = [dict(item) for item in (retry_result.get("assets") or [])]
-    retry_failures = [dict(item) for item in (retry_result.get("asset_failures") or [])]
-    retained_initial_failures: list[dict[str, Any]] = []
-    for failure in initial_result.get("asset_failures") or []:
-        if _is_retryable_arxiv_asset_failure(failure) and any(
-            _asset_matches_failure(asset, failure) for asset in retried_assets
-        ):
-            continue
-        retained_initial_failures.append(dict(failure))
-    return {
-        "assets": [*initial_assets, *retry_assets],
-        "asset_failures": [*retained_initial_failures, *retry_failures],
-    }
 
 def _asset_has_download_candidate(asset: Mapping[str, Any]) -> bool:
     return bool(

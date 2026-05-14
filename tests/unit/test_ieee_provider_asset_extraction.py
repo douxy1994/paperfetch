@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from paper_fetch.providers import _ieee_html, _ieee_metadata, _ieee_supplementary
+from paper_fetch.providers._asset_retry import merge_asset_retry_results
 
 from ._ieee_provider_support import *
 
@@ -316,7 +317,20 @@ class IeeeProviderAssetExtractionTests(unittest.TestCase):
             },
         ]
 
-        merged = _ieee_html._merge_ieee_assets(extracted_assets, downloaded_assets)
+        merged = merge_asset_retry_results(
+            _ieee_html._dedupe_ieee_assets_by_priority(
+                [dict(item) for item in extracted_assets],
+                merge_fields=_ieee_html.IEEE_ASSET_URL_FIELDS,
+            ),
+            _ieee_html._dedupe_ieee_assets_by_priority(
+                [dict(item) for item in downloaded_assets],
+                merge_fields=(
+                    *_ieee_html.IEEE_ASSET_URL_FIELDS,
+                    *_ieee_html.IEEE_DOWNLOAD_MERGE_FIELDS,
+                ),
+            ),
+            policy=_ieee_html.IEEE_ASSET_RETRY_POLICY,
+        )
 
         self.assertEqual(len(merged), 1)
         self.assertEqual(merged[0]["kind"], "table")

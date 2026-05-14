@@ -10,7 +10,7 @@ import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any, Mapping
 
 from ..config import build_user_agent, resolve_asset_download_concurrency
 from ..http import (
@@ -37,6 +37,12 @@ from ..utils import (
     strip_html_tags,
 )
 from ._article_markdown_elsevier_document import build_article_structure
+from ._asset_retry import (
+    AssetRetryPolicy,
+    assets_for_network_retry,
+    merge_asset_failures,
+    merge_asset_retry_results,
+)
 from ._elsevier_xml_rules import (
     ELSEVIER_IMAGE_ASSET_TYPES,
     classify_elsevier_asset_kind,
@@ -310,7 +316,22 @@ def _elsevier_asset_heading(reference: Mapping[str, Any]) -> str:
     return str(reference.get("filename_hint") or reference.get("source_ref") or "Asset")
 
 
-def _is_retryable_elsevier_body_asset_failure(failure: Mapping[str, Any]) -> bool:
+def _elsevier_asset_retry_key(item: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        normalize_text(str(item.get("asset_type") or "")).lower(),
+        normalize_text(str(item.get("source_ref") or "")),
+        normalize_text(
+            str(
+                item.get("source_url")
+                or item.get("download_url")
+                or item.get("url")
+                or ""
+            )
+        ),
+    )
+
+
+def _elsevier_retryable_body_asset_failure(failure: Mapping[str, Any]) -> bool:
     if failure.get("status") is not None:
         return False
     asset_type = normalize_text(str(failure.get("asset_type") or "")).lower()
@@ -340,7 +361,9 @@ def _is_retryable_elsevier_body_asset_failure(failure: Mapping[str, Any]) -> boo
     return any(token in reason for token in _ELSEVIER_RETRYABLE_ASSET_REASON_TOKENS)
 
 
-def _elsevier_reference_matches_failure(reference: Mapping[str, Any], failure: Mapping[str, Any]) -> bool:
+def _elsevier_body_asset_matches_failure(reference: Mapping[str, Any], failure: Mapping[str, Any]) -> bool:
+    if normalize_text(str(reference.get("asset_type") or "")).lower() not in _ELSEVIER_RETRYABLE_BODY_ASSET_TYPES:
+        return False
     reference_url = normalize_text(str(reference.get("source_url") or ""))
     failure_url = normalize_text(
         str(failure.get("source_url") or failure.get("url") or failure.get("download_url") or "")
@@ -358,57 +381,12 @@ def _elsevier_reference_matches_failure(reference: Mapping[str, Any], failure: M
     return bool(reference_heading and reference_heading == failure_heading)
 
 
-def _elsevier_reference_identity(reference: Mapping[str, Any]) -> tuple[str, str, str]:
-    return (
-        normalize_text(str(reference.get("asset_type") or "")).lower(),
-        normalize_text(str(reference.get("source_ref") or "")),
-        normalize_text(str(reference.get("source_url") or "")),
-    )
-
-
-def _elsevier_body_references_for_network_retry(
-    references: Sequence[Mapping[str, Any]],
-    failures: Sequence[Mapping[str, Any]],
-) -> list[dict[str, Any]]:
-    retry_failures = [failure for failure in failures if _is_retryable_elsevier_body_asset_failure(failure)]
-    if not retry_failures:
-        return []
-
-    retry_references: list[dict[str, Any]] = []
-    seen: set[tuple[str, str, str]] = set()
-    for reference in references:
-        if normalize_text(str(reference.get("asset_type") or "")).lower() not in _ELSEVIER_RETRYABLE_BODY_ASSET_TYPES:
-            continue
-        if not any(_elsevier_reference_matches_failure(reference, failure) for failure in retry_failures):
-            continue
-        identity = _elsevier_reference_identity(reference)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        retry_references.append(dict(reference))
-    return retry_references
-
-
-def _merge_elsevier_body_asset_download_results(
-    initial_result: Mapping[str, list[dict[str, Any]]],
-    retry_result: Mapping[str, list[dict[str, Any]]],
-    *,
-    retried_references: Sequence[Mapping[str, Any]],
-) -> dict[str, list[dict[str, Any]]]:
-    initial_assets = [dict(item) for item in (initial_result.get("assets") or [])]
-    retry_assets = [dict(item) for item in (retry_result.get("assets") or [])]
-    retry_failures = [dict(item) for item in (retry_result.get("asset_failures") or [])]
-    retained_initial_failures: list[dict[str, Any]] = []
-    for failure in initial_result.get("asset_failures") or []:
-        if _is_retryable_elsevier_body_asset_failure(failure) and any(
-            _elsevier_reference_matches_failure(reference, failure) for reference in retried_references
-        ):
-            continue
-        retained_initial_failures.append(dict(failure))
-    return {
-        "assets": [*initial_assets, *retry_assets],
-        "asset_failures": [*retained_initial_failures, *retry_failures],
-    }
+ELSEVIER_ASSET_RETRY_POLICY = AssetRetryPolicy(
+    name="elsevier",
+    key_fn=_elsevier_asset_retry_key,
+    retryable_failure=_elsevier_retryable_body_asset_failure,
+    failure_match=_elsevier_body_asset_matches_failure,
+)
 
 
 def download_elsevier_related_assets(
@@ -531,17 +509,26 @@ def download_elsevier_related_assets(
         }
 
     body_result = download_body_references(body_references, concurrency=active_asset_download_concurrency)
-    retry_references = _elsevier_body_references_for_network_retry(
+    retry_references = assets_for_network_retry(
         body_references,
         body_result.get("asset_failures") or [],
+        policy=ELSEVIER_ASSET_RETRY_POLICY,
     )
     if retry_references:
         retry_result = download_body_references(retry_references, concurrency=1)
-        body_result = _merge_elsevier_body_asset_download_results(
-            body_result,
-            retry_result,
-            retried_references=retry_references,
-        )
+        body_result = {
+            "assets": merge_asset_retry_results(
+                body_result.get("assets") or [],
+                retry_result.get("assets") or [],
+                policy=ELSEVIER_ASSET_RETRY_POLICY,
+            ),
+            "asset_failures": merge_asset_failures(
+                body_result.get("asset_failures") or [],
+                retry_result.get("asset_failures") or [],
+                policy=ELSEVIER_ASSET_RETRY_POLICY,
+                retried_assets=retry_references,
+            ),
+        }
     downloads.extend(list(body_result.get("assets") or []))
     failures.extend(list(body_result.get("asset_failures") or []))
 

@@ -11,6 +11,12 @@ from ...extraction.html.assets import (
     looks_like_full_size_asset_url,
 )
 from ...utils import normalize_text
+from .._asset_retry import (
+    AssetRetryPolicy,
+    assets_for_network_retry,
+    merge_asset_failures,
+    merge_asset_retry_results,
+)
 from .._atypon_browser_workflow_profiles import publisher_profile
 from . import html_extraction as _html_extraction
 
@@ -38,6 +44,13 @@ def _download_asset_result_key(asset: Mapping[str, Any]) -> str:
         normalize_text(str(asset.get("source_url") or "")),
     ]
     return "|".join(part for part in parts if part)
+
+
+def _browser_workflow_asset_retry_key(asset: Mapping[str, Any]) -> tuple[Any, ...]:
+    return (
+        _download_asset_retry_scope(asset),
+        _download_asset_result_key(asset),
+    )
 
 
 def _download_asset_match_tokens(asset: Mapping[str, Any]) -> set[str]:
@@ -82,29 +95,44 @@ def _download_failure_match_tokens(failure: Mapping[str, Any]) -> set[str]:
     return {token for token in tokens if token}
 
 
+def _browser_workflow_retryable_asset_failure(_failure: Mapping[str, Any]) -> bool:
+    return True
+
+
+def _browser_workflow_asset_matches_failure(
+    asset: Mapping[str, Any],
+    failure: Mapping[str, Any],
+) -> bool:
+    if _download_asset_retry_scope(asset) != _download_asset_retry_scope(failure):
+        return False
+    asset_tokens = _download_asset_match_tokens(asset)
+    failure_tokens = _download_failure_match_tokens(failure)
+    return bool(asset_tokens and failure_tokens and asset_tokens & failure_tokens)
+
+
+BROWSER_WORKFLOW_ASSET_RETRY_POLICY = AssetRetryPolicy(
+    name="browser_workflow",
+    key_fn=_browser_workflow_asset_retry_key,
+    retryable_failure=_browser_workflow_retryable_asset_failure,
+    failure_match=_browser_workflow_asset_matches_failure,
+)
+
+
 def _assets_matching_download_failures(
     assets: list[dict[str, Any]],
     failures: list[Mapping[str, Any]],
     *,
     retry_scope: str,
 ) -> list[dict[str, Any]]:
-    failure_token_sets = [
-        _download_failure_match_tokens(failure)
-        for failure in failures
-        if _download_asset_retry_scope(failure) == retry_scope
-    ]
-    failure_token_sets = [tokens for tokens in failure_token_sets if tokens]
-    if not failure_token_sets:
-        return []
-
-    matched_assets: list[dict[str, Any]] = []
-    for asset in assets:
-        if _download_asset_retry_scope(asset) != retry_scope:
-            continue
-        asset_tokens = _download_asset_match_tokens(asset)
-        if asset_tokens and any(asset_tokens & tokens for tokens in failure_token_sets):
-            matched_assets.append(dict(asset))
-    return matched_assets
+    return assets_for_network_retry(
+        [asset for asset in assets if _download_asset_retry_scope(asset) == retry_scope],
+        [
+            failure
+            for failure in failures
+            if _download_asset_retry_scope(failure) == retry_scope
+        ],
+        policy=BROWSER_WORKFLOW_ASSET_RETRY_POLICY,
+    )
 
 
 def _browser_workflow_image_download_candidates(
@@ -153,13 +181,11 @@ def _merge_download_attempt_results(
     initial: Mapping[str, Any],
     retry: Mapping[str, Any],
 ) -> dict[str, list[dict[str, Any]]]:
-    downloads_by_key: dict[str, dict[str, Any]] = {}
-    for result in (initial, retry):
-        for asset in list(result.get("assets") or []):
-            key = _download_asset_result_key(asset)
-            downloads_by_key[key or str(len(downloads_by_key))] = dict(asset)
-
-    merged_downloads = list(downloads_by_key.values())
+    merged_downloads = merge_asset_retry_results(
+        list(initial.get("assets") or []),
+        list(retry.get("assets") or []),
+        policy=BROWSER_WORKFLOW_ASSET_RETRY_POLICY,
+    )
     resolved_tokens = (
         set().union(
             *(_download_asset_match_tokens(asset) for asset in merged_downloads)
@@ -167,8 +193,10 @@ def _merge_download_attempt_results(
         if merged_downloads
         else set()
     )
-    failure_candidates = list(retry.get("asset_failures") or []) or list(
-        initial.get("asset_failures") or []
+    failure_candidates = merge_asset_failures(
+        list(initial.get("asset_failures") or []),
+        list(retry.get("asset_failures") or []),
+        policy=BROWSER_WORKFLOW_ASSET_RETRY_POLICY,
     )
     unresolved_failures = []
     for failure in failure_candidates:

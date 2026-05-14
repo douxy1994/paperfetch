@@ -16,12 +16,9 @@ from ..publisher_identity import DOI_PATTERN, normalize_doi
 from ..reason_codes import PDF_FALLBACK
 from ..tracing import fulltext_marker, trace_from_markers
 from ..utils import dedupe_authors, normalize_text, strip_html_tags
+from ._asset_retry import merge_asset_retry_results
 from ._html_authors import AuthorExtractionPipeline, AuthorStep
-from ._ieee_url import (
-    IEEE_REFERENCES_URL_TEMPLATE,
-    _article_number_from_metadata,
-    _article_number_from_url,
-)
+from ._ieee_url import IEEE_REFERENCES_URL_TEMPLATE, _article_number_from_metadata, _article_number_from_url
 from ._script_json import extract_assignment_json
 
 IEEE_METADATA_ASSIGNMENT = "xplGlobal.document.metadata"
@@ -461,18 +458,24 @@ def build_ieee_article_model(
             trace=trace,
         )
     extraction_payload = content.diagnostics.get("extraction") if content is not None else None
-    abstract_sections = (
-        list(extraction_payload.get("abstract_sections") or [])
-        if isinstance(extraction_payload, Mapping)
-        else []
+    abstract_sections = list(extraction_payload.get("abstract_sections") or []) if isinstance(extraction_payload, Mapping) else []
+    section_hints = list(extraction_payload.get("section_hints") or []) if isinstance(extraction_payload, Mapping) else []
+    extracted_assets = ieee_html._dedupe_ieee_assets_by_priority(
+        [dict(item) for item in list(content.extracted_assets if content is not None else [])],
+        merge_fields=ieee_html.IEEE_ASSET_URL_FIELDS,
     )
-    section_hints = (
-        list(extraction_payload.get("section_hints") or [])
-        if isinstance(extraction_payload, Mapping)
-        else []
+    downloaded_asset_results = ieee_html._dedupe_ieee_assets_by_priority(
+        [dict(item) for item in list(downloaded_assets or [])],
+        merge_fields=(
+            *ieee_html.IEEE_ASSET_URL_FIELDS,
+            *ieee_html.IEEE_DOWNLOAD_MERGE_FIELDS,
+        ),
     )
-    extracted_assets = list(content.extracted_assets if content is not None else [])
-    assets = ieee_html._merge_ieee_assets(extracted_assets, list(downloaded_assets or []))
+    assets = merge_asset_retry_results(
+        extracted_assets,
+        downloaded_asset_results,
+        policy=ieee_html.IEEE_ASSET_RETRY_POLICY,
+    )
     availability_diagnostics = (
         dict(content.diagnostics.get("availability_diagnostics") or {})
         if content is not None and isinstance(content.diagnostics.get("availability_diagnostics"), Mapping)

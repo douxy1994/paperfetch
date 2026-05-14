@@ -10,6 +10,7 @@ from bs4 import BeautifulSoup
 from paper_fetch.http import HttpTransport
 from paper_fetch.providers import _springer_html as springer_html
 from paper_fetch.providers import html_springer_nature, springer as springer_provider
+from paper_fetch.providers._asset_retry import merge_asset_retry_results
 from paper_fetch.markdown.citations import normalize_inline_citation_markdown
 from paper_fetch.quality.html_availability import assess_html_fulltext_availability
 from paper_fetch.providers._html_references import extract_numbered_references_from_html
@@ -156,8 +157,8 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         self.assertIn(">10<sup>6</sup> km<sup>2</sup>", normalized)
         self.assertIn("22,500 km<sup>2</sup>", normalized)
 
-    def test_merge_springer_assets_reuses_html_asset_identity_helper(self) -> None:
-        merged = springer_provider._merge_springer_assets(
+    def test_springer_asset_retry_policy_reuses_html_asset_identity_helper(self) -> None:
+        merged = merge_asset_retry_results(
             [
                 {
                     "kind": "figure",
@@ -173,6 +174,7 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
                     "path": "/tmp/example-figure-1.png",
                 }
             ],
+            policy=springer_provider.SPRINGER_ASSET_RETRY_POLICY,
         )
 
         self.assertEqual(len(merged), 1)

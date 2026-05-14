@@ -16,6 +16,7 @@ from ..reason_codes import NO_RESULT
 from ..runtime import RuntimeContext
 from ..utils import normalize_text
 from ._html_section_markdown import render_container_markdown
+from ._asset_retry import AssetRetryPolicy
 from ._ieee_block_page import _looks_like_ieee_block_page
 from ._ieee_supplementary import (
     _extract_ieee_supplementary_assets,
@@ -28,6 +29,10 @@ from ._ieee_url import (
     _absolute_ieee_asset_url,
     _ieee_asset_url_path,
     _is_ignored_ieee_asset_url,
+)
+from ._retry_categories import (
+    DEFAULT_RETRYABLE_ASSET_ERROR_CATEGORIES,
+    NETWORK_RETRYABLE_REASON_TOKENS,
 )
 from .base import ProviderFailure
 
@@ -52,6 +57,37 @@ IEEE_DOWNLOAD_MERGE_FIELDS = (
     "preview_accepted",
 )
 IEEE_SECTION_MARKER_PATTERN = re.compile(r"^SECTION\s+(?:[IVXLCDM]+|\d+)\s*[.:]?$", flags=re.IGNORECASE)
+IEEE_ASSET_RETRY_KEY_FIELDS = (
+    "download_url", "source_url", "full_size_url", "url", "original_url",
+    "preview_url", "figure_page_url", "path", "link",
+)
+
+
+def _ieee_asset_retry_key(asset: Mapping[str, Any]) -> tuple[Any, ...]:
+    for field in IEEE_ASSET_RETRY_KEY_FIELDS:
+        value = normalize_text(str(asset.get(field) or ""))
+        if value:
+            return (value,)
+    return ("",)
+
+
+def _ieee_retryable_asset_failure(failure: Mapping[str, Any]) -> bool:
+    if failure.get("status") is not None:
+        return False
+    error_category = normalize_text(str(failure.get("error_category") or "")).lower()
+    if error_category:
+        return error_category in DEFAULT_RETRYABLE_ASSET_ERROR_CATEGORIES
+    reason = normalize_text(str(failure.get("reason") or "")).lower()
+    if not reason or "unsupported asset url scheme" in reason:
+        return False
+    return any(token in reason for token in NETWORK_RETRYABLE_REASON_TOKENS)
+
+
+IEEE_ASSET_RETRY_POLICY = AssetRetryPolicy(
+    name="ieee",
+    key_fn=_ieee_asset_retry_key,
+    retryable_failure=_ieee_retryable_asset_failure,
+)
 
 
 @dataclass(frozen=True)
@@ -413,34 +449,6 @@ def _normalize_ieee_html_assets(
         if not _ieee_asset_has_ignored_url(asset):
             candidates.append(asset)
     return _dedupe_ieee_assets_by_priority(candidates, merge_fields=IEEE_ASSET_URL_FIELDS)
-
-
-def _merge_ieee_assets(
-    extracted_assets: list[Mapping[str, Any]] | None,
-    downloaded_assets: list[Mapping[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    merged = _dedupe_ieee_assets_by_priority([dict(item) for item in extracted_assets or []], merge_fields=IEEE_ASSET_URL_FIELDS)
-    merge_fields = (*IEEE_ASSET_URL_FIELDS, *IEEE_DOWNLOAD_MERGE_FIELDS)
-    for item in downloaded_assets or []:
-        asset = dict(item)
-        strong_index = _ieee_asset_identity_index(merged, fields=IEEE_STRONG_ASSET_IDENTITY_FIELDS)
-        weak_index = _ieee_asset_identity_index(merged, fields=IEEE_WEAK_ASSET_IDENTITY_FIELDS)
-        identity_index = _ieee_asset_identity_index(merged)
-        strong_matches = _ieee_index_matches(strong_index, _ieee_asset_values_for_fields(asset, IEEE_STRONG_ASSET_IDENTITY_FIELDS))
-        weak_matches = _ieee_index_matches(
-            weak_index,
-            [
-                *_ieee_asset_values_for_fields(asset, IEEE_WEAK_ASSET_IDENTITY_FIELDS),
-                *_ieee_asset_values_for_fields(asset, IEEE_STRONG_ASSET_IDENTITY_FIELDS),
-            ],
-        )
-        identity_matches = _ieee_index_matches(identity_index, _ieee_asset_identity_values(asset))
-        matches = _unique_ieee_assets([*strong_matches, *weak_matches, *identity_matches])
-        if matches:
-            _merge_ieee_asset_group(merged, [*matches, asset], merge_fields=merge_fields)
-            continue
-        merged.append(asset)
-    return merged
 
 
 def _extract_ieee_html(
