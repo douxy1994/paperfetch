@@ -1,0 +1,90 @@
+from __future__ import annotations
+
+import importlib.util
+from pathlib import Path
+
+
+SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "onboard_from_manifests.py"
+
+
+def load_onboard_module():
+    spec = importlib.util.spec_from_file_location("onboard_from_manifests", SCRIPT_PATH)
+    assert spec is not None
+    module = importlib.util.module_from_spec(spec)
+    assert spec.loader is not None
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_discover_brief_contains_required_search_contract() -> None:
+    module = load_onboard_module()
+
+    brief = module.build_discover_brief(
+        provider="mdpi",
+        domain="mdpi.com",
+        doi_prefix="10.3390",
+        output_manifest="docs/ai-onboarding/manifests/mdpi.yml",
+    )
+
+    assert brief["task_id"] == "mdpi-discover-manifest"
+    assert brief["current_step"] == "discover-manifest"
+    assert brief["runtime"] == "coding-agent-subagent"
+    assert brief["schema"] == "docs/ai-onboarding/provider-manifest.schema.json"
+    assert brief["hard_constraints"] == "docs/ai-onboarding/hard-constraints.md"
+    assert brief["provider_seed"] == {
+        "name": "mdpi",
+        "domain": "mdpi.com",
+        "doi_prefix_hint": "10.3390",
+    }
+    assert brief["output_manifest"] == "docs/ai-onboarding/manifests/mdpi.yml"
+    assert brief["search_requirements"]["routing"] == [
+        "doi_prefixes",
+        "domains",
+        "domain_suffixes",
+        "crossref_publisher",
+    ]
+    assert brief["search_requirements"]["doi_sample_purposes"] == [
+        "structure",
+        "table",
+        "formula",
+        "figure",
+        "supplementary",
+        "references",
+        "pdf_fallback",
+        "abstract_only",
+        "access_gate",
+        "empty_shell",
+    ]
+    assert brief["files_allowed_to_modify"] == [
+        "docs/ai-onboarding/manifests/mdpi.yml"
+    ]
+    assert {"src/", "tests/", "docs/providers.md", "CHANGELOG.md"}.issubset(
+        set(brief["files_must_not_modify"])
+    )
+    assert brief["no_commit"] is True
+
+
+def test_discover_brief_yaml_has_no_sensitive_collection_or_sdk_prompts() -> None:
+    module = load_onboard_module()
+    brief = module.build_discover_brief(
+        provider="mdpi",
+        domain="mdpi.com",
+        doi_prefix=None,
+        output_manifest="docs/ai-onboarding/manifests/mdpi.yml",
+    )
+
+    rendered = module.to_yaml(brief).lower()
+
+    forbidden_fragments = [
+        "secret",
+        "api key",
+        "apikey",
+        "token",
+        "env var",
+        "environment variable",
+        "anthropic",
+        "openai",
+        "llm sdk",
+    ]
+    for fragment in forbidden_fragments:
+        assert fragment not in rendered
