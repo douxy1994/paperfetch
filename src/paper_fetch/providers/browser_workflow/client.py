@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import threading
-from typing import Any, Callable, Mapping
+from functools import partial
+from pathlib import Path
+from typing import Any, Mapping
 
 from ...config import build_user_agent, resolve_asset_download_concurrency
 from ...extraction.html import decode_html
-from ...extraction.html.assets import (
-    download_figure_assets_with_image_document_fetcher as _download_figure_assets_with_image_document_fetcher,
-    download_supplementary_assets as _download_supplementary_assets,
-    split_body_and_supplementary_assets,
-)
 from ...extraction.html.signals import HtmlExtractionFailure
 from ...metadata.types import ProviderMetadata
 from ...models import AssetProfile
@@ -27,13 +23,11 @@ from .shared import (
     facade_attr,
 )
 from .._flaresolverr import (
-    FlareSolverrFailure,
     ensure_runtime_ready as _ensure_runtime_ready,
     fetch_html_with_flaresolverr as _fetch_html_with_flaresolverr,
     load_runtime_config as _load_runtime_config,
     merge_browser_context_seeds,
     probe_runtime_status as _probe_runtime_status,
-    warm_browser_context_with_flaresolverr as _warm_browser_context_with_flaresolverr,
 )
 from .._pdf_fallback import PdfFallbackFailure
 from .._waterfall import ProviderWaterfallStep, run_provider_waterfall
@@ -53,9 +47,6 @@ from .fetchers import (
     _MemoizedImageDocumentFetcher,
     _build_shared_playwright_file_fetcher as _default_build_shared_playwright_file_fetcher,
     _build_shared_playwright_image_fetcher as _default_build_shared_playwright_image_fetcher,
-    _compact_failure_diagnostic,
-    _flaresolverr_image_document_payload,
-    _flaresolverr_image_payload_failure_reason,
 )
 from ..atypon_browser_workflow import (
     extract_atypon_browser_workflow_markdown as _extract_atypon_browser_workflow_markdown,
@@ -65,11 +56,11 @@ from .article import (
     browser_workflow_article_from_payload,
     merge_provider_owned_authors,
 )
-from .assets import (
-    _assets_matching_download_failures,
-    _browser_workflow_image_download_candidates,
-    _cached_browser_workflow_assets,
-    _merge_download_attempt_results,
+from .asset_download import (
+    BrowserAssetRecoveryContext,
+    plan_browser_asset_download,
+    retry_failed_browser_assets,
+    run_browser_asset_download_attempt,
 )
 from .bootstrap import bootstrap_browser_workflow as _bootstrap_browser_workflow
 from .pdf_fallback import (
@@ -430,27 +421,24 @@ class BrowserWorkflowClient(ProviderClient):
             return empty_asset_results()
 
         html_text = decode_html(raw_payload.body)
+        normalized_doi = normalize_doi(str(metadata.get("doi") or doi or ""))
+        if not normalized_doi:
+            return empty_asset_results()
         try:
-            article_assets = facade_attr(
-                "_cached_browser_workflow_assets", _cached_browser_workflow_assets
-            )(
-                self,
-                html_text,
-                raw_payload.source_url,
-                asset_profile=asset_profile,
-                context=context,
+            plan = plan_browser_asset_download(
+                article_id=normalized_doi,
+                output_dir=Path(output_dir),
+                html_text=html_text,
+                source_url=raw_payload.source_url,
+                profile={
+                    "client": self,
+                    "context": context,
+                    "asset_profile": asset_profile,
+                },
             )
         except HtmlExtractionFailure:
             return empty_asset_results()
-        if not article_assets:
-            return empty_asset_results()
-        body_assets, supplementary_assets = split_body_and_supplementary_assets(
-            article_assets
-        )
-        asset_download_concurrency = resolve_asset_download_concurrency(context.env)
-
-        normalized_doi = normalize_doi(str(metadata.get("doi") or doi or ""))
-        if not normalized_doi:
+        if not plan.body_assets and not plan.supplementary_assets:
             return empty_asset_results()
 
         runtime = facade_attr("load_runtime_config", _load_runtime_config)(
@@ -462,390 +450,96 @@ class BrowserWorkflowClient(ProviderClient):
         browser_context_seed = merge_browser_context_seeds(
             content.browser_context_seed if content is not None else None
         )
-
-        article_id = (
-            normalized_doi
-            or normalize_text(str(metadata.get("title") or ""))
-            or raw_payload.source_url
-        )
-
-        def seed_urls_for(current_seed: Mapping[str, Any]) -> list[str]:
-            return [
-                normalized
-                for normalized in [
-                    raw_payload.source_url,
-                    normalize_text(str(current_seed.get("browser_final_url") or "")),
-                ]
-                if normalized
-            ]
-
-        def asset_recovery_urls(image_url: str, asset: Mapping[str, Any]) -> list[str]:
-            seen: set[str] = set()
-            ordered: list[str] = []
-            for candidate in [
-                image_url,
-                normalize_text(str(asset.get("figure_page_url") or "")),
-            ]:
-                normalized = normalize_text(candidate)
-                if normalized and normalized not in seen:
-                    seen.add(normalized)
-                    ordered.append(normalized)
-            return ordered
-
-        def supplementary_recovery_urls(
-            file_url: str, asset: Mapping[str, Any]
-        ) -> list[str]:
-            seen: set[str] = set()
-            ordered: list[str] = []
-            for candidate in [
-                file_url,
-                raw_payload.source_url,
-                normalize_text(str(asset.get("source_url") or "")),
-                normalize_text(str(asset.get("download_url") or "")),
-            ]:
-                normalized = normalize_text(candidate)
-                if normalized and normalized not in seen:
-                    seen.add(normalized)
-                    ordered.append(normalized)
-            return ordered
-
-        def asset_challenge_recovery_for(
-            attempt_seed: dict[str, Any],
-            attempt_seed_lock: threading.Lock,
-        ) -> Callable[
-            [str, Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any] | None
-        ]:
-            def recover(
-                image_url: str, asset: Mapping[str, Any], failure: Mapping[str, Any]
-            ) -> Mapping[str, Any]:
-                attempts: list[dict[str, Any]] = []
-                for recovery_url in asset_recovery_urls(image_url, asset):
-                    try:
-                        html_result = facade_attr(
-                            "fetch_html_with_flaresolverr",
-                            _fetch_html_with_flaresolverr,
-                        )(
-                            [recovery_url],
-                            publisher=self.name,
-                            config=runtime,
-                            return_image_payload=True,
-                        )
-                    except FlareSolverrFailure as exc:
-                        if exc.browser_context_seed:
-                            with attempt_seed_lock:
-                                attempt_seed.update(
-                                    merge_browser_context_seeds(
-                                        attempt_seed, exc.browser_context_seed
-                                    )
-                                )
-                        attempts.append(
-                            _compact_failure_diagnostic(
-                                {
-                                    "url": recovery_url,
-                                    "status": "failed",
-                                    "reason": "challenge_recovery_failed",
-                                    "message": exc.message,
-                                }
-                            )
-                        )
-                        continue
-                    with attempt_seed_lock:
-                        attempt_seed.update(
-                            merge_browser_context_seeds(
-                                attempt_seed, html_result.browser_context_seed
-                            )
-                        )
-                    image_payload = _flaresolverr_image_document_payload(html_result)
-                    recovery_reason = (
-                        ""
-                        if image_payload is not None
-                        else _flaresolverr_image_payload_failure_reason(html_result)
-                    )
-                    return _compact_failure_diagnostic(
-                        {
-                            "status": "ok" if image_payload is not None else "failed",
-                            "url": recovery_url,
-                            "final_url": html_result.final_url,
-                            "response_status": html_result.response_status,
-                            "content_type": html_result.response_headers.get(
-                                "content-type"
-                            ),
-                            "title_snippet": (html_result.title or "")[:160],
-                            "attempts": attempts,
-                            "reason": recovery_reason,
-                            "image_payload": image_payload,
-                        }
-                    )
-                return _compact_failure_diagnostic(
-                    {
-                        "status": "failed",
-                        "reason": normalize_text(str(failure.get("reason") or ""))
-                        or "challenge_recovery_failed",
-                        "attempts": attempts,
-                    }
-                )
-
-            return recover
-
-        def supplementary_challenge_recovery_for(
-            attempt_seed: dict[str, Any],
-            attempt_seed_lock: threading.Lock,
-        ) -> Callable[
-            [str, Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any] | None
-        ]:
-            def recover(
-                file_url: str, asset: Mapping[str, Any], failure: Mapping[str, Any]
-            ) -> Mapping[str, Any]:
-                attempts: list[dict[str, Any]] = []
-                for recovery_url in supplementary_recovery_urls(file_url, asset):
-                    try:
-                        html_result = facade_attr(
-                            "fetch_html_with_flaresolverr",
-                            _fetch_html_with_flaresolverr,
-                        )(
-                            [recovery_url],
-                            publisher=self.name,
-                            config=runtime,
-                        )
-                    except FlareSolverrFailure as exc:
-                        if exc.browser_context_seed:
-                            with attempt_seed_lock:
-                                attempt_seed.update(
-                                    merge_browser_context_seeds(
-                                        attempt_seed, exc.browser_context_seed
-                                    )
-                                )
-                        attempts.append(
-                            _compact_failure_diagnostic(
-                                {
-                                    "url": recovery_url,
-                                    "status": "failed",
-                                    "reason": "challenge_recovery_failed",
-                                    "message": exc.message,
-                                }
-                            )
-                        )
-                        continue
-                    with attempt_seed_lock:
-                        attempt_seed.update(
-                            merge_browser_context_seeds(
-                                attempt_seed, html_result.browser_context_seed
-                            )
-                        )
-                    return _compact_failure_diagnostic(
-                        {
-                            "status": "ok",
-                            "url": recovery_url,
-                            "final_url": html_result.final_url,
-                            "response_status": html_result.response_status,
-                            "content_type": html_result.response_headers.get(
-                                "content-type"
-                            ),
-                            "title_snippet": (html_result.title or "")[:160],
-                            "attempts": attempts,
-                        }
-                    )
-                return _compact_failure_diagnostic(
-                    {
-                        "status": "failed",
-                        "reason": normalize_text(str(failure.get("reason") or ""))
-                        or "challenge_recovery_failed",
-                        "attempts": attempts,
-                    }
-                )
-
-            return recover
-
-        def image_document_fetcher_for(
-            current_seed: Mapping[str, Any],
-            attempt_seed: dict[str, Any],
-            attempt_seed_lock: threading.Lock,
-            attempt_body_assets: list[dict[str, Any]],
-        ) -> Callable[[str, Mapping[str, Any]], dict[str, Any] | None] | None:
-            if not attempt_body_assets:
-                return None
-            profile = self.profile
-            if profile is None or not profile.shared_playwright_image_fetcher:
-                return None
-            # Asset workers may run in parallel threads, so they must not borrow
-            # the RuntimeContext-owned shared browser/context.
-            fetcher = facade_attr(
-                "_build_shared_playwright_image_fetcher",
-                _default_build_shared_playwright_image_fetcher,
-            )(
-                browser_context_seed_getter=lambda: attempt_seed,
-                seed_urls_getter=lambda: seed_urls_for(attempt_seed),
-                browser_user_agent=current_seed.get("browser_user_agent")
-                or self.user_agent,
-                headless=runtime.headless,
-                challenge_recovery=asset_challenge_recovery_for(
-                    attempt_seed, attempt_seed_lock
-                ),
-                runtime_context=context,
-                use_runtime_shared_browser=False,
-            )
-            return _MemoizedImageDocumentFetcher(fetcher)
-
-        def file_document_fetcher_for(
-            current_seed: Mapping[str, Any],
-            attempt_seed: dict[str, Any],
-            attempt_seed_lock: threading.Lock,
-            attempt_supplementary_assets: list[dict[str, Any]],
-        ) -> Callable[[str, Mapping[str, Any]], dict[str, Any] | None] | None:
-            if not attempt_supplementary_assets:
-                return None
-            profile = self.profile
-            if profile is None or not profile.shared_playwright_image_fetcher:
-                return None
-            return facade_attr(
-                "_build_shared_playwright_file_fetcher",
-                _default_build_shared_playwright_file_fetcher,
-            )(
-                browser_context_seed_getter=lambda: attempt_seed,
-                seed_urls_getter=lambda: seed_urls_for(attempt_seed),
-                browser_user_agent=current_seed.get("browser_user_agent")
-                or self.user_agent,
-                headless=runtime.headless,
-                challenge_recovery=supplementary_challenge_recovery_for(
-                    attempt_seed, attempt_seed_lock
-                ),
-                runtime_context=context,
-                use_runtime_shared_browser=False,
-                thread_local=True,
-            )
-
-        def run_download_attempt(
-            current_seed: Mapping[str, Any],
-            *,
-            attempt_body_assets: list[dict[str, Any]],
-            attempt_supplementary_assets: list[dict[str, Any]],
-        ) -> dict[str, list[dict[str, Any]]]:
-            attempt_seed = merge_browser_context_seeds(current_seed)
-            attempt_seed_lock = threading.Lock()
-
-            def raw_figure_page_fetcher(figure_page_url: str) -> tuple[str, str] | None:
-                try:
-                    html_result = facade_attr(
-                        "fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr
-                    )(
-                        [figure_page_url],
-                        publisher=self.name,
-                        config=runtime,
-                    )
-                except FlareSolverrFailure:
-                    return None
-                with attempt_seed_lock:
-                    attempt_seed.update(
-                        merge_browser_context_seeds(
-                            attempt_seed, html_result.browser_context_seed
-                        )
-                    )
-                return html_result.html, html_result.final_url
-
-            figure_page_fetcher = _MemoizedFigurePageFetcher(raw_figure_page_fetcher)
-            image_document_fetcher = image_document_fetcher_for(
-                attempt_seed,
-                attempt_seed,
-                attempt_seed_lock,
-                attempt_body_assets,
-            )
-            file_document_fetcher = file_document_fetcher_for(
-                attempt_seed,
-                attempt_seed,
-                attempt_seed_lock,
-                attempt_supplementary_assets,
-            )
-            try:
-                body_result = (
-                    facade_attr(
-                        "download_figure_assets_with_image_document_fetcher",
-                        _download_figure_assets_with_image_document_fetcher,
-                    )(
-                        self.transport,
-                        article_id=article_id,
-                        assets=attempt_body_assets,
-                        output_dir=output_dir,
-                        user_agent=self.user_agent,
-                        asset_profile=asset_profile,
-                        figure_page_fetcher=figure_page_fetcher,
-                        candidate_builder=_browser_workflow_image_download_candidates,
-                        image_document_fetcher=image_document_fetcher,
-                        asset_download_concurrency=asset_download_concurrency,
-                    )
-                    if attempt_body_assets
-                    else empty_asset_results()
-                )
-                supplementary_result = (
-                    facade_attr(
-                        "download_supplementary_assets", _download_supplementary_assets
-                    )(
-                        self.transport,
-                        article_id=article_id,
-                        assets=attempt_supplementary_assets,
-                        output_dir=output_dir,
-                        user_agent=self.user_agent,
-                        asset_profile=asset_profile,
-                        browser_context_seed=attempt_seed,
-                        seed_urls=seed_urls_for(attempt_seed),
-                        file_document_fetcher=file_document_fetcher,
-                        asset_download_concurrency=asset_download_concurrency,
-                    )
-                    if attempt_supplementary_assets
-                    else empty_asset_results()
-                )
-                return {
-                    "assets": [
-                        *list(body_result.get("assets") or []),
-                        *list(supplementary_result.get("assets") or []),
-                    ],
-                    "asset_failures": [
-                        *list(body_result.get("asset_failures") or []),
-                        *list(supplementary_result.get("asset_failures") or []),
-                    ],
-                }
-            finally:
-                for fetcher in (image_document_fetcher, file_document_fetcher):
-                    close_fetcher = getattr(fetcher, "close", None)
-                    if callable(close_fetcher):
-                        close_fetcher()
-
-        initial_result = run_download_attempt(
-            browser_context_seed,
-            attempt_body_assets=body_assets,
-            attempt_supplementary_assets=supplementary_assets,
-        )
-        if not initial_result.get("asset_failures"):
-            return initial_result
-
-        initial_failures = list(initial_result.get("asset_failures") or [])
-        failed_body_assets = _assets_matching_download_failures(
-            body_assets,
-            initial_failures,
-            retry_scope="body",
-        )
-        failed_supplementary_assets = _assets_matching_download_failures(
-            supplementary_assets,
-            initial_failures,
-            retry_scope="supplementary",
-        )
-        if not failed_body_assets and not failed_supplementary_assets:
-            return initial_result
-
-        refreshed_seed = facade_attr(
-            "warm_browser_context_with_flaresolverr",
-            _warm_browser_context_with_flaresolverr,
-        )(
-            seed_urls_for(browser_context_seed),
-            publisher=self.name,
-            config=runtime,
+        asset_download_concurrency = resolve_asset_download_concurrency(context.env)
+        recovery = BrowserAssetRecoveryContext(
+            runtime=runtime,
+            provider=self.name,
+            user_agent=self.user_agent,
             browser_context_seed=browser_context_seed,
+            browser_cookies=list(browser_context_seed.get("browser_cookies") or []),
+            active_seed_urls=[
+                normalized
+                for normalized in (
+                    raw_payload.source_url,
+                    normalize_text(
+                        str(browser_context_seed.get("browser_final_url") or "")
+                    ),
+                )
+                if normalized
+            ],
         )
-        retry_result = run_download_attempt(
-            refreshed_seed,
-            attempt_body_assets=failed_body_assets,
-            attempt_supplementary_assets=failed_supplementary_assets,
+
+        requester = {
+            "transport": self.transport,
+            "asset_download_concurrency": asset_download_concurrency,
+            "figure_page_fetcher_factory": _MemoizedFigurePageFetcher,
+        }
+        image_fetcher_factory = partial(self._browser_asset_image_fetcher, context)
+        file_fetcher_factory = partial(self._browser_asset_file_fetcher, context)
+        result = run_browser_asset_download_attempt(
+            plan,
+            recovery,
+            image_fetcher_factory=image_fetcher_factory,
+            file_fetcher_factory=file_fetcher_factory,
+            opener_requester=requester,
         )
-        return _merge_download_attempt_results(initial_result, retry_result)
+        if result.failures:
+            result = retry_failed_browser_assets(
+                plan,
+                result,
+                recovery,
+                image_fetcher_factory=image_fetcher_factory,
+                file_fetcher_factory=file_fetcher_factory,
+                opener_requester=requester,
+            )
+        return {
+            "assets": [*result.body_results, *result.supplementary_results],
+            "asset_failures": result.failures,
+        }
+
+    def _browser_asset_image_fetcher(self, context: RuntimeContext, **request):
+        profile = self.profile
+        if (
+            not request["attempt_body_assets"]
+            or profile is None
+            or not profile.shared_playwright_image_fetcher
+        ):
+            return None
+        fetcher = facade_attr(
+            "_build_shared_playwright_image_fetcher",
+            _default_build_shared_playwright_image_fetcher,
+        )(
+            browser_context_seed_getter=request["browser_context_seed_getter"],
+            seed_urls_getter=request["seed_urls_getter"],
+            browser_user_agent=request["browser_user_agent"],
+            headless=request["headless"],
+            challenge_recovery=request["challenge_recovery"],
+            runtime_context=context,
+            use_runtime_shared_browser=False,
+        )
+        return _MemoizedImageDocumentFetcher(fetcher)
+
+    def _browser_asset_file_fetcher(self, context: RuntimeContext, **request):
+        profile = self.profile
+        if (
+            not request["attempt_supplementary_assets"]
+            or profile is None
+            or not profile.shared_playwright_image_fetcher
+        ):
+            return None
+        return facade_attr(
+            "_build_shared_playwright_file_fetcher",
+            _default_build_shared_playwright_file_fetcher,
+        )(
+            browser_context_seed_getter=request["browser_context_seed_getter"],
+            seed_urls_getter=request["seed_urls_getter"],
+            browser_user_agent=request["browser_user_agent"],
+            headless=request["headless"],
+            challenge_recovery=request["challenge_recovery"],
+            runtime_context=context,
+            use_runtime_shared_browser=False,
+            thread_local=True,
+        )
 
     def to_article_model(
         self,
