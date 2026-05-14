@@ -18,6 +18,15 @@ HTML_ASSET_IMPORT_BOUNDARY_PATHS = [
     PAPER_FETCH_ROOT / "extraction" / "html" / "assets" / "supplementary.py",
 ]
 FORBIDDEN_PREFIX = "paper_fetch.providers._"
+PROVIDER_RULE_HOOK_IMPORTS = frozenset(
+    {
+        "paper_fetch.providers._ams_html",
+        "paper_fetch.providers._pnas_html",
+        "paper_fetch.providers._science_html",
+        "paper_fetch.providers._wiley_html",
+    }
+)
+PROVIDER_RULES_PATH = PAPER_FETCH_ROOT / "extraction" / "html" / "provider_rules.py"
 REMOVED_PROVIDER_COMPATIBILITY_MODULES = frozenset(
     {
         "paper_fetch.providers._article_markdown",
@@ -76,6 +85,8 @@ def _imported_modules(path: Path, *, module_name: str | None = None) -> list[tup
 def _forbidden_provider_private_imports(path: Path) -> list[str]:
     offenders: list[str] = []
     for imported_module, lineno in _imported_modules(path):
+        if path == PROVIDER_RULES_PATH and imported_module in PROVIDER_RULE_HOOK_IMPORTS:
+            continue
         if imported_module.startswith(FORBIDDEN_PREFIX):
             offenders.append(f"{path.relative_to(SRC_DIR)}:{lineno} imports {imported_module}")
     return offenders

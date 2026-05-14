@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import copy
-import importlib
+from collections.abc import Iterator, Mapping as MappingABC
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
@@ -46,10 +46,7 @@ from .cleanup_policy import (
 
 DEFAULT_NOISE_PROFILE = "generic"
 COMMON_MARKDOWN_PROMO_TOKENS = ("learn more",)
-COMMON_FRONT_MATTER_FOOTER_PREFIXES = (
-    "all content on this site",
-    "copyright",
-)
+COMMON_FRONT_MATTER_FOOTER_PREFIXES = ("all content on this site", "copyright")
 GENERIC_FRONT_MATTER_EXACT_TEXTS = (
     "authors",
     "author information",
@@ -61,73 +58,31 @@ GENERIC_FRONT_MATTER_EXACT_TEXTS = (
 
 DEFAULT_SITE_RULE: dict[str, Any] = {
     "candidate_selectors": [
-        "article",
-        "main article",
-        "[role='main'] article",
-        "[itemprop='articleBody']",
-        "[property='articleBody']",
-        "[itemprop='mainEntity']",
-        ".article",
-        ".article__body",
-        ".article__content",
-        ".article-body",
-        ".main-content",
-        "#main-content",
-        "main",
-        "[role='main']",
-        "body",
+        "article", "main article", "[role='main'] article", "[itemprop='articleBody']",
+        "[property='articleBody']", "[itemprop='mainEntity']", ".article",
+        ".article__body", ".article__content", ".article-body", ".main-content",
+        "#main-content", "main", "[role='main']", "body",
     ],
     "remove_selectors": [
         *(tag for tag in HTML_DROP_TAGS if tag != "template"),
-        "iframe",
-        ".social-share",
-        ".article-tools",
-        ".article-metrics",
-        ".metrics-widget",
-        ".recommended-articles",
-        ".related-content",
-        ".breadcrumbs",
-        ".toc",
-        ".tab__nav",
-        ".accessDenialWidget",
-        ".cookie-banner",
-        ".cookie-consent",
+        "iframe", ".social-share", ".article-tools", ".article-metrics",
+        ".metrics-widget", ".recommended-articles", ".related-content",
+        ".breadcrumbs", ".toc", ".tab__nav", ".accessDenialWidget",
+        ".cookie-banner", ".cookie-consent",
     ],
-    "drop_keywords": {
-        *COMMON_NOISE_TOKENS,
-        "download",
-        "citation-tool",
-        "nav",
-        "access-widget",
-    },
-    "drop_text": {
-        "Check for updates",
-        "View Metrics",
-        "Share",
-        "Cite",
-    },
+    "drop_keywords": {*COMMON_NOISE_TOKENS, "download", "citation-tool", "nav", "access-widget"},
+    "drop_text": {"Check for updates", "View Metrics", "Share", "Cite"},
 }
 
 SCIENCE_SITE_RULE_OVERRIDES: dict[str, Any] = {
-    "candidate_selectors": [
-        ".article__fulltext",
-        ".article-view",
-    ],
+    "candidate_selectors": [".article__fulltext", ".article-view"],
     "remove_selectors": [
-        "header .social-share",
-        ".jump-to-nav",
-        ".article-access-info",
-        ".references-tab",
-        ".permissions",
-        ".issue-item__citation",
-        ".article-header__access",
-        "#article_collateral_menu",
-        "#core-collateral-fulltext-options",
-        "#core-collateral-metrics",
-        "#core-collateral-share",
-        "#core-collateral-media",
-        "#core-collateral-figures",
-        "#core-collateral-tables",
+        "header .social-share", ".jump-to-nav", ".article-access-info",
+        ".references-tab", ".permissions", ".issue-item__citation",
+        ".article-header__access", "#article_collateral_menu",
+        "#core-collateral-fulltext-options", "#core-collateral-metrics",
+        "#core-collateral-share", "#core-collateral-media",
+        "#core-collateral-figures", "#core-collateral-tables",
     ],
     "drop_keywords": {"advert", "tab-nav", "jump-to"},
     "drop_text": {"Permissions"},
@@ -136,61 +91,35 @@ SCIENCE_SITE_RULE_OVERRIDES: dict[str, Any] = {
 # SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
 # when publisher text changes.
 PNAS_MARKDOWN_PROMO_TOKENS = (
-    "sign up for pnas alerts",
-    "get alerts for new articles, or get an alert when an article is cited",
+    "sign up for pnas alerts", "get alerts for new articles, or get an alert when an article is cited",
 )
 ATYPON_FRONT_MATTER_EXACT_TEXTS = (
     # These article-type labels are front-matter chrome for Atypon renderers.
     # html_availability.NARRATIVE_ARTICLE_TYPES is a separate quality heuristic
     # for short narrative papers and intentionally does not drive cleanup.
-    "full access",
-    "open access",
-    "free access",
-    "research article",
-    "perspective",
-    "review",
-    "editorial",
-    "commentary",
+    "full access", "open access", "free access", "research article",
+    "perspective", "review", "editorial", "commentary",
 )
-ATYPON_FRONT_MATTER_CONTAINS_TOKENS = (
-    "authors info",
-    "affiliations",
-)
+ATYPON_FRONT_MATTER_CONTAINS_TOKENS = ("authors info", "affiliations")
 SCIENCE_MASTHEAD_TEXTS = ("science",)
 PNAS_MASTHEAD_TEXTS = ("pnas",)
 SCIENCE_FRONT_MATTER_PUBLICATION_KEYWORDS = SCIENCE_MASTHEAD_TEXTS
 PNAS_FRONT_MATTER_PUBLICATION_KEYWORDS = PNAS_MASTHEAD_TEXTS
-SCIENCE_FRONT_MATTER_EXACT_TEXTS = (
-    *ATYPON_FRONT_MATTER_EXACT_TEXTS,
-    *SCIENCE_MASTHEAD_TEXTS,
-)
+SCIENCE_FRONT_MATTER_EXACT_TEXTS = (*ATYPON_FRONT_MATTER_EXACT_TEXTS, *SCIENCE_MASTHEAD_TEXTS)
 # SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
 # when publisher text changes.
 # STRUCTURAL_UI_COPY_HOOK: provider-specific post-content cutoff, not generic
 # body denylist.
 SCIENCE_POST_CONTENT_BREAK_TOKENS = (
-    "purchase access to other journals in the science family",
-    "become a aaas member",
-    "activate your aaas id",
+    "purchase access to other journals in the science family", "become a aaas member", "activate your aaas id",
 )
-PNAS_FRONT_MATTER_EXACT_TEXTS = (
-    *ATYPON_FRONT_MATTER_EXACT_TEXTS,
-    *PNAS_MASTHEAD_TEXTS,
-)
+PNAS_FRONT_MATTER_EXACT_TEXTS = (*ATYPON_FRONT_MATTER_EXACT_TEXTS, *PNAS_MASTHEAD_TEXTS)
 WILEY_FRONT_MATTER_EXACT_TEXTS = ATYPON_FRONT_MATTER_EXACT_TEXTS
 PNAS_SITE_RULE_OVERRIDES: dict[str, Any] = {
-    "candidate_selectors": [
-        ".article__fulltext",
-        ".core-container",
-        ".article-content",
-    ],
+    "candidate_selectors": [".article__fulltext", ".core-container", ".article-content"],
     "remove_selectors": [
-        ".article__access",
-        ".article__footer",
-        ".article__reference-links",
-        ".core-collateral",
-        ".card",
-        ".signup-alert-ad",
+        ".article__access", ".article__footer", ".article__reference-links",
+        ".core-collateral", ".card", ".signup-alert-ad",
     ],
     "drop_keywords": {"tab-nav"},
 }
@@ -198,75 +127,40 @@ PNAS_SITE_RULE_OVERRIDES: dict[str, Any] = {
 # SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
 # when publisher text changes.
 SPRINGER_NATURE_MARKDOWN_PROMO_TOKENS = (
-    "sign up for alerts",
-    "download citation",
-    "reprints and permissions",
+    "sign up for alerts", "download citation", "reprints and permissions",
     "similar content being viewed by others",
 )
 # SITE_UI_COPY_REGRESSION_MARKER: site-owned Springer/Nature chrome; rerun
 # extraction rules when article action or license section labels change.
 SPRINGER_NATURE_CHROME_SECTION_HEADINGS = (
-    "about this article",
-    "article information",
-    "author information",
-    "authors and affiliations",
-    "cite this article",
-    "open access",
-    "permissions",
-    "rights and permissions",
-    "reprints and permissions",
+    "about this article", "article information", "author information",
+    "authors and affiliations", "cite this article", "open access",
+    "permissions", "rights and permissions", "reprints and permissions",
 )
 # SITE_UI_COPY_REGRESSION_MARKER: site-owned Springer/Nature action chrome;
 # rerun extraction rules when article action attributes change.
 SPRINGER_NATURE_CHROME_ATTR_TOKENS = (
-    "article-actions",
-    "article-metrics",
-    "saved-research",
-    "save-article",
-    "submit-manuscript",
+    "article-actions", "article-metrics", "saved-research", "save-article", "submit-manuscript",
 )
 SPRINGER_NATURE_LICENSE_LINK_HOSTS = ("creativecommons.org",)
 SPRINGER_NATURE_LICENSE_LINK_PATH_PREFIXES = ("/licenses/",)
 SPRINGER_NATURE_LICENSE_WORD_LIMIT = 180
-SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS = (
-    "c-article-equation",
-    "c-article-equation__content",
-)
-SPRINGER_NATURE_DISPLAY_FORMULA_SELECTORS = tuple(
-    f".{token}" for token in SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS
-)
-SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS = (
-    EXTENDED_DATA_LABEL,
-    SPRINGER_NATURE_SOURCE_DATA_LABEL,
-    "peer review",
-)
+SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS = ("c-article-equation", "c-article-equation__content")
+SPRINGER_NATURE_DISPLAY_FORMULA_SELECTORS = tuple(f".{token}" for token in SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS)
+SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS = (EXTENDED_DATA_LABEL, SPRINGER_NATURE_SOURCE_DATA_LABEL, "peer review")
 WILEY_FORMULA_CONTAINER_TOKENS = ("fallback__mathequation",)
 
 WILEY_SITE_RULE_OVERRIDES: dict[str, Any] = {
-    "candidate_selectors": [
-        ".article-section__content",
-        ".issue-item__body",
-        ".epub-section",
-        ".doi-access",
-    ],
-    "remove_selectors": [
-        ".citation-tools",
-        ".epub-reference",
-        ".article-section__tableofcontents",
-        ".publicationHistory",
-    ],
+    "candidate_selectors": [".article-section__content", ".issue-item__body", ".epub-section", ".doi-access"],
+    "remove_selectors": [".citation-tools", ".epub-reference", ".article-section__tableofcontents", ".publicationHistory"],
     "drop_text": {"Recommended articles"},
 }
 
 # SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
 # when AMS toolbar / recommendation labels change.
 AMS_MARKDOWN_PROMO_TOKENS = (
-    DOWNLOAD_PDF_LABEL,
-    "share this article",
-    *CITATION_TOOL_CHROME_TOKENS,
-    *RELATED_CONTENT_CHROME_TOKENS,
-    "most read",
-    "most cited",
+    DOWNLOAD_PDF_LABEL, "share this article", *CITATION_TOOL_CHROME_TOKENS,
+    *RELATED_CONTENT_CHROME_TOKENS, "most read", "most cited",
 )
 # SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
 # when publisher text changes. These tokens stop scanning after the article
@@ -274,38 +168,22 @@ AMS_MARKDOWN_PROMO_TOKENS = (
 # STRUCTURAL_UI_COPY_HOOK: provider-specific post-content cutoff, not generic
 # body denylist.
 AMS_POST_CONTENT_BREAK_TOKENS = (
-    "article type",
-    "issue section",
-    "most read",
-    "most cited",
-    *RELATED_CONTENT_CHROME_TOKENS,
-    "ams publications",
+    "article type", "issue section", "most read", "most cited",
+    *RELATED_CONTENT_CHROME_TOKENS, "ams publications",
 )
 AMS_MASTHEAD_TEXTS = ("ams", "bams")
-AMS_FRONT_MATTER_EXACT_TEXTS = (
-    *ATYPON_FRONT_MATTER_EXACT_TEXTS,
-    "american meteorological society",
-)
+AMS_FRONT_MATTER_EXACT_TEXTS = (*ATYPON_FRONT_MATTER_EXACT_TEXTS, "american meteorological society")
 # Provider-scoped masthead keywords only; runtime publication-watermark helpers
 # require short, punctuation-free, title-like text and must not match prose.
 AMS_FRONT_MATTER_PUBLICATION_KEYWORDS = AMS_MASTHEAD_TEXTS
 AMS_SITE_RULE_OVERRIDES: dict[str, Any] = {
     "candidate_selectors": [
-        "#articleBody",
-        "#contentRoot",
+        "#articleBody", "#contentRoot",
         ".component-content-item.component-container.container-fulltext-display",
-        ".component-content-item.component-content-html",
-        ".article__fulltext",
-        ".articleFullText",
-        ".NLM_article",
-        ".NLM_body",
-        "#bodymatter",
+        ".component-content-item.component-content-html", ".article__fulltext",
+        ".articleFullText", ".NLM_article", ".NLM_body", "#bodymatter",
     ],
-    "remove_selectors": [
-        ".article__toolbar",
-        ".article__metrics",
-        ".core-collateral",
-    ],
+    "remove_selectors": [".article__toolbar", ".article__metrics", ".core-collateral"],
     # Defaults already cover download/metrics/related/toolbar; AMS adds the
     # broader citation token because its Atypon theme uses several variants.
     "drop_keywords": {"citation"},
@@ -313,66 +191,31 @@ AMS_SITE_RULE_OVERRIDES: dict[str, Any] = {
 # AMS DOM postprocess removes AMS-only interactive chrome that must survive
 # generic cleanup until figure/gallery asset URLs have been normalized.
 AMS_DOM_POSTPROCESS_CLEANUP_SELECTORS = (
-    "button[data-xsl-identifier]",
-    "[class*='popover']",
-    ".citation",
-    ".citationActions",
-    ".debug",
-    ".download-figure",
-    ".ppt",
-    ".gallery-link",
-    ".component-image-gallery",
-    ".gallery-overlay",
+    "button[data-xsl-identifier]", "[class*='popover']", ".citation",
+    ".citationActions", ".debug", ".download-figure", ".ppt", ".gallery-link",
+    ".component-image-gallery", ".gallery-overlay",
 )
 
 COMMON_ACCESS_BLOCK_TOKENS = SHARED_COMMON_ACCESS_BLOCK_TOKENS
-IEEE_ACCESS_BLOCK_TEXT_TOKENS = (
-    *COMMON_ACCESS_BLOCK_TOKENS,
-    "institutional sign in",
-    "purchase access",
-)
+IEEE_ACCESS_BLOCK_TEXT_TOKENS = (*COMMON_ACCESS_BLOCK_TOKENS, "institutional sign in", "purchase access")
 # Generic script/style/noscript/iframe/button/input cleanup stays in
 # DEFAULT_SITE_RULE and the browser workflow. These are IEEE REST fragment or
 # Xplore-specific chrome selectors layered on top of those defaults.
 IEEE_EXTRACTION_CLEANUP_SELECTORS = (
-    "accesstype",
-    "select",
-    "textarea",
-    ".zoom-container",
-    ".document-actions",
-    ".article-toolbar",
-    ".stats-document-abstract-view",
-    "button[data-docId]",
-    "a[data-docId][href^='javascript:']",
-    "[href^='javascript:']",
+    "accesstype", "select", "textarea", ".zoom-container", ".document-actions",
+    ".article-toolbar", ".stats-document-abstract-view", "button[data-docId]",
+    "a[data-docId][href^='javascript:']", "[href^='javascript:']",
 )
-IEEE_AVAILABILITY_DROP_KEYWORDS = (
-    "access-type",
-    "document-actions",
-    "references-modal",
-    "show-all",
-    "zoom",
-)
-IEEE_AVAILABILITY_DROP_TEXT = (
-    "Show All",
-    "View References",
-    "Download PDF",
-)
+IEEE_AVAILABILITY_DROP_KEYWORDS = ("access-type", "document-actions", "references-modal", "show-all", "zoom")
+IEEE_AVAILABILITY_DROP_TEXT = ("Show All", "View References", "Download PDF")
 # SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
 # when IEEE toolbar labels change.
 IEEE_MARKDOWN_PROMO_TOKENS = (
-    DOWNLOAD_PDF_LABEL,
-    *CITATION_TOOL_CHROME_TOKENS,
-    "show all",
-    "view references",
-    "view all authors",
+    DOWNLOAD_PDF_LABEL, *CITATION_TOOL_CHROME_TOKENS,
+    "show all", "view references", "view all authors",
 )
 IEEE_SITE_RULE_OVERRIDES: dict[str, Any] = {
-    "candidate_selectors": [
-        "#article",
-        "#BodyWrapper",
-        ".ArticlePage",
-    ],
+    "candidate_selectors": ["#article", "#BodyWrapper", ".ArticlePage"],
     "remove_selectors": list(IEEE_EXTRACTION_CLEANUP_SELECTORS),
     "drop_keywords": set(IEEE_AVAILABILITY_DROP_KEYWORDS),
     "drop_text": set(IEEE_AVAILABILITY_DROP_TEXT),
@@ -432,99 +275,6 @@ class MarkdownHooks:
     classify_heading: Callable[[str, str | None], str | None] | None = None
     keep_unknown_abstract_block: Callable[[str], bool] | None = None
     suppress_missing_abstract: Callable[[str], bool] | None = None
-
-
-def _pnas_hooks_module() -> Any:
-    return importlib.import_module("paper_fetch.providers._pnas_html")
-
-
-def _science_hooks_module() -> Any:
-    return importlib.import_module("paper_fetch.providers._science_html")
-
-
-def _wiley_hooks_module() -> Any:
-    return importlib.import_module("paper_fetch.providers._wiley_html")
-
-
-def _ams_hooks_module() -> Any:
-    return importlib.import_module("paper_fetch.providers._ams_html")
-
-
-def pnas_before_block_normalization(container: Any) -> None:
-    _pnas_hooks_module().pnas_before_block_normalization(container)
-
-
-def pnas_suppress_missing_abstract(source_markdown: str) -> bool:
-    return bool(_pnas_hooks_module().pnas_suppress_missing_abstract(source_markdown))
-
-
-def science_before_block_normalization(container: Any) -> None:
-    _science_hooks_module().science_before_block_normalization(container)
-
-
-def science_asset_body_container(container: Any) -> None:
-    _science_hooks_module().science_asset_body_container(container)
-
-
-def science_asset_figure_extraction(container: Any) -> None:
-    _science_hooks_module().science_asset_figure_extraction(container)
-
-
-def science_normalize_markdown(markdown_text: str) -> str:
-    return str(_science_hooks_module().science_normalize_markdown(markdown_text))
-
-
-def science_keep_unknown_abstract_block(block: str) -> bool:
-    return bool(_science_hooks_module().science_keep_unknown_abstract_block(block))
-
-
-def wiley_before_block_normalization(container: Any) -> None:
-    _wiley_hooks_module().wiley_before_block_normalization(container)
-
-
-def wiley_after_block_normalization(container: Any) -> None:
-    _wiley_hooks_module().wiley_after_block_normalization(container)
-
-
-def wiley_body_container(container: Any) -> None:
-    _wiley_hooks_module().wiley_body_container(container)
-
-
-def wiley_asset_body_container(container: Any) -> None:
-    _wiley_hooks_module().wiley_asset_body_container(container)
-
-
-def ams_before_block_normalization(container: Any) -> None:
-    _ams_hooks_module().ams_before_block_normalization(container)
-
-
-def ams_after_block_normalization(container: Any) -> None:
-    _ams_hooks_module().ams_after_block_normalization(container)
-
-
-def ams_body_container(container: Any) -> None:
-    _ams_hooks_module().ams_body_container(container)
-
-
-def ams_asset_body_container(container: Any) -> None:
-    _ams_hooks_module().ams_asset_body_container(container)
-
-
-def ams_asset_figure_extraction(container: Any) -> None:
-    _ams_hooks_module().ams_asset_figure_extraction(container)
-
-
-def ams_normalize_markdown(markdown_text: str) -> str:
-    return str(_ams_hooks_module().ams_normalize_markdown(markdown_text))
-
-
-def ams_classify_heading(heading: str, title: str | None) -> str | None:
-    result = _ams_hooks_module().ams_classify_heading(heading, title)
-    return str(result) if result is not None else None
-
-
-def ams_keep_unknown_abstract_block(block: str) -> bool:
-    return bool(_ams_hooks_module().ams_keep_unknown_abstract_block(block))
 
 
 def _empty_blocking_fallback_signals(_html: str) -> list[str]:
@@ -628,7 +378,55 @@ class ProviderHtmlRules:
 
 GENERIC_HTML_RULES = ProviderHtmlRules(name=DEFAULT_NOISE_PROFILE)
 
-PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
+
+def provider_html_rules(name: str | None) -> ProviderHtmlRules:
+    return _rule_lookup().get(_normalize_rule_key(name), GENERIC_HTML_RULES)
+
+
+def cleanup_policy_for_profile(noise_profile: str | None) -> CleanupPolicy:
+    return _cleanup_policy_from_rules(provider_html_rules(noise_profile))
+
+
+def merged_site_rule(rules: ProviderHtmlRules) -> dict[str, Any]:
+    return _merged_site_rule_from_overrides(rules.availability.site_rule_overrides)
+
+
+def availability_rules_for_provider(provider: str | None) -> AvailabilityPolicy:
+    return provider_html_rules(provider).availability
+
+
+def formula_rules_for_provider(provider: str | None) -> ProviderFormulaRules:
+    return provider_html_rules(provider).formula
+
+
+def asset_rules_for_provider(provider: str | None) -> ProviderAssetRules:
+    return provider_html_rules(provider).assets
+
+
+def provider_formula_container_tokens(noise_profile: str | None) -> tuple[str, ...]:
+    return formula_rules_for_provider(noise_profile).container_tokens
+
+
+def provider_display_formula_selectors(noise_profile: str | None) -> tuple[str, ...]:
+    return formula_rules_for_provider(noise_profile).display_selectors
+
+
+def provider_supplementary_text_tokens(noise_profile: str | None) -> tuple[str, ...]:
+    return asset_rules_for_provider(noise_profile).supplementary_text_tokens
+
+
+_PROVIDER_HTML_RULES_CACHE: Mapping[str, ProviderHtmlRules] | None = None
+
+
+def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
+    from paper_fetch.providers import (
+        _ams_html as _ams,
+        _pnas_html as _pnas,
+        _science_html as _science,
+        _wiley_html as _wiley,
+    )
+
+    return MappingProxyType(
     {
         "science": ProviderHtmlRules(
             name="science",
@@ -649,13 +447,13 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
                 publication_keywords=SCIENCE_FRONT_MATTER_PUBLICATION_KEYWORDS,
             ),
             dom_hooks=DomHooks(
-                before_block_normalization=science_before_block_normalization,
-                asset_body_container=science_asset_body_container,
-                asset_figure_extraction=science_asset_figure_extraction,
+                before_block_normalization=_science.science_before_block_normalization,
+                asset_body_container=_science.science_asset_body_container,
+                asset_figure_extraction=_science.science_asset_figure_extraction,
             ),
             markdown_hooks=MarkdownHooks(
-                normalize_markdown=science_normalize_markdown,
-                keep_unknown_abstract_block=science_keep_unknown_abstract_block,
+                normalize_markdown=_science.science_normalize_markdown,
+                keep_unknown_abstract_block=_science.science_keep_unknown_abstract_block,
             ),
         ),
         "pnas": ProviderHtmlRules(
@@ -676,10 +474,10 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
                 publication_keywords=PNAS_FRONT_MATTER_PUBLICATION_KEYWORDS,
             ),
             dom_hooks=DomHooks(
-                before_block_normalization=pnas_before_block_normalization,
+                before_block_normalization=_pnas.pnas_before_block_normalization,
             ),
             markdown_hooks=MarkdownHooks(
-                suppress_missing_abstract=pnas_suppress_missing_abstract,
+                suppress_missing_abstract=_pnas.pnas_suppress_missing_abstract,
             ),
         ),
         "elsevier": ProviderHtmlRules(
@@ -732,10 +530,10 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
                 contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
             ),
             dom_hooks=DomHooks(
-                before_block_normalization=wiley_before_block_normalization,
-                after_block_normalization=wiley_after_block_normalization,
-                body_container=wiley_body_container,
-                asset_body_container=wiley_asset_body_container,
+                before_block_normalization=_wiley.wiley_before_block_normalization,
+                after_block_normalization=_wiley.wiley_after_block_normalization,
+                body_container=_wiley.wiley_body_container,
+                asset_body_container=_wiley.wiley_asset_body_container,
             ),
         ),
         "ams": ProviderHtmlRules(
@@ -757,16 +555,16 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
                 publication_keywords=AMS_FRONT_MATTER_PUBLICATION_KEYWORDS,
             ),
             dom_hooks=DomHooks(
-                before_block_normalization=ams_before_block_normalization,
-                after_block_normalization=ams_after_block_normalization,
-                body_container=ams_body_container,
-                asset_body_container=ams_asset_body_container,
-                asset_figure_extraction=ams_asset_figure_extraction,
+                before_block_normalization=_ams.ams_before_block_normalization,
+                after_block_normalization=_ams.ams_after_block_normalization,
+                body_container=_ams.ams_body_container,
+                asset_body_container=_ams.ams_asset_body_container,
+                asset_figure_extraction=_ams.ams_asset_figure_extraction,
             ),
             markdown_hooks=MarkdownHooks(
-                normalize_markdown=ams_normalize_markdown,
-                classify_heading=ams_classify_heading,
-                keep_unknown_abstract_block=ams_keep_unknown_abstract_block,
+                normalize_markdown=_ams.ams_normalize_markdown,
+                classify_heading=_ams.ams_classify_heading,
+                keep_unknown_abstract_block=_ams.ams_keep_unknown_abstract_block,
             ),
         ),
         "ieee": ProviderHtmlRules(
@@ -789,6 +587,29 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
 )
 
 
+def _provider_html_rules_map() -> Mapping[str, ProviderHtmlRules]:
+    global _PROVIDER_HTML_RULES_CACHE
+    rules = _PROVIDER_HTML_RULES_CACHE
+    if rules is None:
+        rules = _build_provider_html_rules()
+        _PROVIDER_HTML_RULES_CACHE = rules
+    return rules
+
+
+class _ProviderHtmlRulesMapping(MappingABC[str, ProviderHtmlRules]):
+    def __getitem__(self, key: str) -> ProviderHtmlRules:
+        return _provider_html_rules_map()[key]
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_provider_html_rules_map())
+
+    def __len__(self) -> int:
+        return len(_provider_html_rules_map())
+
+
+PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = _ProviderHtmlRulesMapping()
+
+
 def _normalize_rule_key(value: str | None) -> str:
     return " ".join(str(value or "").strip().lower().replace("-", "_").split())
 
@@ -803,21 +624,21 @@ def _build_rule_lookup() -> dict[str, ProviderHtmlRules]:
     return lookup
 
 
-_RULE_LOOKUP = MappingProxyType(_build_rule_lookup())
+_RULE_LOOKUP_CACHE: Mapping[str, ProviderHtmlRules] | None = None
+
+
+def _rule_lookup() -> Mapping[str, ProviderHtmlRules]:
+    global _RULE_LOOKUP_CACHE
+    lookup = _RULE_LOOKUP_CACHE
+    if lookup is None:
+        lookup = MappingProxyType(_build_rule_lookup())
+        _RULE_LOOKUP_CACHE = lookup
+    return lookup
+
+
 REGISTERED_NOISE_PROFILES = frozenset(
-    {
-        DEFAULT_NOISE_PROFILE,
-        *(rules.noise_profile for rules in PROVIDER_HTML_RULES.values()),
-    }
+    {DEFAULT_NOISE_PROFILE, "ieee", "pnas", "springer_nature"}
 )
-
-
-def provider_html_rules(name: str | None) -> ProviderHtmlRules:
-    return _RULE_LOOKUP.get(_normalize_rule_key(name), GENERIC_HTML_RULES)
-
-
-def merged_site_rule(rules: ProviderHtmlRules) -> dict[str, Any]:
-    return _merged_site_rule_from_overrides(rules.availability.site_rule_overrides)
 
 
 def _availability_container_rules_from_rules(
@@ -853,26 +674,10 @@ def _cleanup_policy_from_rules(rules: ProviderHtmlRules) -> CleanupPolicy:
     )
 
 
-def cleanup_policy_for_profile(noise_profile: str | None) -> CleanupPolicy:
-    return _cleanup_policy_from_rules(provider_html_rules(noise_profile))
-
-
-def availability_rules_for_provider(provider: str | None) -> AvailabilityPolicy:
-    return provider_html_rules(provider).availability
-
-
 def front_matter_rules_for_profile(
     noise_profile: str | None,
 ) -> ProviderFrontMatterRules:
     return provider_html_rules(noise_profile).front_matter
-
-
-def formula_rules_for_provider(provider: str | None) -> ProviderFormulaRules:
-    return provider_html_rules(provider).formula
-
-
-def asset_rules_for_provider(provider: str | None) -> ProviderAssetRules:
-    return provider_html_rules(provider).assets
 
 
 def normalize_noise_profile(noise_profile: str | None) -> str:
@@ -927,18 +732,6 @@ def _dedupe_tuple(values: list[str]) -> tuple[str, ...]:
     return tuple(dict.fromkeys(value for value in values if value))
 
 
-def provider_formula_container_tokens(noise_profile: str | None) -> tuple[str, ...]:
-    return formula_rules_for_provider(noise_profile).container_tokens
-
-
-def provider_display_formula_selectors(noise_profile: str | None) -> tuple[str, ...]:
-    return formula_rules_for_provider(noise_profile).display_selectors
-
-
-def provider_supplementary_text_tokens(noise_profile: str | None) -> tuple[str, ...]:
-    return asset_rules_for_provider(noise_profile).supplementary_text_tokens
-
-
 def all_provider_formula_container_tokens() -> tuple[str, ...]:
     values: list[str] = []
     for rules in PROVIDER_HTML_RULES.values():
@@ -954,69 +747,32 @@ def all_provider_display_formula_selectors() -> tuple[str, ...]:
 
 
 __all__ = [
-    "DEFAULT_NOISE_PROFILE",
-    "DEFAULT_SITE_RULE",
-    "GENERIC_HTML_RULES",
-    "COMMON_ACCESS_BLOCK_TOKENS",
-    "COMMON_MARKDOWN_PROMO_TOKENS",
-    "COMMON_FRONT_MATTER_FOOTER_PREFIXES",
-    "IEEE_ACCESS_BLOCK_TEXT_TOKENS",
-    "IEEE_AVAILABILITY_DROP_KEYWORDS",
-    "IEEE_AVAILABILITY_DROP_TEXT",
-    "IEEE_EXTRACTION_CLEANUP_SELECTORS",
-    "IEEE_MARKDOWN_PROMO_TOKENS",
-    "IEEE_SITE_RULE_OVERRIDES",
-    "DomHooks",
-    "MarkdownHooks",
-    "PNAS_MARKDOWN_PROMO_TOKENS",
-    "PNAS_SITE_RULE_OVERRIDES",
-    "PNAS_FRONT_MATTER_PUBLICATION_KEYWORDS",
-    "AMS_DOM_POSTPROCESS_CLEANUP_SELECTORS",
-    "AMS_FRONT_MATTER_PUBLICATION_KEYWORDS",
-    "AMS_MARKDOWN_PROMO_TOKENS",
-    "AMS_POST_CONTENT_BREAK_TOKENS",
-    "AMS_SITE_RULE_OVERRIDES",
-    "PROVIDER_HTML_RULES",
-    "ProviderAssetRules",
-    "ProviderCleanupRules",
-    "ProviderFormulaRules",
-    "ProviderFrontMatterRules",
-    "ProviderHeadingRules",
-    "ProviderHtmlRules",
-    "REGISTERED_NOISE_PROFILES",
-    "SCIENCE_FRONT_MATTER_PUBLICATION_KEYWORDS",
-    "SCIENCE_POST_CONTENT_BREAK_TOKENS",
-    "SCIENCE_SITE_RULE_OVERRIDES",
-    "SPRINGER_NATURE_CHROME_ATTR_TOKENS",
-    "SPRINGER_NATURE_CHROME_SECTION_HEADINGS",
-    "SPRINGER_NATURE_DISPLAY_FORMULA_SELECTORS",
-    "SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS",
-    "SPRINGER_NATURE_LICENSE_LINK_HOSTS",
-    "SPRINGER_NATURE_LICENSE_LINK_PATH_PREFIXES",
-    "SPRINGER_NATURE_LICENSE_WORD_LIMIT",
-    "SPRINGER_NATURE_MARKDOWN_PROMO_TOKENS",
-    "SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS",
-    "WILEY_FORMULA_CONTAINER_TOKENS",
-    "WILEY_SITE_RULE_OVERRIDES",
-    "asset_rules_for_provider",
-    "availability_rules_for_provider",
-    "all_provider_display_formula_selectors",
-    "all_provider_formula_container_tokens",
-    "cleanup_policy_for_profile",
-    "extraction_cleanup_selectors_for_profile",
-    "extraction_drop_keywords_for_profile",
-    "formula_rules_for_provider",
-    "front_matter_contains_tokens_for_profile",
-    "front_matter_exact_texts_for_profile",
-    "front_matter_footer_prefixes",
-    "front_matter_publication_keywords_for_profile",
-    "front_matter_rules_for_profile",
-    "markdown_promo_tokens_for_profile",
-    "merged_site_rule",
-    "normalize_noise_profile",
-    "normalize_provider_heading",
-    "provider_display_formula_selectors",
-    "provider_formula_container_tokens",
-    "provider_html_rules",
-    "provider_supplementary_text_tokens",
+    "DEFAULT_NOISE_PROFILE", "DEFAULT_SITE_RULE", "GENERIC_HTML_RULES",
+    "COMMON_ACCESS_BLOCK_TOKENS", "COMMON_MARKDOWN_PROMO_TOKENS",
+    "COMMON_FRONT_MATTER_FOOTER_PREFIXES", "IEEE_ACCESS_BLOCK_TEXT_TOKENS",
+    "IEEE_AVAILABILITY_DROP_KEYWORDS", "IEEE_AVAILABILITY_DROP_TEXT",
+    "IEEE_EXTRACTION_CLEANUP_SELECTORS", "IEEE_MARKDOWN_PROMO_TOKENS",
+    "IEEE_SITE_RULE_OVERRIDES", "DomHooks", "MarkdownHooks",
+    "PNAS_MARKDOWN_PROMO_TOKENS", "PNAS_SITE_RULE_OVERRIDES",
+    "PNAS_FRONT_MATTER_PUBLICATION_KEYWORDS", "AMS_DOM_POSTPROCESS_CLEANUP_SELECTORS",
+    "AMS_FRONT_MATTER_PUBLICATION_KEYWORDS", "AMS_MARKDOWN_PROMO_TOKENS",
+    "AMS_POST_CONTENT_BREAK_TOKENS", "AMS_SITE_RULE_OVERRIDES", "PROVIDER_HTML_RULES",
+    "ProviderAssetRules", "ProviderCleanupRules", "ProviderFormulaRules",
+    "ProviderFrontMatterRules", "ProviderHeadingRules", "ProviderHtmlRules",
+    "REGISTERED_NOISE_PROFILES", "SCIENCE_FRONT_MATTER_PUBLICATION_KEYWORDS",
+    "SCIENCE_POST_CONTENT_BREAK_TOKENS", "SCIENCE_SITE_RULE_OVERRIDES",
+    "SPRINGER_NATURE_CHROME_ATTR_TOKENS", "SPRINGER_NATURE_CHROME_SECTION_HEADINGS",
+    "SPRINGER_NATURE_DISPLAY_FORMULA_SELECTORS", "SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS",
+    "SPRINGER_NATURE_LICENSE_LINK_HOSTS", "SPRINGER_NATURE_LICENSE_LINK_PATH_PREFIXES",
+    "SPRINGER_NATURE_LICENSE_WORD_LIMIT", "SPRINGER_NATURE_MARKDOWN_PROMO_TOKENS",
+    "SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS", "WILEY_FORMULA_CONTAINER_TOKENS",
+    "WILEY_SITE_RULE_OVERRIDES", "asset_rules_for_provider", "availability_rules_for_provider",
+    "all_provider_display_formula_selectors", "all_provider_formula_container_tokens",
+    "cleanup_policy_for_profile", "extraction_cleanup_selectors_for_profile",
+    "extraction_drop_keywords_for_profile", "formula_rules_for_provider",
+    "front_matter_contains_tokens_for_profile", "front_matter_exact_texts_for_profile",
+    "front_matter_footer_prefixes", "front_matter_publication_keywords_for_profile",
+    "front_matter_rules_for_profile", "markdown_promo_tokens_for_profile", "merged_site_rule",
+    "normalize_noise_profile", "normalize_provider_heading", "provider_display_formula_selectors",
+    "provider_formula_container_tokens", "provider_html_rules", "provider_supplementary_text_tokens",
 ]
