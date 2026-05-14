@@ -151,3 +151,6 @@ def test_provider_html_rules_facets_round_trip_to_policies() -> None:
     assert "Custom action" in container_rules.drop_texts
     assert rules.availability.container_rules == container_rules
     assert rules.availability.access_block_text_tokens == ("custom access wall",)
+    assert rules.availability.datalayer_signal_set is None
+    assert rules.availability.text_marker_signal_set is None
+    assert rules.availability.overrides is None

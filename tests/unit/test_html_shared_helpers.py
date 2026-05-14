@@ -1205,10 +1205,10 @@ Important body text.
             rules.noise_profile,
         )
         self.assertEqual(
-            rules.availability.availability_overrides,
+            rules.availability.overrides,
             availability_rules_for_provider(
                 "springer_nature"
-            ).availability_overrides,
+            ).overrides,
         )
         self.assertEqual(
             rules.formula.display_selectors,
@@ -1219,10 +1219,10 @@ Important body text.
             provider_supplementary_text_tokens("springer_nature"),
         )
         self.assertEqual(
-            rules.availability.availability_overrides,
+            rules.availability.overrides,
             availability_rules_for_provider(
                 "springer_nature"
-            ).availability_overrides,
+            ).overrides,
         )
 
     def test_front_matter_publication_keywords_keep_atypon_browser_workflow_provider_scoped(

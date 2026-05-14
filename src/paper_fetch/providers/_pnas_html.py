@@ -7,7 +7,7 @@ import re
 from typing import Any, Mapping
 
 from ..extraction.html.semantics import normalize_heading, parse_markdown_heading
-from ..quality.html_profiles import pnas_blocking_fallback_signals
+from ..quality.html_signals import PNAS_SIGNAL_SET, evaluate_datalayer_blocking_signals
 from ..utils import normalize_text
 from ._html_authors import (
     ATYPON_AUTHOR_COUNT_PATTERN,
@@ -27,7 +27,8 @@ PNAS_IGNORED_AUTHOR_TEXT = {
 }
 
 
-blocking_fallback_signals = pnas_blocking_fallback_signals
+def blocking_fallback_signals(html_text: str) -> list[str]:
+    return evaluate_datalayer_blocking_signals(html_text, PNAS_SIGNAL_SET)
 
 
 def _extract_dom_authors(html_text: str) -> list[str]:

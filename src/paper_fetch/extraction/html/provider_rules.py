@@ -10,19 +10,15 @@ from typing import Any, Callable, Mapping
 
 from ...common_patterns import EXTENDED_DATA_LABEL
 from ...quality.html_signals import (
-    ams_blocking_fallback_signals,
-    ams_positive_signals,
-    default_positive_signals,
-    elsevier_availability_overrides,
-    ieee_blocking_fallback_signals,
-    ieee_positive_signals,
-    no_availability_overrides,
-    pnas_blocking_fallback_signals,
-    science_availability_overrides,
-    science_blocking_fallback_signals,
-    science_positive_signals,
-    springer_availability_overrides,
-    wiley_blocking_fallback_signals,
+    AMS_TEXT_MARKER_SIGNAL_SET,
+    ELSEVIER_AVAILABILITY_OVERRIDES,
+    IEEE_AVAILABILITY_OVERRIDES,
+    IEEE_TEXT_MARKER_SIGNAL_SET,
+    PNAS_SIGNAL_SET,
+    SCIENCE_AVAILABILITY_OVERRIDES,
+    SCIENCE_SIGNAL_SET,
+    SPRINGER_AVAILABILITY_OVERRIDES,
+    WILEY_SIGNAL_SET,
 )
 from ...utils import normalize_text
 from .html_tags import HTML_DROP_TAGS
@@ -277,10 +273,6 @@ class MarkdownHooks:
     suppress_missing_abstract: Callable[[str], bool] | None = None
 
 
-def _empty_blocking_fallback_signals(_html: str) -> list[str]:
-    return []
-
-
 def _empty_availability_policy() -> AvailabilityPolicy:
     return AvailabilityPolicy(name="")
 
@@ -334,14 +326,9 @@ def _availability_policy_with_defaults(
         name=availability.name or provider_name,
         container_rules=container_rules,
         site_rule_overrides=availability.site_rule_overrides,
-        positive_signals=availability.positive_signals or default_positive_signals,
-        blocking_fallback_signals=(
-            availability.blocking_fallback_signals
-            or _empty_blocking_fallback_signals
-        ),
-        availability_overrides=(
-            availability.availability_overrides or no_availability_overrides
-        ),
+        datalayer_signal_set=availability.datalayer_signal_set,
+        text_marker_signal_set=availability.text_marker_signal_set,
+        overrides=availability.overrides,
         access_block_text_tokens=(
             availability.access_block_text_tokens or cleanup.access_block_text_tokens
         ),
@@ -437,9 +424,8 @@ def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
             availability=AvailabilityPolicy(
                 name="science",
                 site_rule_overrides=SCIENCE_SITE_RULE_OVERRIDES,
-                positive_signals=science_positive_signals,
-                blocking_fallback_signals=science_blocking_fallback_signals,
-                availability_overrides=science_availability_overrides,
+                datalayer_signal_set=SCIENCE_SIGNAL_SET,
+                overrides=SCIENCE_AVAILABILITY_OVERRIDES,
             ),
             front_matter=ProviderFrontMatterRules(
                 exact_texts=SCIENCE_FRONT_MATTER_EXACT_TEXTS,
@@ -466,7 +452,7 @@ def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
             availability=AvailabilityPolicy(
                 name="pnas",
                 site_rule_overrides=PNAS_SITE_RULE_OVERRIDES,
-                blocking_fallback_signals=pnas_blocking_fallback_signals,
+                datalayer_signal_set=PNAS_SIGNAL_SET,
             ),
             front_matter=ProviderFrontMatterRules(
                 exact_texts=PNAS_FRONT_MATTER_EXACT_TEXTS,
@@ -484,7 +470,7 @@ def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
             name="elsevier",
             availability=AvailabilityPolicy(
                 name="elsevier",
-                availability_overrides=elsevier_availability_overrides,
+                overrides=ELSEVIER_AVAILABILITY_OVERRIDES,
             ),
         ),
         "springer_nature": ProviderHtmlRules(
@@ -509,7 +495,7 @@ def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
             heading=ProviderHeadingRules(normalizations={"online methods": "Methods"}),
             availability=AvailabilityPolicy(
                 name="springer_nature",
-                availability_overrides=springer_availability_overrides,
+                overrides=SPRINGER_AVAILABILITY_OVERRIDES,
             ),
         ),
         "wiley": ProviderHtmlRules(
@@ -523,7 +509,7 @@ def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
             availability=AvailabilityPolicy(
                 name="wiley",
                 site_rule_overrides=WILEY_SITE_RULE_OVERRIDES,
-                blocking_fallback_signals=wiley_blocking_fallback_signals,
+                datalayer_signal_set=WILEY_SIGNAL_SET,
             ),
             front_matter=ProviderFrontMatterRules(
                 exact_texts=WILEY_FRONT_MATTER_EXACT_TEXTS,
@@ -546,8 +532,7 @@ def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
             availability=AvailabilityPolicy(
                 name="ams",
                 site_rule_overrides=AMS_SITE_RULE_OVERRIDES,
-                positive_signals=ams_positive_signals,
-                blocking_fallback_signals=ams_blocking_fallback_signals,
+                text_marker_signal_set=AMS_TEXT_MARKER_SIGNAL_SET,
             ),
             front_matter=ProviderFrontMatterRules(
                 exact_texts=AMS_FRONT_MATTER_EXACT_TEXTS,
@@ -579,8 +564,8 @@ def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
             availability=AvailabilityPolicy(
                 name="ieee",
                 site_rule_overrides=IEEE_SITE_RULE_OVERRIDES,
-                positive_signals=ieee_positive_signals,
-                blocking_fallback_signals=ieee_blocking_fallback_signals,
+                text_marker_signal_set=IEEE_TEXT_MARKER_SIGNAL_SET,
+                overrides=IEEE_AVAILABILITY_OVERRIDES,
             ),
         ),
     }

@@ -3,7 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:
+    from ...quality.html_signals import (
+        AvailabilityOverrides,
+        DatalayerSignalSet,
+        TextMarkerSignalSet,
+    )
 
 
 @dataclass(frozen=True)
@@ -36,11 +43,7 @@ class AvailabilityPolicy:
         default_factory=AvailabilityContainerRules
     )
     site_rule_overrides: Mapping[str, Any] = field(default_factory=dict)
-    positive_signals: Callable[[str], tuple[list[str], list[str], list[str]]] | None = (
-        None
-    )
-    blocking_fallback_signals: Callable[[str], list[str]] | None = None
-    availability_overrides: Callable[..., tuple[list[str], list[str], list[str]]] | None = (
-        None
-    )
+    datalayer_signal_set: DatalayerSignalSet | None = None
+    text_marker_signal_set: TextMarkerSignalSet | None = None
+    overrides: AvailabilityOverrides | None = None
     access_block_text_tokens: tuple[str, ...] = ()

@@ -5,11 +5,12 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-from ..quality.html_profiles import (
-    science_blocking_fallback_signals,
-    science_positive_signals,
+from ..quality.html_signals import (
+    AAAS_DATALAYER_PATTERN,
+    SCIENCE_SIGNAL_SET,
+    evaluate_datalayer_blocking_signals,
+    evaluate_datalayer_positive_signals,
 )
-from ..quality.html_signals import AAAS_DATALAYER_PATTERN
 from ..utils import dedupe_authors, normalize_text
 from ._html_authors import (
     ATYPON_AUTHOR_COUNT_PATTERN,
@@ -49,7 +50,8 @@ def _load_aaas_datalayer(html_text: str) -> Mapping[str, Any] | None:
     return payload if isinstance(payload, Mapping) else None
 
 
-blocking_fallback_signals = science_blocking_fallback_signals
+def blocking_fallback_signals(html_text: str) -> list[str]:
+    return evaluate_datalayer_blocking_signals(html_text, SCIENCE_SIGNAL_SET)
 
 
 def _extract_datalayer_authors(html_text: str) -> list[str]:
@@ -205,7 +207,7 @@ def _flatten_structured_abstract_markdown(markdown_text: str) -> str:
 
 
 def positive_signals(html_text: str) -> tuple[list[str], list[str], list[str]]:
-    return science_positive_signals(html_text)
+    return evaluate_datalayer_positive_signals(html_text, SCIENCE_SIGNAL_SET)
 
 
 def is_front_matter_teaser_figure(

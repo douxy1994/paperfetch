@@ -45,10 +45,17 @@ from ..models import classify_article_content, filtered_body_sections
 from ..utils import normalize_text
 from .html_profiles import (
     looks_like_abstract_redirect,
-    provider_availability_overrides,
-    provider_blocking_fallback_signals,
-    provider_positive_signals,
     site_rule_for_publisher,
+)
+from .html_signals import (
+    AvailabilityOverrideState,
+    AvailabilityOverrides,
+    apply_availability_overrides,
+    default_positive_signals,
+    evaluate_datalayer_blocking_signals,
+    evaluate_datalayer_positive_signals,
+    evaluate_text_marker_blocking_signals,
+    evaluate_text_marker_positive_signals,
 )
 from .reason_codes import (
     ABSTRACT_ONLY,
@@ -610,16 +617,55 @@ def _apply_provider_availability_overrides(
     final_url: str | None,
     metadata: Mapping[str, Any] | None,
 ) -> None:
-    override_hard, override_abstract, override_blocking = provider_availability_overrides(
-        provider,
-        soup,
-        analysis,
+    policy = availability_rules_for_provider(provider)
+    if policy.overrides is None:
+        return
+    state = AvailabilityOverrideState(
         final_url=final_url,
         metadata=metadata,
+        soup=soup,
+        structure=analysis,
     )
-    analysis.provider_hard_negative_signals = _dedupe_signals(list(override_hard))
-    analysis.provider_abstract_only_hints = _dedupe_signals(list(override_abstract))
-    analysis.provider_blocking_fallback_signals = _dedupe_signals(list(override_blocking))
+    apply_availability_overrides(state, policy.overrides)
+    analysis.provider_hard_negative_signals = _dedupe_signals(state.hard_negative_signals or [])
+    analysis.provider_abstract_only_hints = _dedupe_signals(state.abstract_only_hints or [])
+    analysis.provider_blocking_fallback_signals = _dedupe_signals(state.blocking_fallback_signals or [])
+
+
+def _evaluate_provider_positive_policy_signals(provider: str | None, html_text: str) -> tuple[list[str], list[str], list[str]]:
+    policy = availability_rules_for_provider(provider)
+    strong, soft, abstract_only = default_positive_signals(html_text)
+    if policy.datalayer_signal_set is not None:
+        d_strong, d_soft, d_abstract = evaluate_datalayer_positive_signals(html_text, policy.datalayer_signal_set)
+        strong.extend(d_strong)
+        soft.extend(d_soft)
+        abstract_only.extend(d_abstract)
+    if policy.text_marker_signal_set is not None:
+        t_strong, t_soft, t_abstract = evaluate_text_marker_positive_signals(html_text, policy.text_marker_signal_set)
+        strong.extend(t_strong)
+        soft.extend(t_soft)
+        abstract_only.extend(t_abstract)
+    return _dedupe_signals(strong), _dedupe_signals(soft), _dedupe_signals(abstract_only)
+
+
+def _evaluate_provider_blocking_policy_signals(provider: str | None, html_text: str) -> list[str]:
+    policy = availability_rules_for_provider(provider)
+    signals: list[str] = []
+    if policy.datalayer_signal_set is not None:
+        signals.extend(evaluate_datalayer_blocking_signals(html_text, policy.datalayer_signal_set))
+    if policy.text_marker_signal_set is not None:
+        signals.extend(evaluate_text_marker_blocking_signals(html_text, policy.text_marker_signal_set))
+    if policy.overrides is not None and policy.overrides.empty_shell_rules:
+        state = AvailabilityOverrideState(
+            soup=BeautifulSoup(html_text, choose_parser()),
+            structure=StructuredBodyAnalysis(),
+        )
+        apply_availability_overrides(
+            state,
+            AvailabilityOverrides(empty_shell_rules=policy.overrides.empty_shell_rules),
+        )
+        signals.extend(state.blocking_fallback_signals or [])
+    return _dedupe_signals(signals)
 
 
 def _analyze_html_structure(
@@ -1024,8 +1070,8 @@ def assess_html_fulltext_availability(
     if structure.paywall_text_outside_body_ignored:
         soft_positive_signals.append("paywall_text_outside_body_ignored")
     if html_text:
-        provider_strong, provider_soft, provider_abstract = provider_positive_signals(provider, html_text)
-        provider_blocking = provider_blocking_fallback_signals(provider, html_text)
+        provider_strong, provider_soft, provider_abstract = _evaluate_provider_positive_policy_signals(provider, html_text)
+        provider_blocking = _evaluate_provider_blocking_policy_signals(provider, html_text)
         strong_positive_signals.extend(provider_strong)
         soft_positive_signals.extend(provider_soft)
         blocking_fallback_signals.extend(provider_blocking)

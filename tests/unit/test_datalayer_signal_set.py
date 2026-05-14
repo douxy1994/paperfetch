@@ -11,10 +11,6 @@ from paper_fetch.quality.html_signals import (
     WILEY_SIGNAL_SET,
     evaluate_datalayer_blocking_signals,
     evaluate_datalayer_positive_signals,
-    pnas_blocking_fallback_signals,
-    science_blocking_fallback_signals,
-    science_positive_signals,
-    wiley_blocking_fallback_signals,
 )
 
 
@@ -107,7 +103,7 @@ class DatalayerSignalSetTests(unittest.TestCase):
             ["aaas_page_type_denial"],
         )
         self.assertEqual(
-            science_blocking_fallback_signals(abstract_denied_html),
+            evaluate_datalayer_blocking_signals(abstract_denied_html, SCIENCE_SIGNAL_SET),
             [
                 "aaas_page_type_abstract",
                 "aaas_view_abs",
@@ -130,7 +126,7 @@ class DatalayerSignalSetTests(unittest.TestCase):
             user_access="no",
         )
 
-        strong, soft, abstract_only = science_positive_signals(fulltext_html)
+        strong, soft, abstract_only = evaluate_datalayer_positive_signals(fulltext_html, SCIENCE_SIGNAL_SET)
 
         self.assertEqual(strong, ["aaas_user_entitled", "aaas_user_access_yes"])
         self.assertEqual(
@@ -158,10 +154,6 @@ class DatalayerSignalSetTests(unittest.TestCase):
             evaluate_datalayer_blocking_signals(html, PNAS_SIGNAL_SET),
             ["pnas_paywall_no_access"],
         )
-        self.assertEqual(
-            pnas_blocking_fallback_signals(html),
-            ["pnas_paywall_no_access"],
-        )
 
     def test_wiley_blocking_rules_trigger_from_signal_set(self) -> None:
         html = _wiley_datalayer(
@@ -172,14 +164,6 @@ class DatalayerSignalSetTests(unittest.TestCase):
 
         self.assertEqual(
             evaluate_datalayer_blocking_signals(html, WILEY_SIGNAL_SET),
-            [
-                "wiley_access_no",
-                "wiley_format_viewed_abstract",
-                "wiley_page_tertiary_abs",
-            ],
-        )
-        self.assertEqual(
-            wiley_blocking_fallback_signals(html),
             [
                 "wiley_access_no",
                 "wiley_format_viewed_abstract",

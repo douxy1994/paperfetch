@@ -16,9 +16,10 @@ from paper_fetch.extraction.html.signals import (
 from paper_fetch.quality.html_signals import (
     AAAS_DATALAYER_PATTERN,
     DATALAYER_SCHEMAS,
+    WILEY_SIGNAL_SET,
     authorless_heading_signatures_for_provider,
+    evaluate_datalayer_blocking_signals,
     load_provider_datalayer,
-    wiley_blocking_fallback_signals,
 )
 from paper_fetch.providers import _science_html
 
@@ -111,7 +112,7 @@ class HtmlAccessSignalsTests(unittest.TestCase):
         assert datalayer is not None
         self.assertEqual(datalayer.lowered("format_viewed"), "abstract")
         self.assertEqual(
-            wiley_blocking_fallback_signals(html),
+            evaluate_datalayer_blocking_signals(html, WILEY_SIGNAL_SET),
             [
                 "wiley_access_no",
                 "wiley_format_viewed_abstract",

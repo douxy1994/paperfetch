@@ -17,7 +17,10 @@ from ..extraction.html.formula_rules import (
 )
 from ..extraction.html.inline import render_html_inline_node
 from ..extraction.html.shared import soup_root as _soup_root
-from ..quality.html_signals import ams_blocking_fallback_signals
+from ..quality.html_signals import (
+    AMS_TEXT_MARKER_SIGNAL_SET,
+    evaluate_text_marker_blocking_signals,
+)
 from ..utils import normalize_text
 from ._article_markdown_math import (
     render_external_mathml_expression,
@@ -130,7 +133,8 @@ def extract_references(html_text: str) -> list[dict[str, str | None]]:
         seen.add(raw)
         references.append({"raw": raw})
     return references
-blocking_fallback_signals = ams_blocking_fallback_signals
+def blocking_fallback_signals(html_text: str) -> list[str]:
+    return evaluate_text_marker_blocking_signals(html_text, AMS_TEXT_MARKER_SIGNAL_SET)
 def _ams_parenthetical_looks_like_math_argument(value: str) -> bool:
     normalized = normalize_text(value)
     if not normalized:

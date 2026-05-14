@@ -24,7 +24,7 @@ from ..extraction.html.shared import (
 from ..extraction.html.assets import (
     extract_formula_assets as extract_generic_formula_assets,
 )
-from ..quality.html_profiles import wiley_blocking_fallback_signals
+from ..quality.html_signals import WILEY_SIGNAL_SET, evaluate_datalayer_blocking_signals
 from ..utils import normalize_text
 from ._html_authors import (
     ATYPON_AUTHOR_NOISE_TEXT,
@@ -69,7 +69,8 @@ WILEY_SUPPLEMENTARY_DOWNLOAD_PATH_SEGMENT = "downloadsupplement"
 WILEY_SUPPLEMENTARY_FILENAME_QUERY_KEYS = ("file", "filename", "attachment", "download")
 
 
-blocking_fallback_signals = wiley_blocking_fallback_signals
+def blocking_fallback_signals(html_text: str) -> list[str]:
+    return evaluate_datalayer_blocking_signals(html_text, WILEY_SIGNAL_SET)
 
 
 def find_supporting_information_sections(container: Any) -> list[Any]:
