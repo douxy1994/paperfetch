@@ -129,36 +129,17 @@ def host_matches_domain(hostname: str | None, domain: str | None) -> bool:
     host = _normalize_hostname(hostname)
     normalized_domain = _normalize_catalog_token(domain)
     return bool(host and normalized_domain and (host == normalized_domain or host.endswith(f".{normalized_domain}")))
-def _provider_spec(provider_name: str | None) -> ProviderSpec | None:
-    return PROVIDER_CATALOG.get(_normalize_catalog_token(provider_name))
+def _provider_spec(provider_name: str | None) -> ProviderSpec | None: return PROVIDER_CATALOG.get(_normalize_catalog_token(provider_name))
 
 
-def provider_domains(provider_name: str | None) -> tuple[str, ...]:
-    spec = _provider_spec(provider_name)
-    return spec.domains + spec.domain_suffixes if spec is not None else ()
-def provider_base_domains(provider_name: str | None) -> tuple[str, ...]:
-    spec = _provider_spec(provider_name)
-    if spec is None:
-        return ()
-    return spec.base_domains or spec.domains
-def provider_html_path_templates(provider_name: str | None) -> tuple[str, ...]:
-    spec = _provider_spec(provider_name)
-    return spec.html_path_templates if spec is not None else ()
-def provider_xml_path_templates(provider_name: str | None) -> tuple[str, ...]:
-    spec = _provider_spec(provider_name)
-    return spec.xml_path_templates if spec is not None else ()
-def provider_landing_path_templates(provider_name: str | None) -> tuple[str, ...]:
-    spec = _provider_spec(provider_name)
-    return spec.landing_path_templates if spec is not None else ()
-def provider_pdf_path_templates(provider_name: str | None) -> tuple[str, ...]:
-    spec = _provider_spec(provider_name)
-    return spec.pdf_path_templates if spec is not None else ()
-def provider_pdf_source_path_templates(provider_name: str | None) -> tuple[PdfSourcePathTemplate, ...]:
-    spec = _provider_spec(provider_name)
-    return spec.pdf_source_path_templates if spec is not None else ()
-def provider_crossref_pdf_position(provider_name: str | None) -> int:
-    spec = _provider_spec(provider_name)
-    return int(spec.crossref_pdf_position) if spec is not None else 0
+def provider_domains(provider_name: str | None) -> tuple[str, ...]: return spec.domains + spec.domain_suffixes if (spec := _provider_spec(provider_name)) is not None else ()
+def provider_base_domains(provider_name: str | None) -> tuple[str, ...]: return spec.base_domains or spec.domains if (spec := _provider_spec(provider_name)) is not None else ()
+def provider_html_path_templates(provider_name: str | None) -> tuple[str, ...]: return spec.html_path_templates if (spec := _provider_spec(provider_name)) is not None else ()
+def provider_xml_path_templates(provider_name: str | None) -> tuple[str, ...]: return spec.xml_path_templates if (spec := _provider_spec(provider_name)) is not None else ()
+def provider_landing_path_templates(provider_name: str | None) -> tuple[str, ...]: return spec.landing_path_templates if (spec := _provider_spec(provider_name)) is not None else ()
+def provider_pdf_path_templates(provider_name: str | None) -> tuple[str, ...]: return spec.pdf_path_templates if (spec := _provider_spec(provider_name)) is not None else ()
+def provider_pdf_source_path_templates(provider_name: str | None) -> tuple[PdfSourcePathTemplate, ...]: return spec.pdf_source_path_templates if (spec := _provider_spec(provider_name)) is not None else ()
+def provider_crossref_pdf_position(provider_name: str | None) -> int: return int(spec.crossref_pdf_position) if (spec := _provider_spec(provider_name)) is not None else 0
 def matching_provider_domain(provider_name: str | None, hostname: str | None) -> str | None:
     for domain in provider_domains(provider_name):
         if host_matches_domain(hostname, domain):

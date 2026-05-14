@@ -609,7 +609,7 @@ def _category_for_section_hint_kind(kind: str) -> str:
     return "body_heading"
 
 
-def _apply_provider_availability_overrides(
+def _apply_availability_override_policy(
     *,
     provider: str | None,
     soup: BeautifulSoup,
@@ -683,7 +683,7 @@ def _analyze_html_structure(
     soup = BeautifulSoup(html_text, choose_parser())
     container = select_best_container(soup, provider)
     if container is None:
-        _apply_provider_availability_overrides(
+        _apply_availability_override_policy(
             provider=provider,
             soup=soup,
             analysis=analysis,
@@ -783,7 +783,7 @@ def _analyze_html_structure(
         and (analysis.container_has_paywall_text or _final_url_looks_like_access_page(final_url))
     )
     analysis.access_gate_markers = _dedupe_signals(analysis.access_gate_markers)
-    _apply_provider_availability_overrides(
+    _apply_availability_override_policy(
         provider=provider,
         soup=soup,
         analysis=analysis,
