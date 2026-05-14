@@ -1,0 +1,249 @@
+# 添加一个 Provider：快速上手
+
+这是为第一次给 paper_fetch 接入新出版社（如 MDPI、PLOS、Frontiers）的开发者写的。完整规约见 [`provider-development.md`](provider-development.md)，本文只讲流程。
+
+## 你要做什么
+
+让 `fetch_paper(doi="10.X/Y")` 在 DOI 属于新出版社时返回结构化 `ArticleModel`，主路径走该出版社的官方 HTML/XML/PDF，失败时降级为 abstract-only 或 metadata-only。
+
+## 时间预估
+
+| 阶段 | 时间 |
+|---|---|
+| 设计 + 收 fixtures + 起步 | 1-3 天 |
+| 写 extraction + 客户端 | 2-5 天 |
+| 跑通 + 重构 + 文档 | 1-2 天 |
+| **合计** | **1-2 周** |
+
+如果出版社用 Atypon 等已有 browser-workflow 框架，可能 3-5 天就够。
+
+---
+
+## Step 0：花 30 分钟先写设计
+
+不要直接 coding。先在一个 issue 或 doc 段里写清楚下面 5 个问题：
+
+1. **怎么 routing 到这个 provider？** 按域名（如 `mdpi.com`）还是按 Crossref publisher 字段还是 DOI 前缀（`10.3390/`）？
+2. **主路径顺序是什么？** 比如 `landing HTML → XML API → PDF text-only → abstract-only`。
+3. **怎么判断 fulltext 成功？** 只看 HTTP 200 是不够的（项目反模式之一）——要看 article container、章节、正文长度、access gate 文案等。
+4. **`asset_profile` 三模式分别下载什么？** `none` / `body` / `all` 各对应什么 scope？
+5. **需要哪些环境变量 / API key / browser runtime？** `probe_status()` 怎么检查本地配置？
+
+跳过这步会让 Step 1（收 fixture）选偏「快乐路径」，Step 3（实现）反复返工。
+
+---
+
+## Step 1：按正交清单收 fixtures（1-3 天）
+
+**不要积累 8-9 篇相似的「跑得通」文献**——按能力维度铺开：
+
+```
+golden_criteria/<doi_slug>/
+  ├─ structure 篇        # 标题/作者/摘要/章节/参考文献
+  ├─ tables 篇           # 含 inline + 复杂 caption
+  ├─ formulas 篇         # MathML / image fallback
+  ├─ figures 篇          # multi-panel
+  ├─ supplementary 篇    # asset_profile=all 触发
+  ├─ references 篇       # 复杂样式
+  └─ pdf-fallback 篇 ×1-2
+
+block/
+  ├─ abstract-only 篇    # provider 主动返回摘要
+  ├─ access-gate 篇      # paywall
+  └─ empty-shell 篇      # 空壳 HTML
+```
+
+操作流程：
+
+1. 找真实 DOI（不要造假数据）。
+2. 用 `capture_fixture.py` 录制 replay，并让脚本登记 `manifest.json`，`expected_outcome` 初始为 `"pending"`。
+3. golden 类样本写到 `tests/fixtures/golden_criteria/<doi_slug>/original.{html,xml,pdf}`。
+4. block 类样本用 `--purpose abstract-only|access-gate|empty-shell`，写到 `tests/fixtures/block/<doi_slug>/original.html`。
+
+示例：
+
+```bash
+PYTHONPATH=src python3 scripts/capture_fixture.py \
+  --doi 10.3390/membranes15030093 \
+  --provider mdpi \
+  --purpose structure
+
+PYTHONPATH=src python3 scripts/capture_fixture.py \
+  --doi 10.3390/example-gated \
+  --provider mdpi \
+  --purpose access-gate
+```
+
+详细 fixture 规则见 [`provider-development.md` §8](provider-development.md#8-测试标准)，正交清单见同文档 [附录 A](provider-development.md#附录-a)。
+
+---
+
+## Step 2：跑 scaffold 起步（10 分钟）
+
+```bash
+python3 scripts/scaffold_provider.py --name mdpi --doi 10.3390/membranes15030093 --fulltext-client
+```
+
+会生成：
+- `src/paper_fetch/providers/_mdpi_html.py`（含 `register_provider_bundle(...)` 占位）
+- `src/paper_fetch/providers/mdpi.py`（ProviderClient 子类骨架）
+- `tests/unit/test_mdpi_provider.py`（测试骨架）
+- `tests/fixtures/golden_criteria/10.3390_membranes15030093/.gitkeep`
+- `manifest.json` 占位条目
+- stdout 打印 PR-checklist
+
+---
+
+## Step 3：实现 extraction 与客户端（2-5 天）
+
+### 3.1 填 `ProviderBundle`
+
+打开 `_mdpi_html.py`，把顶部的 `register_provider_bundle(ProviderBundle(...))` 填完整：
+
+- `catalog=ProviderSpec(...)`：hosts / 路径模板 / asset_default / probe_capability（见 [§2](provider-development.md#2-先接-provider-catalog)）
+- `html_rules=ProviderHtmlRules(cleanup=..., front_matter=..., availability=..., dom_hooks=..., markdown_hooks=...)`（见 [§5](provider-development.md#5-extraction-owner-复用规则)）
+- 可选：`asset_retry=AssetRetryPolicy(...)`、`metadata_merge=(...)`
+
+### 3.2 写 hook 函数
+
+`mdpi_before_block_normalization(container)` / `mdpi_normalize_markdown(text)` 等放在同一个 `_mdpi_html.py` 文件里。**不要**在 `extraction/html/provider_rules.py` 写 wrapper——直接函数引用即可。
+
+### 3.3 写客户端 `MdpiClient`
+
+继承 `paper_fetch.providers.base.ProviderClient`，**只覆盖必要 hook**：
+
+- `fetch_raw_fulltext()`：发请求 + 校验 payload（见 [§3-§4](provider-development.md#3-client-contract)）
+- `to_article_model()`：raw → ArticleModel
+- `html_to_markdown()`：HTML 路线必填
+- `download_related_assets()`：仅有资产能力时实现
+- `probe_status()`：本地环境检查
+
+**不要**绕过 `fetch_result()` template method 自己拼 `FetchEnvelope`——会被 review 打回。
+
+### 3.4 复用 canonical owner
+
+写代码前先看 [`provider-development.md` §5 owner 复用规则](provider-development.md#5-extraction-owner-复用规则)。HTTP header、access gate 文案、table 渲染、markdown IR 全部有 canonical 实现。**不要重写**——重写会被打回。
+
+---
+
+## Step 4：Prototype 通过（Commit A，约 1 天）
+
+跑：
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/unit -q
+```
+
+直到 `test_mdpi_provider.py` 全绿。然后**第一次为每篇 fixture 写 `expected.json`**：
+
+```bash
+PYTHONPATH=src python3 scripts/snapshot_expected.py --doi 10.3390/membranes15030093 --review
+PYTHONPATH=src python3 scripts/snapshot_expected.py --doi 10.3390/membranes15030093
+```
+
+之后每次改 extraction 都用 `pytest` diff 来审，**不再手动每次重看 markdown**。
+
+跑完整性 lint：
+
+```bash
+PYTHONPATH=src python3 -m pytest tests/unit/test_provider_bundle_completeness.py -q
+```
+
+全过即 Commit A。这一步固化「跑通」的状态。
+
+---
+
+## Step 5：重构对齐 canonical owner（Commit B，约半天）
+
+逐条跑 [`provider-development.md` 附录 B](provider-development.md#附录-b) 的 grep checklist。**每条命中**要么删除并 import canonical owner，要么加注释解释 publisher 差异。
+
+典型清理：
+
+- 自己写的 `_header_value(response, "Content-Type")` → `from paper_fetch.http.headers import header_value`
+- 自己 hardcode 的 `_doi_pdf_candidate(doi)` → 改成 `ProviderSpec` 模板字段
+- 自己写的 `_render_table_markdown(table)` → 改用 `paper_fetch.extraction.markdown_render`
+
+清理后再跑一遍全量 pytest，确认 `expected.json` 不变。Commit B。
+
+---
+
+## Step 6：端到端收尾（约半天）
+
+按 [`provider-development.md` §9](provider-development.md#9-文档同步标准) 更新：
+
+| 文件 | 必填项 |
+|---|---|
+| `docs/providers.md` | 能力矩阵、routing 信号、waterfall、asset_profile、status |
+| `docs/extraction-rules.md` | 用户可见新规则（若有） |
+| `docs/architecture/target-architecture.md` | 仅新增 canonical owner 时 |
+| `docs/deployment.md` / `.env.example` | 新环境变量（若有） |
+| `CHANGELOG.md` | 一行用户可见摘要 |
+
+然后对照 [`provider-development.md` 附录 C PR Checklist](provider-development.md#附录-c) 逐项勾选。所有项通过 → PR。
+
+---
+
+## 一个完整例子：接 MDPI 的路线
+
+```bash
+# Step 0 (设计 doc)
+# - routing: domain mdpi.com + DOI 前缀 10.3390
+# - 主路径: landing HTML → article HTML → PDF fallback
+# - asset_profile: body 下图 + 表 + 公式；all 下加 supplementary zip
+# - probe: 检查 mdpi.com 可达即 ready
+
+# Step 1 (fixtures, 1-2 天)
+PYTHONPATH=src python3 scripts/capture_fixture.py \
+  --doi 10.3390/membranes15030093 \
+  --provider mdpi \
+  --purpose structure
+# 重复 8-10 篇覆盖 structure/table/formula/figure/supp/refs/pdf/block
+
+# Step 2 (scaffold)
+python3 scripts/scaffold_provider.py --name mdpi --doi 10.3390/membranes15030093 \
+  --fulltext-client
+
+# Step 3 (实现, 2-3 天)
+# - 编辑 src/paper_fetch/providers/_mdpi_html.py: 填 ProviderBundle
+# - 编辑 src/paper_fetch/providers/mdpi.py: 填 MdpiClient
+# - 跑 pytest 直到 test_mdpi_provider.py 局部通过
+
+# Step 4 (Commit A)
+PYTHONPATH=src python3 scripts/snapshot_expected.py --doi 10.3390/membranes15030093 --review
+PYTHONPATH=src python3 scripts/snapshot_expected.py --doi 10.3390/membranes15030093
+PYTHONPATH=src python3 -m pytest tests/unit -q
+git commit -m "feat(mdpi): prototype provider with golden replay"
+
+# Step 5 (重构, 半天)
+# - 按附录 B grep 自查
+# - 删除 local helper
+git commit -m "refactor(mdpi): align with canonical owners"
+
+# Step 6 (文档, 半天)
+# - 改 docs/providers.md / CHANGELOG.md / extraction-rules.md
+# - 跑 python3 scripts/validate_extraction_rules.py
+git commit -m "docs(mdpi): add provider documentation"
+
+# PR
+```
+
+---
+
+## 5 个最容易踩的坑
+
+1. **跳过 Step 0 直接收 fixture**：fixtures 全是 open-access HTML，后期发现没覆盖 paywall 或 abstract-only，要回炉。
+2. **手动每次重审 markdown**：第一次跑通就写 `expected.json`，后续靠 `pytest` diff。
+3. **在 `_X_html.py` 内重写 canonical owner 已有的能力**（table 渲染、header 查找、access gate 文案）：项目反模式，PR 会被打回。
+4. **prototype 和重构混在一个 commit**：重构发现要改 fixtures 时丢失 prototype 进度。
+5. **改了 `provider_catalog.py` / `provider_rules.py` / `quality/html_signals.py`**：这些现在是禁区，CI lint 会失败。所有 provider 数据走 `ProviderBundle` 自注册。
+
+---
+
+## 接下来读哪里
+
+- 详细规约：[`provider-development.md`](provider-development.md)
+- 已支持 provider 的能力矩阵：[`providers.md`](providers.md)
+- 系统分层与 typed contract：[`architecture/target-architecture.md`](architecture/target-architecture.md)
+- 用户可见提取规则：[`extraction-rules.md`](extraction-rules.md)
+
+有不清楚的，先看现有 provider 的 `_pnas_html.py` 或 `mdpi.py`（如果已存在）抄一遍——大多数模式都已有先例。

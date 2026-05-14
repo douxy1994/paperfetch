@@ -1,0 +1,299 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import re
+import sys
+import warnings
+from pathlib import Path
+from typing import Any
+
+from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
+
+from paper_fetch.publisher_identity import normalize_doi
+from paper_fetch.utils import normalize_text
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def doi_slug(doi: str) -> str:
+    return normalize_doi(doi).replace("/", "_")
+
+
+def _load_manifest(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {"samples": {}}
+    manifest = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(manifest, dict):
+        raise ValueError(f"manifest root must be an object: {path}")
+    samples = manifest.setdefault("samples", {})
+    if not isinstance(samples, dict):
+        raise ValueError(f"manifest samples must be an object: {path}")
+    return manifest
+
+
+def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
+    path.write_text(json.dumps(manifest, indent=2, sort_keys=False) + "\n", encoding="utf-8")
+
+
+def _sample_for_doi(manifest: dict[str, Any], doi: str) -> tuple[str, dict[str, Any]] | None:
+    slug = doi_slug(doi)
+    samples = manifest.get("samples", {})
+    if slug in samples and isinstance(samples[slug], dict):
+        return slug, samples[slug]
+    for sample_id, sample in samples.items():
+        if isinstance(sample, dict) and normalize_doi(str(sample.get("doi") or "")) == doi:
+            return str(sample_id), sample
+    return None
+
+
+def _fixture_root(root: Path, sample_id: str, sample: dict[str, Any]) -> Path:
+    family = str(sample.get("fixture_family") or "golden")
+    if family == "block":
+        return root / "tests" / "fixtures" / "block" / sample_id
+    return root / "tests" / "fixtures" / "golden_criteria" / sample_id
+
+
+def _raw_fixture_path(root: Path, sample_id: str, sample: dict[str, Any]) -> Path:
+    assets = sample.get("assets") if isinstance(sample.get("assets"), dict) else {}
+    for name in ("original.html", "original.xml", "original.pdf"):
+        value = assets.get(name)
+        if value:
+            return root / str(value)
+    fixture_root = _fixture_root(root, sample_id, sample)
+    for name in ("original.html", "original.xml", "original.pdf"):
+        path = fixture_root / name
+        if path.exists():
+            return path
+    raise FileNotFoundError(f"fixture is missing original.html/original.xml/original.pdf: {sample_id}")
+
+
+def _meta_values(soup: BeautifulSoup, *names: str) -> list[str]:
+    wanted = {name.lower() for name in names}
+    values: list[str] = []
+    for node in soup.find_all("meta"):
+        key = str(node.get("name") or node.get("property") or "").lower()
+        if key in wanted:
+            value = normalize_text(str(node.get("content") or ""))
+            if value:
+                values.append(value)
+    return values
+
+
+def _text_from_selector(soup: BeautifulSoup, selector: str) -> str:
+    node = soup.select_one(selector)
+    return normalize_text(node.get_text(" ", strip=True)) if node else ""
+
+
+def _review_summary_from_html(raw_path: Path, sample: dict[str, Any]) -> dict[str, Any]:
+    with warnings.catch_warnings():
+        warnings.filterwarnings("ignore", category=XMLParsedAsHTMLWarning)
+        soup = BeautifulSoup(raw_path.read_text(encoding="utf-8", errors="ignore"), "html.parser")
+    title = (
+        (_meta_values(soup, "citation_title", "dc.title", "og:title") or [""])[0]
+        or _text_from_selector(soup, "h1")
+        or _text_from_selector(soup, "title")
+        or str(sample.get("title") or "")
+    )
+    authors = _meta_values(soup, "citation_author", "dc.creator")
+    abstract = (
+        (_meta_values(soup, "citation_abstract", "dc.description", "description") or [""])[0]
+        or _text_from_selector(soup, ".abstract")
+        or _text_from_selector(soup, "[class*=abstract]")
+    )
+    headings = [
+        normalize_text(node.get_text(" ", strip=True))
+        for node in soup.find_all(re.compile(r"^h[1-6]$"))
+        if normalize_text(node.get_text(" ", strip=True))
+    ]
+    formula_count = len(soup.find_all("math")) + len(soup.select("[class*=formula], [class*=math], .equation"))
+    return {
+        "title": normalize_text(title),
+        "authors": authors,
+        "abstract_length": len(normalize_text(abstract)),
+        "section_headings": headings,
+        "table_count": len(soup.find_all("table")),
+        "figure_count": len(soup.find_all("figure")),
+        "formula_count": formula_count,
+    }
+
+
+def _review_summary_from_pdf(raw_path: Path, sample: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "title": normalize_text(str(sample.get("title") or "")),
+        "authors": [],
+        "abstract_length": 0,
+        "section_headings": [],
+        "table_count": 0,
+        "figure_count": 0,
+        "formula_count": 0,
+    }
+
+
+def _availability(sample: dict[str, Any], summary: dict[str, Any]) -> str:
+    purpose = str(sample.get("purpose") or "")
+    family = str(sample.get("fixture_family") or "golden")
+    if purpose in {"access-gate", "empty-shell"}:
+        return "blocked"
+    if purpose == "abstract-only":
+        return "abstract-only"
+    if family == "block":
+        return "blocked"
+    if summary["section_headings"] or summary["table_count"] or summary["figure_count"] or summary["formula_count"]:
+        return "fulltext"
+    if summary["abstract_length"]:
+        return "abstract-only"
+    return "blocked"
+
+
+def _expected_content_kind(availability: str) -> str:
+    if availability == "fulltext":
+        return "fulltext"
+    if availability == "abstract-only":
+        return "abstract_only"
+    return "metadata_only"
+
+
+def _expected_from_review_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    availability = str(summary["availability"])
+    body = availability == "fulltext"
+    abstract = bool(summary["abstract_length"]) or availability == "abstract-only"
+    return {
+        "has": {
+            "title": bool(summary["title"]),
+            "authors": bool(summary["authors"]),
+            "abstract": abstract,
+            "body": body,
+            "figures": summary["figure_count"] > 0,
+            "references": False,
+            "data_availability": False,
+            "code_availability": False,
+        },
+        "counts": {
+            "sections": len(summary["section_headings"]),
+            "abstract_sections": 1 if abstract else 0,
+            "body_sections": len(summary["section_headings"]) if body else 0,
+            "figures": summary["figure_count"],
+            "tables": summary["table_count"],
+            "references": 0,
+        },
+        "expected_content_kind": _expected_content_kind(availability),
+    }
+
+
+def _expected_from_golden_corpus(doi: str, sample_id: str, sample: dict[str, Any], root: Path) -> dict[str, Any] | None:
+    if root != _repo_root().resolve() or str(sample.get("fixture_family") or "golden") != "golden":
+        return None
+    repo_root = str(root)
+    if repo_root not in sys.path:
+        sys.path.insert(0, repo_root)
+    try:
+        from tests.golden_corpus import (
+            GoldenCorpusFixture,
+            build_article_from_fixture,
+            expected_summary_from_article,
+        )
+    except Exception:
+        return None
+    try:
+        article = build_article_from_fixture(GoldenCorpusFixture(sample_id=sample_id, sample=dict(sample)))
+    except Exception:
+        return None
+    expected = expected_summary_from_article(article)
+    expected["expected_content_kind"] = str(expected.get("expected_content_kind") or "")
+    return expected
+
+
+def _build_review_summary(root: Path, doi: str, sample_id: str, sample: dict[str, Any]) -> dict[str, Any]:
+    raw_path = _raw_fixture_path(root, sample_id, sample)
+    if raw_path.suffix.lower() == ".pdf":
+        summary = _review_summary_from_pdf(raw_path, sample)
+    else:
+        summary = _review_summary_from_html(raw_path, sample)
+    availability = _availability(sample, summary)
+    summary.update(
+        {
+            "doi": doi,
+            "availability": availability,
+            "asset_failures": [],
+            "source_trail": [
+                f"fixture:{sample.get('fixture_family') or 'golden'}",
+                f"route:{sample.get('route_kind') or raw_path.suffix.lstrip('.')}",
+            ],
+        }
+    )
+    return summary
+
+
+def _manifest_outcome(expected: dict[str, Any], review_summary: dict[str, Any]) -> str:
+    if expected.get("expected_content_kind") == "fulltext":
+        return "fulltext"
+    if expected.get("expected_content_kind") == "abstract_only":
+        return "abstract-only"
+    if review_summary["availability"] in {"blocked", "abstract-only"}:
+        return str(review_summary["availability"])
+    return "blocked"
+
+
+def snapshot_expected(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
+    root = Path(args.output_dir).resolve()
+    doi = normalize_doi(args.doi)
+    manifest_path = root / "tests" / "fixtures" / "golden_criteria" / "manifest.json"
+    manifest = _load_manifest(manifest_path)
+    match = _sample_for_doi(manifest, doi)
+    if match is None:
+        if args.review:
+            return (
+                {
+                    "doi": doi,
+                    "available": False,
+                    "error": "fixture sample is not registered in manifest",
+                    "summary": None,
+                },
+                False,
+            )
+        raise FileNotFoundError(f"fixture sample is not registered in manifest: {doi}")
+
+    sample_id, sample = match
+    review_summary = _build_review_summary(root, doi, sample_id, sample)
+    expected = _expected_from_golden_corpus(doi, sample_id, sample, root) or _expected_from_review_summary(review_summary)
+    review_summary["availability"] = _manifest_outcome(expected, review_summary)
+    if args.review:
+        return {"expected": expected, "review": review_summary}, False
+
+    expected_path = root / "tests" / "fixtures" / "golden_criteria" / sample_id / "expected.json"
+    expected_path.parent.mkdir(parents=True, exist_ok=True)
+    expected_path.write_text(json.dumps(expected, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    sample["expected_outcome"] = _manifest_outcome(expected, review_summary)
+    assets = sample.setdefault("assets", {})
+    if isinstance(assets, dict):
+        assets["expected.json"] = expected_path.relative_to(root).as_posix()
+    _write_manifest(manifest_path, manifest)
+    return expected, True
+
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description="Generate expected.json from a local replay fixture.")
+    parser.add_argument("--doi", required=True, help="DOI to snapshot, for example 10.1234/sample")
+    parser.add_argument("--review", action="store_true", help="print the generated summary without writing")
+    parser.add_argument("--output-dir", default=_repo_root(), help="repo root to read/write; defaults to this checkout")
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    try:
+        summary, _ = snapshot_expected(args)
+    except Exception as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    print(json.dumps(summary, indent=2, sort_keys=True))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

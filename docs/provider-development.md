@@ -265,6 +265,8 @@ Fixtures 规则：
 - access gate、paywall、abstract-only 等负样本放在 `tests/fixtures/block/`。
 - 新 fixture 必须同步 `tests/fixtures/golden_criteria/manifest.json` 和 fixture catalog。
 - 不从 `live-downloads/`、临时目录或散落 top-level 文件读取测试样本。
+- Step 1 录制真实 DOI replay 时优先使用 `python3 scripts/capture_fixture.py --doi <doi> --purpose <purpose>`，脚本会写 canonical fixture 路径并把 manifest 条目置为 `expected_outcome="pending"`；需要先看写入计划时加 `--dry-run`。
+- Step 4 第一次固化预期时使用 `python3 scripts/snapshot_expected.py --doi <doi> --review` 审核用户可见摘要，再运行不带 `--review` 的命令写入兼容 golden corpus 的 `expected.json`（`has` / `counts` / `expected_content_kind`）并同步 manifest outcome。
 
 Golden corpus 规则：
 
