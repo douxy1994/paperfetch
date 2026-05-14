@@ -26,7 +26,10 @@
   - commit: 0915df5
   - 摘要: 新增 `scripts/scaffold_provider.py`，支持 provider name/DOI/source/fulltext-client/html-capable/output-dir，生成 provider bundle 骨架、fixture 占位、manifest pending 条目和 starter unit test。
   - 验收: `scaffold_provider.py --help` 通过；`test_scaffold_provider.py` 5 passed；`validate_extraction_rules.py` 通过；全量 unit 1171 passed + 264 subtests。
-- [ ] S6: 文档对齐 + checklist 化
+- [x] S6: 文档对齐 + checklist 化
+  - commit: dfbf682
+  - 摘要: `docs/provider-development.md` 改为 bundle/scaffold 流程与 PR checklist，删除手改 catalog/rules 的旧接入说明；`target-architecture.md` 记录 ProviderBundle discovery 与 `_registry.py` 职责。
+  - 验收: S6 docs grep 通过（旧 hook/signal 函数无命中，scaffold/checklist/bundle 文档存在）；`validate_extraction_rules.py` 通过；全量 unit 1171 passed + 264 subtests。
 - [ ] S7: Fixture 录制 + expected.json 工具
 - [ ] S8: ProviderClient / Waterfall 脚手架
 - [ ] S9: 重构对齐 grep lint 测试
