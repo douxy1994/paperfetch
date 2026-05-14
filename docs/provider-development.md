@@ -1,5 +1,7 @@
 # 新增 Provider 开发标准
 
+> Human reference only. AI/coordinator provider onboarding must use docs/ai-onboarding/.
+
 这份文档是后续接入新出版社 provider 的工程标准。目标是让新 provider 一开始就接入当前架构边界，减少后续因为路由、typed payload、资产语义、测试夹具或文档事实来源不一致造成的返工。
 
 本文只描述新增 provider 的开发流程和验收标准。当前已支持 provider 的能力矩阵、运行时行为和环境变量仍以 [`providers.md`](providers.md) 为准；系统分层、typed contract 和 owner 边界仍以 [`architecture/target-architecture.md`](architecture/target-architecture.md) 为准；用户可见提取 / 渲染规则仍以 [`extraction-rules.md`](extraction-rules.md) 为准。
@@ -99,6 +101,27 @@ python3 scripts/scaffold_provider.py --name newpub --doi 10.1234/sample [--fullt
 - 正文长度阈值统一走 `body_text_thresholds`。通用 HTML 使用默认阈值；确有差异的 provider 只覆盖差异字段。
 - `client_factory_path` 指向最终 client，例如 `paper_fetch.providers.mdpi:MdpiClient`。
 - `status_order` 插入稳定顺序，避免 UI / MCP status 抖动。
+
+```python
+register_provider_bundle(
+    ProviderBundle(
+        catalog=ProviderSpec(
+            name="newpub",
+            display_name="New Publisher",
+            official=True,
+            domains=("example.org",),
+            doi_prefixes=("10.1234",),
+            publisher_aliases=("New Publisher",),
+            asset_default="body",
+            probe_capability="routing_signal",
+            provider_managed_abstract_only=True,
+            client_factory_path="paper_fetch.providers.newpub:NewpubClient",
+            status_order=90,
+        ),
+        sources=("newpub",),
+    )
+)
+```
 
 不要手写新的 provider 常量列表，也不要修改中心模块的 provider 字典或规则表。`preferred_providers`、MCP provider status、registry clients、默认 asset profile 和 provider identity 都应该继续从 bundle discovery 派生。新增后至少补 provider 相关 unit test 的 DOI、domain、publisher 推断样例，并让 `tests/unit/test_provider_bundle_completeness.py` 通过。
 

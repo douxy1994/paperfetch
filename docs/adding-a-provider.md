@@ -1,5 +1,7 @@
 # 添加一个 Provider：快速上手
 
+> Human reference only. AI/coordinator provider onboarding must use docs/ai-onboarding/.
+
 这是为第一次给 paper_fetch 接入新出版社（如 MDPI、PLOS、Frontiers）的开发者写的。完整规约见 [`provider-development.md`](provider-development.md)，本文只讲流程。
 
 ## 你要做什么

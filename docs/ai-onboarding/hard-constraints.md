@@ -28,4 +28,17 @@ Worker 和 coordinator 必须满足下列机器可判约束。
 - `python3 scripts/validate_extraction_rules.py` must pass before merge-ready.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_manifest_bundle_sync.py -q` must pass before merge-ready.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_bundle_completeness.py tests/unit/test_provider_owner_reuse.py -q` must pass before merge-ready.
+- `PYTHONPATH=src python3 -m pytest tests/unit/test_human_docs_drift.py -q` must pass before merge-ready.
 - `manifest_sync_back.py` is the only allowed writer for sync-back fields in `extraction_hints` and `success_criteria`.
+
+## Grep Must Be Empty
+
+Implementation acceptance must run these forbidden-central-logic checks with the provider slug substituted for `<provider>`. Return code `0` means forbidden drift exists; return code `1` means no matches.
+
+```bash
+git grep -nE "<provider>" -- src/paper_fetch/extraction/html/provider_rules.py
+git grep -nE "<provider>" -- src/paper_fetch/quality/html_signals.py
+git grep -nE "<provider>" -- src/paper_fetch/quality/html_availability.py
+git grep -nE "raw_payload\\.metadata\\[" -- src/paper_fetch/providers/
+git grep -nE "BeautifulSoup is None|Tag is None" -- src/paper_fetch/providers/
+```
