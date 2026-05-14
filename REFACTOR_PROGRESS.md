@@ -88,4 +88,11 @@
 - 覆盖: S14 coordinator dry-run/state DAG、S15 manifest capture/retry、S16 structured stderr 均通过本地验收；`test_manifest_discovery_brief.py` / `test_onboard_from_manifests.py` / `test_capture_fixture.py` / `test_scaffold_provider_from_manifest.py` / `test_snapshot_expected.py` / `test_structured_tool_errors.py` 等关键回归覆盖 coordinator、fixture capture、snapshot 和错误 schema；全量 unit 1243 passed + 264 subtests。
 
 ### 阶段 D：文档权威源切换（S17）
-- [ ] S17: AI onboarding 文档切主权威源 + 旧 docs 降级 / drift lint
+- [x] S17: AI onboarding 文档切主权威源 + 旧 docs 降级 / drift lint
+  - commit: 3d9a101
+  - 摘要: `docs/ai-onboarding/README.md` 切为 AI/coordinator provider onboarding 权威入口，覆盖 S14 coordinator、S15 manifest capture/retry、S16 structured error，并移除未跟踪审计文件链接；新增 `docs/ai-onboarding/acceptance.md`；`hard-constraints.md` 增加 drift lint 与 central-provider grep gates；`docs/provider-development.md` / `docs/adding-a-provider.md` 顶部降级为 human reference；新增 `test_human_docs_drift.py` 检查旧文档 API、hard-constraints grep 语法/路径和 AI/human API 禁用冲突。
+  - 验收: S17 grep（`docs/ai-onboarding` banner、`Human reference only`、AI docs 禁词）通过；AI onboarding markdown 链接均可解析；`test_human_docs_drift.py` / `test_provider_manifest_schema.py` / `test_manifest_bundle_sync.py` 12 passed + 1 warning（human-only API drift warning，按 S17 规则不阻断）；`python3 scripts/validate_extraction_rules.py` 通过；`python3 -m ruff check .` 通过；全量 unit 1246 passed + 1 warning + 264 subtests；full golden corpus 174 passed。
+
+### 最终验收点
+- commit: 3d9a101
+- 覆盖: S1-S17 均已落地并按阶段记录；S17 后 AI provider onboarding 权威源为 `docs/ai-onboarding/`，旧人类文档保留但不作为 AI worker 输入；最新全量 unit 为 1246 passed + 1 warning + 264 subtests，full golden corpus 为 174 passed；warning 来自 best-effort human docs drift 检测。
