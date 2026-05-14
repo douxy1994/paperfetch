@@ -231,11 +231,11 @@ Provider fulltext 内部链路统一接收同一个 `RuntimeContext`：workflow 
 
 `RawFulltextPayload.metadata` 只保留为 legacy/read-only compatibility view：`route`、`markdown_text`、`warnings`、`source_trail`、diagnostics、browser seed 等结构化字段必须由 `ProviderContent`、`warnings`、`trace`、`merged_metadata` 等 typed fields 传入。新生产路径不得把结构化字段写入 legacy metadata pocket，也不得通过 `raw_payload.metadata[...]` 读取 typed 状态。构造 `RawFulltextPayload(metadata={...})` 不再把 legacy magic keys 注入结构化字段，只允许非结构化 passthrough metadata 留在导出里。
 
-Provider 身份与能力配置统一来自 `paper_fetch.provider_catalog.PROVIDER_CATALOG`。新增 provider 时，应先补 `ProviderSpec`，再接入 provider client；routing、默认资产策略、MCP status 顺序和 registry 都从 catalog 派生。
+Provider 身份与能力配置统一来自 provider entry module 顶部注册的 `ProviderBundle`。`src/paper_fetch/providers/_registry.py` 只负责保存 `ProviderBundle`、处理重复注册并提供只读迭代 / 按名查找；各 provider 入口模块导入时调用 `register_provider_bundle(ProviderBundle(...))`。`paper_fetch.provider_catalog.PROVIDER_CATALOG` 与 source map 是 bundle discovery 的懒加载视图，不再是新 provider PR 手工编辑的静态字典；routing、默认资产策略、MCP status 顺序和 registry 都从 discovered bundle 派生。
 
 Crossref 的 provider adapter 位于 `paper_fetch.providers.crossref.CrossrefClient`，继续保留 public import path；resolve 与 provider adapter 共同依赖 `paper_fetch.metadata.crossref.CrossrefLookupClient`，避免 resolution 层反向复用 provider 层。
 
-架构测试会阻止已删除的 legacy surface 回流：service 不得重新接收旧 runtime keyword，provider 不得重新定义 `fetch_fulltext()` dict 入口，生产代码不得读取 `raw_payload.metadata[...]` magic keys，provider-neutral 层不得 import `paper_fetch.providers._*`，测试不得重新 import 旧 `_html_*`、`_language_filter`、`_atypon_browser_workflow`、`_atypon_browser_workflow_html`、`paper_fetch.extraction.html._assets`、`paper_fetch.providers.html_assets`、`paper_fetch.providers.science_html`、`paper_fetch.providers.pnas_html`、`paper_fetch.providers.springer_html` 或 `paper_fetch.providers.wiley_html` compatibility modules。provider catalog 仍是 provider 身份、状态顺序和 registry client factory 的单一事实来源。
+架构测试会阻止已删除的 legacy surface 回流：service 不得重新接收旧 runtime keyword，provider 不得重新定义 `fetch_fulltext()` dict 入口，生产代码不得读取 `raw_payload.metadata[...]` magic keys，provider-neutral 层不得 import `paper_fetch.providers._*`，测试不得重新 import 旧 `_html_*`、`_language_filter`、`_atypon_browser_workflow`、`_atypon_browser_workflow_html`、`paper_fetch.extraction.html._assets`、`paper_fetch.providers.html_assets`、`paper_fetch.providers.science_html`、`paper_fetch.providers.pnas_html`、`paper_fetch.providers.springer_html` 或 `paper_fetch.providers.wiley_html` compatibility modules。provider bundle 仍是 provider 身份、状态顺序和 registry client factory 的单一事实来源。
 
 ### 8. Runtime / Artifact / Cache 边界
 
@@ -628,8 +628,9 @@ MCP resource sync 只在 fetch 实际使用下载目录，或 Markdown 保存步
 应该主要改：
 
 - `src/paper_fetch/providers/`
-- `src/paper_fetch/provider_catalog.py`
 - 必要时更新 provider-specific extraction / metadata adapter
+
+新增 provider 必须在 provider entry module 顶部注册 `ProviderBundle`；不要手工编辑 `provider_catalog.py`、`extraction/html/provider_rules.py`、`quality/html_signals.py` 或 `quality/html_availability.py`。
 
 不应该把 provider 逻辑塞进 CLI 或 MCP 层。
 
