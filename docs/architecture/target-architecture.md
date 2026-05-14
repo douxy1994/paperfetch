@@ -385,6 +385,8 @@ workflow 会尽可能拿到两类元数据：
 
 旧兼容入口已删除，包括 `paper_fetch.providers.browser_workflow_fetchers.*`、`_browser_workflow_html_extraction.py`、`_browser_workflow_shared.py`、`_browser_workflow_fetchers.py`、`paper_fetch.providers.science_html`、`paper_fetch.providers.pnas_html` 和 `paper_fetch.providers.wiley_html`。新代码只能从 `paper_fetch.providers.browser_workflow.*` 引入 browser workflow orchestration，从 `paper_fetch.providers._science_html` / `_pnas_html` / `_wiley_html` / `_ams_html` 引入 provider-owned HTML 作者提取和 blocking fallback 信号。
 
+provider-owned author 抽取统一通过 `paper_fetch.providers._html_authors.AuthorExtractionPipeline` 表达；每个 provider 只能注册命名 `AuthorStep`，由 pipeline 执行 jsonld / metadata / DOM / data-layer 等 fallback 并在首个非空去重结果处停止。arXiv 和 IEEE 的 provider-specific 作者边界、metadata 字段优先级仍保留在各自 provider step 内，但不再手写独立多步 fallback 链。
+
 `paper_fetch.providers._atypon_browser_workflow_profiles` 是 Atypon-only candidate routing/profile dispatch helper。它支持 provider catalog 中的 `science` / `pnas` / `wiley` / `ams`；候选 URL 模板来自 `ProviderSpec`，provider-owned callback 模块按 `ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES` 动态导入。`paper_fetch.providers.atypon_browser_workflow` 承载 Atypon browser HTML markdown、asset scopes、normalization 和 postprocess entrypoint，publisher 差异通过 profile callback 分派。
 
 browser workflow 内部不再通过包级 facade 反射查找 patch 点；`BrowserWorkflowClient`、bootstrap、PDF fallback 和 asset retry helper 统一接收 `shared.BrowserWorkflowDeps`。生产默认依赖由 `default_browser_workflow_deps()` 装配，测试需要替换 runtime、FlareSolverr、Playwright 或 asset downloader 时通过构造定制 deps 注入。

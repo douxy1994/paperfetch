@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 import re
 from typing import Any, Callable, Mapping, Pattern
 
@@ -41,16 +42,31 @@ ATYPON_AUTHOR_COLLAPSE_UI_TEXT = frozenset({"expand all", "collapse all", "fewer
 ATYPON_AUTHOR_COUNT_PATTERN = re.compile(r"^\+\s*\d+\s+authors?$", flags=re.IGNORECASE)
 
 
+@dataclass(frozen=True)
+class AuthorStep:
+    name: str
+    extractor: Callable[[str], list[str]]
+
+
 class AuthorExtractionPipeline:
-    def __init__(self, *extractors: Callable[[str], list[str]]) -> None:
-        self.extractors = tuple(extractors)
+    def __init__(
+        self, *steps: Callable[[str], list[str]] | AuthorStep
+    ) -> None:
+        self.steps = tuple(self._coerce_step(step) for step in steps)
+        self.extractors = tuple(step.extractor for step in self.steps)
 
     def __call__(self, html_text: str) -> list[str]:
-        for extractor in self.extractors:
-            authors = dedupe_authors(extractor(html_text))
+        for step in self.steps:
+            authors = dedupe_authors(step.extractor(html_text))
             if authors:
                 return authors
         return []
+
+    @staticmethod
+    def _coerce_step(step: Callable[[str], list[str]] | AuthorStep) -> AuthorStep:
+        if isinstance(step, AuthorStep):
+            return step
+        return AuthorStep(getattr(step, "__name__", step.__class__.__name__), step)
 
 
 def load_json_assignment(

@@ -47,6 +47,7 @@ from ..utils import (
     strip_html_tags,
 )
 from ._html_section_markdown import render_container_markdown
+from ._html_authors import AuthorExtractionPipeline, AuthorStep
 from .browser_workflow.shared import BROWSER_HTML_BLOCKED_RESOURCE_TYPES
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http, fetch_pdf_with_playwright
 from ._payloads import build_provider_payload
@@ -255,25 +256,92 @@ def _first_metadata_text(metadata: Mapping[str, Any], *keys: str) -> str:
     return ""
 
 
-def _ieee_author_name(author: Any) -> str:
+def _author_pipeline_json(value: Any) -> str:
+    return json.dumps(value, ensure_ascii=False, default=str)
+
+
+def _load_author_pipeline_value(payload: str) -> Any:
+    try:
+        return json.loads(payload)
+    except (TypeError, json.JSONDecodeError):
+        return None
+
+
+def _load_author_pipeline_mapping(payload: str) -> Mapping[str, Any]:
+    value = _load_author_pipeline_value(payload)
+    return value if isinstance(value, Mapping) else {}
+
+
+def _extract_ieee_author_name_field(author_payload: str) -> list[str]:
+    author = _load_author_pipeline_value(author_payload)
+    if not isinstance(author, Mapping):
+        return []
+    for key in ("name", "preferredName", "fullName", "authorName"):
+        text = normalize_text(str(author.get(key) or ""))
+        if text:
+            return [text]
+    return []
+
+
+def _extract_ieee_author_first_last_name(author_payload: str) -> list[str]:
+    author = _load_author_pipeline_value(author_payload)
+    if not isinstance(author, Mapping):
+        return []
+    first_name = normalize_text(str(author.get("firstName") or ""))
+    last_name = normalize_text(str(author.get("lastName") or ""))
+    name = normalize_text(f"{first_name} {last_name}")
+    return [name] if name else []
+
+
+def _extract_ieee_scalar_author_name(author_payload: str) -> list[str]:
+    author = _load_author_pipeline_value(author_payload)
     if isinstance(author, Mapping):
-        for key in ("name", "preferredName", "fullName", "authorName"):
-            text = normalize_text(str(author.get(key) or ""))
-            if text:
-                return text
-        first_name = normalize_text(str(author.get("firstName") or ""))
-        last_name = normalize_text(str(author.get("lastName") or ""))
-        return normalize_text(f"{first_name} {last_name}")
-    return normalize_text(str(author or ""))
+        return []
+    name = normalize_text(str(author or ""))
+    return [name] if name else []
 
 
-def _authors_from_ieee_metadata(metadata: Mapping[str, Any]) -> list[str]:
-    authors = metadata.get("authors") or metadata.get("authorsList")
+_AUTHOR_NAME_PIPELINE = AuthorExtractionPipeline(
+    AuthorStep("name-field", _extract_ieee_author_name_field),
+    AuthorStep("first-last", _extract_ieee_author_first_last_name),
+    AuthorStep("scalar", _extract_ieee_scalar_author_name),
+)
+
+
+def _ieee_author_items_from_metadata_key(
+    metadata_payload: str, key: str
+) -> list[Any]:
+    metadata = _load_author_pipeline_mapping(metadata_payload)
+    authors = metadata.get(key)
     if isinstance(authors, Mapping):
         authors = authors.get("authors") or authors.get("author")
-    if not isinstance(authors, list):
-        return []
-    return dedupe_authors([_ieee_author_name(item) for item in authors if _ieee_author_name(item)])
+    return list(authors) if isinstance(authors, list) else []
+
+
+def _extract_ieee_authors_from_items(items: list[Any]) -> list[str]:
+    return [
+        name
+        for item in items
+        for name in _AUTHOR_NAME_PIPELINE(_author_pipeline_json(item))
+    ]
+
+
+def _extract_ieee_authors(metadata_payload: str) -> list[str]:
+    return _extract_ieee_authors_from_items(
+        _ieee_author_items_from_metadata_key(metadata_payload, "authors")
+    )
+
+
+def _extract_ieee_authors_list(metadata_payload: str) -> list[str]:
+    return _extract_ieee_authors_from_items(
+        _ieee_author_items_from_metadata_key(metadata_payload, "authorsList")
+    )
+
+
+_AUTHOR_PIPELINE = AuthorExtractionPipeline(
+    AuthorStep("authors", _extract_ieee_authors),
+    AuthorStep("authorsList", _extract_ieee_authors_list),
+)
 
 
 def _extend_unique_text(target: list[str], values: list[str]) -> None:
@@ -414,7 +482,7 @@ def _merge_ieee_metadata(base_metadata: Mapping[str, Any], landing_metadata: Map
         or normalize_text(str(merged.get("title") or ""))
     )
     abstract = strip_html_tags(_first_metadata_text(landing_metadata, "abstract")) or normalize_text(str(merged.get("abstract") or ""))
-    authors = _authors_from_ieee_metadata(landing_metadata)
+    authors = _AUTHOR_PIPELINE(_author_pipeline_json(landing_metadata))
     base_authors = [
         normalize_text(str(item))
         for item in (merged.get("authors") or [])

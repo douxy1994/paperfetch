@@ -26,6 +26,7 @@ from ._article_markdown_math import (
 from ._html_authors import (
     ATYPON_AUTHOR_NOISE_TEXT,
     AuthorExtractionPipeline,
+    AuthorStep,
     extract_meta_authors,
     extract_property_authors,
     extract_selector_authors,
@@ -106,15 +107,18 @@ def _extract_ams_selector_authors(html_text: str) -> list[str]:
     )
 
 
-_AUTHOR_EXTRACTION_PIPELINE = AuthorExtractionPipeline(
-    partial(extract_meta_authors, keys={"citation_author", "dc.creator"}),
-    _extract_ams_property_authors,
-    _extract_ams_selector_authors,
+_AUTHOR_PIPELINE = AuthorExtractionPipeline(
+    AuthorStep(
+        "meta",
+        partial(extract_meta_authors, keys={"citation_author", "dc.creator"}),
+    ),
+    AuthorStep("property", _extract_ams_property_authors),
+    AuthorStep("selector", _extract_ams_selector_authors),
 )
 
 
 def extract_authors(html_text: str) -> list[str]:
-    return _AUTHOR_EXTRACTION_PIPELINE(html_text)
+    return _AUTHOR_PIPELINE(html_text)
 
 
 def extract_references(html_text: str) -> list[dict[str, str | None]]:

@@ -68,6 +68,7 @@ from ._html_section_markdown import (
     render_container_markdown,
     render_heading_text_from_html,
 )
+from ._html_authors import AuthorExtractionPipeline, AuthorStep
 from ._html_asset_engine import merge_assets_by_identity
 from ._payloads import build_provider_payload
 from ._retry_categories import (
@@ -919,7 +920,19 @@ def _split_arxiv_author_text(text: str) -> list[str]:
     return dedupe_authors(authors)
 
 
-def _extract_arxiv_html_authors(article: Any) -> list[str]:
+def _arxiv_author_article_from_html(html_text: str) -> Any:
+    if BeautifulSoup is None:
+        return None
+    soup = BeautifulSoup(html_text, "html.parser")
+    article = soup.find("article")
+    if isinstance(article, Tag):
+        return article
+    wrapper_soup = BeautifulSoup(f"<article>{html_text}</article>", "html.parser")
+    return wrapper_soup.find("article")
+
+
+def _extract_arxiv_creator_authors(html_text: str) -> list[str]:
+    article = _arxiv_author_article_from_html(html_text)
     if Tag is None or not isinstance(article, Tag):
         return []
     creators = [
@@ -927,21 +940,32 @@ def _extract_arxiv_html_authors(article: Any) -> list[str]:
         for node in _arxiv_select(article, "author_creators")
         if isinstance(node, Tag)
     ]
-    if len(creators) > 1:
-        authors: list[str] = []
-        for creator in creators:
-            person_node = _arxiv_select_one(creator, "author_person_names") or creator
-            candidate = _clean_arxiv_frontmatter_text(person_node)
-            if _looks_like_arxiv_author_name(candidate):
-                authors.append(candidate)
-        if authors:
-            return dedupe_authors(authors)
+    if len(creators) <= 1:
+        return []
+    authors: list[str] = []
+    for creator in creators:
+        person_node = _arxiv_select_one(creator, "author_person_names") or creator
+        candidate = _clean_arxiv_frontmatter_text(person_node)
+        if _looks_like_arxiv_author_name(candidate):
+            authors.append(candidate)
+    return dedupe_authors(authors)
 
+
+def _extract_arxiv_person_authors(html_text: str) -> list[str]:
+    article = _arxiv_author_article_from_html(html_text)
+    if Tag is None or not isinstance(article, Tag):
+        return []
     authors = []
     for person_node in _arxiv_select(article, "author_person_names"):
         candidate_text = _candidate_arxiv_author_text_from_person_node(person_node)
         authors.extend(_split_arxiv_author_text(candidate_text))
     return dedupe_authors(authors)
+
+
+_AUTHOR_PIPELINE = AuthorExtractionPipeline(
+    AuthorStep("creators", _extract_arxiv_creator_authors),
+    AuthorStep("person-names", _extract_arxiv_person_authors),
+)
 
 
 def _arxiv_node_identity_text(node: Any) -> str:
@@ -1040,7 +1064,7 @@ def _extract_arxiv_html_frontmatter(
         )
     if title:
         html_metadata["title"] = title
-    authors = _extract_arxiv_html_authors(article)
+    authors = _AUTHOR_PIPELINE(str(article))
     if authors:
         html_metadata["authors"] = authors
     if abstract:

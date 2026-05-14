@@ -16,6 +16,7 @@ from ._html_authors import (
     ATYPON_AUTHOR_COLLAPSE_UI_TEXT,
     ATYPON_AUTHOR_NOISE_TEXT,
     AuthorExtractionPipeline,
+    AuthorStep,
     extract_property_authors,
     normalized_author_tokens,
 )
@@ -73,14 +74,14 @@ def _extract_dom_authors(html_text: str) -> list[str]:
     )
 
 
-_AUTHOR_EXTRACTION_PIPELINE = AuthorExtractionPipeline(
-    _extract_datalayer_authors,
-    _extract_dom_authors,
+_AUTHOR_PIPELINE = AuthorExtractionPipeline(
+    AuthorStep("datalayer", _extract_datalayer_authors),
+    AuthorStep("dom", _extract_dom_authors),
 )
 
 
 def extract_authors(html_text: str) -> list[str]:
-    return _AUTHOR_EXTRACTION_PIPELINE(html_text)
+    return _AUTHOR_PIPELINE(html_text)
 
 
 def _normalize_science_heading(value: Any) -> str:

@@ -57,6 +57,7 @@ from ._html_asset_engine import (
 )
 from ._html_authors import (
     AuthorExtractionPipeline,
+    AuthorStep,
     GENERIC_AUTHOR_NOISE_TEXT,
     extract_jsonld_authors as extract_common_jsonld_authors,
     extract_meta_authors as extract_common_meta_authors,
@@ -225,15 +226,15 @@ def _extract_dom_authors(html_text: str) -> list[str]:
     )
 
 
-_AUTHOR_EXTRACTION_PIPELINE = AuthorExtractionPipeline(
-    _extract_meta_authors,
-    _extract_jsonld_authors,
-    _extract_dom_authors,
+_AUTHOR_PIPELINE = AuthorExtractionPipeline(
+    AuthorStep("meta", _extract_meta_authors),
+    AuthorStep("jsonld", _extract_jsonld_authors),
+    AuthorStep("dom", _extract_dom_authors),
 )
 
 
 def extract_authors(html_text: str) -> list[str]:
-    return _AUTHOR_EXTRACTION_PIPELINE(html_text)
+    return _AUTHOR_PIPELINE(html_text)
 
 
 def parse_html_metadata(html_text: str, source_url: str):

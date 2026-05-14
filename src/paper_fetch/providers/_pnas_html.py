@@ -14,6 +14,7 @@ from ._html_authors import (
     ATYPON_AUTHOR_COLLAPSE_UI_TEXT,
     ATYPON_AUTHOR_NOISE_TEXT,
     AuthorExtractionPipeline,
+    AuthorStep,
     extract_meta_authors,
     extract_property_authors,
 )
@@ -39,14 +40,17 @@ def _extract_dom_authors(html_text: str) -> list[str]:
     )
 
 
-_AUTHOR_EXTRACTION_PIPELINE = AuthorExtractionPipeline(
-    _extract_dom_authors,
-    partial(extract_meta_authors, keys={"citation_author", "dc.creator"}),
+_AUTHOR_PIPELINE = AuthorExtractionPipeline(
+    AuthorStep("dom", _extract_dom_authors),
+    AuthorStep(
+        "meta",
+        partial(extract_meta_authors, keys={"citation_author", "dc.creator"}),
+    ),
 )
 
 
 def extract_authors(html_text: str) -> list[str]:
-    return _AUTHOR_EXTRACTION_PIPELINE(html_text)
+    return _AUTHOR_PIPELINE(html_text)
 
 
 def pnas_before_block_normalization(container: Any) -> None:

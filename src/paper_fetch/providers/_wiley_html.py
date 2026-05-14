@@ -29,6 +29,7 @@ from ..utils import normalize_text
 from ._html_authors import (
     ATYPON_AUTHOR_NOISE_TEXT,
     AuthorExtractionPipeline,
+    AuthorStep,
     extract_jsonld_authors,
     extract_meta_authors,
     extract_selector_authors,
@@ -191,15 +192,15 @@ def _extract_dom_authors(html_text: str) -> list[str]:
     )
 
 
-_AUTHOR_EXTRACTION_PIPELINE = AuthorExtractionPipeline(
-    partial(extract_meta_authors, keys={"citation_author"}),
-    _extract_jsonld_authors,
-    _extract_dom_authors,
+_AUTHOR_PIPELINE = AuthorExtractionPipeline(
+    AuthorStep("meta", partial(extract_meta_authors, keys={"citation_author"})),
+    AuthorStep("jsonld", _extract_jsonld_authors),
+    AuthorStep("dom", _extract_dom_authors),
 )
 
 
 def extract_authors(html_text: str) -> list[str]:
-    return _AUTHOR_EXTRACTION_PIPELINE(html_text)
+    return _AUTHOR_PIPELINE(html_text)
 
 
 def _heading_nodes(container: Tag) -> list[Tag]:
