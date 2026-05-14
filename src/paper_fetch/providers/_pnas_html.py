@@ -5,17 +5,6 @@ from __future__ import annotations
 from functools import partial
 from typing import Any, Callable, Mapping
 
-from ..provider_catalog import (
-    provider_base_domains,
-    provider_crossref_pdf_position,
-    provider_domains,
-    provider_html_path_templates,
-    provider_pdf_path_templates,
-)
-from ..extraction.html.provider_rules import (
-    PNAS_SITE_RULE_OVERRIDES,
-    provider_html_rules,
-)
 from ..quality.html_profiles import pnas_blocking_fallback_signals
 from ..utils import normalize_text
 from ._html_authors import (
@@ -28,13 +17,6 @@ from ._html_authors import (
 )
 from ._html_references import extract_numbered_references_from_html
 
-HOSTS: tuple[str, ...] = provider_domains("pnas")
-BASE_HOSTS: tuple[str, ...] = provider_base_domains("pnas")
-HTML_PATH_TEMPLATES: tuple[str, ...] = provider_html_path_templates("pnas")
-PDF_PATH_TEMPLATES: tuple[str, ...] = provider_pdf_path_templates("pnas")
-CROSSREF_PDF_POSITION = provider_crossref_pdf_position("pnas")
-NOISE_PROFILE = provider_html_rules("pnas").noise_profile
-SITE_RULE_OVERRIDES: dict[str, Any] = PNAS_SITE_RULE_OVERRIDES
 PNAS_AUTHOR_COUNT_PATTERN = ATYPON_AUTHOR_COUNT_PATTERN
 PNAS_IGNORED_AUTHOR_TEXT = {
     *ATYPON_AUTHOR_NOISE_TEXT,

@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import ast
+import importlib
 import unittest
+
+import pytest
 
 from tests.paths import SRC_DIR
 
@@ -135,6 +138,22 @@ class AtyponBrowserWorkflowHtmlStaticTests(unittest.TestCase):
                 offenders.append(f"{path.name}:{name}")
 
         self.assertEqual(offenders, [])
+
+
+@pytest.mark.parametrize(
+    "module_name", ["_pnas_html", "_science_html", "_wiley_html", "_ams_html"]
+)
+def test_no_route_constants(module_name: str) -> None:
+    module = importlib.import_module(f"paper_fetch.providers.{module_name}")
+    for name in (
+        "HOSTS",
+        "BASE_HOSTS",
+        "HTML_PATH_TEMPLATES",
+        "PDF_PATH_TEMPLATES",
+        "CROSSREF_PDF_POSITION",
+        "SITE_RULE_OVERRIDES",
+    ):
+        assert not hasattr(module, name), f"{module_name}.{name} must be removed"
 
 
 if __name__ == "__main__":

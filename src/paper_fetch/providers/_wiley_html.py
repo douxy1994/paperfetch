@@ -8,18 +8,8 @@ from functools import partial
 from typing import Any, Mapping
 
 from ..common_patterns import HEADING_TAG_PATTERN
-from ..provider_catalog import (
-    provider_base_domains,
-    provider_crossref_pdf_position,
-    provider_domains,
-    provider_html_path_templates,
-    provider_pdf_path_templates,
-)
 from ..extraction.html.parsing import choose_parser
-from ..extraction.html.provider_rules import (
-    WILEY_SITE_RULE_OVERRIDES,
-    provider_html_rules,
-)
+from ..extraction.html.provider_rules import provider_html_rules
 from ..extraction.html.semantics import (
     BACK_MATTER_TOKENS,
     heading_category,
@@ -55,13 +45,6 @@ except ImportError:  # pragma: no cover - dependency is declared in pyproject
     BeautifulSoup = None
     Tag = None
 
-HOSTS: tuple[str, ...] = provider_domains("wiley")
-BASE_HOSTS: tuple[str, ...] = provider_base_domains("wiley")
-HTML_PATH_TEMPLATES: tuple[str, ...] = provider_html_path_templates("wiley")
-PDF_PATH_TEMPLATES: tuple[str, ...] = provider_pdf_path_templates("wiley")
-CROSSREF_PDF_POSITION = provider_crossref_pdf_position("wiley")
-NOISE_PROFILE = provider_html_rules("wiley").noise_profile
-SITE_RULE_OVERRIDES: dict[str, Any] = WILEY_SITE_RULE_OVERRIDES
 NUMBERED_SECTION_HEADING_PATTERN = re.compile(r"^\d+(?:\.\d+)*\s+\S")
 WILEY_AUTHOR_NOISE_TEXT = {
     *ATYPON_AUTHOR_NOISE_TEXT,
@@ -592,7 +575,7 @@ def extract_formula_assets(html_text: str, source_url: str) -> list[dict[str, st
     return extract_generic_formula_assets(
         html_text,
         source_url,
-        noise_profile=NOISE_PROFILE,
+        noise_profile=provider_html_rules("wiley").noise_profile,
     )
 
 

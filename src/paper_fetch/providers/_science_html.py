@@ -5,17 +5,6 @@ from __future__ import annotations
 import re
 from typing import Any, Mapping
 
-from ..provider_catalog import (
-    provider_base_domains,
-    provider_crossref_pdf_position,
-    provider_domains,
-    provider_html_path_templates,
-    provider_pdf_path_templates,
-)
-from ..extraction.html.provider_rules import (
-    SCIENCE_SITE_RULE_OVERRIDES,
-    provider_html_rules,
-)
 from ..quality.html_profiles import (
     science_blocking_fallback_signals,
     science_positive_signals,
@@ -33,13 +22,6 @@ from ._html_authors import (
 from ._html_references import extract_numbered_references_from_html
 from ._script_json import extract_assignment_json
 
-HOSTS: tuple[str, ...] = provider_domains("science")
-BASE_HOSTS: tuple[str, ...] = provider_base_domains("science")
-HTML_PATH_TEMPLATES: tuple[str, ...] = provider_html_path_templates("science")
-PDF_PATH_TEMPLATES: tuple[str, ...] = provider_pdf_path_templates("science")
-CROSSREF_PDF_POSITION = provider_crossref_pdf_position("science")
-NOISE_PROFILE = provider_html_rules("science").noise_profile
-SITE_RULE_OVERRIDES: dict[str, Any] = SCIENCE_SITE_RULE_OVERRIDES
 SCIENCE_AUTHOR_COUNT_PATTERN = ATYPON_AUTHOR_COUNT_PATTERN
 SCIENCE_STRUCTURED_SUBHEADING_PATTERN = re.compile(
     r"(?m)^###\s+([A-Z][A-Z0-9 /-]*)\s*$"
