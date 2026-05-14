@@ -10,6 +10,7 @@ import re
 from typing import Any, Mapping
 
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS
+from ..metadata.types import MetadataMergeRule, merge_metadata_layers
 from ..models import article_from_markdown, metadata_only_article
 from ..publisher_identity import DOI_PATTERN, normalize_doi
 from ..reason_codes import PDF_FALLBACK
@@ -159,34 +160,60 @@ _AUTHOR_PIPELINE = AuthorExtractionPipeline(
     AuthorStep("authorsList", _extract_ieee_authors_list),
 )
 
+_IEEE_METADATA_SCALAR_KEYS = (
+    "provider", "official_provider", "publisher", "doi", "title", "abstract",
+    "journal_title", "published", "landing_page_url", "article_number",
+    "articleNumber", "articleId", "isDynamicHtml", "html_flag", "ml_html_flag",
+    "pdfUrl", "pdfPath", "raw_ieee_metadata",
+)
+_IEEE_METADATA_TEXT_KEYS = (
+    "publisher", "title", "abstract", "journal_title", "published",
+    "landing_page_url", "article_number", "articleNumber", "articleId",
+    "pdfUrl", "pdfPath",
+)
+_IEEE_METADATA_MERGE_RULE = MetadataMergeRule(
+    overwrite=_IEEE_METADATA_SCALAR_KEYS,
+    concat_unique=("keywords",),
+)
+_IEEE_AUTHOR_MERGE_RULE = MetadataMergeRule(concat_unique=("authors",))
+_IEEE_KEYWORD_MERGE_RULE = MetadataMergeRule(concat_unique=("keywords",))
 
-def _extend_unique_text(target: list[str], values: list[str]) -> None:
-    seen = {item.lower() for item in target}
-    for value in values:
-        text = normalize_text(str(value or ""))
-        if not text:
-            continue
-        key = text.lower()
-        if key not in seen:
-            seen.add(key)
-            target.append(text)
+
+def _merge_ieee_keywords(*values: list[str]) -> list[str]:
+    merged = merge_metadata_layers(
+        [{"keywords": value} for value in values if value],
+        rule=_IEEE_KEYWORD_MERGE_RULE,
+    )
+    return list(merged.get("keywords") or [])
+
+
+def _keyword_text_parts(value: str) -> list[str]:
+    return [part.strip() for part in re.split(r"[;,]", value)]
+
+
+def _keyword_values(value: Any) -> list[str]:
+    if isinstance(value, str):
+        return _keyword_text_parts(value)
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    return [str(value)] if value not in (None, "") else []
 
 
 def _keywords_from_ieee_metadata(metadata: Mapping[str, Any]) -> list[str]:
-    keywords: list[str] = []
+    keyword_groups: list[list[str]] = []
     raw_keywords = metadata.get("keywords")
     if isinstance(raw_keywords, list):
         for item in raw_keywords:
             if isinstance(item, Mapping):
                 values = item.get("kwd") or item.get("keywords") or item.get("terms") or item.get("value")
                 if isinstance(values, str):
-                    _extend_unique_text(keywords, [values])
+                    keyword_groups.append([values])
                 elif isinstance(values, list):
-                    _extend_unique_text(keywords, [str(value) for value in values])
+                    keyword_groups.append([str(value) for value in values])
                 continue
-            _extend_unique_text(keywords, [str(item)])
+            keyword_groups.append([str(item)])
     elif isinstance(raw_keywords, str):
-        _extend_unique_text(keywords, [part.strip() for part in re.split(r"[;,]", raw_keywords)])
+        keyword_groups.append(_keyword_text_parts(raw_keywords))
     for key in (
         "authorKeywords",
         "author_terms",
@@ -199,10 +226,10 @@ def _keywords_from_ieee_metadata(metadata: Mapping[str, Any]) -> list[str]:
     ):
         value = metadata.get(key)
         if isinstance(value, list):
-            _extend_unique_text(keywords, [str(item) for item in value])
+            keyword_groups.append([str(item) for item in value])
         elif isinstance(value, str):
-            _extend_unique_text(keywords, [part.strip() for part in re.split(r"[;,]", value)])
-    return keywords
+            keyword_groups.append(_keyword_text_parts(value))
+    return _merge_ieee_keywords(*keyword_groups)
 
 
 def _parse_landing_metadata(html_text: str) -> dict[str, Any]:
@@ -283,46 +310,52 @@ def _references_from_ieee_reference_payload(payload: Mapping[str, Any]) -> list[
 
 
 def _merge_ieee_metadata(base_metadata: Mapping[str, Any], landing_metadata: Mapping[str, Any], response_url: str) -> dict[str, Any]:
-    merged = dict(base_metadata or {})
+    base_layer = dict(base_metadata or {})
+    base_layer["journal_title"] = base_layer.get("journal_title") or base_layer.get("journal")
+    base_layer["keywords"] = _keyword_values(base_layer.get("keywords"))
+    for key in _IEEE_METADATA_TEXT_KEYS:
+        if key in base_layer:
+            base_layer[key] = normalize_text(str(base_layer.get(key) or "")) or None
+    if base_layer.get("doi"):
+        base_layer["doi"] = normalize_doi(str(base_layer.get("doi") or "")) or None
+    base_layer.pop("authors", None)
     title = (
         strip_html_tags(_first_metadata_text(landing_metadata, "formulaStrippedArticleTitle", "displayDocTitle", "title"))
-        or normalize_text(str(merged.get("title") or ""))
+        or normalize_text(str(base_layer.get("title") or ""))
     )
-    abstract = strip_html_tags(_first_metadata_text(landing_metadata, "abstract")) or normalize_text(str(merged.get("abstract") or ""))
-    authors = _AUTHOR_PIPELINE(_author_pipeline_json(landing_metadata))
-    base_authors = [normalize_text(str(item)) for item in (merged.get("authors") or []) if normalize_text(str(item))]
-    keywords: list[str] = []
-    base_keywords = merged.get("keywords") or []
-    if isinstance(base_keywords, str):
-        _extend_unique_text(keywords, [part.strip() for part in re.split(r"[;,]", base_keywords)])
-    elif isinstance(base_keywords, list):
-        _extend_unique_text(keywords, [str(item) for item in base_keywords])
-    _extend_unique_text(keywords, _keywords_from_ieee_metadata(landing_metadata))
+    abstract = strip_html_tags(_first_metadata_text(landing_metadata, "abstract")) or normalize_text(str(base_layer.get("abstract") or ""))
+    landing_authors = _AUTHOR_PIPELINE(_author_pipeline_json(landing_metadata))
+    base_authors = [normalize_text(str(item)) for item in (base_metadata or {}).get("authors") or [] if normalize_text(str(item))]
     article_number = _article_number_from_metadata(landing_metadata) or _article_number_from_url(response_url)
-    doi = normalize_doi(_first_metadata_text(landing_metadata, "doi") or str(merged.get("doi") or ""))
-    merged.update(
-        {
-            "provider": "ieee",
-            "official_provider": True,
-            "publisher": merged.get("publisher") or "IEEE",
-            "doi": doi or merged.get("doi"),
-            "title": title or None,
-            "abstract": abstract or None,
-            "journal_title": _first_metadata_text(landing_metadata, "publicationTitle") or merged.get("journal_title") or merged.get("journal"),
-            "published": _first_metadata_text(landing_metadata, "publicationDate", "onlineDate", "publicationYear") or merged.get("published"),
-            "keywords": keywords,
-            "landing_page_url": response_url,
-            "authors": dedupe_authors([*authors, *base_authors]),
-            "article_number": article_number or None,
-            "articleNumber": article_number or None,
-            "articleId": _first_metadata_text(landing_metadata, "articleId") or article_number or None,
-            "isDynamicHtml": _boolish(landing_metadata.get("isDynamicHtml")),
-            "html_flag": _boolish(landing_metadata.get("html_flag")),
-            "ml_html_flag": _boolish(landing_metadata.get("ml_html_flag")),
-            "pdfUrl": _first_metadata_text(landing_metadata, "pdfUrl") or None,
-            "pdfPath": _first_metadata_text(landing_metadata, "pdfPath") or None,
-            "raw_ieee_metadata": dict(landing_metadata),
-        }
+    landing_layer = {
+        "provider": "ieee",
+        "official_provider": True,
+        "doi": normalize_doi(_first_metadata_text(landing_metadata, "doi")) or None,
+        "title": title or None,
+        "abstract": abstract or None,
+        "journal_title": _first_metadata_text(landing_metadata, "publicationTitle"),
+        "published": _first_metadata_text(landing_metadata, "publicationDate", "onlineDate", "publicationYear"),
+        "keywords": _keywords_from_ieee_metadata(landing_metadata),
+        "landing_page_url": response_url,
+        "article_number": article_number or None,
+        "articleNumber": article_number or None,
+        "articleId": _first_metadata_text(landing_metadata, "articleId") or article_number or None,
+        "isDynamicHtml": _boolish(landing_metadata.get("isDynamicHtml")),
+        "html_flag": _boolish(landing_metadata.get("html_flag")),
+        "ml_html_flag": _boolish(landing_metadata.get("ml_html_flag")),
+        "pdfUrl": _first_metadata_text(landing_metadata, "pdfUrl") or None,
+        "pdfPath": _first_metadata_text(landing_metadata, "pdfPath") or None,
+        "raw_ieee_metadata": dict(landing_metadata),
+    }
+    merged = merge_metadata_layers([base_layer, landing_layer], rule=_IEEE_METADATA_MERGE_RULE)
+    authors_layer = merge_metadata_layers(
+        [{"authors": landing_authors}, {"authors": base_authors}],
+        rule=_IEEE_AUTHOR_MERGE_RULE,
+    )
+    merged["publisher"] = merged.get("publisher") or "IEEE"
+    merged["keywords"] = list(merged.get("keywords") or [])
+    merged["authors"] = dedupe_authors(
+        [str(item) for item in (authors_layer.get("authors") or [])]
     )
     return merged
 

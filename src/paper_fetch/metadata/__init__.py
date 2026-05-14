@@ -7,8 +7,10 @@ from .types import (
     FulltextLink,
     HtmlLookupHints,
     HtmlMetadata,
+    MetadataMergeRule,
     ProviderMetadata,
     ReferenceMetadata,
+    merge_metadata_layers,
 )
 
 
@@ -25,6 +27,8 @@ __all__ = [
     "FulltextLink",
     "HtmlLookupHints",
     "HtmlMetadata",
+    "MetadataMergeRule",
     "ProviderMetadata",
     "ReferenceMetadata",
+    "merge_metadata_layers",
 ]

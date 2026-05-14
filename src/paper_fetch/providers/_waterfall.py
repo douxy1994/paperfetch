@@ -60,7 +60,7 @@ class ProviderWaterfallStep:
     include_failure_trail_on_success: bool = True
 
 
-def _extend_unique(target: list[str], values: list[str] | tuple[str, ...]) -> None:
+def _append_unique_text(target: list[str], values: list[str] | tuple[str, ...]) -> None:
     for value in values:
         normalized = str(value or "").strip()
         if normalized and normalized not in target:
@@ -135,8 +135,8 @@ def run_provider_waterfall(
     final_failure_factory: FinalFailureFactory | None = None,
 ) -> RawFulltextPayload:
     state = ProviderWaterfallState()
-    _extend_unique(state.warnings, list(initial_warnings or []))
-    _extend_unique(state.initial_source_trail, list(initial_source_trail or []))
+    _append_unique_text(state.warnings, list(initial_warnings or []))
+    _append_unique_text(state.initial_source_trail, list(initial_source_trail or []))
 
     for step in steps:
         try:
@@ -148,8 +148,8 @@ def run_provider_waterfall(
             warning = _resolve_failure_warning(step.failure_warning, failure, state)
             failure = _failure_with_warning(failure, warning)
             state.failures.append((step.label, failure))
-            _extend_unique(state.warnings, failure.warnings)
-            _extend_unique(state.failure_source_trail, failure.source_trail)
+            _append_unique_text(state.warnings, failure.warnings)
+            _append_unique_text(state.failure_source_trail, failure.source_trail)
             continue
 
         payload_warnings = [*state.warnings, *payload.warnings]
@@ -160,12 +160,12 @@ def run_provider_waterfall(
         if step.success_markers:
             source_trail = list(state.initial_source_trail)
             if step.include_failure_trail_on_success:
-                _extend_unique(source_trail, state.failure_source_trail)
-            _extend_unique(source_trail, list(step.success_markers))
+                _append_unique_text(source_trail, state.failure_source_trail)
+            _append_unique_text(source_trail, list(step.success_markers))
             payload.trace = trace_from_markers(source_trail)
         elif state.source_trail:
             source_trail = list(state.source_trail)
-            _extend_unique(source_trail, source_trail_from_trace(payload.trace))
+            _append_unique_text(source_trail, source_trail_from_trace(payload.trace))
             payload.trace = trace_from_markers(source_trail)
         return payload
 

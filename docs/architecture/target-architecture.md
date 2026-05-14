@@ -344,6 +344,8 @@ workflow 会尽可能拿到两类元数据：
 - 更稳定的 provider 选择
 - metadata-only 结果的最终内容
 
+provider 内部的多层 metadata enrichment 使用 `paper_fetch.metadata.types.MetadataMergeRule` / `merge_metadata_layers()` 描述字段优先级：IEEE landing、arXiv API/HTML 与 Springer HTML 只在 provider adapter 里做 publisher-specific 解析和规范化，通用的 scalar/list 合并和文本列表去重由 typed merge helper 统一承载，provider-specific 的 DOI 和 author 规范化在 adapter 边界完成。
+
 ### 4. provider fulltext
 
 如果选中了 provider，workflow.fulltext 会先尝试 provider 主路径。

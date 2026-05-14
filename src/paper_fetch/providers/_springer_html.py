@@ -22,9 +22,6 @@ from ..extraction.html.assets import (
     looks_like_full_size_asset_url,
 )
 from ..extraction.html._metadata import (
-    merge_html_metadata as merge_generic_html_metadata,
-)
-from ..extraction.html._metadata import (
     parse_html_metadata as parse_generic_html_metadata,
 )
 from ..extraction.html._runtime import (
@@ -47,9 +44,10 @@ from ..extraction.html.semantics import (
 from ..extraction.html.ui_tokens import (
     SPRINGER_FULL_SIZE_IMAGE_LABEL,
     SPRINGER_NATURE_SOURCE_DATA_LABEL,
-    SPRINGER_POWERPOINT_SLIDE_LABEL,
     SPRINGER_PREVIEW_PHRASE,
 )
+from ..metadata.types import MetadataMergeRule, merge_metadata_layers
+from ..publisher_identity import normalize_doi
 from ..utils import dedupe_authors, normalize_text
 from ._html_asset_engine import (
     HtmlAssetExtractionPolicy,
@@ -231,6 +229,30 @@ _AUTHOR_PIPELINE = AuthorExtractionPipeline(
     AuthorStep("jsonld", _extract_jsonld_authors),
     AuthorStep("dom", _extract_dom_authors),
 )
+_SPRINGER_BASE_FIRST_SCALAR_KEYS = frozenset(
+    {
+        "title",
+        "journal_title",
+        "published",
+        "landing_page_url",
+        "doi",
+        "article_type",
+        "citation_fulltext_html_url",
+        "citation_abstract_html_url",
+    }
+)
+_SPRINGER_HTML_METADATA_MERGE_RULE = MetadataMergeRule(
+    fill_empty=tuple(_SPRINGER_BASE_FIRST_SCALAR_KEYS),
+    overwrite=(
+        "abstract",
+        "raw_meta",
+        "lookup_title",
+        "lookup_redirect_url",
+        "identifier_value",
+    ),
+    concat_unique=("authors", "keywords"),
+    take_first_non_empty=("references",),
+)
 
 
 def extract_authors(html_text: str) -> list[str]:
@@ -253,7 +275,32 @@ def parse_html_metadata(html_text: str, source_url: str):
 
 
 def merge_html_metadata(base_metadata, html_metadata):
-    return merge_generic_html_metadata(base_metadata, html_metadata)
+    base = dict(base_metadata or {})
+    html_metadata = dict(html_metadata or {})
+    merged = merge_metadata_layers(
+        [base, html_metadata],
+        rule=_SPRINGER_HTML_METADATA_MERGE_RULE,
+    )
+    for key in _SPRINGER_BASE_FIRST_SCALAR_KEYS:
+        merged[key] = normalize_text(str(merged.get(key) or "")) or None
+    merged["abstract"] = normalize_text(str(merged.get("abstract") or "")) or None
+    merged["authors"] = dedupe_authors(
+        [str(item) for item in (merged.get("authors") or [])]
+    )
+    merged["keywords"] = list(merged.get("keywords") or [])
+    merged["license_urls"] = list(base.get("license_urls") or [])
+    merged["fulltext_links"] = list(base.get("fulltext_links") or [])
+    if "references" in base:
+        merged["references"] = list(base.get("references") or [])
+    else:
+        merged.pop("references", None)
+    merged["raw_meta"] = html_metadata.get("raw_meta", {})
+    for key in ("lookup_title", "lookup_redirect_url", "identifier_value"):
+        if html_metadata.get(key):
+            merged[key] = html_metadata.get(key)
+    if not merged.get("doi"):
+        merged["doi"] = normalize_doi(str(html_metadata.get("doi") or ""))
+    return merged
 
 
 def _clean_springer_preview_fragment(text: str) -> str:

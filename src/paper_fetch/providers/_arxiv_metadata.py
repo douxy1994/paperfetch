@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Any, Iterable, Mapping, Sequence
+from typing import Any, Mapping, Sequence
 import re
 
 from ..arxiv_id import (
@@ -17,7 +17,7 @@ from ..arxiv_id import (
 )
 from ..extraction.html.semantics import SECTION_HEADING_PATTERN
 from ..http import PDF_MIME_TYPE
-from ..metadata.types import ProviderMetadata
+from ..metadata.types import MetadataMergeRule, ProviderMetadata, merge_metadata_layers
 from ..provider_catalog import register_metadata_probe_short_circuit
 from ..reason_codes import NO_RESULT, NOT_SUPPORTED
 from ..utils import dedupe_authors, normalize_text
@@ -36,6 +36,52 @@ _ARXIV_WATERMARK_PATTERN = re.compile(
     r"arxiv:\s*(?P<arxiv_id>[^\s\[]+)(?:\s+\[(?P<category>[^\]]+)\])?(?:\s+(?P<date>\d{1,2}\s+[A-Za-z]{3}\s+\d{4}))?",
     flags=re.IGNORECASE,
 )
+_ARXIV_LIST_KEYS = frozenset(
+    {
+        "authors",
+        "keywords",
+        "license_urls",
+        "fulltext_links",
+        "categories",
+    }
+)
+_ARXIV_SKIP_KEYS = frozenset({"source_url", "references"})
+_ARXIV_SCALAR_KEYS = (
+    "provider",
+    "official_provider",
+    "doi",
+    "external_doi",
+    "title",
+    "abstract",
+    "published",
+    "updated",
+    "journal_title",
+    "publisher",
+    "landing_page_url",
+    "arxiv_id",
+    "primary_category",
+    "pdf_url",
+    "html_url",
+)
+_ARXIV_APPEND_MERGE_RULE = MetadataMergeRule(
+    overwrite=_ARXIV_SCALAR_KEYS,
+    concat_unique=tuple(_ARXIV_LIST_KEYS),
+)
+_ARXIV_API_MERGE_RULE = MetadataMergeRule(
+    overwrite=(*_ARXIV_SCALAR_KEYS, *_ARXIV_LIST_KEYS),
+)
+_ARXIV_TEXT_LIST_RULE = MetadataMergeRule(concat_unique=("values",))
+
+
+def _mergeable_arxiv_layer(layer: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(layer, Mapping):
+        return {}
+    return {
+        key: value
+        for key, value in layer.items()
+        if key not in _ARXIV_SKIP_KEYS and value not in (None, "", [])
+    }
+
 
 def _first_header_value(
     headers: Mapping[str, Any] | None, key: str, default: str = ""
@@ -47,13 +93,16 @@ def _first_header_value(
     return default
 
 
-def _dedupe_strings(values: Iterable[str | None]) -> list[str]:
-    result: list[str] = []
-    for raw_value in values:
-        value = normalize_text(raw_value)
-        if value and value not in result:
-            result.append(value)
-    return result
+def _dedupe_metadata_text_values(values: Sequence[Any]) -> list[str]:
+    merged = merge_metadata_layers(
+        [{"values": list(values)}],
+        rule=_ARXIV_TEXT_LIST_RULE,
+    )
+    return list(merged.get("values") or [])
+
+
+def _dedupe_strings(values: Sequence[Any]) -> list[str]:
+    return _dedupe_metadata_text_values(values)
 
 
 def _datetime_to_date(value: Any) -> str | None:
@@ -380,35 +429,17 @@ def _merge_arxiv_metadata_layers(
     api_metadata: Mapping[str, Any] | None = None,
     references: Sequence[Mapping[str, Any]] | None = None,
 ) -> ProviderMetadata:
-    merged: dict[str, Any] = dict(derived_metadata or {})
-    merged.pop("source_url", None)
-
-    def apply_layer(layer: Mapping[str, Any] | None, *, replace_lists: bool) -> None:
-        if not isinstance(layer, Mapping):
-            return
-        for key, value in layer.items():
-            if key == "source_url" or value in (None, "", []):
-                continue
-            if key in {
-                "authors",
-                "keywords",
-                "license_urls",
-                "fulltext_links",
-                "categories",
-            }:
-                if replace_lists or not merged.get(key):
-                    merged[key] = (
-                        list(value or []) if isinstance(value, list) else [value]
-                    )
-                else:
-                    merged[key] = list(merged.get(key) or []) + list(value or [])
-                continue
-            if key == "references":
-                continue
-            merged[key] = value
-
-    apply_layer(html_metadata, replace_lists=False)
-    apply_layer(api_metadata, replace_lists=True)
+    merged = merge_metadata_layers(
+        [
+            _mergeable_arxiv_layer(derived_metadata),
+            _mergeable_arxiv_layer(html_metadata),
+        ],
+        rule=_ARXIV_APPEND_MERGE_RULE,
+    )
+    merged = merge_metadata_layers(
+        [merged, _mergeable_arxiv_layer(api_metadata)],
+        rule=_ARXIV_API_MERGE_RULE,
+    )
 
     arxiv_id = normalize_arxiv_id(str(merged.get("arxiv_id") or ""))
     if arxiv_id:
@@ -428,11 +459,11 @@ def _merge_arxiv_metadata_layers(
     merged["authors"] = dedupe_authors(
         [str(item) for item in (merged.get("authors") or [])]
     )
-    merged["keywords"] = _dedupe_strings(
-        str(item) for item in (merged.get("keywords") or [])
+    merged["keywords"] = _dedupe_metadata_text_values(
+        list(merged.get("keywords") or [])
     )
-    merged["license_urls"] = _dedupe_strings(
-        str(item) for item in (merged.get("license_urls") or [])
+    merged["license_urls"] = _dedupe_metadata_text_values(
+        list(merged.get("license_urls") or [])
     )
     if references:
         merged["references"] = [dict(item) for item in references]
