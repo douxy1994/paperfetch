@@ -18,7 +18,10 @@
   - commit: bcd8c0f
   - 摘要: 新增 `ProviderBundle` 注册表，将 provider catalog、HTML rules、source map、asset retry 等 provider-owned 配置收敛到各 provider entry module，`provider_catalog.py` / `provider_rules.py` 改为按 bundle discovery 懒加载。
   - 验收: S3 grep 为空，provider bundle 注册文件数 10，`provider_catalog.py` 280 行；`test_provider_catalog.py` / `test_provider_bundle_registration.py` 38 passed + 16 subtests；全量 unit 1156 passed + 264 subtests；full golden corpus 174 passed。
-- [ ] S4: onboarding 完整性 lint
+- [x] S4: onboarding 完整性 lint
+  - commit: 34d44aa
+  - 摘要: `ProviderSpec` 增加 `html_capable`，`AvailabilityPolicy` 增加显式 `no_signals` opt-out，新增 bundle 完整性和中心 provider 分支 lint。
+  - 验收: S4 新增测试 9 passed；`validate_extraction_rules.py` 通过；全量 unit 1166 passed + 264 subtests；S3 catalog/rules grep 仍为空且 `provider_catalog.py` 保持 280 行。
 - [ ] S5: Scaffold 脚本
 - [ ] S6: 文档对齐 + checklist 化
 - [ ] S7: Fixture 录制 + expected.json 工具
