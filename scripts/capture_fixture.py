@@ -8,8 +8,21 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from paper_fetch.http import HttpTransport
-from paper_fetch.publisher_identity import infer_provider_from_doi, normalize_doi
+import yaml
+
+REPO_ROOT = Path(__file__).resolve().parents[1]
+SRC_PATH = REPO_ROOT / "src"
+if SRC_PATH.is_dir() and str(SRC_PATH) not in sys.path:
+    sys.path.insert(0, str(SRC_PATH))
+
+from paper_fetch.extraction.html.signals import CHALLENGE_PATTERNS, contains_access_gate_text, summarize_html  # noqa: E402
+from paper_fetch.http import (  # noqa: E402
+    HttpTransport,
+    RequestFailure,
+    build_network_error_detail,
+    classify_network_error,
+)  # noqa: E402
+from paper_fetch.publisher_identity import infer_provider_from_doi, normalize_doi  # noqa: E402
 
 
 GOLDEN_PURPOSES = {
@@ -19,18 +32,95 @@ GOLDEN_PURPOSES = {
     "figure",
     "supplementary",
     "references",
-    "pdf-fallback",
+    "pdf_fallback",
 }
-BLOCK_PURPOSES = {"abstract-only", "access-gate", "empty-shell"}
+BLOCK_PURPOSES = {"abstract_only", "access_gate", "empty_shell"}
 PURPOSES = sorted(GOLDEN_PURPOSES | BLOCK_PURPOSES)
+PURPOSE_ALIASES = {
+    "abstract-only": "abstract_only",
+    "access-gate": "access_gate",
+    "empty-shell": "empty_shell",
+    "pdf-fallback": "pdf_fallback",
+}
+CLI_PURPOSES = sorted(set(PURPOSES) | set(PURPOSE_ALIASES))
+RETRY_VIA_ERROR_CODES = {"HTTP_FORBIDDEN", "HTTP_RATE_LIMITED", "CHALLENGE_DETECTED"}
+
+
+class ManifestContext:
+    def __init__(
+        self,
+        *,
+        path: Path,
+        data: dict[str, Any],
+        provider: str | None,
+        routing: dict[str, Any],
+        sample: dict[str, Any] | None,
+        requires_flaresolverr: bool,
+    ) -> None:
+        self.path = path
+        self.data = data
+        self.provider = provider
+        self.routing = routing
+        self.sample = sample
+        self.requires_flaresolverr = requires_flaresolverr
+
+
+class CaptureFixtureError(Exception):
+    def __init__(
+        self,
+        code: str,
+        message: str,
+        *,
+        retryable: bool,
+        status_code: int | None = None,
+        route: str | None = None,
+        previous_code: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retryable = retryable
+        self.status_code = status_code
+        self.route = route
+        self.previous_code = previous_code
+
+    def to_payload(
+        self,
+        *,
+        provider: str | None = None,
+        manifest: str | None = None,
+        purpose: str | None = None,
+    ) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "code": self.code,
+            "message": self.message,
+            "retryable": self.retryable,
+        }
+        if provider:
+            payload["provider"] = provider
+        if manifest:
+            payload["manifest"] = manifest
+        if purpose:
+            payload["purpose"] = purpose
+        if self.status_code is not None:
+            payload["status_code"] = self.status_code
+        if self.route:
+            payload["route"] = self.route
+        if self.previous_code:
+            payload["previous_code"] = self.previous_code
+        return payload
 
 
 def _repo_root() -> Path:
-    return Path(__file__).resolve().parents[1]
+    return REPO_ROOT
 
 
 def doi_slug(doi: str) -> str:
     return normalize_doi(doi).replace("/", "_")
+
+
+def normalize_purpose(value: str) -> str:
+    return PURPOSE_ALIASES.get(value, value)
 
 
 def _load_manifest(path: Path) -> dict[str, Any]:
@@ -43,6 +133,50 @@ def _load_manifest(path: Path) -> dict[str, Any]:
     if not isinstance(samples, dict):
         raise ValueError(f"manifest samples must be an object: {path}")
     return manifest
+
+
+def _load_provider_manifest(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        raise CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            f"provider manifest does not exist: {path}",
+            retryable=False,
+)
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            f"provider manifest root must be an object: {path}",
+            retryable=False,
+        )
+    return data
+
+
+def _manifest_context(path_value: str | None, purpose: str | None) -> ManifestContext | None:
+    if not path_value:
+        return None
+    path = Path(path_value)
+    data = _load_provider_manifest(path)
+    fixtures = data.get("fixtures") if isinstance(data.get("fixtures"), dict) else {}
+    doi_samples = fixtures.get("doi_samples") if isinstance(fixtures.get("doi_samples"), dict) else {}
+    sample = doi_samples.get(purpose) if purpose else None
+    if purpose and sample is not None and not isinstance(sample, dict):
+        raise CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            f"fixtures.doi_samples.{purpose} must be an object",
+            retryable=False,
+        )
+    routing = data.get("routing") if isinstance(data.get("routing"), dict) else {}
+    probe = data.get("probe") if isinstance(data.get("probe"), dict) else {}
+    provider = data.get("name")
+    return ManifestContext(
+        path=path,
+        data=data,
+        provider=str(provider) if provider else None,
+        routing=dict(routing),
+        sample=sample if isinstance(sample, dict) else None,
+        requires_flaresolverr=bool(probe.get("requires_flaresolverr")),
+    )
 
 
 def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
@@ -66,7 +200,7 @@ def _body_bytes(response: dict[str, Any]) -> bytes:
 
 def _extension_for(content_type: str, purpose: str) -> str:
     normalized = content_type.lower()
-    if purpose == "pdf-fallback" or "application/pdf" in normalized:
+    if purpose == "pdf_fallback" or "application/pdf" in normalized:
         return "pdf"
     if "xml" in normalized:
         return "xml"
@@ -97,7 +231,7 @@ def _manifest_entry(
     content_type: str,
 ) -> dict[str, Any]:
     family = _fixture_family(purpose)
-    route_kind = "pdf_fallback" if purpose == "pdf-fallback" else ("block" if family == "block" else _extension_for(content_type, purpose))
+    route_kind = "pdf_fallback" if purpose == "pdf_fallback" else ("block" if family == "block" else _extension_for(content_type, purpose))
     asset_name = fixture_path.name
     return {
         "doi": doi,
@@ -127,46 +261,301 @@ def _capture_http(doi: str) -> dict[str, Any]:
     )
 
 
+def _is_pdf_response(content_type: str, body: bytes) -> bool:
+    return "application/pdf" in content_type.lower() or body.lstrip().startswith(b"%PDF")
+
+
+def _is_html_response(content_type: str, body: bytes) -> bool:
+    return (
+        "html" in content_type.lower()
+        or body.lstrip().lower().startswith(b"<!doctype html")
+        or b"<html" in body[:512].lower()
+    )
+
+
+def _decode_body(body: bytes) -> str:
+    return body.decode("utf-8", errors="replace")
+
+
+def _contains_challenge(text: str) -> bool:
+    lowered = text.lower()
+    return any(pattern in lowered for pattern in CHALLENGE_PATTERNS) or "captcha" in lowered
+
+
+def _looks_empty_article_shell(content_type: str, body: bytes) -> bool:
+    if not _is_html_response(content_type, body):
+        return False
+    if not body.strip():
+        return True
+    html = _decode_body(body)
+    text = summarize_html(html, limit=200).strip()
+    return not text and "<html" in html.lower()
+
+
+def _validate_capture_response(
+    *,
+    response: dict[str, Any],
+    purpose: str,
+    route: str,
+) -> tuple[str, bytes, str]:
+    content_type = _content_type(response)
+    body = _body_bytes(response)
+    final_url = str(response.get("url") or "")
+    status_code = int(response.get("status_code") or 200)
+    body_text = _decode_body(body) if _is_html_response(content_type, body) else ""
+
+    if status_code == 403:
+        raise CaptureFixtureError(
+            "HTTP_FORBIDDEN",
+            "publisher returned HTTP 403 while capturing fixture",
+            retryable=True,
+            status_code=status_code,
+            route=route,
+        )
+    if status_code == 429:
+        raise CaptureFixtureError(
+            "HTTP_RATE_LIMITED",
+            "publisher returned HTTP 429 while capturing fixture",
+            retryable=True,
+            status_code=status_code,
+            route=route,
+        )
+    if status_code >= 500:
+        raise CaptureFixtureError(
+            "NETWORK_TRANSIENT",
+            f"publisher returned transient HTTP {status_code} while capturing fixture",
+            retryable=True,
+            status_code=status_code,
+            route=route,
+        )
+    if _is_html_response(content_type, body) and _contains_challenge(body_text):
+        raise CaptureFixtureError(
+            "CHALLENGE_DETECTED",
+            "publisher returned a challenge or CAPTCHA page while capturing fixture",
+            retryable=True,
+            status_code=status_code,
+            route=route,
+        )
+    if purpose == "pdf_fallback" and not _is_pdf_response(content_type, body):
+        raise CaptureFixtureError(
+            "NON_PDF_FALLBACK_CONTENT",
+            "pdf_fallback sample did not return PDF content",
+            retryable=False,
+            status_code=status_code,
+            route=route,
+        )
+    if purpose != "access_gate" and _is_html_response(content_type, body) and contains_access_gate_text(body_text):
+        raise CaptureFixtureError(
+            "ACCESS_GATE_CAPTURED",
+            "captured HTML is an access gate instead of the requested fixture purpose",
+            retryable=False,
+            status_code=status_code,
+            route=route,
+        )
+    if purpose != "empty_shell" and _looks_empty_article_shell(content_type, body):
+        raise CaptureFixtureError(
+            "EMPTY_ARTICLE_SHELL",
+            "captured HTML has no article text",
+            retryable=False,
+            status_code=status_code,
+            route=route,
+        )
+    return content_type, body, final_url
+
+
+def _map_request_failure(exc: RequestFailure, *, route: str) -> CaptureFixtureError:
+    status_code = exc.status_code
+    if status_code == 403:
+        return CaptureFixtureError(
+            "HTTP_FORBIDDEN",
+            str(exc),
+            retryable=True,
+            status_code=status_code,
+            route=route,
+        )
+    if status_code == 429:
+        return CaptureFixtureError(
+            "HTTP_RATE_LIMITED",
+            str(exc),
+            retryable=True,
+            status_code=status_code,
+            route=route,
+        )
+    if status_code is not None and status_code >= 500:
+        return CaptureFixtureError(
+            "NETWORK_TRANSIENT",
+            str(exc),
+            retryable=True,
+            status_code=status_code,
+            route=route,
+        )
+    if exc.body:
+        content_type = _content_type({"headers": exc.headers})
+        body_text = _decode_body(exc.body) if _is_html_response(content_type, exc.body) else ""
+        if _contains_challenge(body_text):
+            return CaptureFixtureError(
+                "CHALLENGE_DETECTED",
+                str(exc),
+                retryable=True,
+                status_code=status_code,
+                route=route,
+            )
+    return CaptureFixtureError(
+        "NETWORK_TRANSIENT",
+        str(exc),
+        retryable=True,
+        status_code=status_code,
+        route=route,
+    )
+
+
+def _capture_route(doi: str, *, route: str) -> dict[str, Any]:
+    if route == "http":
+        try:
+            return _capture_http(doi)
+        except RequestFailure as exc:
+            raise _map_request_failure(exc, route=route) from exc
+        except Exception as exc:
+            category = classify_network_error(exc)
+            detail = build_network_error_detail(exc)
+            message = f"network transient during fixture capture: {category.value}"
+            if detail:
+                message = f"{message}: {detail}"
+            raise CaptureFixtureError(
+                "NETWORK_TRANSIENT",
+                message,
+                retryable=True,
+                route=route,
+            ) from exc
+    if route == "playwright":
+        raise CaptureFixtureError(
+            "BROWSER_RUNTIME_REQUIRED",
+            "playwright fixture capture is not implemented in this non-interactive script yet",
+            retryable=False,
+            route=route,
+        )
+    if route == "flaresolverr":
+        raise CaptureFixtureError(
+            "FLARESOLVERR_REQUIRED",
+            "flaresolverr fixture capture requires a configured runtime and is not implemented in this script yet",
+            retryable=False,
+            route=route,
+        )
+    raise CaptureFixtureError(
+        "UNSUITABLE_DOI_SAMPLE",
+        f"unsupported fixture capture route: {route}",
+        retryable=False,
+        route=route,
+    )
+
+
+def _should_retry_via(error: CaptureFixtureError, *, retry_via: str | None, manifest: ManifestContext | None) -> bool:
+    if retry_via != "flaresolverr":
+        return False
+    if manifest and manifest.requires_flaresolverr:
+        return True
+    return error.code in RETRY_VIA_ERROR_CODES
+
+
+def _manifest_evidence(sample: dict[str, Any] | None) -> dict[str, Any]:
+    if not sample:
+        return {}
+    return {
+        "evidence_url": sample.get("evidence_url"),
+        "evidence_reason": sample.get("evidence_reason"),
+        "observed_signals": sample.get("observed_signals", []),
+        "confidence": sample.get("confidence"),
+    }
+
+
 def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.output_dir).resolve()
-    doi = normalize_doi(args.doi)
+    purpose = normalize_purpose(args.purpose)
+    manifest = _manifest_context(getattr(args, "from_manifest", None), purpose)
+    if manifest and manifest.sample is None:
+        raise CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            f"manifest does not define fixtures.doi_samples.{purpose}",
+            retryable=False,
+        )
+    sample_doi = manifest.sample.get("doi") if manifest and manifest.sample else None
+    raw_doi = args.doi or sample_doi
+    provider = args.provider or (manifest.provider if manifest else None)
+    if raw_doi is None:
+        return {
+            "status": "SKIPPED",
+            "skipped": True,
+            "purpose": purpose,
+            "provider": provider,
+            "manifest": manifest.path.as_posix() if manifest else None,
+            "reason": f"fixtures.doi_samples.{purpose}.doi is null",
+            "evidence": _manifest_evidence(manifest.sample if manifest else None),
+            "evidence_confidence": (manifest.sample or {}).get("confidence") if manifest else None,
+        }
+    doi = normalize_doi(str(raw_doi))
     slug = doi_slug(doi)
-    provider = args.provider or infer_provider_from_doi(doi) or "unknown"
+    provider = provider or infer_provider_from_doi(doi) or "unknown"
     source_url = f"https://doi.org/{doi}"
-
-    if args.via != "http":
-        raise NotImplementedError(f"--via {args.via} is not implemented yet")
 
     fetched_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if args.dry_run:
         content_type = "text/html"
         body = b""
         final_url = source_url
+        route = args.via
     else:
-        response = _capture_http(doi)
-        content_type = _content_type(response)
-        body = _body_bytes(response)
-        final_url = str(response.get("url") or source_url)
+        route = args.via
+        try:
+            response = _capture_route(doi, route=route)
+            content_type, body, final_url = _validate_capture_response(
+                response=response,
+                purpose=purpose,
+                route=route,
+            )
+            final_url = final_url or source_url
+        except CaptureFixtureError as exc:
+            retry_via = getattr(args, "retry_via", None)
+            if _should_retry_via(exc, retry_via=retry_via, manifest=manifest):
+                route = retry_via
+                try:
+                    response = _capture_route(doi, route=route)
+                    content_type, body, final_url = _validate_capture_response(
+                        response=response,
+                        purpose=purpose,
+                        route=route,
+                    )
+                    final_url = final_url or source_url
+                except CaptureFixtureError as retry_exc:
+                    if retry_exc.previous_code is None:
+                        retry_exc.previous_code = exc.code
+                    raise retry_exc from exc
+            else:
+                raise
 
-    fixture_path = _fixture_path(root, slug, args.purpose, content_type)
+    fixture_path = _fixture_path(root, slug, purpose, content_type)
     manifest_path = root / "tests" / "fixtures" / "golden_criteria" / "manifest.json"
     manifest = _load_manifest(manifest_path)
     samples = manifest["samples"]
     exists = fixture_path.exists() or slug in samples
     if exists and not args.force:
-        raise FileExistsError(f"refusing to overwrite existing fixture or manifest sample: {slug}")
+        raise CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            f"refusing to overwrite existing fixture or manifest sample: {slug}",
+            retryable=False,
+        )
 
     entry = _manifest_entry(
         doi=doi,
         provider=provider,
         source_url=final_url,
         fetched_at=fetched_at,
-        purpose=args.purpose,
+        purpose=purpose,
         fixture_path=fixture_path,
         root=root,
         content_type=content_type,
     )
     summary = {
+        "status": "OK",
         "doi": doi,
         "dry_run": bool(args.dry_run),
         "fixture_path": fixture_path.relative_to(root).as_posix(),
@@ -175,8 +564,17 @@ def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
         "content_type": content_type,
         "bytes": len(body),
         "route": entry["route_kind"],
-        "purpose": args.purpose,
+        "capture_route": route,
+        "route_kind": entry["route_kind"],
+        "purpose": purpose,
+        "provider": provider,
     }
+    if getattr(args, "from_manifest", None):
+        provider_manifest = _manifest_context(getattr(args, "from_manifest", None), purpose)
+        summary["manifest"] = str(args.from_manifest)
+        summary["manifest_sample"] = _manifest_evidence(provider_manifest.sample if provider_manifest else None)
+        summary["evidence_confidence"] = (provider_manifest.sample or {}).get("confidence") if provider_manifest else None
+        summary["provider_routing"] = provider_manifest.routing if provider_manifest else {}
 
     if args.dry_run:
         summary["would_write"] = [summary["fixture_path"], "tests/fixtures/golden_criteria/manifest.json"]
@@ -191,23 +589,57 @@ def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Capture a DOI replay fixture and register it in the golden manifest.")
-    parser.add_argument("--doi", required=True, help="DOI to capture, for example 10.1234/sample")
+    parser.add_argument("--doi", help="DOI to capture, for example 10.1234/sample")
     parser.add_argument("--provider", help="provider name; defaults to DOI/catalog inference")
     parser.add_argument("--via", choices=("http", "playwright", "flaresolverr"), default="http")
-    parser.add_argument("--purpose", choices=PURPOSES, required=True)
+    parser.add_argument("--purpose", choices=CLI_PURPOSES, required=True)
+    parser.add_argument("--from-manifest", help="ProviderManifest YAML input; reads DOI, evidence, and routing by purpose")
+    parser.add_argument("--retry-via", choices=("flaresolverr", "playwright"), help="retry failed capture through another route")
+    parser.add_argument("--fail-fast", action="store_true", help="emit JSON stderr and exit non-zero on the first failure")
     parser.add_argument("--dry-run", action="store_true", help="print planned writes without fetching or writing")
     parser.add_argument("--output-dir", default=_repo_root(), help="repo root to write into; defaults to this checkout")
     parser.add_argument("--force", action="store_true", help="overwrite existing fixture and manifest sample")
     return parser
 
 
+def _error_context(args: argparse.Namespace) -> dict[str, str | None]:
+    purpose = normalize_purpose(args.purpose) if args.purpose else None
+    provider = args.provider
+    if getattr(args, "from_manifest", None):
+        try:
+            manifest = _manifest_context(args.from_manifest, purpose)
+        except CaptureFixtureError:
+            manifest = None
+        if manifest and manifest.provider:
+            provider = provider or manifest.provider
+    return {
+        "provider": provider,
+        "manifest": getattr(args, "from_manifest", None),
+        "purpose": purpose,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
+    if not args.doi and not args.from_manifest:
+        error = CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            "--doi is required unless --from-manifest is provided",
+            retryable=False,
+        )
+        print(json.dumps(error.to_payload(purpose=normalize_purpose(args.purpose)), sort_keys=True), file=sys.stderr)
+        return 1
     try:
         summary = capture_fixture(args)
+    except CaptureFixtureError as exc:
+        context = _error_context(args)
+        print(json.dumps(exc.to_payload(**context), sort_keys=True), file=sys.stderr)
+        return 1
     except Exception as exc:
-        print(str(exc), file=sys.stderr)
+        context = _error_context(args)
+        error = CaptureFixtureError("UNSUITABLE_DOI_SAMPLE", str(exc), retryable=False)
+        print(json.dumps(error.to_payload(**context), sort_keys=True), file=sys.stderr)
         return 1
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
