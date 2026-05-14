@@ -8,12 +8,12 @@ from typing import Any, Callable, Mapping
 
 from ..common_patterns import HEADING_TAG_PATTERN
 from ..extraction.html.container_selectors import ARTICLE_BODY_SELECTORS
-from ..extraction.html.cleanup_policy import classify_dom_cleanup_node
+from ..extraction.html.cleanup_policy import classify_availability_node
 from ..extraction.html._runtime import body_metrics, has_sufficient_article_body
 from ..extraction.html.front_matter import ARTICLE_TYPE_FRONT_MATTER_PREFIXES
 from ..extraction.html.formula_rules import MATHML_SCRIPT_TYPES
 from ..extraction.html.provider_rules import (
-    cleanup_policy_for_profile,
+    availability_rules_for_provider,
     front_matter_footer_prefixes,
 )
 from ..extraction.html.section_scan import SectionScanState
@@ -471,10 +471,11 @@ def select_best_container(
 
 
 def _should_drop_browser_workflow_node(node: Tag, publisher: str | None) -> bool:
-    decision = classify_dom_cleanup_node(
+    rules = availability_rules_for_provider(publisher).container_rules
+    decision = classify_availability_node(
         node,
-        policy=cleanup_policy_for_profile(publisher),
-        stage="browser_workflow",
+        rules,
+        browser_workflow=True,
         identity=node_identity_text(node),
         text=normalize_text(node.get_text(" ", strip=True)),
         is_mathml_script=_is_mathml_script(node),
@@ -490,13 +491,12 @@ def should_drop_node(
 ) -> bool:
     if drop_profile == HTML_CONTAINER_DROP_BROWSER_WORKFLOW:
         return _should_drop_browser_workflow_node(node, publisher)
-    policy = cleanup_policy_for_profile(publisher)
+    rules = availability_rules_for_provider(publisher).container_rules
     identity = node_identity_text(node)
     text = normalize_text(node.get_text(" ", strip=True))
-    decision = classify_dom_cleanup_node(
+    decision = classify_availability_node(
         node,
-        policy=policy,
-        stage="availability",
+        rules,
         identity=identity,
         text=text,
         is_mathml_script=_is_mathml_script(node),
@@ -505,17 +505,16 @@ def should_drop_node(
         return True
     try:
         return any(
-            classify_dom_cleanup_node(
+            classify_availability_node(
                 node,
-                policy=policy,
-                stage="availability",
+                rules,
                 identity=identity,
                 text=text,
                 matched_selector=selector,
                 is_mathml_script=_is_mathml_script(node),
             ).action
             == "drop"
-            for selector in policy.availability_remove_selectors
+            for selector in rules.remove_selectors
             if node.select_one(selector) is node
         )
     except Exception:
@@ -528,20 +527,16 @@ def clean_container(
     *,
     drop_profile: str = HTML_CONTAINER_DROP_AVAILABILITY,
 ) -> Tag:
-    policy = cleanup_policy_for_profile(publisher)
-    stage = (
-        "browser_workflow"
-        if drop_profile == HTML_CONTAINER_DROP_BROWSER_WORKFLOW
-        else "availability"
-    )
-    for selector in policy.availability_remove_selectors:
+    rules = availability_rules_for_provider(publisher).container_rules
+    browser_workflow = drop_profile == HTML_CONTAINER_DROP_BROWSER_WORKFLOW
+    for selector in rules.remove_selectors:
         try:
             for node in list(container.select(selector)):
                 if isinstance(node, Tag):
-                    decision = classify_dom_cleanup_node(
+                    decision = classify_availability_node(
                         node,
-                        policy=policy,
-                        stage=stage,
+                        rules,
+                        browser_workflow=browser_workflow,
                         identity=node_identity_text(node),
                         text=normalize_text(node.get_text(" ", strip=True)),
                         matched_selector=selector,

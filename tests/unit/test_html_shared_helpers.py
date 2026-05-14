@@ -1165,7 +1165,10 @@ Important body text.
             ieee_policy.extraction_drop_keywords,
         )
         self.assertIn(".document-actions", ieee_policy.extraction_cleanup_selectors)
-        self.assertIn("document-actions", ieee_policy.availability_drop_keywords)
+        self.assertIn(
+            "document-actions",
+            availability_rules_for_provider("ieee").container_rules.drop_keywords,
+        )
 
     def test_cleanup_policy_exposes_springer_nature_chrome_policy(self) -> None:
         policy = cleanup_policy_for_profile("springer_nature")

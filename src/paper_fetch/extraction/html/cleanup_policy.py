@@ -7,8 +7,13 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from ...models import normalize_text
+from .availability_policy import AvailabilityContainerRules
 from .html_tags import HTML_DROP_TAGS
-from .semantics import MARKDOWN_AUXILIARY_HEADINGS, looks_like_reference_anchor
+from .semantics import (
+    MARKDOWN_AUXILIARY_HEADINGS,
+    looks_like_reference_anchor,
+    node_identity_text,
+)
 from .signals import (
     MARKDOWN_ACCESS_NOISE_LABELS,
     MARKDOWN_SHORT_ACCESS_GATE_TOKENS,
@@ -118,14 +123,6 @@ class CleanupPolicy:
     license_link_path_prefixes: tuple[str, ...] = ()
     license_word_limit: int = 0
     extraction_drop_keywords: tuple[str, ...] = ()
-    availability_remove_selectors: tuple[str, ...] = ()
-    availability_drop_keywords: tuple[str, ...] = ()
-    availability_drop_texts: frozenset[str] = frozenset()
-    availability_drop_tags: tuple[str, ...] = AVAILABILITY_DROP_TAGS
-    browser_workflow_drop_tags: tuple[str, ...] = BROWSER_WORKFLOW_DROP_TAGS
-    browser_workflow_short_text_patterns: tuple[str, ...] = (
-        BROWSER_WORKFLOW_SHORT_TEXT_PATTERNS
-    )
     markdown_exact_texts: frozenset[str] = MARKDOWN_EXACT_NOISE_TEXTS
     markdown_prefix_texts: tuple[str, ...] = MARKDOWN_PREFIX_NOISE_TEXTS
     markdown_short_tokens: tuple[str, ...] = MARKDOWN_SHORT_NOISE_TOKENS
@@ -155,9 +152,6 @@ def build_cleanup_policy(
     front_matter_exact_texts: tuple[str, ...] = (),
     front_matter_contains_tokens: tuple[str, ...] = (),
     front_matter_publication_keywords: tuple[str, ...] = (),
-    availability_remove_selectors: tuple[str, ...] = (),
-    availability_drop_keywords: tuple[str, ...] = (),
-    availability_drop_texts: tuple[str, ...] = (),
     post_content_exact_texts: tuple[str, ...] = (),
     post_content_prefixes: tuple[str, ...] = (),
     post_content_cutoff_tokens: tuple[str, ...] = (),
@@ -176,9 +170,6 @@ def build_cleanup_policy(
         license_link_path_prefixes=license_link_path_prefixes,
         license_word_limit=license_word_limit,
         extraction_drop_keywords=extraction_drop_keywords,
-        availability_remove_selectors=availability_remove_selectors,
-        availability_drop_keywords=availability_drop_keywords,
-        availability_drop_texts=frozenset(availability_drop_texts),
         markdown_contains_tokens=markdown_contains_tokens,
         provider_markdown_promo_tokens=provider_markdown_promo_tokens,
         front_matter_exact_texts=front_matter_exact_texts,
@@ -212,12 +203,6 @@ def extend_cleanup_policy(
         license_link_path_prefixes=policy.license_link_path_prefixes,
         license_word_limit=policy.license_word_limit,
         extraction_drop_keywords=policy.extraction_drop_keywords,
-        availability_remove_selectors=policy.availability_remove_selectors,
-        availability_drop_keywords=policy.availability_drop_keywords,
-        availability_drop_texts=policy.availability_drop_texts,
-        availability_drop_tags=policy.availability_drop_tags,
-        browser_workflow_drop_tags=policy.browser_workflow_drop_tags,
-        browser_workflow_short_text_patterns=policy.browser_workflow_short_text_patterns,
         markdown_exact_texts=policy.markdown_exact_texts,
         markdown_prefix_texts=policy.markdown_prefix_texts,
         markdown_short_tokens=policy.markdown_short_tokens,
@@ -268,6 +253,56 @@ def _attr_tokens(element: Any) -> list[str]:
     return tokens
 
 
+def classify_availability_node(
+    element: Any,
+    rules: AvailabilityContainerRules,
+    *,
+    browser_workflow: bool = False,
+    identity: str | None = None,
+    text: str | None = None,
+    matched_selector: str | None = None,
+    is_mathml_script: bool = False,
+) -> CleanupDecision:
+    if is_mathml_script:
+        return KEEP_CLEANUP_DECISION
+    if matched_selector:
+        return CleanupDecision("drop", "availability_selector")
+
+    element_name = _element_name(element)
+    normalized_text = normalize_text(
+        text if text is not None else _element_text(element)
+    )
+    node_identity = normalize_text(
+        identity if identity is not None else node_identity_text(element)
+    ).lower()
+
+    if browser_workflow:
+        if element_name in rules.drop_tags_for(browser_workflow=True):
+            return CleanupDecision("drop", "dom_drop_tag")
+        if contains_access_gate_text(normalized_text):
+            return KEEP_CLEANUP_DECISION
+        short_text = len(normalized_text) <= 200
+        if short_text and any(token in node_identity for token in rules.drop_keywords):
+            return CleanupDecision("drop", "availability_identity_token")
+        if short_text and normalized_text in rules.drop_texts:
+            return CleanupDecision("drop", "availability_drop_text")
+        lowered = normalized_text.lower()
+        if short_text and any(
+            pattern in lowered
+            for pattern in rules.short_text_patterns_for(browser_workflow=True)
+        ):
+            return CleanupDecision("drop", "browser_workflow_short_ui_text")
+        return KEEP_CLEANUP_DECISION
+
+    if any(token in node_identity for token in rules.drop_keywords):
+        return CleanupDecision("drop", "availability_identity_token")
+    if normalized_text in rules.drop_texts:
+        return CleanupDecision("drop", "availability_drop_text")
+    if element_name in rules.drop_tags_for():
+        return CleanupDecision("drop", "dom_drop_tag")
+    return KEEP_CLEANUP_DECISION
+
+
 def classify_dom_cleanup_node(
     element: Any,
     *,
@@ -287,37 +322,6 @@ def classify_dom_cleanup_node(
     normalized_text = normalize_text(
         text if text is not None else _element_text(element)
     )
-
-    if stage == "browser_workflow":
-        if element_name in policy.browser_workflow_drop_tags:
-            return CleanupDecision("drop", "dom_drop_tag")
-        if contains_access_gate_text(normalized_text):
-            return KEEP_CLEANUP_DECISION
-        short_text = len(normalized_text) <= 200
-        node_identity = normalize_text(identity or "").lower()
-        if short_text and any(
-            token in node_identity for token in policy.availability_drop_keywords
-        ):
-            return CleanupDecision("drop", "availability_identity_token")
-        if short_text and normalized_text in policy.availability_drop_texts:
-            return CleanupDecision("drop", "availability_drop_text")
-        lowered = normalized_text.lower()
-        if short_text and any(
-            pattern in lowered
-            for pattern in policy.browser_workflow_short_text_patterns
-        ):
-            return CleanupDecision("drop", "browser_workflow_short_ui_text")
-        return KEEP_CLEANUP_DECISION
-
-    if stage == "availability":
-        node_identity = normalize_text(identity or "").lower()
-        if any(token in node_identity for token in policy.availability_drop_keywords):
-            return CleanupDecision("drop", "availability_identity_token")
-        if normalized_text in policy.availability_drop_texts:
-            return CleanupDecision("drop", "availability_drop_text")
-        if element_name in policy.availability_drop_tags:
-            return CleanupDecision("drop", "dom_drop_tag")
-        return KEEP_CLEANUP_DECISION
 
     if not normalized_text:
         return KEEP_CLEANUP_DECISION

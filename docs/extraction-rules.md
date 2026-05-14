@@ -91,7 +91,7 @@ metadata
 3. 长测试列表按 `Owner（generic/provider/models/cli）`、`Provider 覆盖`、`Service / live review 覆盖` 分组；只有一个测试函数锁住的规则，边界说明必须标注“测试覆盖度低”或等价风险。
 4. 新增 provider 适用项时，同步更新对应 provider 的“共享规则另见”和“不适用 / 部分适用说明”。
 5. 新增 canonical fixture 后，同步 `tests/fixtures/golden_criteria/manifest.json`、本文档的 fixture 反向索引，或“未直接挂规则 fixture 清单/用途说明”。
-6. 新增或移动站点 UI copy / chrome 文案、selector、heading、attr token 或 license link policy 时，必须进入 `paper_fetch.extraction.html.cleanup_policy.CleanupPolicy` / provider cleanup policy；provider 文件里保留的 DOM hook 只能负责时序或结构修复，如需保留站点 UI 常量，必须在 hook 旁用 `STRUCTURAL_UI_COPY_HOOK` 说明它不是普通正文 denylist。
+6. 新增或移动站点 UI copy / chrome 文案、selector、heading、attr token、availability container rule 或 license link policy 时，必须进入 `paper_fetch.extraction.html.cleanup_policy.CleanupPolicy`、`paper_fetch.extraction.html.availability_policy.AvailabilityPolicy.container_rules` / provider cleanup policy；provider 文件里保留的 DOM hook 只能负责时序或结构修复，如需保留站点 UI 常量，必须在 hook 旁用 `STRUCTURAL_UI_COPY_HOOK` 说明它不是普通正文 denylist。
 7. 修改文档后运行 `python3 scripts/validate_extraction_rules.py`，再按变更范围运行 integration / unit / lint；常规 unit / integration 命令默认复用 `pyproject.toml` 的并行配置，只有 live / 外部共享状态测试或排查顺序问题时才加 `-n 0`，并在结果里说明原因。
 
 ### 新增规则 checklist
@@ -236,7 +236,7 @@ metadata
 - 这条规则约束的是：出版社页面里的操作按钮、图窗入口、站点工具栏和明显的站点动作词，不能随着 HTML 提取或后处理一起混进最终 markdown；`Permissions`、`Rights and permissions`、`Open Access` 这类站点许可 / 操作节只能按 heading 或 section 结构过滤，不能扩成普通正文词面 denylist。
 - 如果违反，用户会看到：正文里夹杂 `Open in figure viewer`、`PowerPoint`、`Sign up for PNAS alerts`、`Request permissions`、Creative Commons 许可长文这类站点操作文案，看起来像把网页操作层一起抓进来了。
 - 它对应的阶段是：`html-cleanup`、`markdown-normalization`、`asset-validation`、`final-rendering`。
-- Owner：`paper_fetch.extraction.html.cleanup_policy.CleanupPolicy`、provider cleanup policy 与 provider structural hooks。
+- Owner：`paper_fetch.extraction.html.cleanup_policy.CleanupPolicy`、`paper_fetch.extraction.html.availability_policy.AvailabilityPolicy`、provider cleanup policy 与 provider structural hooks。
 - 代表性 HTML / XML：
   - [`../tests/fixtures/golden_criteria/10.1029_2004gb002273/original.html`](../tests/fixtures/golden_criteria/10.1029_2004gb002273/original.html)
   - [`../tests/fixtures/golden_criteria/10.1073_pnas.2309123120/original.html`](../tests/fixtures/golden_criteria/10.1073_pnas.2309123120/original.html)
@@ -252,7 +252,7 @@ metadata
   - [`../tests/unit/test_atypon_browser_workflow_markdown.py`](../tests/unit/test_atypon_browser_workflow_markdown.py) 中的 `test_science_real_fixture_does_not_leak_competing_interests_modal`
 - 边界说明：
   - 这条规则过滤的是站点 UI 和操作噪声，不是过滤所有出现在图题或正文里的英文短语。
-  - 代码中带 `SITE_UI_COPY_REGRESSION_MARKER` 的整句站点文案和 chrome selector / heading / attr 常量是易受站点改版影响的回归点；`scripts/validate_extraction_rules.py` 会要求 provider promo / post-content / chrome / fatal-error 常量带 marker，并要求这些规则能归入 `CleanupPolicy` / provider cleanup policy 或显式 `STRUCTURAL_UI_COPY_HOOK`，更新这些规则时必须回看本规则和对应 provider fixture。
+  - 代码中带 `SITE_UI_COPY_REGRESSION_MARKER` 的整句站点文案和 chrome selector / heading / attr 常量是易受站点改版影响的回归点；`scripts/validate_extraction_rules.py` 会要求 provider promo / post-content / chrome / fatal-error 常量带 marker，并要求这些规则能归入 `CleanupPolicy`、`AvailabilityPolicy.container_rules` / provider cleanup policy 或显式 `STRUCTURAL_UI_COPY_HOOK`，更新这些规则时必须回看本规则和对应 provider fixture。
   - provider 专用 DOM hook 可以保留在 provider 文件中处理必须晚于结构归一化的逻辑，例如先读取 AMS gallery / full-size 图片链接再删除 gallery chrome；普通 chrome 数据本身仍应来自 provider cleanup policy。
   - `download` 不是全局噪声词；`Source Data Fig. 1 (Download xlsx)`、supplementary file、figure/table asset download 这类有效材料入口必须保留。
   - `preview sentence` 和 AI alt disclaimer 也会被过滤，但它们属于 [Springer 访问提示规则](#rule-springer-access-hint-disclaimer)，不混在本条里定义。
@@ -307,7 +307,7 @@ metadata
   - 这条规则不约束 provider 路由、PDF fallback 编排或 live 网络重试。
   - 它只约束“用户实际可见的 HTML 内容类型判定不能错位”。
   - availability 相关阈值分三组维护：near-duplicate / inflated abstract 保护渲染层不重复输出摘要；HTML body scoring 保护 access gate 与真实正文判定；provider body thresholds 只覆盖 XML/纯文本 provider 的最小正文量。这些阈值只随回归样本一起调整，不能在单个 provider 内临时覆盖。
-  - Publisher 私有的 availability override（例如 Science perspective、Elsevier canonical abstract URL、Springer preview wall vs body run）必须通过 provider `AvailabilityPolicy` / `ProviderHtmlRules.availability` 兼容 facade 注册；access-gate 文案统一来自 `paper_fetch.extraction.html.signals.ACCESS_GATE_LABELS` / `ACCESS_GATE_PATTERNS`，Markdown 降噪只引用 `MARKDOWN_ACCESS_NOISE_LABELS`，不得在 provider 后处理或 runtime 中复制。
+  - Publisher 私有的 availability override（例如 Science perspective、Elsevier canonical abstract URL、Springer preview wall vs body run）必须通过 provider `AvailabilityPolicy` / `ProviderHtmlRules.availability` 注册；access-gate 文案统一来自 `paper_fetch.extraction.html.signals.ACCESS_GATE_LABELS` / `ACCESS_GATE_PATTERNS`，Markdown 降噪只引用 `MARKDOWN_ACCESS_NOISE_LABELS`，不得在 provider 后处理或 runtime 中复制。
 
 <a id="rule-provider-owned-authors"></a>
 ### Provider 自有作者与摘要信号必须进入最终文章元数据

@@ -33,8 +33,14 @@ from .ui_tokens import (
     RELATED_CONTENT_CHROME_TOKENS,
     SPRINGER_NATURE_SOURCE_DATA_LABEL,
 )
-from .availability_policy import AvailabilityPolicy
-from .cleanup_policy import CleanupPolicy, build_cleanup_policy
+from .availability_policy import AvailabilityContainerRules, AvailabilityPolicy
+from .cleanup_policy import (
+    AVAILABILITY_DROP_TAGS,
+    BROWSER_WORKFLOW_DROP_TAGS,
+    BROWSER_WORKFLOW_SHORT_TEXT_PATTERNS,
+    CleanupPolicy,
+    build_cleanup_policy,
+)
 
 
 DEFAULT_NOISE_PROFILE = "generic"
@@ -417,6 +423,7 @@ class ProviderHtmlRules:
     def availability(self) -> AvailabilityPolicy:
         return AvailabilityPolicy(
             name=self.name,
+            container_rules=_availability_container_rules_from_rules(self),
             site_rule_overrides=self.availability_site_rule_overrides,
             positive_signals=self.positive_signals,
             blocking_fallback_signals=self.blocking_fallback_signals,
@@ -575,8 +582,22 @@ def merged_site_rule(rules: ProviderHtmlRules) -> dict[str, Any]:
     return merged
 
 
-def _cleanup_policy_from_rules(rules: ProviderHtmlRules) -> CleanupPolicy:
+def _availability_container_rules_from_rules(
+    rules: ProviderHtmlRules,
+) -> AvailabilityContainerRules:
     site_rule = merged_site_rule(rules)
+    return AvailabilityContainerRules(
+        candidate_selectors=tuple(site_rule.get("candidate_selectors") or ()),
+        remove_selectors=tuple(site_rule.get("remove_selectors") or ()),
+        drop_keywords=tuple(site_rule.get("drop_keywords") or ()),
+        drop_texts=tuple(site_rule.get("drop_text") or ()),
+        drop_tags=AVAILABILITY_DROP_TAGS,
+        browser_workflow_drop_tags=BROWSER_WORKFLOW_DROP_TAGS,
+        browser_workflow_short_text_patterns=BROWSER_WORKFLOW_SHORT_TEXT_PATTERNS,
+    )
+
+
+def _cleanup_policy_from_rules(rules: ProviderHtmlRules) -> CleanupPolicy:
     return build_cleanup_policy(
         rules.noise_profile,
         markdown_contains_tokens=(
@@ -595,9 +616,6 @@ def _cleanup_policy_from_rules(rules: ProviderHtmlRules) -> CleanupPolicy:
         front_matter_exact_texts=rules.front_matter_exact_texts,
         front_matter_contains_tokens=rules.front_matter_contains_tokens,
         front_matter_publication_keywords=rules.front_matter_publication_keywords,
-        availability_remove_selectors=tuple(site_rule.get("remove_selectors") or ()),
-        availability_drop_keywords=tuple(site_rule.get("drop_keywords") or ()),
-        availability_drop_texts=tuple(site_rule.get("drop_text") or ()),
     )
 
 
