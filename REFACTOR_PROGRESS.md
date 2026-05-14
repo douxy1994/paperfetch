@@ -70,7 +70,10 @@
 - 覆盖: S11A discovery help、S12 `--from-manifest` help、S13 manifest sync grep 均通过；`test_manifest_discovery_brief.py` / `test_onboard_from_manifests.py` / `test_provider_manifest_schema.py` / `test_known_providers_sync.py` / `test_scaffold_provider_from_manifest.py` / `test_manifest_bundle_sync.py` / `test_manifest_sync_back.py` 共 32 passed；全量 unit 1225 passed + 264 subtests。
 
 ### 阶段 C：批量调度与自动恢复（S14-S16）
-- [ ] S14: Coordinator 编排脚本（单 provider 串行 + coding agent CLI）
+- [x] S14: Coordinator 编排脚本（单 provider 串行 + coding agent CLI）
+  - commit: 7bd7b9f
+  - 摘要: 扩展 `onboard_from_manifests.py`，`start --provider/--manifest --dry-run` 生成 10 步串行 DAG、discovery/implementation worker brief、state schema 与 agent CLI runtime 元数据；新增 `next` / `verify` / `advance` 本地状态命令，保持脚本只生成 brief、DAG、verification plan，不调用 LLM SDK；补齐 coordinator spec、hard constraints、failure recovery 和 onboarding state schema。
+  - 验收: S14 dry-run 文件和 `runtime: coding-agent-subagent` / `no_commit: true` grep 通过；LLM SDK grep 为空；`test_manifest_discovery_brief.py` / `test_onboard_from_manifests.py` 11 passed；AI onboarding 禁词 grep 通过；`python3 -m ruff check .` 通过；`validate_extraction_rules.py` 通过；全量 unit 1229 passed + 264 subtests。
 - [ ] S15: capture_fixture 非交互化与 retry
 - [ ] S16: 工具链结构化错误输出
 
