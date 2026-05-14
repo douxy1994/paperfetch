@@ -14,6 +14,7 @@ from paper_fetch.providers.atypon_browser_workflow.markdown import (
     extract_atypon_browser_workflow_markdown,
 )
 from tests.golden_criteria import golden_criteria_asset, golden_criteria_sample_for_doi
+from tests.unit._browser_workflow_deps import install_browser_workflow_deps
 from tests.unit._paper_fetch_support import fulltext_pdf_bytes
 
 from ._atypon_browser_workflow_provider_support import (
@@ -127,39 +128,38 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
         client = AmsClient(transport=None, env={})
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "ams", AMS_DOI)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
-                    return_value=_flaresolverr.FetchedPublisherHtml(
-                        source_url=AMS_LANDING_URL,
-                        final_url=AMS_LANDING_URL,
-                        html=(
-                            "<html><head><meta name='citation_author' content='Ada Example'></head>"
-                            "<body><article><section id='bodymatter'><h2>Results</h2>"
-                            "<p>Body text.</p></section></article></body></html>"
-                        ),
-                        response_status=200,
-                        response_headers={"content-type": "text/html"},
-                        title=AMS_TITLE,
-                        summary="AMS full text",
-                        browser_context_seed={},
+            mocked_html = mock.Mock(
+                return_value=_flaresolverr.FetchedPublisherHtml(
+                    source_url=AMS_LANDING_URL,
+                    final_url=AMS_LANDING_URL,
+                    html=(
+                        "<html><head><meta name='citation_author' content='Ada Example'></head>"
+                        "<body><article><section id='bodymatter'><h2>Results</h2>"
+                        "<p>Body text.</p></section></article></body></html>"
                     ),
-                ) as mocked_html,
-                mock.patch.object(
-                    browser_workflow,
-                    "extract_atypon_browser_workflow_markdown",
+                    response_status=200,
+                    response_headers={"content-type": "text/html"},
+                    title=AMS_TITLE,
+                    summary="AMS full text",
+                    browser_context_seed={},
+                )
+            )
+            mocked_pdf = mock.Mock()
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mocked_html,
+                extract_atypon_browser_workflow_markdown=mock.Mock(
                     return_value=(
                         f"# {AMS_TITLE}\n\n## Results\n\n" + ("Body text " * 120),
                         {"title": AMS_TITLE},
-                    ),
+                    )
                 ),
-                mock.patch.object(browser_workflow, "fetch_pdf_with_playwright") as mocked_pdf,
-            ):
-                raw_payload = client.fetch_raw_fulltext(AMS_DOI, self._metadata())
-                article = client.to_article_model(self._metadata(), raw_payload)
+                fetch_pdf_with_playwright=mocked_pdf,
+            )
+            raw_payload = client.fetch_raw_fulltext(AMS_DOI, self._metadata())
+            article = client.to_article_model(self._metadata(), raw_payload)
 
         attempted_html = list(mocked_html.call_args.args[0])
         self.assertEqual(attempted_html, [AMS_LANDING_URL])
@@ -186,37 +186,31 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
         }
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "ams", AMS_DOI)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            mocked_pdf = mock.Mock(
+                return_value=mock.Mock(
+                    source_url=AMS_PDF_URL,
+                    final_url=AMS_PDF_URL,
+                    pdf_bytes=fulltext_pdf_bytes(),
+                    markdown_text=f"# {AMS_TITLE}\n\n## Results\n\n" + ("Body text " * 120),
+                    suggested_filename="ams.pdf",
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     side_effect=_flaresolverr.FlareSolverrFailure(
                         "insufficient_body",
                         "AMS HTML did not expose enough body.",
                         browser_context_seed=seed,
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "warm_browser_context_with_flaresolverr",
-                    return_value=seed,
-                ),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_pdf_with_playwright",
-                    return_value=mock.Mock(
-                        source_url=AMS_PDF_URL,
-                        final_url=AMS_PDF_URL,
-                        pdf_bytes=fulltext_pdf_bytes(),
-                        markdown_text=f"# {AMS_TITLE}\n\n## Results\n\n" + ("Body text " * 120),
-                        suggested_filename="ams.pdf",
-                    ),
-                ) as mocked_pdf,
-            ):
-                raw_payload = client.fetch_raw_fulltext(AMS_DOI, self._metadata())
-                article = client.to_article_model(self._metadata(), raw_payload)
+                pdf_browser_context_seed=mock.Mock(return_value=seed),
+                fetch_pdf_with_playwright=mocked_pdf,
+            )
+            raw_payload = client.fetch_raw_fulltext(AMS_DOI, self._metadata())
+            article = client.to_article_model(self._metadata(), raw_payload)
 
         self.assertIn(AMS_PDF_URL, list(mocked_pdf.call_args.args[0]))
         self.assertEqual(_payload_route(raw_payload), "pdf_fallback")
@@ -235,12 +229,20 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
         """
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "ams", AMS_DOI)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            mocked_pdf = mock.Mock(
+                return_value=mock.Mock(
+                    source_url=citation_pdf_url,
+                    final_url=citation_pdf_url,
+                    pdf_bytes=fulltext_pdf_bytes(),
+                    markdown_text=f"# {AMS_TITLE}\n\n## Results\n\n" + ("Body text " * 120),
+                    suggested_filename="ams.pdf",
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     return_value=_flaresolverr.FetchedPublisherHtml(
                         source_url=AMS_LANDING_URL,
                         final_url=AMS_LANDING_URL,
@@ -250,36 +252,24 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
                         title=AMS_TITLE,
                         summary="AMS abstract",
                         browser_context_seed={},
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "extract_atypon_browser_workflow_markdown",
+                extract_atypon_browser_workflow_markdown=mock.Mock(
                     side_effect=browser_workflow.HtmlExtractionFailure(
                         "abstract_only", "Abstract only."
-                    ),
+                    )
                 ),
-                mock.patch.object(browser_workflow, "warm_browser_context_with_flaresolverr", return_value={}),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_pdf_with_playwright",
-                    return_value=mock.Mock(
-                        source_url=citation_pdf_url,
-                        final_url=citation_pdf_url,
-                        pdf_bytes=fulltext_pdf_bytes(),
-                        markdown_text=f"# {AMS_TITLE}\n\n## Results\n\n" + ("Body text " * 120),
-                        suggested_filename="ams.pdf",
-                    ),
-                ) as mocked_pdf,
-            ):
-                raw_payload = client.fetch_raw_fulltext(
-                    AMS_DOI,
-                    {
-                        "doi": AMS_DOI,
-                        "title": AMS_TITLE,
-                        "landing_page_url": AMS_LANDING_URL,
-                    },
-                )
+                pdf_browser_context_seed=mock.Mock(return_value={}),
+                fetch_pdf_with_playwright=mocked_pdf,
+            )
+            raw_payload = client.fetch_raw_fulltext(
+                AMS_DOI,
+                {
+                    "doi": AMS_DOI,
+                    "title": AMS_TITLE,
+                    "landing_page_url": AMS_LANDING_URL,
+                },
+            )
 
         self.assertEqual(list(mocked_pdf.call_args.args[0])[0], citation_pdf_url)
         self.assertEqual(_payload_route(raw_payload), "pdf_fallback")

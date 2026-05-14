@@ -40,17 +40,18 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed={},
             )
+            mocked_fetch = mock.Mock()
+            mocked_builder = mock.Mock(return_value=shared_fetcher)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mocked_fetch,
+                _build_shared_playwright_image_fetcher=mocked_builder,
+            )
             with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(browser_workflow, "fetch_html_with_flaresolverr") as mocked_fetch,
                 mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
                 mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_fetcher,
-                ) as mocked_builder,
             ):
                 result = client.download_related_assets(
                     SCIENCE_SAMPLE.doi,
@@ -128,21 +129,18 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed={},
             )
+            mocked_image_builder = mock.Mock(return_value=shared_image_fetcher)
+            mocked_file_builder = mock.Mock(return_value=shared_file_fetcher)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                _build_shared_playwright_image_fetcher=mocked_image_builder,
+                _build_shared_playwright_file_fetcher=mocked_file_builder,
+            )
             with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
                 mock.patch.object(html_assets, "_build_cookie_seeded_opener", return_value=object()) as mocked_opener,
                 mock.patch.object(html_assets, "_request_with_opener", return_value=challenge_html) as mocked_request,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_image_fetcher,
-                ) as mocked_image_builder,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_file_fetcher",
-                    return_value=shared_file_fetcher,
-                ) as mocked_file_builder,
             ):
                 result = client.download_related_assets(
                     SCIENCE_SAMPLE.doi,
@@ -214,34 +212,33 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed=initial_seed,
             )
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
-                    return_value=_flaresolverr.FetchedPublisherHtml(
-                        source_url=figure_page_url,
-                        final_url=figure_page_url,
-                        html=(
-                            "<html><head>"
-                            f"<meta property='og:image' content='{full_size_url}' />"
-                            "</head><body></body></html>"
-                        ),
-                        response_status=200,
-                        response_headers={"content-type": "text/html"},
-                        title="Figure page",
-                        summary="Figure page summary",
-                        browser_context_seed=warmed_seed,
+            mocked_fetch = mock.Mock(
+                return_value=_flaresolverr.FetchedPublisherHtml(
+                    source_url=figure_page_url,
+                    final_url=figure_page_url,
+                    html=(
+                        "<html><head>"
+                        f"<meta property='og:image' content='{full_size_url}' />"
+                        "</head><body></body></html>"
                     ),
-                ) as mocked_fetch,
+                    response_status=200,
+                    response_headers={"content-type": "text/html"},
+                    title="Figure page",
+                    summary="Figure page summary",
+                    browser_context_seed=warmed_seed,
+                )
+            )
+            mocked_builder = mock.Mock(return_value=shared_fetcher)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mocked_fetch,
+                _build_shared_playwright_image_fetcher=mocked_builder,
+            )
+            with (
                 mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
                 mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_fetcher,
-                ) as mocked_builder,
             ):
                 result = client.download_related_assets(
                     PNAS_SAMPLE.doi,
@@ -306,12 +303,11 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed=initial_seed,
             )
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     return_value=_flaresolverr.FetchedPublisherHtml(
                         source_url=figure_page_url,
                         final_url=figure_page_url,
@@ -325,15 +321,16 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                         title="Figure page",
                         summary="Figure page summary",
                         browser_context_seed=initial_seed,
-                    ),
+                    )
                 ),
+                _build_shared_playwright_image_fetcher=mock.Mock(
+                    return_value=shared_fetcher
+                ),
+            )
+            mocked_builder = client.deps._build_shared_playwright_image_fetcher
+            with (
                 mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
                 mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_fetcher,
-                ) as mocked_builder,
             ):
                 result = client.download_related_assets(
                     PNAS_SAMPLE.doi,
@@ -401,40 +398,38 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed=seed,
             )
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
-                    return_value=_flaresolverr.FetchedPublisherHtml(
-                        source_url=figure_page_url,
-                        final_url=figure_page_url,
-                        html=(
-                            "<html><head>"
-                            f"<meta property='og:image' content='{full_size_url}' />"
-                            "</head><body></body></html>"
-                        ),
-                        response_status=200,
-                        response_headers={"content-type": "text/html"},
-                        title="Figure page",
-                        summary="Figure page summary",
-                        browser_context_seed=seed,
+            mocked_fetch = mock.Mock(
+                return_value=_flaresolverr.FetchedPublisherHtml(
+                    source_url=figure_page_url,
+                    final_url=figure_page_url,
+                    html=(
+                        "<html><head>"
+                        f"<meta property='og:image' content='{full_size_url}' />"
+                        "</head><body></body></html>"
                     ),
-                ) as mocked_fetch,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_fetcher,
-                ),
-            ):
-                result = client.download_related_assets(
-                    PNAS_SAMPLE.doi,
-                    {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="body",
+                    response_status=200,
+                    response_headers={"content-type": "text/html"},
+                    title="Figure page",
+                    summary="Figure page summary",
+                    browser_context_seed=seed,
                 )
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mocked_fetch,
+                _build_shared_playwright_image_fetcher=mock.Mock(
+                    return_value=shared_fetcher
+                ),
+            )
+            result = client.download_related_assets(
+                PNAS_SAMPLE.doi,
+                {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="body",
+            )
 
         self.assertEqual(mocked_fetch.call_count, 1)
         self.assertEqual(shared_fetcher.call_count, 1)
@@ -467,10 +462,17 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed={},
             )
+            mocked_fetch = mock.Mock()
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mocked_fetch,
+                _build_shared_playwright_image_fetcher=mock.Mock(
+                    return_value=shared_fetcher
+                ),
+            )
             with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(browser_workflow, "fetch_html_with_flaresolverr") as mocked_fetch,
                 mock.patch.object(
                     atypon_browser_workflow_asset_scopes,
                     "extract_scoped_html_assets",
@@ -494,11 +496,6 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                             "section": "body",
                         },
                     ],
-                ),
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_fetcher,
                 ),
             ):
                 result = client.download_related_assets(
@@ -547,17 +544,18 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed={},
             )
+            mocked_fetch = mock.Mock()
+            mocked_builder = mock.Mock(return_value=shared_fetcher)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mocked_fetch,
+                _build_shared_playwright_image_fetcher=mocked_builder,
+            )
             with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(browser_workflow, "fetch_html_with_flaresolverr") as mocked_fetch,
                 mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
                 mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_fetcher,
-                ) as mocked_builder,
             ):
                 result = client.download_related_assets(
                     SCIENCE_SAMPLE.doi,

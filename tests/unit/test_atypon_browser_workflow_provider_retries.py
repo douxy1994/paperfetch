@@ -48,27 +48,24 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed=initial_seed,
             )
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "warm_browser_context_with_flaresolverr",
-                    return_value=refreshed_seed,
-                ) as mocked_warm,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    side_effect=[failing_fetcher, successful_fetcher],
-                ) as mocked_builder,
-            ):
-                result = client.download_related_assets(
-                    PNAS_SAMPLE.doi,
-                    {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="body",
-                )
+            mocked_warm = mock.Mock(return_value=refreshed_seed)
+            mocked_builder = mock.Mock(
+                side_effect=[failing_fetcher, successful_fetcher]
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                refresh_browser_context_seed=mocked_warm,
+                _build_shared_playwright_image_fetcher=mocked_builder,
+            )
+            result = client.download_related_assets(
+                PNAS_SAMPLE.doi,
+                {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="body",
+            )
 
         self.assertEqual(mocked_builder.call_count, 2)
         mocked_warm.assert_called_once()
@@ -138,7 +135,25 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "science", doi)
-            client = browser_workflow.BrowserWorkflowClient(AssetTransport({}), {})
+            mocked_warm = mock.Mock(return_value={"browser_final_url": article_url})
+            mocked_figures = mock.Mock(return_value=figure_result)
+            mocked_supplementary = mock.Mock(
+                side_effect=[supplementary_failure, supplementary_success]
+            )
+            client = browser_workflow.BrowserWorkflowClient(
+                AssetTransport({}),
+                {},
+                deps=browser_workflow_deps(
+                    load_runtime_config=mock.Mock(return_value=runtime),
+                    ensure_runtime_ready=mock.Mock(),
+                    _cached_browser_workflow_assets=mock.Mock(
+                        return_value=[figure_asset, supplementary_asset]
+                    ),
+                    refresh_browser_context_seed=mocked_warm,
+                    download_figure_assets_with_image_document_fetcher=mocked_figures,
+                    download_supplementary_assets=mocked_supplementary,
+                ),
+            )
             client.name = "science"
             raw_payload = _typed_raw_payload(
                 provider="science",
@@ -148,37 +163,13 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 route="html",
                 browser_context_seed={"browser_final_url": article_url},
             )
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "_cached_browser_workflow_assets",
-                    return_value=[figure_asset, supplementary_asset],
-                ),
-                mock.patch.object(
-                    browser_workflow,
-                    "warm_browser_context_with_flaresolverr",
-                    return_value={"browser_final_url": article_url},
-                ) as mocked_warm,
-                mock.patch.object(
-                    browser_workflow,
-                    "download_figure_assets_with_image_document_fetcher",
-                    return_value=figure_result,
-                ) as mocked_figures,
-                mock.patch.object(
-                    browser_workflow,
-                    "download_supplementary_assets",
-                    side_effect=[supplementary_failure, supplementary_success],
-                ) as mocked_supplementary,
-            ):
-                result = client.download_related_assets(
-                    doi,
-                    {"doi": doi, "title": "Retry Supplement"},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="all",
-                )
+            result = client.download_related_assets(
+                doi,
+                {"doi": doi, "title": "Retry Supplement"},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="all",
+            )
 
         mocked_warm.assert_called_once()
         mocked_figures.assert_called_once()
@@ -268,7 +259,25 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "science", doi)
-            client = browser_workflow.BrowserWorkflowClient(AssetTransport({}), {})
+            mocked_warm = mock.Mock(return_value={"browser_final_url": article_url})
+            mocked_figures = mock.Mock(
+                side_effect=[initial_body_result, retry_body_result]
+            )
+            mocked_supplementary = mock.Mock(return_value=supplementary_result)
+            client = browser_workflow.BrowserWorkflowClient(
+                AssetTransport({}),
+                {},
+                deps=browser_workflow_deps(
+                    load_runtime_config=mock.Mock(return_value=runtime),
+                    ensure_runtime_ready=mock.Mock(),
+                    _cached_browser_workflow_assets=mock.Mock(
+                        return_value=[first_figure, second_figure, supplementary_asset]
+                    ),
+                    refresh_browser_context_seed=mocked_warm,
+                    download_figure_assets_with_image_document_fetcher=mocked_figures,
+                    download_supplementary_assets=mocked_supplementary,
+                ),
+            )
             client.name = "science"
             raw_payload = _typed_raw_payload(
                 provider="science",
@@ -278,37 +287,13 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 route="html",
                 browser_context_seed={"browser_final_url": article_url},
             )
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "_cached_browser_workflow_assets",
-                    return_value=[first_figure, second_figure, supplementary_asset],
-                ),
-                mock.patch.object(
-                    browser_workflow,
-                    "warm_browser_context_with_flaresolverr",
-                    return_value={"browser_final_url": article_url},
-                ) as mocked_warm,
-                mock.patch.object(
-                    browser_workflow,
-                    "download_figure_assets_with_image_document_fetcher",
-                    side_effect=[initial_body_result, retry_body_result],
-                ) as mocked_figures,
-                mock.patch.object(
-                    browser_workflow,
-                    "download_supplementary_assets",
-                    return_value=supplementary_result,
-                ) as mocked_supplementary,
-            ):
-                result = client.download_related_assets(
-                    doi,
-                    {"doi": doi, "title": "Retry Figure"},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="all",
-                )
+            result = client.download_related_assets(
+                doi,
+                {"doi": doi, "title": "Retry Figure"},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="all",
+            )
 
         mocked_warm.assert_called_once()
         self.assertEqual(mocked_figures.call_count, 2)
@@ -362,16 +347,16 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 markdown_text="# Title\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed=seed,
             )
+            mocked_builder = mock.Mock(return_value=shared_fetcher)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                _build_shared_playwright_image_fetcher=mocked_builder,
+            )
             with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
                 mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
                 mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_fetcher,
-                ) as mocked_builder,
             ):
                 result = client.download_related_assets(
                     "10.1111/gcb.16011",
@@ -442,16 +427,16 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 markdown_text="# Title\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed=seed,
             )
+            mocked_builder = mock.Mock(return_value=shared_fetcher)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                _build_shared_playwright_image_fetcher=mocked_builder,
+            )
             with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
                 mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
                 mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
-                mock.patch.object(
-                    browser_workflow,
-                    "_build_shared_playwright_image_fetcher",
-                    return_value=shared_fetcher,
-                ) as mocked_builder,
             ):
                 result = client.download_related_assets(
                     "10.1111/gcb.16011",

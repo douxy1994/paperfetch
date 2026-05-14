@@ -17,47 +17,44 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
                 "browser_cookies": [{"name": "sessionid", "value": "warm", "domain": ".science.org", "path": "/"}],
                 "browser_user_agent": "Mozilla/5.0",
             }
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            mocked_warm = mock.Mock(
+                return_value={
+                    "browser_cookies": [seed["browser_cookies"][0], preflight_seed["browser_cookies"][0]],
+                    "browser_user_agent": "Mozilla/5.0",
+                    "browser_final_url": f"https://www.science.org/doi/{SCIENCE_SAMPLE.doi}",
+                }
+            )
+            mocked_pdf = mock.Mock(
+                return_value=mock.Mock(
+                    source_url=f"https://www.science.org/doi/epdf/{SCIENCE_SAMPLE.doi}",
+                    final_url=f"https://www.science.org/doi/epdf/{SCIENCE_SAMPLE.doi}",
+                    pdf_bytes=fulltext_pdf_bytes(),
+                    markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                    suggested_filename="article.pdf",
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     side_effect=_flaresolverr.FlareSolverrFailure(
                         "redirected_to_abstract",
                         "Abstract redirect",
                         browser_context_seed=seed,
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "warm_browser_context_with_flaresolverr",
-                    return_value={
-                        "browser_cookies": [seed["browser_cookies"][0], preflight_seed["browser_cookies"][0]],
-                        "browser_user_agent": "Mozilla/5.0",
-                        "browser_final_url": f"https://www.science.org/doi/{SCIENCE_SAMPLE.doi}",
-                    },
-                ) as mocked_warm,
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_pdf_with_playwright",
-                    return_value=mock.Mock(
-                        source_url=f"https://www.science.org/doi/epdf/{SCIENCE_SAMPLE.doi}",
-                        final_url=f"https://www.science.org/doi/epdf/{SCIENCE_SAMPLE.doi}",
-                        pdf_bytes=fulltext_pdf_bytes(),
-                        markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
-                        suggested_filename="article.pdf",
-                    ),
-                ) as mocked_pdf,
-            ):
-                raw_payload = client.fetch_raw_fulltext(
-                    SCIENCE_SAMPLE.doi,
-                    {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
-                )
-                article = client.to_article_model(
-                    {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
-                    raw_payload,
-                )
+                pdf_browser_context_seed=mocked_warm,
+                fetch_pdf_with_playwright=mocked_pdf,
+            )
+            raw_payload = client.fetch_raw_fulltext(
+                SCIENCE_SAMPLE.doi,
+                {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
+            )
+            article = client.to_article_model(
+                {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
+                raw_payload,
+            )
 
         mocked_warm.assert_called_once()
         mocked_pdf.assert_called_once()
@@ -81,17 +78,17 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         client = pnas_provider.PnasClient(transport=None, env={})
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "pnas", PNAS_SAMPLE.doi)
-            with (
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_direct_playwright",
-                    side_effect=browser_workflow.HtmlExtractionFailure("playwright_direct_failed", "Direct preflight failed."),
+            mocked_pdf = mock.Mock()
+            install_browser_workflow_deps(
+                client,
+                fetch_html_with_direct_playwright=mock.Mock(
+                    side_effect=browser_workflow.HtmlExtractionFailure(
+                        "playwright_direct_failed", "Direct preflight failed."
+                    )
                 ),
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     return_value=_flaresolverr.FetchedPublisherHtml(
                         source_url=PNAS_SAMPLE.landing_url,
                         final_url=PNAS_SAMPLE.landing_url,
@@ -101,28 +98,31 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
                         title=PNAS_SAMPLE.title,
                         summary="Example summary",
                         browser_context_seed={},
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "extract_atypon_browser_workflow_markdown",
-                    return_value=(f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120), {"title": PNAS_SAMPLE.title}),
+                extract_atypon_browser_workflow_markdown=mock.Mock(
+                    return_value=(
+                        f"# {PNAS_SAMPLE.title}\n\n## Results\n\n"
+                        + ("Body text " * 120),
+                        {"title": PNAS_SAMPLE.title},
+                    )
                 ),
-                mock.patch.object(browser_workflow, "fetch_pdf_with_playwright") as mocked_pdf,
-            ):
-                raw_payload = client.fetch_raw_fulltext(
-                    PNAS_SAMPLE.doi,
-                    {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
-                )
-                article = client.to_article_model(
-                    {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
-                    raw_payload,
-                )
+                fetch_pdf_with_playwright=mocked_pdf,
+            )
+            raw_payload = client.fetch_raw_fulltext(
+                PNAS_SAMPLE.doi,
+                {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+            )
+            article = client.to_article_model(
+                {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+                raw_payload,
+            )
 
         mocked_pdf.assert_not_called()
         self.assertEqual(_payload_route(raw_payload), "html")
         self.assertEqual(article.source, "pnas")
         self.assertIn("fulltext:pnas_html_ok", article.quality.source_trail)
+
     def test_pnas_direct_playwright_html_preflight_skips_flaresolverr(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
         seed = {
@@ -130,33 +130,37 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
             "browser_user_agent": "Mozilla/5.0",
             "browser_final_url": PNAS_SAMPLE.landing_url,
         }
-        with (
-            mock.patch.object(
-                browser_workflow,
-                "fetch_html_with_direct_playwright",
-                return_value=_flaresolverr.FetchedPublisherHtml(
-                    source_url=PNAS_SAMPLE.landing_url,
-                    final_url=PNAS_SAMPLE.landing_url,
-                    html="<html><body><main>PNAS direct full text</main></body></html>",
-                    response_status=200,
-                    response_headers={"content-type": "text/html"},
-                    title=PNAS_SAMPLE.title,
-                    summary="PNAS direct full text",
-                    browser_context_seed=seed,
-                ),
-            ) as mocked_direct,
-            mock.patch.object(browser_workflow, "load_runtime_config") as mocked_runtime,
-            mock.patch.object(browser_workflow, "fetch_html_with_flaresolverr") as mocked_flaresolverr,
-            mock.patch.object(
-                browser_workflow,
-                "extract_atypon_browser_workflow_markdown",
-                return_value=(f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120), {"title": PNAS_SAMPLE.title}),
-            ),
-        ):
-            raw_payload = client.fetch_raw_fulltext(
-                PNAS_SAMPLE.doi,
-                {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+        mocked_direct = mock.Mock(
+            return_value=_flaresolverr.FetchedPublisherHtml(
+                source_url=PNAS_SAMPLE.landing_url,
+                final_url=PNAS_SAMPLE.landing_url,
+                html="<html><body><main>PNAS direct full text</main></body></html>",
+                response_status=200,
+                response_headers={"content-type": "text/html"},
+                title=PNAS_SAMPLE.title,
+                summary="PNAS direct full text",
+                browser_context_seed=seed,
             )
+        )
+        mocked_runtime = mock.Mock()
+        mocked_flaresolverr = mock.Mock()
+        install_browser_workflow_deps(
+            client,
+            fetch_html_with_direct_playwright=mocked_direct,
+            load_runtime_config=mocked_runtime,
+            fetch_html_with_flaresolverr=mocked_flaresolverr,
+            extract_atypon_browser_workflow_markdown=mock.Mock(
+                return_value=(
+                    f"# {PNAS_SAMPLE.title}\n\n## Results\n\n"
+                    + ("Body text " * 120),
+                    {"title": PNAS_SAMPLE.title},
+                )
+            ),
+        )
+        raw_payload = client.fetch_raw_fulltext(
+            PNAS_SAMPLE.doi,
+            {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+        )
 
         mocked_direct.assert_called_once()
         mocked_runtime.assert_not_called()
@@ -167,42 +171,47 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         self.assertEqual(raw_payload.content.fetcher, "playwright_direct")
         self.assertEqual(raw_payload.content.browser_context_seed, seed)
         self.assertIn("fulltext:pnas_html_ok", _payload_source_trail(raw_payload))
+
     def test_pnas_direct_playwright_html_preflight_falls_back_to_flaresolverr(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "pnas", PNAS_SAMPLE.doi)
-            with (
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_direct_playwright",
-                    side_effect=browser_workflow.HtmlExtractionFailure("insufficient_body", "Direct body was not sufficient."),
-                ) as mocked_direct,
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime) as mocked_runtime,
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
-                    return_value=_flaresolverr.FetchedPublisherHtml(
-                        source_url=PNAS_SAMPLE.landing_url,
-                        final_url=PNAS_SAMPLE.landing_url,
-                        html="<html></html>",
-                        response_status=200,
-                        response_headers={"content-type": "text/html"},
-                        title=PNAS_SAMPLE.title,
-                        summary="Example summary",
-                        browser_context_seed={},
-                    ),
-                ) as mocked_flaresolverr,
-                mock.patch.object(
-                    browser_workflow,
-                    "extract_atypon_browser_workflow_markdown",
-                    return_value=(f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120), {"title": PNAS_SAMPLE.title}),
-                ),
-            ):
-                raw_payload = client.fetch_raw_fulltext(
-                    PNAS_SAMPLE.doi,
-                    {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+            mocked_direct = mock.Mock(
+                side_effect=browser_workflow.HtmlExtractionFailure(
+                    "insufficient_body", "Direct body was not sufficient."
                 )
+            )
+            mocked_runtime = mock.Mock(return_value=runtime)
+            mocked_flaresolverr = mock.Mock(
+                return_value=_flaresolverr.FetchedPublisherHtml(
+                    source_url=PNAS_SAMPLE.landing_url,
+                    final_url=PNAS_SAMPLE.landing_url,
+                    html="<html></html>",
+                    response_status=200,
+                    response_headers={"content-type": "text/html"},
+                    title=PNAS_SAMPLE.title,
+                    summary="Example summary",
+                    browser_context_seed={},
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                fetch_html_with_direct_playwright=mocked_direct,
+                load_runtime_config=mocked_runtime,
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mocked_flaresolverr,
+                extract_atypon_browser_workflow_markdown=mock.Mock(
+                    return_value=(
+                        f"# {PNAS_SAMPLE.title}\n\n## Results\n\n"
+                        + ("Body text " * 120),
+                        {"title": PNAS_SAMPLE.title},
+                    )
+                ),
+            )
+            raw_payload = client.fetch_raw_fulltext(
+                PNAS_SAMPLE.doi,
+                {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+            )
 
         mocked_direct.assert_called_once()
         mocked_runtime.assert_called_once()
@@ -245,12 +254,14 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "pnas", doi)
-            with (
-                mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload),
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(browser_workflow, "fetch_seeded_browser_pdf_payload", return_value=pdf_payload) as mocked_pdf,
-            ):
+            mocked_pdf = mock.Mock(return_value=pdf_payload)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_seeded_browser_pdf_payload=mocked_pdf,
+            )
+            with mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload):
                 result = client.fetch_result(
                     doi,
                     {"doi": doi, "title": title, "landing_page_url": landing_url},
@@ -318,12 +329,14 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "science", doi)
-            with (
-                mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload),
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(browser_workflow, "fetch_seeded_browser_pdf_payload", return_value=pdf_payload) as mocked_pdf,
-            ):
+            mocked_pdf = mock.Mock(return_value=pdf_payload)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_seeded_browser_pdf_payload=mocked_pdf,
+            )
+            with mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload):
                 result = client.fetch_result(
                     doi,
                     {"doi": doi, "title": title, "landing_page_url": landing_url},
@@ -356,16 +369,17 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "pnas", doi)
-            with (
-                mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload),
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_seeded_browser_pdf_payload",
-                    side_effect=browser_workflow.PdfFallbackFailure("pdf_download_failed", "PNAS PDF fallback failed."),
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_seeded_browser_pdf_payload=mock.Mock(
+                    side_effect=browser_workflow.PdfFallbackFailure(
+                        "pdf_download_failed", "PNAS PDF fallback failed."
+                    )
                 ),
-            ):
+            )
+            with mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload):
                 result = client.fetch_result(
                     doi,
                     {"doi": doi, "title": title, "landing_page_url": landing_url},
@@ -414,16 +428,17 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "science", doi)
-            with (
-                mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload),
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_seeded_browser_pdf_payload",
-                    side_effect=browser_workflow.PdfFallbackFailure("pdf_download_failed", "Science PDF fallback failed."),
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_seeded_browser_pdf_payload=mock.Mock(
+                    side_effect=browser_workflow.PdfFallbackFailure(
+                        "pdf_download_failed", "Science PDF fallback failed."
+                    )
                 ),
-            ):
+            )
+            with mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload):
                 result = client.fetch_result(
                     doi,
                     {"doi": doi, "title": title, "landing_page_url": landing_url},
@@ -457,16 +472,17 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "wiley", doi)
-            with (
-                mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload),
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_seeded_browser_pdf_payload",
-                    side_effect=browser_workflow.PdfFallbackFailure("pdf_download_failed", "Wiley PDF fallback failed."),
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_seeded_browser_pdf_payload=mock.Mock(
+                    side_effect=browser_workflow.PdfFallbackFailure(
+                        "pdf_download_failed", "Wiley PDF fallback failed."
+                    )
                 ),
-            ):
+            )
+            with mock.patch.object(client, "fetch_raw_fulltext", return_value=html_payload):
                 result = client.fetch_result(
                     doi,
                     {"doi": doi, "title": title, "landing_page_url": landing_url},
@@ -491,52 +507,49 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
                 "browser_cookies": [{"name": "sessionid", "value": "warm", "domain": ".pnas.org", "path": "/"}],
                 "browser_user_agent": "Mozilla/5.0",
             }
-            with (
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_direct_playwright",
-                    side_effect=browser_workflow.HtmlExtractionFailure("playwright_direct_failed", "Direct preflight failed."),
+            mocked_warm = mock.Mock(
+                return_value={
+                    "browser_cookies": [seed["browser_cookies"][0], preflight_seed["browser_cookies"][0]],
+                    "browser_user_agent": "Mozilla/5.0",
+                    "browser_final_url": f"https://www.pnas.org/doi/{PNAS_SAMPLE.doi}",
+                }
+            )
+            mocked_pdf = mock.Mock(
+                return_value=mock.Mock(
+                    source_url=f"https://www.pnas.org/doi/pdf/{PNAS_SAMPLE.doi}",
+                    final_url=f"https://www.pnas.org/doi/pdf/{PNAS_SAMPLE.doi}",
+                    pdf_bytes=fulltext_pdf_bytes(),
+                    markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                    suggested_filename="article.pdf",
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                fetch_html_with_direct_playwright=mock.Mock(
+                    side_effect=browser_workflow.HtmlExtractionFailure(
+                        "playwright_direct_failed", "Direct preflight failed."
+                    )
                 ),
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     side_effect=_flaresolverr.FlareSolverrFailure(
                         "redirected_to_abstract",
                         "Abstract redirect",
                         browser_context_seed=seed,
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "warm_browser_context_with_flaresolverr",
-                    return_value={
-                        "browser_cookies": [seed["browser_cookies"][0], preflight_seed["browser_cookies"][0]],
-                        "browser_user_agent": "Mozilla/5.0",
-                        "browser_final_url": f"https://www.pnas.org/doi/{PNAS_SAMPLE.doi}",
-                    },
-                ) as mocked_warm,
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_pdf_with_playwright",
-                    return_value=mock.Mock(
-                        source_url=f"https://www.pnas.org/doi/pdf/{PNAS_SAMPLE.doi}",
-                        final_url=f"https://www.pnas.org/doi/pdf/{PNAS_SAMPLE.doi}",
-                        pdf_bytes=fulltext_pdf_bytes(),
-                        markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
-                        suggested_filename="article.pdf",
-                    ),
-                ) as mocked_pdf,
-            ):
-                raw_payload = client.fetch_raw_fulltext(
-                    PNAS_SAMPLE.doi,
-                    {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
-                )
-                article = client.to_article_model(
-                    {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
-                    raw_payload,
-                )
+                pdf_browser_context_seed=mocked_warm,
+                fetch_pdf_with_playwright=mocked_pdf,
+            )
+            raw_payload = client.fetch_raw_fulltext(
+                PNAS_SAMPLE.doi,
+                {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+            )
+            article = client.to_article_model(
+                {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
+                raw_payload,
+            )
 
         mocked_warm.assert_called_once()
         mocked_pdf.assert_called_once()

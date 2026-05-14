@@ -8,23 +8,15 @@ import threading
 from typing import Any, Callable, Mapping
 
 from ...extraction.html.assets import (
-    download_figure_assets_with_image_document_fetcher as _download_figure_assets_with_image_document_fetcher,
-    download_supplementary_assets as _download_supplementary_assets,
     extract_scoped_html_assets,
-    split_body_and_supplementary_assets as _split_body_and_supplementary_assets,
 )
 from ...models import AssetProfile
 from ...utils import empty_asset_results, normalize_text
 from .._flaresolverr import (
     FlareSolverrFailure,
-    fetch_html_with_flaresolverr as _fetch_html_with_flaresolverr,
     merge_browser_context_seeds,
-    warm_browser_context_with_flaresolverr as _warm_browser_context_with_flaresolverr,
 )
 from .assets import (
-    _assets_matching_download_failures,
-    _browser_workflow_image_download_candidates,
-    _cached_browser_workflow_assets,
     _merge_download_attempt_results,
 )
 from .fetchers import (
@@ -32,7 +24,7 @@ from .fetchers import (
     _flaresolverr_image_document_payload,
     _flaresolverr_image_payload_failure_reason,
 )
-from .shared import facade_attr
+from .shared import BrowserWorkflowDeps
 
 
 @dataclass(frozen=True)
@@ -68,6 +60,7 @@ def plan_browser_asset_download(
     html_text,
     source_url,
     profile,
+    deps: BrowserWorkflowDeps,
 ) -> BrowserAssetDownloadPlan:
     asset_profile = _asset_profile_from_plan_profile(profile)
     article_assets = _article_assets_from_plan_profile(
@@ -75,10 +68,11 @@ def plan_browser_asset_download(
         html_text=html_text,
         source_url=source_url,
         asset_profile=asset_profile,
+        deps=deps,
     )
-    body_assets, supplementary_assets = facade_attr(
-        "split_body_and_supplementary_assets", _split_body_and_supplementary_assets
-    )(article_assets)
+    body_assets, supplementary_assets = deps.split_body_and_supplementary_assets(
+        article_assets
+    )
     return BrowserAssetDownloadPlan(
         article_id=normalize_text(str(article_id or "")),
         output_dir=Path(output_dir),
@@ -95,6 +89,7 @@ def run_browser_asset_download_attempt(
     image_fetcher_factory,
     file_fetcher_factory,
     opener_requester,
+    deps: BrowserWorkflowDeps,
 ) -> BrowserAssetDownloadResult:
     return _run_browser_asset_download_attempt(
         plan,
@@ -105,6 +100,7 @@ def run_browser_asset_download_attempt(
         image_fetcher_factory=image_fetcher_factory,
         file_fetcher_factory=file_fetcher_factory,
         opener_requester=opener_requester,
+        deps=deps,
     )
 
 
@@ -116,17 +112,14 @@ def retry_failed_browser_assets(
     image_fetcher_factory,
     file_fetcher_factory,
     opener_requester,
+    deps: BrowserWorkflowDeps,
 ) -> BrowserAssetDownloadResult:
-    failed_body_assets = facade_attr(
-        "_assets_matching_download_failures", _assets_matching_download_failures
-    )(
+    failed_body_assets = deps._assets_matching_download_failures(
         plan.body_assets,
         previous.failures,
         retry_scope="body",
     )
-    failed_supplementary_assets = facade_attr(
-        "_assets_matching_download_failures", _assets_matching_download_failures
-    )(
+    failed_supplementary_assets = deps._assets_matching_download_failures(
         plan.supplementary_assets,
         previous.failures,
         retry_scope="supplementary",
@@ -134,9 +127,7 @@ def retry_failed_browser_assets(
     if not failed_body_assets and not failed_supplementary_assets:
         return previous
 
-    refreshed_seed = facade_attr(
-        "warm_browser_context_with_flaresolverr", _warm_browser_context_with_flaresolverr
-    )(
+    refreshed_seed = deps.refresh_browser_context_seed(
         _seed_urls_for(recovery, recovery.browser_context_seed),
         publisher=recovery.provider,
         config=recovery.runtime,
@@ -151,12 +142,13 @@ def retry_failed_browser_assets(
         image_fetcher_factory=image_fetcher_factory,
         file_fetcher_factory=file_fetcher_factory,
         opener_requester=opener_requester,
+        deps=deps,
     )
     merged = _merge_download_attempt_results(
         _result_mapping(previous),
         _result_mapping(retry_result),
     )
-    return _download_result_from_mapping(merged)
+    return _download_result_from_mapping(merged, deps=deps)
 
 
 def _asset_profile_from_plan_profile(profile: Any) -> AssetProfile:
@@ -178,6 +170,7 @@ def _article_assets_from_plan_profile(
     html_text: str,
     source_url: str,
     asset_profile: AssetProfile,
+    deps: BrowserWorkflowDeps,
 ) -> list[dict[str, Any]]:
     if isinstance(profile, Mapping):
         if "assets" in profile:
@@ -192,9 +185,7 @@ def _article_assets_from_plan_profile(
         context = getattr(profile, "context", None)
 
     if client is not None and context is not None:
-        return facade_attr(
-            "_cached_browser_workflow_assets", _cached_browser_workflow_assets
-        )(
+        return deps._cached_browser_workflow_assets(
             client,
             html_text,
             source_url,
@@ -218,6 +209,7 @@ def _run_browser_asset_download_attempt(
     image_fetcher_factory,
     file_fetcher_factory,
     opener_requester,
+    deps: BrowserWorkflowDeps,
 ) -> BrowserAssetDownloadResult:
     attempt_seed = merge_browser_context_seeds(
         {"browser_cookies": recovery.browser_cookies},
@@ -228,9 +220,7 @@ def _run_browser_asset_download_attempt(
 
     def raw_figure_page_fetcher(figure_page_url: str) -> tuple[str, str] | None:
         try:
-            html_result = facade_attr(
-                "fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr
-            )(
+            html_result = deps.fetch_html_with_flaresolverr(
                 [figure_page_url],
                 publisher=recovery.provider,
                 config=recovery.runtime,
@@ -259,6 +249,7 @@ def _run_browser_asset_download_attempt(
         attempt_body_assets=attempt_body_assets,
         seed_urls_getter=seed_urls_getter,
         image_fetcher_factory=image_fetcher_factory,
+        deps=deps,
     )
     file_document_fetcher = _build_attempt_file_fetcher(
         recovery,
@@ -267,13 +258,11 @@ def _run_browser_asset_download_attempt(
         attempt_supplementary_assets=attempt_supplementary_assets,
         seed_urls_getter=seed_urls_getter,
         file_fetcher_factory=file_fetcher_factory,
+        deps=deps,
     )
     try:
         body_result = (
-            facade_attr(
-                "download_figure_assets_with_image_document_fetcher",
-                _download_figure_assets_with_image_document_fetcher,
-            )(
+            deps.download_figure_assets_with_image_document_fetcher(
                 attempt_settings.get("transport"),
                 article_id=plan.article_id,
                 assets=attempt_body_assets,
@@ -281,10 +270,7 @@ def _run_browser_asset_download_attempt(
                 user_agent=recovery.user_agent,
                 asset_profile=plan.asset_profile,
                 figure_page_fetcher=figure_page_fetcher,
-                candidate_builder=facade_attr(
-                    "_browser_workflow_image_download_candidates",
-                    _browser_workflow_image_download_candidates,
-                ),
+                candidate_builder=deps._browser_workflow_image_download_candidates,
                 image_document_fetcher=image_document_fetcher,
                 asset_download_concurrency=attempt_settings.get(
                     "asset_download_concurrency"
@@ -303,9 +289,7 @@ def _run_browser_asset_download_attempt(
                 "opener_requester"
             ]
         supplementary_result = (
-            facade_attr(
-                "download_supplementary_assets", _download_supplementary_assets
-            )(
+            deps.download_supplementary_assets(
                 attempt_settings.get("transport"),
                 article_id=plan.article_id,
                 assets=attempt_supplementary_assets,
@@ -353,6 +337,7 @@ def _build_attempt_image_fetcher(
     attempt_body_assets: list[dict[str, Any]],
     seed_urls_getter: Callable[[], list[str]],
     image_fetcher_factory,
+    deps: BrowserWorkflowDeps,
 ) -> Callable[[str, Mapping[str, Any]], dict[str, Any] | None] | None:
     if not attempt_body_assets or not callable(image_fetcher_factory):
         return None
@@ -367,6 +352,7 @@ def _build_attempt_image_fetcher(
             recovery,
             attempt_seed=attempt_seed,
             attempt_seed_lock=attempt_seed_lock,
+            deps=deps,
         ),
     )
 
@@ -379,6 +365,7 @@ def _build_attempt_file_fetcher(
     attempt_supplementary_assets: list[dict[str, Any]],
     seed_urls_getter: Callable[[], list[str]],
     file_fetcher_factory,
+    deps: BrowserWorkflowDeps,
 ) -> Callable[[str, Mapping[str, Any]], dict[str, Any] | None] | None:
     if not attempt_supplementary_assets or not callable(file_fetcher_factory):
         return None
@@ -393,6 +380,7 @@ def _build_attempt_file_fetcher(
             recovery,
             attempt_seed=attempt_seed,
             attempt_seed_lock=attempt_seed_lock,
+            deps=deps,
         ),
     )
 
@@ -402,6 +390,7 @@ def _asset_challenge_recovery_for(
     *,
     attempt_seed: dict[str, Any],
     attempt_seed_lock: threading.Lock,
+    deps: BrowserWorkflowDeps,
 ) -> Callable[[str, Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any] | None]:
     def recover(
         image_url: str, asset: Mapping[str, Any], failure: Mapping[str, Any]
@@ -409,10 +398,7 @@ def _asset_challenge_recovery_for(
         attempts: list[dict[str, Any]] = []
         for recovery_url in _asset_recovery_urls(image_url, asset):
             try:
-                html_result = facade_attr(
-                    "fetch_html_with_flaresolverr",
-                    _fetch_html_with_flaresolverr,
-                )(
+                html_result = deps.fetch_html_with_flaresolverr(
                     [recovery_url],
                     publisher=recovery.provider,
                     config=recovery.runtime,
@@ -479,6 +465,7 @@ def _supplementary_challenge_recovery_for(
     *,
     attempt_seed: dict[str, Any],
     attempt_seed_lock: threading.Lock,
+    deps: BrowserWorkflowDeps,
 ) -> Callable[[str, Mapping[str, Any], Mapping[str, Any]], Mapping[str, Any] | None]:
     def recover(
         file_url: str, asset: Mapping[str, Any], failure: Mapping[str, Any]
@@ -486,10 +473,7 @@ def _supplementary_challenge_recovery_for(
         attempts: list[dict[str, Any]] = []
         for recovery_url in _supplementary_recovery_urls(recovery, file_url, asset):
             try:
-                html_result = facade_attr(
-                    "fetch_html_with_flaresolverr",
-                    _fetch_html_with_flaresolverr,
-                )(
+                html_result = deps.fetch_html_with_flaresolverr(
                     [recovery_url],
                     publisher=recovery.provider,
                     config=recovery.runtime,
@@ -619,10 +603,12 @@ def _result_mapping(result: BrowserAssetDownloadResult) -> dict[str, list[dict[s
 
 def _download_result_from_mapping(
     result: Mapping[str, Any],
+    *,
+    deps: BrowserWorkflowDeps,
 ) -> BrowserAssetDownloadResult:
-    body_results, supplementary_results = facade_attr(
-        "split_body_and_supplementary_assets", _split_body_and_supplementary_assets
-    )([dict(asset) for asset in list(result.get("assets") or [])])
+    body_results, supplementary_results = deps.split_body_and_supplementary_assets(
+        [dict(asset) for asset in list(result.get("assets") or [])]
+    )
     return BrowserAssetDownloadResult(
         body_results=body_results,
         supplementary_results=supplementary_results,

@@ -14,6 +14,7 @@ from ..runtime import RuntimeContext
 from ..tracing import fulltext_marker
 from ..utils import normalize_text
 from . import _wiley_html, browser_workflow
+from .browser_workflow.shared import BrowserWorkflowDeps, default_browser_workflow_deps
 from ._pdf_fallback import PdfFallbackFailure, PdfFallbackStrategy, fetch_pdf_over_http
 from ._pdf_common import PdfFetchResult, pdf_fetch_result_from_response
 from ._waterfall import (
@@ -94,8 +95,13 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
     name = WILEY_BROWSER_PROFILE.name
     profile = WILEY_BROWSER_PROFILE
 
-    def __init__(self, transport, env: Mapping[str, str]) -> None:
-        super().__init__(transport, env)
+    def __init__(
+        self,
+        transport,
+        env: Mapping[str, str],
+        deps: BrowserWorkflowDeps = default_browser_workflow_deps(),
+    ) -> None:
+        super().__init__(transport, env, deps=deps)
         self.tdm_client_token = str(
             self.env.get(WILEY_TDM_CLIENT_TOKEN_ENV_VAR, "")
         ).strip()
@@ -116,9 +122,7 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
         }
 
     def probe_status(self) -> ProviderStatusResult:
-        browser_status = browser_workflow.probe_runtime_status(
-            self.env, provider=self.name
-        )
+        browser_status = self.deps.probe_runtime_status(self.env, provider=self.name)
         token_configured = bool(self.tdm_client_token)
         browser_ready = bool(browser_status.checks) and all(
             check.status == OK for check in browser_status.checks
@@ -159,12 +163,13 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
         context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         context = self._runtime_context(context)
-        bootstrap = browser_workflow.bootstrap_browser_workflow(
+        bootstrap = self.deps.bootstrap_browser_workflow(
             self,
             doi,
             metadata,
             allow_runtime_failure=True,
             context=context,
+            deps=self.deps,
         )
         if bootstrap.html_payload is not None:
             return bootstrap.html_payload
@@ -236,7 +241,7 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
                     else [],
                 )
             try:
-                return browser_workflow.fetch_seeded_browser_pdf_payload(
+                return self.deps.fetch_seeded_browser_pdf_payload(
                     provider=self.name,
                     runtime=bootstrap.runtime,
                     pdf_candidates=bootstrap.pdf_candidates,
@@ -253,6 +258,7 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
                     ),
                     artifact_subdir="browser_pdf_fallback",
                     context=context,
+                    deps=self.deps,
                 )
             except PdfFallbackFailure as exc:
                 raise ProviderFailure(NO_RESULT, exc.message) from exc

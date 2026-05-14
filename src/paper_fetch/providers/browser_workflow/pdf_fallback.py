@@ -8,13 +8,9 @@ from ...http import PDF_MIME_TYPE
 from ...runtime import RuntimeContext
 from ...tracing import trace_from_markers
 from ...reason_codes import PDF_FALLBACK
-from .._flaresolverr import (
-    warm_browser_context_with_flaresolverr as _warm_browser_context_with_flaresolverr,
-)
-from .._pdf_fallback import fetch_pdf_with_playwright as _fetch_pdf_with_playwright
 from ..base import ProviderContent, RawFulltextPayload
 from .fetchers import _choose_playwright_seed_url
-from .shared import facade_attr
+from .shared import BrowserWorkflowDeps, default_browser_workflow_deps
 
 
 def fetch_seeded_browser_pdf_payload(
@@ -33,11 +29,10 @@ def fetch_seeded_browser_pdf_payload(
     success_warning: str = "Full text was extracted from PDF fallback after the HTML path was not usable.",
     artifact_subdir: str = PDF_FALLBACK,
     context: RuntimeContext | None = None,
+    deps: BrowserWorkflowDeps | None = None,
 ) -> RawFulltextPayload:
-    pdf_browser_context_seed = facade_attr(
-        "warm_browser_context_with_flaresolverr",
-        _warm_browser_context_with_flaresolverr,
-    )(
+    deps = deps or default_browser_workflow_deps()
+    pdf_browser_context_seed = deps.pdf_browser_context_seed(
         pdf_candidates,
         publisher=provider,
         config=runtime,
@@ -49,7 +44,7 @@ def fetch_seeded_browser_pdf_payload(
         landing_page_url,
         pdf_browser_context_seed.get("browser_final_url"),
     )
-    pdf_result = facade_attr("fetch_pdf_with_playwright", _fetch_pdf_with_playwright)(
+    pdf_result = deps.fetch_pdf_with_playwright(
         pdf_candidates,
         artifact_dir=runtime.artifact_dir / artifact_subdir,
         browser_cookies=list(pdf_browser_context_seed.get("browser_cookies") or []),

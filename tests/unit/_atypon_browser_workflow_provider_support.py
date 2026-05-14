@@ -31,6 +31,10 @@ from tests.golden_criteria import (
     golden_criteria_scenario_asset,
 )
 from tests.provider_benchmark_samples import provider_benchmark_sample
+from tests.unit._browser_workflow_deps import (
+    browser_workflow_deps,
+    install_browser_workflow_deps,
+)
 from tests.unit._paper_fetch_support import build_envelope, fulltext_pdf_bytes
 
 

@@ -23,6 +23,7 @@ from paper_fetch.providers.elsevier import (
 from paper_fetch.providers.springer import SpringerClient
 from paper_fetch.providers.wiley import WileyClient
 from paper_fetch.runtime import RuntimeContext
+from tests.unit._browser_workflow_deps import browser_workflow_deps
 from tests.unit._paper_fetch_support import RecordingTransport
 
 
@@ -214,13 +215,11 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             headless=True,
         )
 
-        client = WileyClient(transport=None, env={})
-        with (
-            mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-            mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-            mock.patch.object(
-                browser_workflow,
-                "fetch_html_with_flaresolverr",
+        mocked_pdf = mock.Mock()
+        deps = browser_workflow_deps(
+            load_runtime_config=mock.Mock(return_value=runtime),
+            ensure_runtime_ready=mock.Mock(),
+            fetch_html_with_flaresolverr=mock.Mock(
                 return_value=_flaresolverr.FetchedPublisherHtml(
                     source_url="https://onlinelibrary.wiley.com/doi/full/10.1002/ece3.9361",
                     final_url="https://onlinelibrary.wiley.com/doi/full/10.1002/ece3.9361",
@@ -230,19 +229,22 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                     title="Example Wiley Article",
                     summary="Example summary",
                     browser_context_seed={},
-                ),
+                )
             ),
-            mock.patch.object(
-                browser_workflow,
-                "extract_atypon_browser_workflow_markdown",
-                return_value=("# Example Wiley Article\n\n## Results\n\n" + ("Body text " * 120), {"title": "Example"}),
+            extract_atypon_browser_workflow_markdown=mock.Mock(
+                return_value=(
+                    "# Example Wiley Article\n\n## Results\n\n"
+                    + ("Body text " * 120),
+                    {"title": "Example"},
+                )
             ),
-            mock.patch.object(browser_workflow, "fetch_pdf_with_playwright") as mocked_pdf,
-        ):
-            payload = client.fetch_raw_fulltext(
-                doi,
-                {"doi": doi, "landing_page_url": "https://onlinelibrary.wiley.com/doi/full/10.1002/ece3.9361"},
-            )
+            fetch_pdf_with_playwright=mocked_pdf,
+        )
+        client = WileyClient(transport=None, env={}, deps=deps)
+        payload = client.fetch_raw_fulltext(
+            doi,
+            {"doi": doi, "landing_page_url": "https://onlinelibrary.wiley.com/doi/full/10.1002/ece3.9361"},
+        )
 
         mocked_pdf.assert_not_called()
         self.assertIsNotNone(payload.content)
@@ -272,31 +274,32 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             browser_context_seed={},
         )
 
-        client = WileyClient(transport=None, env={})
-        with (
-            mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-            mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-            mock.patch.object(
-                browser_workflow,
-                "fetch_html_with_flaresolverr",
-                side_effect=[
-                    browser_workflow.FlareSolverrFailure(
-                        "cloudflare_challenge",
-                        "Encountered a challenge page.",
-                    ),
-                    fallback_html,
-                ],
-            ) as mocked_fetch,
-            mock.patch.object(
-                browser_workflow,
-                "extract_atypon_browser_workflow_markdown",
-                return_value=("# Example Wiley Article\n\n## Results\n\n" + ("Body text " * 120), {"title": "Example"}),
+        mocked_fetch = mock.Mock(
+            side_effect=[
+                browser_workflow.FlareSolverrFailure(
+                    "cloudflare_challenge",
+                    "Encountered a challenge page.",
+                ),
+                fallback_html,
+            ]
+        )
+        deps = browser_workflow_deps(
+            load_runtime_config=mock.Mock(return_value=runtime),
+            ensure_runtime_ready=mock.Mock(),
+            fetch_html_with_flaresolverr=mocked_fetch,
+            extract_atypon_browser_workflow_markdown=mock.Mock(
+                return_value=(
+                    "# Example Wiley Article\n\n## Results\n\n"
+                    + ("Body text " * 120),
+                    {"title": "Example"},
+                )
             ),
-        ):
-            payload = client.fetch_raw_fulltext(
-                doi,
-                {"doi": doi, "landing_page_url": "https://onlinelibrary.wiley.com/doi/full/10.1002/ece3.9361"},
-            )
+        )
+        client = WileyClient(transport=None, env={}, deps=deps)
+        payload = client.fetch_raw_fulltext(
+            doi,
+            {"doi": doi, "landing_page_url": "https://onlinelibrary.wiley.com/doi/full/10.1002/ece3.9361"},
+        )
 
         self.assertEqual(mocked_fetch.call_count, 2)
         self.assertEqual(mocked_fetch.call_args_list[0].kwargs["wait_seconds"], 0)
@@ -342,31 +345,30 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             browser_context_seed={},
         )
 
-        client = WileyClient(transport=None, env={})
-        with (
-            mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-            mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-            mock.patch.object(
-                browser_workflow,
-                "fetch_html_with_flaresolverr",
-                side_effect=[fast_html, fallback_html],
-            ) as mocked_fetch,
-            mock.patch.object(
-                browser_workflow,
-                "extract_atypon_browser_workflow_markdown",
+        mocked_fetch = mock.Mock(side_effect=[fast_html, fallback_html])
+        deps = browser_workflow_deps(
+            load_runtime_config=mock.Mock(return_value=runtime),
+            ensure_runtime_ready=mock.Mock(),
+            fetch_html_with_flaresolverr=mocked_fetch,
+            extract_atypon_browser_workflow_markdown=mock.Mock(
                 side_effect=[
                     browser_workflow.HtmlExtractionFailure(
                         "insufficient_body",
                         "HTML extraction did not produce enough article body text.",
                     ),
-                    ("# Example Wiley Article\n\n## Results\n\n" + ("Body text " * 120), {"title": "Example"}),
-                ],
+                    (
+                        "# Example Wiley Article\n\n## Results\n\n"
+                        + ("Body text " * 120),
+                        {"title": "Example"},
+                    ),
+                ]
             ),
-        ):
-            payload = client.fetch_raw_fulltext(
-                doi,
-                {"doi": doi, "landing_page_url": "https://onlinelibrary.wiley.com/doi/full/10.1002/ece3.9361"},
-            )
+        )
+        client = WileyClient(transport=None, env={}, deps=deps)
+        payload = client.fetch_raw_fulltext(
+            doi,
+            {"doi": doi, "landing_page_url": "https://onlinelibrary.wiley.com/doi/full/10.1002/ece3.9361"},
+        )
 
         self.assertEqual(mocked_fetch.call_count, 2)
         self.assertIs(mocked_fetch.call_args_list[0].kwargs["disable_media"], True)
@@ -1421,16 +1423,14 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                 browser_context_seed={"browser_final_url": "https://www.science.org/doi/full/10.1126/science.assets"},
             ),
         )
-        client = browser_workflow.BrowserWorkflowClient(RecordingTransport({}), {})
-        client.name = "science"
-
-        with (
-            tempfile.TemporaryDirectory() as tmpdir,
-            mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-            mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-            mock.patch.object(
-                browser_workflow,
-                "_cached_browser_workflow_assets",
+        mocked_figures = mock.Mock(return_value={"assets": [], "asset_failures": []})
+        mocked_supplementary = mock.Mock(
+            return_value={"assets": [], "asset_failures": []}
+        )
+        deps = browser_workflow_deps(
+            load_runtime_config=mock.Mock(return_value=runtime),
+            ensure_runtime_ready=mock.Mock(),
+            _cached_browser_workflow_assets=mock.Mock(
                 return_value=[
                     {
                         "kind": "figure",
@@ -1444,11 +1444,17 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                         "url": "https://example.test/supplement.pdf",
                         "section": "supplementary",
                     },
-                ],
+                ]
             ),
-            mock.patch.object(browser_workflow, "download_figure_assets_with_image_document_fetcher", return_value={"assets": [], "asset_failures": []}) as mocked_figures,
-            mock.patch.object(browser_workflow, "download_supplementary_assets", return_value={"assets": [], "asset_failures": []}) as mocked_supplementary,
-        ):
+            download_figure_assets_with_image_document_fetcher=mocked_figures,
+            download_supplementary_assets=mocked_supplementary,
+        )
+        client = browser_workflow.BrowserWorkflowClient(
+            RecordingTransport({}), {}, deps=deps
+        )
+        client.name = "science"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
             result = client.download_related_assets(
                 doi,
                 {"doi": doi, "title": "Asset Concurrency"},

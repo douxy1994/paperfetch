@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import urllib.parse
 
+from dataclasses import dataclass
+from typing import Any, Callable
+
 from ...quality import html_profiles as _html_profiles
 from ...utils import normalize_text
 from .._pdf_candidates import extract_pdf_url_from_crossref as extract_pdf_url_from_crossref
@@ -14,6 +17,88 @@ dedupe_signals = _html_profiles.dedupe_signals
 default_positive_signals = _html_profiles.default_positive_signals
 looks_like_abstract_redirect = _html_profiles.looks_like_abstract_redirect
 BROWSER_HTML_BLOCKED_RESOURCE_TYPES = {"image", "font", "stylesheet", "media"}
+
+
+@dataclass(frozen=True)
+class BrowserWorkflowDeps:
+    load_runtime_config: Callable[..., Any]
+    ensure_runtime_ready: Callable[..., Any]
+    probe_runtime_status: Callable[..., Any]
+    fetch_html_with_flaresolverr: Callable[..., Any]
+    warm_browser_context_with_flaresolverr: Callable[..., Any]
+    fetch_seeded_browser_pdf_payload: Callable[..., Any]
+    fetch_pdf_with_playwright: Callable[..., Any]
+    download_figure_assets_with_image_document_fetcher: Callable[..., Any]
+    download_supplementary_assets: Callable[..., Any]
+    split_body_and_supplementary_assets: Callable[..., Any]
+    bootstrap_browser_workflow: Callable[..., Any]
+    _build_shared_playwright_file_fetcher: Callable[..., Any]
+    _build_shared_playwright_image_fetcher: Callable[..., Any]
+    extract_atypon_browser_workflow_markdown: Callable[..., Any]
+    pdf_browser_context_seed: Callable[..., Any]
+    refresh_browser_context_seed: Callable[..., Any]
+    fetch_html_with_direct_playwright: Callable[..., Any]
+    _cached_browser_workflow_markdown: Callable[..., Any]
+    _cached_browser_workflow_assets: Callable[..., Any]
+    _assets_matching_download_failures: Callable[..., Any]
+    _browser_workflow_image_download_candidates: Callable[..., Any]
+
+
+def default_browser_workflow_deps() -> BrowserWorkflowDeps:
+    """返回生产默认依赖。"""
+    from ...extraction.html.assets import (
+        download_figure_assets_with_image_document_fetcher,
+        download_supplementary_assets,
+        split_body_and_supplementary_assets,
+    )
+    from .._flaresolverr import (
+        ensure_runtime_ready,
+        fetch_html_with_flaresolverr,
+        load_runtime_config,
+        probe_runtime_status,
+        warm_browser_context_with_flaresolverr,
+    )
+    from .._pdf_fallback import fetch_pdf_with_playwright
+    from ..atypon_browser_workflow import extract_atypon_browser_workflow_markdown
+    from .assets import (
+        _assets_matching_download_failures,
+        _browser_workflow_image_download_candidates,
+        _cached_browser_workflow_assets,
+    )
+    from .bootstrap import bootstrap_browser_workflow
+    from .fetchers import (
+        _build_shared_playwright_file_fetcher,
+        _build_shared_playwright_image_fetcher,
+    )
+    from .html_extraction import (
+        _cached_browser_workflow_markdown,
+        fetch_html_with_direct_playwright,
+    )
+    from .pdf_fallback import fetch_seeded_browser_pdf_payload
+
+    return BrowserWorkflowDeps(
+        load_runtime_config=load_runtime_config,
+        ensure_runtime_ready=ensure_runtime_ready,
+        probe_runtime_status=probe_runtime_status,
+        fetch_html_with_flaresolverr=fetch_html_with_flaresolverr,
+        warm_browser_context_with_flaresolverr=warm_browser_context_with_flaresolverr,
+        fetch_seeded_browser_pdf_payload=fetch_seeded_browser_pdf_payload,
+        fetch_pdf_with_playwright=fetch_pdf_with_playwright,
+        download_figure_assets_with_image_document_fetcher=download_figure_assets_with_image_document_fetcher,
+        download_supplementary_assets=download_supplementary_assets,
+        split_body_and_supplementary_assets=split_body_and_supplementary_assets,
+        bootstrap_browser_workflow=bootstrap_browser_workflow,
+        _build_shared_playwright_file_fetcher=_build_shared_playwright_file_fetcher,
+        _build_shared_playwright_image_fetcher=_build_shared_playwright_image_fetcher,
+        extract_atypon_browser_workflow_markdown=extract_atypon_browser_workflow_markdown,
+        pdf_browser_context_seed=warm_browser_context_with_flaresolverr,
+        refresh_browser_context_seed=warm_browser_context_with_flaresolverr,
+        fetch_html_with_direct_playwright=fetch_html_with_direct_playwright,
+        _cached_browser_workflow_markdown=_cached_browser_workflow_markdown,
+        _cached_browser_workflow_assets=_cached_browser_workflow_assets,
+        _assets_matching_download_failures=_assets_matching_download_failures,
+        _browser_workflow_image_download_candidates=_browser_workflow_image_download_candidates,
+    )
 
 
 def preferred_html_candidate_from_landing_page(
@@ -120,10 +205,3 @@ def build_browser_workflow_pdf_candidates(
     if not inserted:
         _append_unique(candidates, crossref_candidate)
     return candidates
-
-
-def facade_attr(name: str, fallback):
-    import sys
-
-    facade = sys.modules.get(__package__)
-    return getattr(facade, name, fallback) if facade is not None else fallback

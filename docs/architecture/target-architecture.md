@@ -387,7 +387,7 @@ workflow 会尽可能拿到两类元数据：
 
 `paper_fetch.providers._atypon_browser_workflow_profiles` 是 Atypon-only candidate routing/profile dispatch helper。它支持 provider catalog 中的 `science` / `pnas` / `wiley` / `ams`；候选 URL 模板来自 `ProviderSpec`，provider-owned callback 模块按 `ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES` 动态导入。`paper_fetch.providers.atypon_browser_workflow` 承载 Atypon browser HTML markdown、asset scopes、normalization 和 postprocess entrypoint，publisher 差异通过 profile callback 分派。
 
-facade 继续 re-export 测试和 provider 已依赖的 patch 点。例如 `load_runtime_config`、`fetch_html_with_flaresolverr`、`fetch_html_with_direct_playwright`、`fetch_pdf_with_playwright`、`extract_atypon_browser_workflow_markdown` 与 shared Playwright fetcher 构造器。
+browser workflow 内部不再通过包级 facade 反射查找 patch 点；`BrowserWorkflowClient`、bootstrap、PDF fallback 和 asset retry helper 统一接收 `shared.BrowserWorkflowDeps`。生产默认依赖由 `default_browser_workflow_deps()` 装配，测试需要替换 runtime、FlareSolverr、Playwright 或 asset downloader 时通过构造定制 deps 注入。
 
 `wiley` / `science` / `pnas` / `ams` 的 HTML 正文图片资产下载也属于这套 provider-owned browser workflow：每个 asset download attempt 内，单个 worker 线程会复用自己的 seeded Playwright browser context，先尝试 full-size/original，全部失败后再用同一线程私有 context 尝试 preview；并发 worker 之间不复用 `RuntimeContext` 持有的共享 browser。PNAS direct Playwright HTML preflight 和 PDF/ePDF fallback 同样通过 `RuntimeContext` 复用 browser，但这只适用于非 threaded 的主流程 Playwright 步骤。通用 HTTP-first 资产下载仍保留给非目标 provider，并由 `paper_fetch.extraction.html.assets.download` 的私有 candidate/attempt/resolution 模型和共享 executor 统一处理 figure、table/formula image 与 supplementary 的 resolve/fallback 流程；网络解析阶段进入 bounded worker pool，文件写入、文件名去重、`source_data/` 分流和失败诊断收集仍按原 asset 顺序串行执行。
 

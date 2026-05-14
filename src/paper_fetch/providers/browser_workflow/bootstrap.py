@@ -13,19 +13,15 @@ from ...utils import normalize_text
 from . import html_extraction as _html_extraction
 from .html_extraction import (
     _browser_workflow_html_payload,
-    _cached_browser_workflow_markdown,
-    fetch_html_with_direct_playwright as _fetch_html_with_direct_playwright,
 )
 from .shared import (
-    facade_attr,
+    BrowserWorkflowDeps,
+    default_browser_workflow_deps,
     preferred_html_candidate_from_landing_page as _preferred_html_candidate_from_landing_page,
 )
 from .._pdf_candidates import extract_pdf_candidate_urls_from_html
 from .._flaresolverr import (
     FlareSolverrFailure,
-    ensure_runtime_ready as _ensure_runtime_ready,
-    fetch_html_with_flaresolverr as _fetch_html_with_flaresolverr,
-    load_runtime_config as _load_runtime_config,
 )
 from ..base import ProviderFailure
 from ...reason_codes import NOT_SUPPORTED
@@ -37,18 +33,24 @@ if TYPE_CHECKING:
 logger = logging.getLogger("paper_fetch.providers.browser_workflow")
 
 
-def _fetch_flaresolverr_html_payload(*args, **kwargs):
+def _fetch_flaresolverr_html_payload(*args, deps: BrowserWorkflowDeps | None = None, **kwargs):
+    deps = deps or default_browser_workflow_deps()
     kwargs.setdefault(
         "html_fetcher",
-        facade_attr("fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr),
+        deps.fetch_html_with_flaresolverr,
     )
     return _html_extraction._fetch_flaresolverr_html_payload(*args, **kwargs)
 
 
-def _fetch_flaresolverr_html_payload_with_fast_path(*args, **kwargs):
+def _fetch_flaresolverr_html_payload_with_fast_path(
+    *args,
+    deps: BrowserWorkflowDeps | None = None,
+    **kwargs,
+):
+    deps = deps or default_browser_workflow_deps()
     kwargs.setdefault(
         "html_fetcher",
-        facade_attr("fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr),
+        deps.fetch_html_with_flaresolverr,
     )
     return _html_extraction._fetch_flaresolverr_html_payload_with_fast_path(
         *args, **kwargs
@@ -62,7 +64,9 @@ def bootstrap_browser_workflow(
     *,
     allow_runtime_failure: bool = False,
     context: RuntimeContext | None = None,
+    deps: BrowserWorkflowDeps | None = None,
 ) -> BrowserWorkflowBootstrapResult:
+    deps = deps or default_browser_workflow_deps()
     context = client._runtime_context(context)
     normalized_doi = normalize_doi(doi)
     if not normalized_doi:
@@ -102,16 +106,14 @@ def bootstrap_browser_workflow(
 
     if profile.direct_playwright_html_preflight:
         try:
-            html_result = facade_attr(
-                "fetch_html_with_direct_playwright", _fetch_html_with_direct_playwright
-            )(
+            html_result = deps.fetch_html_with_direct_playwright(
                 html_candidates,
                 publisher=client.name,
                 user_agent=client.user_agent,
                 context=context,
             )
             result.browser_context_seed = html_result.browser_context_seed
-            markdown_text, extraction = _cached_browser_workflow_markdown(
+            markdown_text, extraction = deps._cached_browser_workflow_markdown(
                 client,
                 html_result.html,
                 html_result.final_url,
@@ -144,12 +146,12 @@ def bootstrap_browser_workflow(
             )
 
     try:
-        result.runtime = facade_attr("load_runtime_config", _load_runtime_config)(
+        result.runtime = deps.load_runtime_config(
             client.env,
             provider=client.name,
             doi=normalized_doi,
         )
-        facade_attr("ensure_runtime_ready", _ensure_runtime_ready)(result.runtime)
+        deps.ensure_runtime_ready(result.runtime)
     except ProviderFailure as exc:
         if not allow_runtime_failure:
             raise
@@ -166,6 +168,7 @@ def bootstrap_browser_workflow(
             metadata=metadata,
             context=context,
             warnings=result.warnings,
+            deps=deps,
         )
         result.browser_context_seed = html_result.browser_context_seed
         result.html_payload = html_payload

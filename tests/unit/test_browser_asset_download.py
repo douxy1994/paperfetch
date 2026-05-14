@@ -5,7 +5,6 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase, mock
 
-from paper_fetch.providers import browser_workflow
 from paper_fetch.providers.browser_workflow.asset_download import (
     BrowserAssetDownloadPlan,
     BrowserAssetDownloadResult,
@@ -14,6 +13,7 @@ from paper_fetch.providers.browser_workflow.asset_download import (
     retry_failed_browser_assets,
     run_browser_asset_download_attempt,
 )
+from tests.unit._browser_workflow_deps import browser_workflow_deps
 
 
 class BrowserWorkflowAssetDownloadTests(TestCase):
@@ -40,6 +40,7 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
                 "asset_profile": "all",
                 "assets": [figure_asset, supplementary_asset],
             },
+            deps=browser_workflow_deps(),
         )
 
         self.assertIsInstance(plan, BrowserAssetDownloadPlan)
@@ -105,30 +106,26 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
             "asset_failures": [],
         }
 
-        with (
-            mock.patch.object(
-                browser_workflow,
-                "download_figure_assets_with_image_document_fetcher",
-                return_value=body_result,
-            ) as mocked_figures,
-            mock.patch.object(
-                browser_workflow,
-                "download_supplementary_assets",
-                return_value=supplementary_result,
-            ) as mocked_supplementary,
-        ):
-            result = run_browser_asset_download_attempt(
-                plan,
-                recovery,
-                image_fetcher_factory=image_fetcher_factory,
-                file_fetcher_factory=file_fetcher_factory,
-                opener_requester={
-                    "transport": object(),
-                    "asset_download_concurrency": 3,
-                    "figure_page_fetcher_factory": figure_page_fetcher_factory,
-                    "opener_requester": opener_requester,
-                },
-            )
+        mocked_figures = mock.Mock(return_value=body_result)
+        mocked_supplementary = mock.Mock(return_value=supplementary_result)
+        deps = browser_workflow_deps(
+            download_figure_assets_with_image_document_fetcher=mocked_figures,
+            download_supplementary_assets=mocked_supplementary,
+        )
+
+        result = run_browser_asset_download_attempt(
+            plan,
+            recovery,
+            image_fetcher_factory=image_fetcher_factory,
+            file_fetcher_factory=file_fetcher_factory,
+            opener_requester={
+                "transport": object(),
+                "asset_download_concurrency": 3,
+                "figure_page_fetcher_factory": figure_page_fetcher_factory,
+                "opener_requester": opener_requester,
+            },
+            deps=deps,
+        )
 
         self.assertEqual(result.body_results, body_result["assets"])
         self.assertEqual(result.supplementary_results, supplementary_result["assets"])
@@ -237,30 +234,26 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
             "asset_failures": [],
         }
 
-        with (
-            mock.patch.object(
-                browser_workflow,
-                "warm_browser_context_with_flaresolverr",
-                return_value={"browser_final_url": "https://example.test/refreshed"},
-            ) as mocked_warm,
-            mock.patch.object(
-                browser_workflow,
-                "download_figure_assets_with_image_document_fetcher",
-                return_value=retry_body_result,
-            ) as mocked_figures,
-            mock.patch.object(
-                browser_workflow,
-                "download_supplementary_assets",
-            ) as mocked_supplementary,
-        ):
-            result = retry_failed_browser_assets(
-                plan,
-                previous,
-                recovery,
-                image_fetcher_factory=mock.Mock(return_value=None),
-                file_fetcher_factory=mock.Mock(return_value=None),
-                opener_requester={"transport": object()},
-            )
+        mocked_warm = mock.Mock(
+            return_value={"browser_final_url": "https://example.test/refreshed"}
+        )
+        mocked_figures = mock.Mock(return_value=retry_body_result)
+        mocked_supplementary = mock.Mock()
+        deps = browser_workflow_deps(
+            refresh_browser_context_seed=mocked_warm,
+            download_figure_assets_with_image_document_fetcher=mocked_figures,
+            download_supplementary_assets=mocked_supplementary,
+        )
+
+        result = retry_failed_browser_assets(
+            plan,
+            previous,
+            recovery,
+            image_fetcher_factory=mock.Mock(return_value=None),
+            file_fetcher_factory=mock.Mock(return_value=None),
+            opener_requester={"transport": object()},
+            deps=deps,
+        )
 
         mocked_warm.assert_called_once()
         self.assertEqual(mocked_figures.call_args.kwargs["assets"], [failed_figure])

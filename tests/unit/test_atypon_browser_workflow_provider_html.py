@@ -9,13 +9,14 @@ class AtyponBrowserWorkflowProviderHtmlTests(AtyponBrowserWorkflowProviderTestCa
         client = science_provider.ScienceClient(transport=None, env={})
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "science", SCIENCE_SAMPLE.doi)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(browser_workflow, "fetch_html_with_direct_playwright") as mocked_direct,
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            mocked_direct = mock.Mock()
+            mocked_pdf = mock.Mock()
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_direct_playwright=mocked_direct,
+                fetch_html_with_flaresolverr=mock.Mock(
                     return_value=_flaresolverr.FetchedPublisherHtml(
                         source_url=SCIENCE_SAMPLE.landing_url,
                         final_url=SCIENCE_SAMPLE.landing_url,
@@ -25,23 +26,25 @@ class AtyponBrowserWorkflowProviderHtmlTests(AtyponBrowserWorkflowProviderTestCa
                         title=SCIENCE_SAMPLE.title,
                         summary="Example summary",
                         browser_context_seed={},
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "extract_atypon_browser_workflow_markdown",
-                    return_value=(f"# {SCIENCE_SAMPLE.title}\n\n## Discussion\n\n" + ("Body text " * 120), {"title": SCIENCE_SAMPLE.title}),
+                extract_atypon_browser_workflow_markdown=mock.Mock(
+                    return_value=(
+                        f"# {SCIENCE_SAMPLE.title}\n\n## Discussion\n\n"
+                        + ("Body text " * 120),
+                        {"title": SCIENCE_SAMPLE.title},
+                    )
                 ),
-                mock.patch.object(browser_workflow, "fetch_pdf_with_playwright") as mocked_pdf,
-            ):
-                raw_payload = client.fetch_raw_fulltext(
-                    SCIENCE_SAMPLE.doi,
-                    {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
-                )
-                article = client.to_article_model(
-                    {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
-                    raw_payload,
-                )
+                fetch_pdf_with_playwright=mocked_pdf,
+            )
+            raw_payload = client.fetch_raw_fulltext(
+                SCIENCE_SAMPLE.doi,
+                {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
+            )
+            article = client.to_article_model(
+                {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
+                raw_payload,
+            )
 
         mocked_pdf.assert_not_called()
         mocked_direct.assert_not_called()

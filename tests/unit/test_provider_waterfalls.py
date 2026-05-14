@@ -13,6 +13,7 @@ from paper_fetch.runtime import RuntimeContext
 from tests.golden_criteria import golden_criteria_scenario_asset
 from tests.provider_benchmark_samples import WILEY_PDF_FALLBACK_SAMPLE, provider_benchmark_sample
 from tests.paths import FIXTURE_DIR
+from tests.unit._browser_workflow_deps import install_browser_workflow_deps
 from tests.unit._paper_fetch_support import RecordingTransport, fulltext_pdf_bytes
 
 
@@ -851,13 +852,14 @@ class PublisherWaterfallTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "wiley", doi)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(browser_workflow, "fetch_html_with_direct_playwright") as mocked_direct,
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            mocked_direct = mock.Mock()
+            mocked_browser_pdf = mock.Mock()
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_direct_playwright=mocked_direct,
+                fetch_html_with_flaresolverr=mock.Mock(
                     return_value=_flaresolverr.FetchedPublisherHtml(
                         source_url=WILEY_SAMPLE.landing_url,
                         final_url=WILEY_SAMPLE.landing_url,
@@ -867,15 +869,19 @@ class PublisherWaterfallTests(unittest.TestCase):
                         title=WILEY_SAMPLE.title,
                         summary="Wiley summary",
                         browser_context_seed={},
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "extract_atypon_browser_workflow_markdown",
-                    return_value=(f"# {WILEY_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120), {"title": WILEY_SAMPLE.title}),
+                extract_atypon_browser_workflow_markdown=mock.Mock(
+                    return_value=(
+                        f"# {WILEY_SAMPLE.title}\n\n## Results\n\n"
+                        + ("Body text " * 120),
+                        {"title": WILEY_SAMPLE.title},
+                    )
                 ),
+                fetch_pdf_with_playwright=mocked_browser_pdf,
+            )
+            with (
                 mock.patch.object(wiley_provider, "_fetch_wiley_tdm_pdf_result") as mocked_api,
-                mock.patch.object(browser_workflow, "fetch_pdf_with_playwright") as mocked_browser_pdf,
             ):
                 raw_payload = client.fetch_raw_fulltext(doi, metadata)
                 article = client.to_article_model(metadata, raw_payload)
@@ -901,36 +907,36 @@ class PublisherWaterfallTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "wiley", doi)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
-                    side_effect=browser_workflow.HtmlExtractionFailure(
-                        "insufficient_fulltext",
-                        "HTML content does not look like a complete full-text article.",
-                    ),
-                ),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_seeded_browser_pdf_payload",
-                    return_value=RawFulltextPayload(
-                        provider="wiley",
+            mocked_browser_pdf = mock.Mock(
+                return_value=RawFulltextPayload(
+                    provider="wiley",
+                    source_url=f"https://onlinelibrary.wiley.com/doi/epdf/{doi}",
+                    content_type="application/pdf",
+                    body=fulltext_pdf_bytes(),
+                    content=ProviderContent(
+                        route_kind="pdf_fallback",
                         source_url=f"https://onlinelibrary.wiley.com/doi/epdf/{doi}",
                         content_type="application/pdf",
                         body=fulltext_pdf_bytes(),
-                        content=ProviderContent(
-                            route_kind="pdf_fallback",
-                            source_url=f"https://onlinelibrary.wiley.com/doi/epdf/{doi}",
-                            content_type="application/pdf",
-                            body=fulltext_pdf_bytes(),
-                            markdown_text=f"# {WILEY_PDF_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
-                            suggested_filename="article.pdf",
-                        ),
-                        needs_local_copy=True,
+                        markdown_text=f"# {WILEY_PDF_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                        suggested_filename="article.pdf",
                     ),
-                ) as mocked_browser_pdf,
+                    needs_local_copy=True,
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
+                    side_effect=browser_workflow.HtmlExtractionFailure(
+                        "insufficient_fulltext",
+                        "HTML content does not look like a complete full-text article.",
+                    )
+                ),
+                fetch_seeded_browser_pdf_payload=mocked_browser_pdf,
+            )
+            with (
                 mock.patch.object(wiley_provider, "_fetch_wiley_tdm_pdf_result") as mocked_api,
             ):
                 raw_payload = client.fetch_raw_fulltext(doi, metadata)
@@ -955,12 +961,30 @@ class PublisherWaterfallTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "wiley", doi)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            mocked_warm = mock.Mock(
+                return_value={
+                    "browser_cookies": [
+                        {"name": "cf_clearance", "value": "seed", "domain": ".wiley.com", "path": "/"},
+                        {"name": "sessionid", "value": "warm", "domain": ".wiley.com", "path": "/"},
+                    ],
+                    "browser_user_agent": "Mozilla/5.0",
+                    "browser_final_url": WILEY_PDF_SAMPLE.landing_url,
+                }
+            )
+            mocked_browser_pdf = mock.Mock(
+                return_value=mock.Mock(
+                    source_url=f"https://onlinelibrary.wiley.com/doi/epdf/{doi}",
+                    final_url=f"https://onlinelibrary.wiley.com/doi/epdf/{doi}",
+                    pdf_bytes=fulltext_pdf_bytes(),
+                    markdown_text=f"# {WILEY_PDF_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                    suggested_filename="article.pdf",
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     side_effect=browser_workflow.FlareSolverrFailure(
                         "redirected_to_abstract",
                         "HTML redirected to abstract.",
@@ -971,32 +995,13 @@ class PublisherWaterfallTests(unittest.TestCase):
                             "browser_user_agent": "Mozilla/5.0",
                             "browser_final_url": WILEY_PDF_SAMPLE.landing_url,
                         },
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "warm_browser_context_with_flaresolverr",
-                    return_value={
-                        "browser_cookies": [
-                            {"name": "cf_clearance", "value": "seed", "domain": ".wiley.com", "path": "/"},
-                            {"name": "sessionid", "value": "warm", "domain": ".wiley.com", "path": "/"},
-                        ],
-                        "browser_user_agent": "Mozilla/5.0",
-                        "browser_final_url": WILEY_PDF_SAMPLE.landing_url,
-                    },
-                ) as mocked_warm,
+                pdf_browser_context_seed=mocked_warm,
+                fetch_pdf_with_playwright=mocked_browser_pdf,
+            )
+            with (
                 mock.patch.object(wiley_provider, "_fetch_wiley_tdm_pdf_result") as mocked_api,
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_pdf_with_playwright",
-                    return_value=mock.Mock(
-                        source_url=f"https://onlinelibrary.wiley.com/doi/epdf/{doi}",
-                        final_url=f"https://onlinelibrary.wiley.com/doi/epdf/{doi}",
-                        pdf_bytes=fulltext_pdf_bytes(),
-                        markdown_text=f"# {WILEY_PDF_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
-                        suggested_filename="article.pdf",
-                    ),
-                ) as mocked_browser_pdf,
             ):
                 raw_payload = client.fetch_raw_fulltext(doi, metadata)
                 article = client.to_article_model(metadata, raw_payload)
@@ -1033,12 +1038,17 @@ class PublisherWaterfallTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "wiley", doi)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            mocked_browser_pdf = mock.Mock(
+                side_effect=browser_workflow.PdfFallbackFailure(
+                    "download_not_triggered",
+                    "Browser PDF download was not triggered.",
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     side_effect=browser_workflow.FlareSolverrFailure(
                         "redirected_to_abstract",
                         "HTML redirected to abstract.",
@@ -1049,16 +1059,11 @@ class PublisherWaterfallTests(unittest.TestCase):
                             "browser_user_agent": "Mozilla/5.0",
                             "browser_final_url": WILEY_PDF_SAMPLE.landing_url,
                         },
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_seeded_browser_pdf_payload",
-                    side_effect=browser_workflow.PdfFallbackFailure(
-                        "download_not_triggered",
-                        "Browser PDF download was not triggered.",
-                    ),
-                ) as mocked_browser_pdf,
+                fetch_seeded_browser_pdf_payload=mocked_browser_pdf,
+            )
+            with (
                 mock.patch.object(
                     wiley_provider,
                     "_fetch_wiley_tdm_pdf_result",
@@ -1097,25 +1102,25 @@ class PublisherWaterfallTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "wiley", doi)
-            with (
-                mock.patch.object(browser_workflow, "load_runtime_config", return_value=runtime),
-                mock.patch.object(browser_workflow, "ensure_runtime_ready"),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_html_with_flaresolverr",
+            mocked_browser_pdf = mock.Mock(
+                side_effect=browser_workflow.PdfFallbackFailure(
+                    "download_not_triggered",
+                    "Browser PDF download was not triggered.",
+                )
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_flaresolverr=mock.Mock(
                     side_effect=browser_workflow.HtmlExtractionFailure(
                         "insufficient_fulltext",
                         "HTML content does not look like a complete full-text article.",
-                    ),
+                    )
                 ),
-                mock.patch.object(
-                    browser_workflow,
-                    "fetch_seeded_browser_pdf_payload",
-                    side_effect=browser_workflow.PdfFallbackFailure(
-                        "download_not_triggered",
-                        "Browser PDF download was not triggered.",
-                    ),
-                ) as mocked_browser_pdf,
+                fetch_seeded_browser_pdf_payload=mocked_browser_pdf,
+            )
+            with (
                 mock.patch.object(
                     wiley_provider,
                     "_fetch_wiley_tdm_pdf_result",
@@ -1149,17 +1154,18 @@ class PublisherWaterfallTests(unittest.TestCase):
             env={wiley_provider.WILEY_TDM_CLIENT_TOKEN_ENV_VAR: "secret"},
         )
 
-        with (
-            mock.patch.object(
-                browser_workflow,
-                "load_runtime_config",
+        install_browser_workflow_deps(
+            client,
+            load_runtime_config=mock.Mock(
                 side_effect=ProviderFailure(
                     "not_configured",
                     "Wiley browser workflow is not configured.",
                     missing_env=["FLARESOLVERR_ENV_FILE"],
-                ),
+                )
             ),
-                mock.patch.object(
+        )
+        with (
+            mock.patch.object(
                 wiley_provider,
                 "_fetch_wiley_tdm_pdf_result",
                 return_value=mock.Mock(
