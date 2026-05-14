@@ -74,7 +74,10 @@
   - commit: 7bd7b9f
   - 摘要: 扩展 `onboard_from_manifests.py`，`start --provider/--manifest --dry-run` 生成 10 步串行 DAG、discovery/implementation worker brief、state schema 与 agent CLI runtime 元数据；新增 `next` / `verify` / `advance` 本地状态命令，保持脚本只生成 brief、DAG、verification plan，不调用 LLM SDK；补齐 coordinator spec、hard constraints、failure recovery 和 onboarding state schema。
   - 验收: S14 dry-run 文件和 `runtime: coding-agent-subagent` / `no_commit: true` grep 通过；LLM SDK grep 为空；`test_manifest_discovery_brief.py` / `test_onboard_from_manifests.py` 11 passed；AI onboarding 禁词 grep 通过；`python3 -m ruff check .` 通过；`validate_extraction_rules.py` 通过；全量 unit 1229 passed + 264 subtests。
-- [ ] S15: capture_fixture 非交互化与 retry
+- [x] S15: capture_fixture 非交互化与 retry
+  - commit: 9f31d83
+  - 摘要: `capture_fixture.py` 增加 `--from-manifest`、`--retry-via`、`--fail-fast`，manifest 模式按 purpose 读取 DOI/evidence/routing，`doi: null` 输出 skipped summary；HTTP 403/429、challenge、非 PDF fallback、access gate、empty shell、browser/FlareSolverr runtime 和 network transient 均映射为结构化 JSON error code，失败路径保持 stdout 为空。
+  - 验收: S15 help/git grep 通过；`test_capture_fixture.py` 11 passed；`python3 -m ruff check .` 通过；`validate_extraction_rules.py` 通过；全量 unit 1236 passed + 264 subtests。
 - [ ] S16: 工具链结构化错误输出
 
 ### 阶段 D：文档权威源切换（S17）
