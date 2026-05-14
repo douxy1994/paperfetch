@@ -14,7 +14,10 @@
   - commit: ce92370（另有 5b3fe71 刷新进入本阶段前已 stale 的 9 个 AMS golden summary）
   - 摘要: `AvailabilityPolicy` 迁移到 datalayer/text-marker/override typed 字段，删除 provider 专属 signal/override callable 与 `html_profiles` façade，provider 和 browser-workflow callsite 改走 typed evaluator。
   - 验收: S2 grep 为空，`html_signals.py` 331 行，S2 局部 pytest 43 passed + 6 subtests；全量 unit 1143 passed + 264 subtests；full golden corpus 174 passed。
-- [ ] S3: 引入 ProviderBundle
+- [x] S3: 引入 ProviderBundle
+  - commit: bcd8c0f
+  - 摘要: 新增 `ProviderBundle` 注册表，将 provider catalog、HTML rules、source map、asset retry 等 provider-owned 配置收敛到各 provider entry module，`provider_catalog.py` / `provider_rules.py` 改为按 bundle discovery 懒加载。
+  - 验收: S3 grep 为空，provider bundle 注册文件数 10，`provider_catalog.py` 280 行；`test_provider_catalog.py` / `test_provider_bundle_registration.py` 38 passed + 16 subtests；全量 unit 1156 passed + 264 subtests；full golden corpus 174 passed。
 - [ ] S4: onboarding 完整性 lint
 - [ ] S5: Scaffold 脚本
 - [ ] S6: 文档对齐 + checklist 化
