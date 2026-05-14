@@ -462,6 +462,9 @@ git grep -nE "raw_payload\.metadata\[" -- src/paper_fetch/providers/X.py
 
 任何一条非空且无注释解释 → 立即改。
 
+本清单已机械化为 `tests/unit/test_provider_owner_reuse.py`；命中且没有
+`# OWNER_REUSE_EXCEPTION: <一句话原因>` 注释会导致 CI 失败。
+
 ---
 
 ## 附录 C：PR Checklist（Step 4-6 验收用）
