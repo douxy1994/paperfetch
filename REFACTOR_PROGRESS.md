@@ -78,7 +78,14 @@
   - commit: 9f31d83
   - 摘要: `capture_fixture.py` 增加 `--from-manifest`、`--retry-via`、`--fail-fast`，manifest 模式按 purpose 读取 DOI/evidence/routing，`doi: null` 输出 skipped summary；HTTP 403/429、challenge、非 PDF fallback、access gate、empty shell、browser/FlareSolverr runtime 和 network transient 均映射为结构化 JSON error code，失败路径保持 stdout 为空。
   - 验收: S15 help/git grep 通过；`test_capture_fixture.py` 11 passed；`python3 -m ruff check .` 通过；`validate_extraction_rules.py` 通过；全量 unit 1236 passed + 264 subtests。
-- [ ] S16: 工具链结构化错误输出
+- [x] S16: 工具链结构化错误输出
+  - commit: 7238a5f
+  - 摘要: 新增 `_structured_errors.py` 统一 `ToolError` / JSON payload schema；scaffold、capture、snapshot、coordinator 的预期失败路径改为 stderr JSON，固定包含 `code` / `message` / `provider` / `manifest` / `task_id` / `retryable` / `details`；保留 S12/S15 兼容字段，并将 `failure-recovery.md` 改为按 `## Signal: <CODE>` 的恢复决策表。
+  - 验收: 四条手工失败路径（scaffold flag conflict、capture missing DOI、snapshot missing fixture、coordinator state conflict）均非零退出、stdout 为空、stderr 可 JSON 解析；额外回归 capture missing/bad manifest 输出 `MANIFEST_NOT_FOUND` / `MANIFEST_SCHEMA_INVALID`；`test_structured_tool_errors.py` 7 passed；scaffold/capture/snapshot/coordinator 目标回归 35 passed；S16 grep 通过；`python3 -m ruff check .` 通过；`validate_extraction_rules.py` 通过；全量 unit 1243 passed + 264 subtests。
+
+### 阶段 C 验收点
+- commit: 7238a5f
+- 覆盖: S14 coordinator dry-run/state DAG、S15 manifest capture/retry、S16 structured stderr 均通过本地验收；`test_manifest_discovery_brief.py` / `test_onboard_from_manifests.py` / `test_capture_fixture.py` / `test_scaffold_provider_from_manifest.py` / `test_snapshot_expected.py` / `test_structured_tool_errors.py` 等关键回归覆盖 coordinator、fixture capture、snapshot 和错误 schema；全量 unit 1243 passed + 264 subtests。
 
 ### 阶段 D：文档权威源切换（S17）
 - [ ] S17: AI onboarding 文档切主权威源 + 旧 docs 降级 / drift lint
