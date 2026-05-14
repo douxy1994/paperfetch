@@ -48,7 +48,10 @@
   - 验收: S10 grep 和 scaffold `/tmp` 探针通过；`test_probe_status_default.py` / `test_scaffold_docs_sync.py` / `test_scaffold_provider.py` 12 passed；catalog/bundle 相关目标测试 57 passed + 16 subtests；`validate_extraction_rules.py` 通过；`python3 -m ruff check .` 通过；全量 unit 1193 passed + 264 subtests。
 
 ### 阶段 B：AI 接入最小闭环（S11A-S13）
-- [ ] S11A: AI Manifest Discovery
+- [x] S11A: AI Manifest Discovery
+  - commit: 64a96f5
+  - 摘要: 新增 `onboard_from_manifests.py` discovery/start dry-run 入口，生成 `discover-manifest` task DAG 与 worker brief；补齐 discovery brief 机器合约文档和 `agent-task-brief.md`；测试覆盖 brief 搜索要求、allow/deny 写入范围、无 LLM SDK 依赖和 manifest replay 路径。
+  - 验收: S11A 文件/help/dry-run grep 通过；`test_manifest_discovery_brief.py` / `test_onboard_from_manifests.py` 7 passed；`python3 -m ruff check .` 通过；`validate_extraction_rules.py` 通过；全量 unit 1200 passed + 264 subtests。
 - [ ] S11: ProviderManifest schema + manifests
 - [ ] S12: scaffold --from-manifest
 - [ ] S13: manifest ↔ bundle 同步 lint（含 sync-back）
