@@ -77,40 +77,91 @@ Forbidden paths include:
 
 Coordinator must treat any forbidden write as `WORKER_MODIFIED_FORBIDDEN_FILE` and discard that worker result before retrying.
 
-## scaffold/from-manifest
+## implement-provider
 
-`scaffold` worker 必须把已校验的 provider manifest 作为唯一 provider 输入源。Brief 必须包含：
+`implement-provider` brief 必须是 YAML object。Provider manifest 是唯一 provider 行为输入源。Worker 不得从 README、audit 文档、临时聊天记录或共享 docs 推断 provider 行为。
 
 ```yaml
-task_id: mdpi-scaffold
-current_step: scaffold
+task_id: mdpi-implement-provider
+provider_manifest: docs/ai-onboarding/manifests/mdpi.yml
+current_step: implement-provider
 runtime: coding-agent-subagent
-input_manifest: docs/ai-onboarding/manifests/mdpi.yml
-schema: docs/ai-onboarding/provider-manifest.schema.json
-scaffold_command:
-  - python3
-  - scripts/scaffold_provider.py
-  - --from-manifest
-  - docs/ai-onboarding/manifests/mdpi.yml
+upstream_artifacts:
+  task_dag: task-dag.json
+  capture_commands: docs/ai-onboarding/capture-commands/mdpi.txt
+  scaffold_summary: docs/ai-onboarding/scaffold/mdpi.json
+hard_constraints: docs/ai-onboarding/hard-constraints.md
+acceptance:
+  pytest:
+    - PYTHONPATH=src python3 -m pytest tests/unit/test_mdpi_provider.py -q
+    - PYTHONPATH=src python3 -m pytest tests/unit/test_provider_bundle_completeness.py tests/unit/test_provider_owner_reuse.py -q
+  grep_must_be_empty:
+    - pattern: mdpi
+      paths:
+        - src/paper_fetch/extraction/html/provider_rules.py
+        - src/paper_fetch/quality/html_signals.py
+        - src/paper_fetch/quality/html_availability.py
 files_allowed_to_modify:
-  - src/paper_fetch/providers/_mdpi_html.py
   - src/paper_fetch/providers/mdpi.py
+  - src/paper_fetch/providers/_mdpi_html.py
   - tests/unit/test_mdpi_provider.py
-  - tests/fixtures/golden_criteria/
-  - tests/fixtures/golden_criteria/manifest.json
-  - docs/ai-onboarding/capture-commands/mdpi.txt
+files_must_not_modify:
+  - docs/ai-onboarding/manifests/mdpi.yml
+  - docs/ai-onboarding/known-providers.yml
   - docs/providers.md
   - docs/extraction-rules.md
   - CHANGELOG.md
-files_must_not_modify:
-  - docs/ai-onboarding/manifests/mdpi.yml
+  - src/paper_fetch/provider_catalog.py
+  - src/paper_fetch/extraction/html/provider_rules.py
+  - src/paper_fetch/quality/html_signals.py
+  - src/paper_fetch/quality/html_availability.py
+failure_recovery:
+  policy: docs/ai-onboarding/failure-recovery.md
+  max_retries: 3
+  forbidden_write_code: WORKER_MODIFIED_FORBIDDEN_FILE
+  acceptance_failure_retry_task: implement-provider
+  blocked_after_retry_exhaustion: true
 no_commit: true
 ```
 
-### scaffold/from-manifest Rules
+### implement-provider Required Keys
 
-- `input_manifest` 必须等于传给 `scripts/scaffold_provider.py --from-manifest` 的路径。
-- `--from-manifest` 不能和 legacy scaffold 输入混用，包括 `--name`、`--doi`、`--source`、`--fulltext-client` 或 `--html-capable`。
-- Worker 不得修改 `input_manifest`；schema 修复属于 `discover-manifest`。
-- 命令 stdout 是 JSON artifact summary。Coordinator 应记录其中的 `generated_files` 和 `docs_files`。
-- 如果 scaffold 以 `MANIFEST_SCHEMA_INVALID` 退出，coordinator 应把 JSON stderr 回派给 manifest repair，而不是要求 scaffold patch manifest。
+- `task_id` must be `<provider>-implement-provider`.
+- `provider_manifest` must be the manifest path for the provider.
+- `current_step` must be `implement-provider`.
+- `runtime` must be `coding-agent-subagent`.
+- `upstream_artifacts` must include `task_dag`, `capture_commands`, and `scaffold_summary`.
+- `hard_constraints` must be `docs/ai-onboarding/hard-constraints.md`.
+- `acceptance.pytest` must contain provider-local pytest.
+- `acceptance.grep_must_be_empty` must contain central provider-logic grep checks.
+- `files_allowed_to_modify` must only contain provider-specific implementation and provider-specific tests.
+- `files_must_not_modify` must include manifest, shared docs, known provider index, and central provider logic files.
+- `failure_recovery.policy` must be `docs/ai-onboarding/failure-recovery.md`.
+- `failure_recovery.max_retries` must be `3`.
+- `failure_recovery.acceptance_failure_retry_task` must be `implement-provider`.
+- `no_commit` must be `true`.
+
+### implement-provider Prompt
+
+Coordinator must inline these inputs when dispatching the worker through the selected coding agent CLI:
+
+- implementation brief YAML
+- `docs/ai-onboarding/hard-constraints.md`
+- current provider manifest YAML
+
+The worker must return a structured summary containing changed files, tests run, grep checks run, and unresolved failures.
+
+## coordinator-only scaffold/from-manifest
+
+`scaffold` is a coordinator action. Coordinator must run:
+
+```bash
+python3 scripts/scaffold_provider.py --from-manifest docs/ai-onboarding/manifests/mdpi.yml
+```
+
+Rules:
+
+- `--from-manifest` must not be combined with legacy scaffold inputs including `--name`, `--doi`, `--source`, `--fulltext-client`, or `--html-capable`.
+- Command stdout is JSON artifact summary.
+- Coordinator records `generated_files` and `docs_files` as upstream artifacts for `implement-provider`.
+- If scaffold exits with `MANIFEST_SCHEMA_INVALID`, coordinator routes the JSON stderr to manifest repair.

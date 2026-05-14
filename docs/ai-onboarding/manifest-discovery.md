@@ -1,6 +1,6 @@
 # Manifest Discovery
 
-`discover-manifest` 是 AI onboarding 的第一步。它把 provider 种子转换成带证据的 `ProviderManifest`，供后续 `validate-manifest`、`capture-fixtures`、`scaffold` 和 `implement-provider` 使用。
+`discover-manifest` 是 AI onboarding 的第一步。它把 provider 种子转换成带证据的 `ProviderManifest`，供后续 `validate-manifest`、`capture-fixtures`、`scaffold` 和 `implement-provider` 使用。Coordinator DAG 和状态机规则见 `docs/ai-onboarding/coordinator-spec.md`。
 
 ## Worker Input
 
@@ -166,3 +166,5 @@ Discovery 输出完成后必须满足：
 - 每个 DOI sample 有 evidence object
 - Worker 没有修改 `files_must_not_modify`
 - `scripts/onboard_from_manifests.py start --provider <name> --domain <domain> --dry-run` 生成的 DAG 含 `discover-manifest`
+- `scripts/onboard_from_manifests.py start --provider <name> --domain <domain> --dry-run` 写 `briefs/discover-manifest.yml` 和 `briefs/implement-provider.yml`
+- `scripts/onboard_from_manifests.py start --manifest <manifest> --dry-run` 跳过 `discover-manifest`，并从 manifest YAML 读取 provider name

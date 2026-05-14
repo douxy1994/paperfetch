@@ -5,15 +5,24 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
+
+import yaml
 
 
 PROVIDER_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 SCHEMA_PATH = "docs/ai-onboarding/provider-manifest.schema.json"
 HARD_CONSTRAINTS_PATH = "docs/ai-onboarding/hard-constraints.md"
+FAILURE_RECOVERY_PATH = "docs/ai-onboarding/failure-recovery.md"
+STATE_SCHEMA_PATH = "docs/ai-onboarding/onboarding-state.schema.json"
+DEFAULT_STATE_PATH = "docs/ai-onboarding/onboarding-state.json"
+AGENT_CLI_ENV = "PROVIDER_ONBOARDING_AGENT_CLI"
 DISCOVER_STEP = "discover-manifest"
+IMPLEMENT_STEP = "implement-provider"
+MAX_WORKER_RETRIES = 3
 ROUTING_REQUIREMENTS = [
     "doi_prefixes",
     "domains",
@@ -38,6 +47,56 @@ FILES_MUST_NOT_MODIFY = [
     "docs/providers.md",
     "CHANGELOG.md",
 ]
+SHARED_FILES_MUST_NOT_MODIFY = [
+    "docs/ai-onboarding/known-providers.yml",
+    "docs/providers.md",
+    "docs/extraction-rules.md",
+    "CHANGELOG.md",
+]
+CENTRAL_PROVIDER_LOGIC_PATHS = [
+    "src/paper_fetch/extraction/html/provider_rules.py",
+    "src/paper_fetch/quality/html_signals.py",
+    "src/paper_fetch/quality/html_availability.py",
+]
+
+
+class DagStep(NamedTuple):
+    id: str
+    type: str
+    owner: str
+    brief: str | None = None
+    command: tuple[str, ...] = ()
+
+
+TASK_DAG: tuple[DagStep, ...] = (
+    DagStep(
+        id=DISCOVER_STEP,
+        type="worker-brief",
+        owner="coordinator-subagent",
+        brief="briefs/discover-manifest.yml",
+    ),
+    DagStep(id="validate-manifest", type="coordinator-check", owner="coordinator"),
+    DagStep(id="capture-fixtures", type="coordinator-action", owner="coordinator"),
+    DagStep(id="scaffold", type="coordinator-action", owner="coordinator"),
+    DagStep(
+        id=IMPLEMENT_STEP,
+        type="worker-brief",
+        owner="coordinator-subagent",
+        brief="briefs/implement-provider.yml",
+    ),
+    DagStep(id="snapshot-expected", type="coordinator-action", owner="coordinator"),
+    DagStep(id="manifest-sync-back", type="coordinator-action", owner="coordinator"),
+    DagStep(id="provider-local-acceptance", type="coordinator-check", owner="coordinator"),
+    DagStep(id="global-lint", type="coordinator-check", owner="coordinator"),
+    DagStep(id="merge-ready", type="coordinator-action", owner="coordinator"),
+)
+
+
+class OnboardingSource(NamedTuple):
+    provider: str
+    manifest: str
+    include_discovery: bool
+    manifest_yaml: str | None
 
 
 def _provider_slug(provider: str) -> str:
@@ -51,6 +110,51 @@ def _provider_slug(provider: str) -> str:
 
 def default_manifest_path(provider: str) -> str:
     return f"docs/ai-onboarding/manifests/{_provider_slug(provider)}.yml"
+
+
+def _repo_root() -> Path:
+    return Path(__file__).resolve().parents[1]
+
+
+def _read_manifest(path: Path) -> dict[str, Any]:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"manifest root must be a mapping: {path}")
+    return data
+
+
+def _manifest_source(path_value: str) -> OnboardingSource:
+    manifest_path = Path(path_value)
+    if not manifest_path.is_absolute():
+        manifest_path = _repo_root() / manifest_path
+    manifest = _read_manifest(manifest_path)
+    provider_value = manifest.get("name")
+    if not isinstance(provider_value, str):
+        raise ValueError(f"manifest must contain string name: {path_value}")
+    provider = _provider_slug(provider_value)
+    manifest_yaml = manifest_path.read_text(encoding="utf-8")
+    return OnboardingSource(
+        provider=provider,
+        manifest=path_value,
+        include_discovery=False,
+        manifest_yaml=manifest_yaml,
+    )
+
+
+def _provider_source(
+    *,
+    provider: str,
+    domain: str | None,
+    doi_prefix: str | None,
+) -> OnboardingSource:
+    del domain, doi_prefix
+    provider_name = _provider_slug(provider)
+    return OnboardingSource(
+        provider=provider_name,
+        manifest=default_manifest_path(provider_name),
+        include_discovery=True,
+        manifest_yaml=None,
+    )
 
 
 def build_discover_brief(
@@ -100,31 +204,113 @@ def build_discover_brief(
     }
 
 
-def build_dag(*, provider: str | None, manifest: str | None, include_discovery: bool) -> dict[str, Any]:
+def _implementation_allowed_files(provider: str) -> list[str]:
+    provider_name = _provider_slug(provider)
+    return [
+        f"src/paper_fetch/providers/{provider_name}.py",
+        f"src/paper_fetch/providers/_{provider_name}_html.py",
+        f"tests/unit/test_{provider_name}_provider.py",
+    ]
+
+
+def _implementation_forbidden_files(manifest: str) -> list[str]:
+    return [
+        manifest,
+        *SHARED_FILES_MUST_NOT_MODIFY,
+        "src/paper_fetch/provider_catalog.py",
+        *CENTRAL_PROVIDER_LOGIC_PATHS,
+    ]
+
+
+def build_implementation_brief(
+    *,
+    provider: str,
+    manifest: str,
+    manifest_yaml: str | None = None,
+) -> dict[str, Any]:
+    """Build the worker input for provider implementation."""
+    provider_name = _provider_slug(provider)
+    brief: dict[str, Any] = {
+        "task_id": f"{provider_name}-{IMPLEMENT_STEP}",
+        "provider_manifest": manifest,
+        "current_step": IMPLEMENT_STEP,
+        "runtime": "coding-agent-subagent",
+        "upstream_artifacts": {
+            "task_dag": "task-dag.json",
+            "capture_commands": f"docs/ai-onboarding/capture-commands/{provider_name}.txt",
+            "scaffold_summary": f"docs/ai-onboarding/scaffold/{provider_name}.json",
+        },
+        "hard_constraints": HARD_CONSTRAINTS_PATH,
+        "acceptance": {
+            "pytest": [
+                f"PYTHONPATH=src python3 -m pytest tests/unit/test_{provider_name}_provider.py -q",
+                "PYTHONPATH=src python3 -m pytest "
+                "tests/unit/test_provider_bundle_completeness.py "
+                "tests/unit/test_provider_owner_reuse.py -q",
+            ],
+            "grep_must_be_empty": [
+                {
+                    "pattern": provider_name,
+                    "paths": CENTRAL_PROVIDER_LOGIC_PATHS,
+                }
+            ],
+        },
+        "files_allowed_to_modify": _implementation_allowed_files(provider_name),
+        "files_must_not_modify": _implementation_forbidden_files(manifest),
+        "failure_recovery": {
+            "policy": FAILURE_RECOVERY_PATH,
+            "max_retries": MAX_WORKER_RETRIES,
+            "forbidden_write_code": "WORKER_MODIFIED_FORBIDDEN_FILE",
+            "acceptance_failure_retry_task": IMPLEMENT_STEP,
+            "blocked_after_retry_exhaustion": True,
+        },
+        "no_commit": True,
+    }
+    if manifest_yaml is not None:
+        brief["manifest_yaml"] = manifest_yaml
+    return brief
+
+
+def build_dag(
+    *,
+    provider: str | None,
+    manifest: str | None,
+    include_discovery: bool,
+    dry_run: bool,
+) -> dict[str, Any]:
     provider_name = _provider_slug(provider) if provider else None
     steps: list[dict[str, Any]] = []
-    if include_discovery:
-        steps.append(
-            {
-                "id": DISCOVER_STEP,
-                "type": "worker-brief",
-                "brief": "briefs/discover-manifest.yml",
-                "produces": [default_manifest_path(provider_name or "")],
-            }
-        )
-    steps.extend(
-        [
-            {"id": "validate-manifest", "type": "coordinator-check"},
-            {"id": "capture-fixtures", "type": "coordinator-action"},
-            {"id": "scaffold", "type": "coordinator-action"},
-            {"id": "implement-provider", "type": "worker-brief"},
-            {"id": "merge-ready", "type": "coordinator-check"},
-        ]
-    )
+    previous_step: str | None = None
+    for step in TASK_DAG:
+        if step.id == DISCOVER_STEP and not include_discovery:
+            continue
+        item: dict[str, Any] = {
+            "id": step.id,
+            "type": step.type,
+            "owner": step.owner,
+            "depends_on": [previous_step] if previous_step else [],
+            "retry_limit": MAX_WORKER_RETRIES if step.type == "worker-brief" else 0,
+        }
+        if step.brief is not None:
+            item["brief"] = step.brief
+        if step.command:
+            item["command"] = list(step.command)
+        if step.id == DISCOVER_STEP and manifest is not None:
+            item["produces"] = [manifest]
+        steps.append(item)
+        previous_step = step.id
     return {
         "provider": provider_name,
         "manifest": manifest,
-        "dry_run": True,
+        "dry_run": dry_run,
+        "runtime": "coding-agent-subagent",
+        "agent_cli_env": AGENT_CLI_ENV,
+        "state_schema": STATE_SCHEMA_PATH,
+        "serial": {
+            "single_provider": True,
+            "single_task": True,
+            "no_matrix": True,
+        },
         "steps": steps,
     }
 
@@ -177,6 +363,217 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
+def _write_json(path: Path, data: dict[str, Any]) -> None:
+    write_text(path, json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def _state_path(value: str) -> Path:
+    path = Path(value)
+    if path.is_absolute():
+        return path
+    return _repo_root() / path
+
+
+def _default_state() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "agent_cli": os.environ.get(AGENT_CLI_ENV),
+        "active_provider": None,
+        "providers": {},
+    }
+
+
+def _load_state(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return _default_state()
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise ValueError(f"state root must be an object: {path}")
+    data.setdefault("schema_version", 1)
+    data.setdefault("agent_cli", os.environ.get(AGENT_CLI_ENV))
+    data.setdefault("active_provider", None)
+    providers = data.setdefault("providers", {})
+    if not isinstance(providers, dict):
+        raise ValueError(f"state providers must be an object: {path}")
+    return data
+
+
+def _dag_step_ids(include_discovery: bool) -> tuple[str, ...]:
+    return tuple(
+        step.id for step in TASK_DAG if include_discovery or step.id != DISCOVER_STEP
+    )
+
+
+def _task_statuses(step_ids: tuple[str, ...]) -> dict[str, str]:
+    return {
+        step_id: "in_progress" if index == 0 else "pending"
+        for index, step_id in enumerate(step_ids)
+    }
+
+
+def _ensure_single_active_provider(state: dict[str, Any], provider: str) -> None:
+    active_provider = state.get("active_provider")
+    if active_provider not in {None, provider}:
+        providers = state.get("providers", {})
+        active_state = providers.get(active_provider, {})
+        if active_state.get("status") == "in_progress":
+            raise SystemExit(
+                "another provider is already in_progress: "
+                f"{active_provider}; finish or block it before starting {provider}"
+            )
+
+
+def _ensure_provider_state(
+    state: dict[str, Any],
+    *,
+    provider: str,
+    manifest: str | None = None,
+    include_discovery: bool = True,
+) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    _ensure_single_active_provider(state, provider_name)
+    providers = state["providers"]
+    current = providers.get(provider_name)
+    if isinstance(current, dict):
+        return current
+    step_ids = _dag_step_ids(include_discovery)
+    provider_state = {
+        "provider": provider_name,
+        "manifest": manifest or default_manifest_path(provider_name),
+        "status": "in_progress",
+        "current_step": step_ids[0],
+        "steps": list(step_ids),
+        "completed_steps": [],
+        "task_statuses": _task_statuses(step_ids),
+        "retry_counts": {step_id: 0 for step_id in step_ids},
+        "verifications": {},
+    }
+    providers[provider_name] = provider_state
+    state["active_provider"] = provider_name
+    return provider_state
+
+
+def _next_pending_step(provider_state: dict[str, Any]) -> str | None:
+    task_statuses = provider_state["task_statuses"]
+    for step_id in provider_state["steps"]:
+        if task_statuses.get(step_id) == "in_progress":
+            return str(step_id)
+    for step_id in provider_state["steps"]:
+        if task_statuses.get(step_id) == "pending":
+            task_statuses[step_id] = "in_progress"
+            provider_state["current_step"] = step_id
+            return str(step_id)
+    provider_state["current_step"] = None
+    return None
+
+
+def _verify_commands(provider: str, task: str) -> list[list[str]]:
+    provider_name = _provider_slug(provider)
+    command_map: dict[str, list[list[str]]] = {
+        "validate-manifest": [
+            [
+                "PYTHONPATH=src",
+                "python3",
+                "-m",
+                "pytest",
+                "tests/unit/test_provider_manifest_schema.py",
+                "tests/unit/test_known_providers_sync.py",
+                "-q",
+            ]
+        ],
+        "capture-fixtures": [
+            [
+                "test",
+                "-f",
+                f"docs/ai-onboarding/capture-commands/{provider_name}.txt",
+            ]
+        ],
+        "scaffold": [
+            [
+                "python3",
+                "scripts/scaffold_provider.py",
+                "--from-manifest",
+                default_manifest_path(provider_name),
+            ]
+        ],
+        IMPLEMENT_STEP: [
+            [
+                "PYTHONPATH=src",
+                "python3",
+                "-m",
+                "pytest",
+                f"tests/unit/test_{provider_name}_provider.py",
+                "-q",
+            ],
+            [
+                "git",
+                "grep",
+                "-n",
+                provider_name,
+                "--",
+                *CENTRAL_PROVIDER_LOGIC_PATHS,
+            ],
+        ],
+        "snapshot-expected": [
+            ["python3", "scripts/snapshot_expected.py", "--help"]
+        ],
+        "manifest-sync-back": [
+            [
+                "python3",
+                "scripts/manifest_sync_back.py",
+                "--provider",
+                provider_name,
+                "--manifest",
+                default_manifest_path(provider_name),
+            ]
+        ],
+        "provider-local-acceptance": [
+            [
+                "PYTHONPATH=src",
+                "python3",
+                "-m",
+                "pytest",
+                f"tests/unit/test_{provider_name}_provider.py",
+                "-q",
+            ],
+            [
+                "git",
+                "grep",
+                "-n",
+                provider_name,
+                "--",
+                *CENTRAL_PROVIDER_LOGIC_PATHS,
+            ],
+        ],
+        "global-lint": [
+            [
+                "PYTHONPATH=src",
+                "python3",
+                "-m",
+                "pytest",
+                "tests/unit/test_manifest_bundle_sync.py",
+                "tests/unit/test_provider_owner_reuse.py",
+                "tests/unit/test_provider_bundle_completeness.py",
+                "tests/unit/test_import_boundaries.py",
+                "tests/unit/test_extraction_rules_validator.py",
+                "-q",
+            ]
+        ],
+        "merge-ready": [
+            [
+                "git",
+                "diff",
+                "--",
+                default_manifest_path(provider_name),
+                "docs/ai-onboarding/known-providers.yml",
+                "docs/providers.md",
+                "CHANGELOG.md",
+            ]
+        ],
+    }
+    return command_map.get(task, [])
+
+
 def run_discover(args: argparse.Namespace) -> int:
     brief = build_discover_brief(
         provider=args.provider,
@@ -190,24 +587,146 @@ def run_discover(args: argparse.Namespace) -> int:
 
 def run_start(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir)
-    if not args.dry_run:
-        raise SystemExit("start currently supports --dry-run only")
-
     if args.manifest:
-        dag = build_dag(provider=None, manifest=args.manifest, include_discovery=False)
-        write_text(output_dir / "task-dag.json", json.dumps(dag, indent=2, sort_keys=True) + "\n")
+        source = _manifest_source(args.manifest)
+    else:
+        source = _provider_source(
+            provider=args.provider,
+            domain=args.domain,
+            doi_prefix=args.doi_prefix,
+        )
+
+    dag = build_dag(
+        provider=source.provider,
+        manifest=source.manifest,
+        include_discovery=source.include_discovery,
+        dry_run=args.dry_run,
+    )
+    implementation_brief = build_implementation_brief(
+        provider=source.provider,
+        manifest=source.manifest,
+        manifest_yaml=source.manifest_yaml,
+    )
+    write_text(
+        output_dir / "task-dag.json",
+        json.dumps(dag, indent=2, sort_keys=True) + "\n",
+    )
+    write_text(
+        output_dir / "briefs" / "implement-provider.yml",
+        to_yaml(implementation_brief) + "\n",
+    )
+
+    if source.include_discovery:
+        discover_brief = build_discover_brief(
+            provider=source.provider,
+            domain=args.domain,
+            doi_prefix=args.doi_prefix,
+            output_manifest=source.manifest,
+        )
+        write_text(
+            output_dir / "briefs" / "discover-manifest.yml",
+            to_yaml(discover_brief) + "\n",
+        )
+    if args.dry_run:
         return 0
 
-    output_manifest = default_manifest_path(args.provider)
-    brief = build_discover_brief(
-        provider=args.provider,
-        domain=args.domain,
-        doi_prefix=args.doi_prefix,
-        output_manifest=output_manifest,
+    state_path = _state_path(args.state)
+    state = _load_state(state_path)
+    _ensure_provider_state(
+        state,
+        provider=source.provider,
+        manifest=source.manifest,
+        include_discovery=source.include_discovery,
     )
-    dag = build_dag(provider=args.provider, manifest=output_manifest, include_discovery=True)
-    write_text(output_dir / "task-dag.json", json.dumps(dag, indent=2, sort_keys=True) + "\n")
-    write_text(output_dir / "briefs" / "discover-manifest.yml", to_yaml(brief) + "\n")
+    _write_json(state_path, state)
+    return 0
+
+
+def run_next(args: argparse.Namespace) -> int:
+    provider = _provider_slug(args.provider)
+    state_path = _state_path(args.state)
+    state = _load_state(state_path)
+    provider_state = _ensure_provider_state(state, provider=provider)
+    step_id = _next_pending_step(provider_state)
+    _write_json(state_path, state)
+    print(
+        json.dumps(
+            {
+                "provider": provider,
+                "status": provider_state["status"],
+                "current_step": step_id,
+                "state": str(state_path),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def run_verify(args: argparse.Namespace) -> int:
+    provider = _provider_slug(args.provider)
+    state_path = _state_path(args.state)
+    state = _load_state(state_path)
+    provider_state = _ensure_provider_state(state, provider=provider)
+    commands = _verify_commands(provider, args.task)
+    verifications = provider_state.setdefault("verifications", {})
+    verifications[args.task] = {
+        "dry_run": True,
+        "commands": commands,
+        "result": "planned",
+    }
+    _write_json(state_path, state)
+    print(
+        json.dumps(
+            {
+                "provider": provider,
+                "task": args.task,
+                "dry_run": True,
+                "commands": commands,
+                "result": "planned",
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def run_advance(args: argparse.Namespace) -> int:
+    provider = _provider_slug(args.provider)
+    state_path = _state_path(args.state)
+    state = _load_state(state_path)
+    provider_state = _ensure_provider_state(state, provider=provider)
+    task_statuses = provider_state["task_statuses"]
+    if args.task not in task_statuses:
+        raise SystemExit(f"unknown task for provider {provider}: {args.task}")
+    task_statuses[args.task] = "completed"
+    completed_steps = provider_state["completed_steps"]
+    if args.task not in completed_steps:
+        completed_steps.append(args.task)
+    provider_state["current_step"] = None
+    next_step = _next_pending_step(provider_state)
+    if next_step is None:
+        provider_state["status"] = "merge_ready"
+        state["active_provider"] = None
+    else:
+        provider_state["status"] = "in_progress"
+        state["active_provider"] = provider
+    _write_json(state_path, state)
+    print(
+        json.dumps(
+            {
+                "provider": provider,
+                "advanced": args.task,
+                "status": provider_state["status"],
+                "next_step": next_step,
+                "state": str(state_path),
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
     return 0
 
 
@@ -242,7 +761,50 @@ def build_parser() -> argparse.ArgumentParser:
     start.add_argument("--doi-prefix", help="DOI prefix seed")
     start.add_argument("--dry-run", action="store_true", help="write planned artifacts only")
     start.add_argument("--output-dir", required=True, help="directory for dry-run artifacts")
+    start.add_argument(
+        "--state",
+        default=DEFAULT_STATE_PATH,
+        help="coordinator state JSON path",
+    )
     start.set_defaults(func=run_start)
+
+    next_task = subparsers.add_parser(
+        "next",
+        help="print and persist the next serial task for one provider",
+    )
+    next_task.add_argument("--provider", required=True, help="provider name")
+    next_task.add_argument(
+        "--state",
+        default=DEFAULT_STATE_PATH,
+        help="coordinator state JSON path",
+    )
+    next_task.set_defaults(func=run_next)
+
+    verify = subparsers.add_parser(
+        "verify",
+        help="write dry-run verification plan for a provider task",
+    )
+    verify.add_argument("--provider", required=True, help="provider name")
+    verify.add_argument("--task", required=True, help="task id to verify")
+    verify.add_argument(
+        "--state",
+        default=DEFAULT_STATE_PATH,
+        help="coordinator state JSON path",
+    )
+    verify.set_defaults(func=run_verify)
+
+    advance = subparsers.add_parser(
+        "advance",
+        help="mark a task complete and persist the next serial task",
+    )
+    advance.add_argument("--provider", required=True, help="provider name")
+    advance.add_argument("--task", required=True, help="task id to mark complete")
+    advance.add_argument(
+        "--state",
+        default=DEFAULT_STATE_PATH,
+        help="coordinator state JSON path",
+    )
+    advance.set_defaults(func=run_advance)
 
     return parser
 
