@@ -130,6 +130,7 @@ provider 内部多步骤 fallback 应使用 `paper_fetch.providers._waterfall.ru
 - 通用 figure/table label core 与 Extended Data prefix 判断：`paper_fetch.common_patterns`
 - Reference anchor 判定：`paper_fetch.extraction.html.semantics` 中的 `looks_like_reference_anchor()` / `has_explicit_reference_marker()` 以及底层 `paper_fetch.extraction.citation_anchors.looks_like_reference_href()`；不要在 provider 或 runtime 中复制 `data-test`、`role`、`class`、`href` fragment 规则。
 - HTML table：`paper_fetch.extraction.html.tables`
+- Markdown block rendering：`paper_fetch.extraction.markdown_render`，统一 table / figure / formula / caption / list 的 IR 和最终行渲染；provider 只保留 HTML/XML/DOM -> IR 或 legacy entry 的转换层。
 - Citation cleanup：`paper_fetch.markdown.citations`，只负责 numeric payload / Markdown cleanup；reference href 判定委托 `citation_anchors`
 - Formula rules：`paper_fetch.extraction.html.formula_rules`、`paper_fetch.providers._article_markdown_math`
 - Image MIME / dimensions：`paper_fetch.extraction.image_payloads`

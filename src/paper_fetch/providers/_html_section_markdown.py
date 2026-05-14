@@ -5,14 +5,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
-from ..common_patterns import FIGURE_LABEL_CORE_PATTERN, HEADING_TAG_PATTERN, INLINE_WHITESPACE_PATTERN
-from ..extraction.html.formula_rules import (
-    formula_image_url_from_node,
-    is_display_formula_node,
-    is_formula_container,
-    looks_like_formula_image,
-    mathml_element_from_html_node,
-)
+from ..common_patterns import HEADING_TAG_PATTERN, INLINE_WHITESPACE_PATTERN
 from ..extraction.html.inline import (
     InlineToken,
     html_inline_tokens,
@@ -20,14 +13,27 @@ from ..extraction.html.inline import (
     render_html_inline_node,
     render_inline_tokens,
 )
-from ..extraction.html.semantics import has_explicit_reference_marker, normalize_section_title
-from ..extraction.html.ui_tokens import (
-    FIGURE_FULL_SIZE_IMAGE_LABEL,
-    FIGURE_POWERPOINT_SLIDE_LABEL,
+from ..extraction.markdown_render.figures import (
+    FIGURE_ACTION_TRAILING_LINK_PATTERN as FIGURE_ACTION_TRAILING_LINK_PATTERN,
+    FIGURE_DESCRIPTION_SELECTORS as FIGURE_DESCRIPTION_SELECTORS,
+    FIGURE_ID_PATTERN as FIGURE_ID_PATTERN,
+    FIGURE_LABEL_PATTERN as FIGURE_LABEL_PATTERN,
+    INLINE_FIGURE_ALT_ATTR as INLINE_FIGURE_ALT_ATTR,
+    INLINE_FIGURE_SRC_ATTR as INLINE_FIGURE_SRC_ATTR,
+    is_html_figure_container as _is_figure_container,
+    render_html_figure_markdown,
 )
+from ..extraction.markdown_render.formulas import (
+    is_html_formula_container as _is_formula_container,
+    is_html_formula_image_node as _is_formula_image_node,
+    is_mathjax_tex_node as _is_mathjax_tex_node,
+    render_html_formula_container as _render_formula_container,
+    render_html_formula_image_node as _render_formula_image_node,
+    render_html_mathml_node as _render_mathml_node,
+)
+from ..extraction.html.semantics import has_explicit_reference_marker, normalize_section_title
 from ..formula.convert import normalize_latex_macros
 from ..models import normalize_text
-from ._article_markdown_math import render_external_mathml_expression, render_mathml_expression
 from ..markdown.citations import is_citation_link, numeric_citation_payload
 from .html_noise import HTML_BLOCK_TAGS, HTML_DROP_TAGS, should_drop_html_element
 
@@ -44,27 +50,6 @@ MARKDOWN_BLANK_RUN_PATTERN = re.compile(r"\n{3,}")
 ORDERED_LIST_PREFIX_PATTERN = re.compile(r"^\s*(?:\(?\d+[A-Za-z]?\)?|[ivxlcdm]+)[.)]\s+", flags=re.IGNORECASE)
 UNORDERED_LIST_PREFIX_PATTERN = re.compile(r"^\s*[•◦▪▫‣⁃∙●○◾◽◼□■]\s*")
 MARKDOWN_LIST_ITEM_PATTERN = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
-# The shared figure label core is reused here, but this renderer also needs a
-# line-start anchor and a second capture for the caption remainder.
-FIGURE_LABEL_PATTERN = re.compile(
-    rf"^\s*{FIGURE_LABEL_CORE_PATTERN}\s*[:.]?\s*(.*)$",
-    flags=re.IGNORECASE,
-)
-FIGURE_ID_PATTERN = re.compile(r"(?:^|[-_ ])figure[-_ ]?(\d+[A-Za-z]?)$", flags=re.IGNORECASE)
-# Cross-publisher figure action links often trail the caption text in Atypon
-# and Springer/Nature DOMs. Keep the caption parser generic by trimming only
-# action labels, not provider-specific caption wording.
-FIGURE_ACTION_TRAILING_LINK_PATTERN = re.compile(
-    rf"\b(?:{re.escape(FIGURE_POWERPOINT_SLIDE_LABEL)}|{re.escape(FIGURE_FULL_SIZE_IMAGE_LABEL)})\b.*$",
-    flags=re.IGNORECASE,
-)
-FIGURE_DESCRIPTION_SELECTORS = (
-    "figcaption",
-    ".c-article-section__figure-description",
-    ".figure__caption-text",
-)
-INLINE_FIGURE_SRC_ATTR = "data-paper-fetch-inline-src"
-INLINE_FIGURE_ALT_ATTR = "data-paper-fetch-inline-alt"
 
 def _render_heading_inline_node(node: Any, *, text_style: str | None = None) -> str:
     return render_html_inline_node(node, policy="heading", text_style=text_style)
@@ -249,83 +234,6 @@ def render_container_markdown(
             lines.extend([text, ""])
 
 
-def _node_attr_text(node: Any) -> str:
-    if not isinstance(node, Tag):
-        return ""
-    attrs = getattr(node, "attrs", None) or {}
-    parts = [normalize_text(node.name or "")]
-    for key in ("id", "class", "data-test", "data-container-section"):
-        value = attrs.get(key)
-        if isinstance(value, (list, tuple, set)):
-            parts.extend(normalize_text(str(item)) for item in value)
-        else:
-            parts.append(normalize_text(str(value or "")))
-    return " ".join(part.lower() for part in parts if part)
-
-
-def _is_formula_container(node: Any) -> bool:
-    return is_formula_container(node)
-
-
-def _is_display_formula_node(node: Any) -> bool:
-    return is_display_formula_node(node)
-
-
-def _first_formula_image_url(node: Any) -> str:
-    return formula_image_url_from_node(node)
-
-
-def _is_formula_image_node(node: Any) -> bool:
-    return looks_like_formula_image(node)
-
-
-def _render_formula_image_node(node: Any) -> str:
-    url = _first_formula_image_url(node)
-    if not url:
-        return ""
-    return f"![Formula]({url})"
-
-
-def _render_mathml_node(node: Any) -> str:
-    element = mathml_element_from_html_node(node)
-    if element is None:
-        return ""
-    display_mode = _is_display_formula_node(node)
-    expression = normalize_text(render_external_mathml_expression(element, display_mode=display_mode))
-    if not expression:
-        expression = normalize_text(render_mathml_expression(element))
-    if not expression:
-        return ""
-    return f"\n\n$$\n{expression}\n$$\n\n" if display_mode else f"${expression}$"
-
-
-def _render_formula_container(node: Any) -> str:
-    mathml = _render_mathml_node(node)
-    if mathml:
-        return mathml
-    latex = _formula_latex_from_node(node)
-    if latex:
-        return f"\n\n$$\n{latex}\n$$\n\n" if _is_display_formula_node(node) else latex
-    image_url = _first_formula_image_url(node)
-    if image_url:
-        rendered = f"![Formula]({image_url})"
-        return f"\n\n{rendered}\n\n" if _is_display_formula_node(node) else rendered
-    if _is_formula_container(node):
-        return "[Formula unavailable]"
-    return ""
-
-
-def _is_figure_container(node: Any) -> bool:
-    if not isinstance(node, Tag):
-        return False
-    if node.name == "figure":
-        return True
-    identity = _node_attr_text(node)
-    if "figure" not in identity:
-        return False
-    return node.find("figure") is not None or node.find("img") is not None or node.find("figcaption") is not None
-
-
 def _is_div_section_container(node: Any) -> bool:
     if not isinstance(node, Tag) or normalize_text(node.name or "").lower() != "div":
         return False
@@ -337,149 +245,8 @@ def _is_div_section_container(node: Any) -> bool:
     return bool(classes & {"section", "section_2"}) and node.find(HEADING_TAG_PATTERN) is not None
 
 
-def _clean_figure_text_candidate(text: str) -> str:
-    normalized = normalize_text(text.replace("\n", " "))
-    if not normalized:
-        return ""
-    normalized = FIGURE_ACTION_TRAILING_LINK_PATTERN.sub("", normalized).strip()
-    return normalize_text(normalized)
-
-
-def _figure_label_from_text(text: str) -> tuple[str, str]:
-    normalized = _clean_figure_text_candidate(text)
-    match = FIGURE_LABEL_PATTERN.match(normalized)
-    if match is None:
-        return "", normalized
-    return f"Figure {match.group(1)}.", normalize_text(match.group(2))
-
-
-def _figure_label_from_node(node: Any) -> str:
-    current = node
-    while isinstance(current, Tag):
-        identity = _node_attr_text(current)
-        match = FIGURE_ID_PATTERN.search(identity)
-        if match is not None:
-            return f"Figure {match.group(1)}."
-        current = current.parent if isinstance(getattr(current, "parent", None), Tag) else None
-    return ""
-
-
-def _iter_figure_text_candidates(node: Any) -> list[str]:
-    if not isinstance(node, Tag):
-        return []
-    caption_candidates: list[str] = []
-    description_candidates: list[str] = []
-    for selector in FIGURE_DESCRIPTION_SELECTORS:
-        for match in node.select(selector):
-            if not isinstance(match, Tag):
-                continue
-            text = render_clean_text_from_html(match)
-            if not text:
-                continue
-            if selector == ".c-article-section__figure-description":
-                if text not in description_candidates:
-                    description_candidates.append(text)
-                continue
-            if text not in caption_candidates:
-                caption_candidates.append(text)
-    if caption_candidates:
-        return caption_candidates + [text for text in description_candidates if text not in caption_candidates]
-    if description_candidates:
-        return description_candidates
-
-    candidates: list[str] = []
-    data_title = normalize_text(str(node.get("data-title") or ""))
-    if data_title and data_title not in candidates:
-        candidates.append(data_title)
-    if candidates:
-        return candidates
-    image = node.find("img")
-    if isinstance(image, Tag):
-        alt_text = normalize_text(str(image.get("alt") or ""))
-        if alt_text and alt_text not in candidates:
-            candidates.append(alt_text)
-    return candidates
-
-
-def _iter_inline_figure_images(node: Any) -> list[tuple[str, str]]:
-    if not isinstance(node, Tag):
-        return []
-
-    images: list[tuple[str, str]] = []
-    seen: set[tuple[str, str]] = set()
-
-    def add_image(candidate: Any) -> None:
-        if not isinstance(candidate, Tag):
-            return
-        src = normalize_text(str(candidate.get(INLINE_FIGURE_SRC_ATTR) or ""))
-        if not src:
-            return
-        alt = normalize_text(str(candidate.get(INLINE_FIGURE_ALT_ATTR) or "Figure")) or "Figure"
-        item = (src, alt)
-        if item in seen:
-            return
-        seen.add(item)
-        images.append(item)
-
-    add_image(node)
-    for image in node.find_all("img"):
-        add_image(image)
-    return images
-
-
-def _append_inline_figure_image(lines: list[str], src: str, alt: str) -> None:
-    lines.extend([f"![{alt or 'Figure'}]({src})", ""])
-
-
 def render_figure_markdown(node: Any, lines: list[str]) -> None:
-    if not isinstance(node, Tag):
-        return
-
-    inline_images = _iter_inline_figure_images(node)
-    figure_items: list[tuple[str, str]] = []
-    for text in _iter_figure_text_candidates(node):
-        label, remainder = _figure_label_from_text(text)
-        candidate = _clean_figure_text_candidate(remainder if label else text)
-        item = (label, candidate)
-        if (label or candidate) and item not in figure_items:
-            figure_items.append(item)
-
-    fallback_label = _figure_label_from_node(node)
-    if not figure_items and fallback_label:
-        figure_items.append((fallback_label, ""))
-    if not figure_items:
-        for src, alt in inline_images:
-            _append_inline_figure_image(lines, src, alt)
-        return
-
-    if inline_images and len(inline_images) == len(figure_items) and len(inline_images) > 1:
-        for index, (label, caption) in enumerate(figure_items):
-            src, alt = inline_images[index]
-            _append_inline_figure_image(lines, src, alt)
-            active_label = label or (fallback_label if index == 0 else "")
-            if active_label:
-                line = f"**{active_label}**"
-                if caption:
-                    line = f"{line} {caption}"
-            else:
-                line = caption
-            if line:
-                lines.extend([line, ""])
-        return
-
-    for src, alt in inline_images:
-        _append_inline_figure_image(lines, src, alt)
-
-    for index, (label, caption) in enumerate(figure_items):
-        active_label = label or (fallback_label if index == 0 else "")
-        if active_label:
-            line = f"**{active_label}**"
-            if caption:
-                line = f"{line} {caption}"
-        else:
-            line = caption
-        if line:
-            lines.extend([line, ""])
+    render_html_figure_markdown(node, lines, render_clean_text=render_clean_text_from_html)
 
 
 def _has_explicit_citation_marker(node: Any) -> bool:
@@ -671,44 +438,6 @@ def render_clean_children(node: Any) -> str:
         text += rendered
     flush_inline_tokens()
     return text
-
-
-def _is_mathjax_tex_node(node: Any) -> bool:
-    if not isinstance(node, Tag):
-        return False
-    name = normalize_text(node.name or "").lower()
-    if name == "tex-math":
-        return True
-    classes = getattr(node, "attrs", {}).get("class") or []
-    if isinstance(classes, str):
-        class_values = classes.split()
-    else:
-        class_values = [str(value) for value in classes]
-    normalized_classes = {normalize_text(value).lower() for value in class_values}
-    return bool(normalized_classes & {"mathjax-tex", "tex", "tex2jax_ignore"})
-
-
-def _formula_latex_from_node(node: Any) -> str:
-    if not isinstance(node, Tag):
-        return ""
-    candidates: list[Any] = []
-    if _is_mathjax_tex_node(node):
-        candidates.append(node)
-    candidates.extend(candidate for candidate in node.find_all("tex-math") if isinstance(candidate, Tag))
-    try:
-        candidates.extend(candidate for candidate in node.select(".mathjax-tex, .tex, .tex2jax_ignore") if isinstance(candidate, Tag))
-    except Exception:
-        pass
-    seen: set[int] = set()
-    for candidate in candidates:
-        identity = id(candidate)
-        if identity in seen:
-            continue
-        seen.add(identity)
-        latex = normalize_latex_macros(candidate.get_text("", strip=False).strip())
-        if latex:
-            return latex
-    return ""
 
 
 def needs_space_between(left: str, right: str, previous_child: Any, child: Any) -> bool:

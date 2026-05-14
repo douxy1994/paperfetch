@@ -72,7 +72,7 @@ resolve DOI / landing URL
 - XML 必须校验 NLM/JATS article root、`front/article-meta`、正文 `body/sec`、非空摘要，以及至少一个含 `<p>` 的正文 section 和足够正文字符数，不能只按 HTTP 200 判定成功；正文字符阈值来自 `ProviderSpec.body_text_thresholds`，Copernicus 只覆盖 `min_chars=500`。
 - 早期 Copernicus XML 可能返回 `200 application/xml` 且有 `front/article-meta`，但 `body` 为空、没有 `sec`，实际只包含摘要级内容；这类 XML 必须失败并继续 PDF fallback，不经过 HTML 全文 fallback。
 - XML 成功时公开 `source="copernicus_xml"`，source trail 为 `fulltext:copernicus_xml_ok`；PDF fallback 成功公开 `copernicus_pdf`。
-- XML renderer 复用 `paper_fetch.providers._article_markdown_jats` 的通用 JATS 层覆盖标题、作者、摘要、正文 section、图表 caption、OASIS/HTML 表格、MathML display formula、references、data/code availability 和 supplementary links；Copernicus 模块只保留该路线的 provider 适配入口。
+- XML renderer 复用 `paper_fetch.providers._article_markdown_jats` 的通用 JATS 层覆盖标题、作者、摘要、正文 section、图表 caption、OASIS/HTML 表格、MathML display formula、references、data/code availability 和 supplementary links；table / figure / formula / list 的最终 Markdown 行渲染统一走 `paper_fetch.extraction.markdown_render`，Copernicus 模块只保留该路线的 provider 适配入口。
 - Copernicus 没有 provider-owned HTML fallback，也不注册 HTML cleanup / availability hook；XML 不可用时直接进入 PDF fallback，再失败才进入 metadata-only fallback。
 - `asset_profile=body` 默认保留正文 figure / table / formula 资产；`asset_profile=all` 额外允许明确 supplementary scope 的附件。PDF fallback 只返回 text-only Markdown，并通过 artifact warning 与 `download:copernicus_assets_skipped_text_only` 标记跳过资产。
 - Golden corpus 覆盖 8 篇现代 XML 主路径样本，以及 4 篇早期 abstract-only XML 落到 PDF text-only fallback 的样本。

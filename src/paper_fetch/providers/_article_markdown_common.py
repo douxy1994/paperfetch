@@ -16,6 +16,14 @@ from ._article_markdown_xml import (
     normalize_compact_text,
     xml_local_name,
 )
+from ..extraction.markdown_render.figures import add_figure_once, render_figure_block
+from ..extraction.markdown_render.tables import (
+    add_table_once,
+    normalize_table_cell_text,
+    render_image_table_block,
+    render_structured_table_block,
+    render_table_block,
+)
 from ..utils import normalize_text, sanitize_filename
 
 XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
@@ -190,75 +198,6 @@ def normalize_lines(lines: list[str]) -> str:
     return "\n".join(cleaned).strip() + "\n"
 
 
-def normalize_table_cell_text(value: str) -> str:
-    text = normalize_text(value)
-    text = text.replace("\n", "<br>")
-    return text.replace("|", r"\|")
-
-
-def render_figure_block(entry: Mapping[str, str]) -> list[str]:
-    lines = [f"![{entry['heading']}]({entry['link']})", ""]
-    if entry.get("caption"):
-        lines.extend([entry["caption"], ""])
-    return lines
-
-
-def add_figure_once(lines: list[str], entry: Mapping[str, str] | None, used_figure_keys: set[str]) -> None:
-    if not entry:
-        return
-    key = entry["key"]
-    if key in used_figure_keys:
-        return
-    used_figure_keys.add(key)
-    lines.extend(render_figure_block(entry))
-
-
-def render_image_table_block(entry: Mapping[str, Any]) -> list[str]:
-    lines = [entry["heading"], ""]
-    if entry.get("caption"):
-        lines.extend([str(entry["caption"]), ""])
-    if entry.get("link"):
-        lines.extend([f"![{entry['heading']}]({entry['link']})", ""])
-    for footnote in entry.get("footnotes", []):
-        text = normalize_text(str(footnote))
-        if text:
-            lines.extend([text, ""])
-    return lines
-
-
-def render_structured_table_block(entry: Mapping[str, Any]) -> list[str]:
-    lines = [entry["heading"], ""]
-    if entry.get("caption"):
-        lines.extend([str(entry["caption"]), ""])
-    rows = entry.get("rows") or []
-    if not rows:
-        return render_image_table_block(
-            {
-                **entry,
-                "fallback_message": "Table content could not be fully converted to Markdown; original table resource is retained below.",
-            }
-        )
-    lines.append("| " + " | ".join(rows[0]) + " |")
-    lines.append("| " + " | ".join(["---"] * len(rows[0])) + " |")
-    for row in rows[1:]:
-        lines.append("| " + " | ".join(row) + " |")
-    lines.append("")
-    for footnote in entry.get("footnotes", []):
-        text = normalize_text(str(footnote))
-        if text:
-            lines.extend([text, ""])
-    return lines
-
-
-def render_table_block(entry: Mapping[str, Any]) -> list[str]:
-    if not entry:
-        return []
-    render_kind = normalize_text(str(entry.get("table_render_kind") or entry.get("kind") or "")).lower()
-    if render_kind == "structured":
-        return render_structured_table_block(entry)
-    return render_image_table_block(entry)
-
-
 def collect_conversion_notes(
     *,
     table_entries: list[Mapping[str, Any]] | None = None,
@@ -301,13 +240,3 @@ def collect_conversion_notes(
         notes.append(f"- {normalized}")
 
     return notes
-
-
-def add_table_once(lines: list[str], entry: Mapping[str, Any] | None, used_table_keys: set[str]) -> None:
-    if not entry:
-        return
-    key = str(entry["key"])
-    if key in used_table_keys:
-        return
-    used_table_keys.add(key)
-    lines.extend(render_table_block(entry))
