@@ -11,8 +11,29 @@ from typing import Any
 
 from bs4 import BeautifulSoup, XMLParsedAsHTMLWarning
 
-from paper_fetch.publisher_identity import normalize_doi
-from paper_fetch.utils import normalize_text
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _structured_errors import ToolError, emit_error, error_payload  # noqa: E402
+from paper_fetch.publisher_identity import normalize_doi  # noqa: E402
+from paper_fetch.utils import normalize_text  # noqa: E402
+
+
+class SnapshotArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        emit_error(
+            error_payload(
+                "EXPECTED_SNAPSHOT_FAILED",
+                message,
+                provider=None,
+                manifest=None,
+                task_id="snapshot-expected-parse-args",
+                retryable=False,
+                details={"reason": message},
+            )
+        )
+        raise SystemExit(2)
 
 
 def _repo_root() -> Path:
@@ -255,10 +276,38 @@ def snapshot_expected(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
                 },
                 False,
             )
-        raise FileNotFoundError(f"fixture sample is not registered in manifest: {doi}")
+        raise ToolError(
+            "FIXTURE_NOT_FOUND",
+            "Fixture sample is not registered in manifest.",
+            retryable=False,
+            manifest=manifest_path.as_posix(),
+            task_id=f"{doi_slug(doi)}-step6-snapshot-expected",
+            details={"doi": doi, "manifest": manifest_path.as_posix()},
+        )
 
     sample_id, sample = match
-    review_summary = _build_review_summary(root, doi, sample_id, sample)
+    try:
+        review_summary = _build_review_summary(root, doi, sample_id, sample)
+    except FileNotFoundError as exc:
+        raise ToolError(
+            "FIXTURE_NOT_FOUND",
+            str(exc),
+            provider=str(sample.get("publisher") or "") or None,
+            manifest=manifest_path.as_posix(),
+            task_id=f"{sample_id}-step6-snapshot-expected",
+            retryable=False,
+            details={"doi": doi, "sample_id": sample_id},
+        ) from exc
+    except Exception as exc:
+        raise ToolError(
+            "EXPECTED_SNAPSHOT_FAILED",
+            str(exc),
+            provider=str(sample.get("publisher") or "") or None,
+            manifest=manifest_path.as_posix(),
+            task_id=f"{sample_id}-step6-snapshot-expected",
+            retryable=False,
+            details={"doi": doi, "sample_id": sample_id},
+        ) from exc
     expected = _expected_from_golden_corpus(doi, sample_id, sample, root) or _expected_from_review_summary(review_summary)
     review_summary["availability"] = _manifest_outcome(expected, review_summary)
     if args.review:
@@ -276,7 +325,7 @@ def snapshot_expected(args: argparse.Namespace) -> tuple[dict[str, Any], bool]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Generate expected.json from a local replay fixture.")
+    parser = SnapshotArgumentParser(description="Generate expected.json from a local replay fixture.")
     parser.add_argument("--doi", required=True, help="DOI to snapshot, for example 10.1234/sample")
     parser.add_argument("--review", action="store_true", help="print the generated summary without writing")
     parser.add_argument("--output-dir", default=_repo_root(), help="repo root to read/write; defaults to this checkout")
@@ -288,8 +337,31 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         summary, _ = snapshot_expected(args)
+    except ToolError as exc:
+        emit_error(
+            error_payload(
+                exc.code,
+                exc.message,
+                provider=exc.provider,
+                manifest=exc.manifest,
+                task_id=exc.task_id,
+                retryable=exc.retryable,
+                details=exc.details,
+            )
+        )
+        return 1
     except Exception as exc:
-        print(str(exc), file=sys.stderr)
+        emit_error(
+            error_payload(
+                "EXPECTED_SNAPSHOT_FAILED",
+                str(exc),
+                provider=None,
+                manifest=None,
+                task_id="snapshot-expected",
+                retryable=False,
+                details={"reason": str(exc)},
+            )
+        )
         return 1
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0

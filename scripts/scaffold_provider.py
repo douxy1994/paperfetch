@@ -9,6 +9,12 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _structured_errors import ToolError, emit_error, error_payload  # noqa: E402
+
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 DOI_RE = re.compile(r"^10\.[^/\s]+/.+")
@@ -17,6 +23,22 @@ PROVIDERS_DETAILS_MARKER = "<!-- SCAFFOLD: provider-docs -->"
 EXTRACTION_RULES_MARKER = "<!-- SCAFFOLD: extraction-rules-unstable-doi -->"
 CHANGELOG_UNRELEASED_MARKER = "<!-- SCAFFOLD: changelog-unreleased -->"
 MANIFEST_SCHEMA_INVALID = "MANIFEST_SCHEMA_INVALID"
+
+
+class ScaffoldArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        emit_error(
+            error_payload(
+                "SCAFFOLD_FORBIDDEN_FLAG_COMBINATION",
+                message,
+                provider=None,
+                manifest=None,
+                task_id="scaffold-parse-args",
+                retryable=False,
+                details={"reason": message},
+            )
+        )
+        raise SystemExit(2)
 
 
 @dataclass(frozen=True)
@@ -55,7 +77,9 @@ class ScaffoldInput:
 
 
 class ManifestSchemaError(ValueError):
-    pass
+    def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
+        super().__init__(message)
+        self.details = details or {}
 
 
 def _repo_root() -> Path:
@@ -244,7 +268,14 @@ def _load_provider_manifest(path: Path) -> dict[str, Any]:
         error = errors[0]
         path_text = ".".join(str(part) for part in error.path)
         prefix = f"{path_text}: " if path_text else ""
-        raise ManifestSchemaError(f"{prefix}{error.message}") from None
+        raise ManifestSchemaError(
+            f"{prefix}{error.message}",
+            details={
+                "field": path_text or None,
+                "expected": str(error.validator),
+                "reason": error.message,
+            },
+        ) from None
     return manifest
 
 
@@ -274,6 +305,15 @@ def _fixture_samples_from_manifest(
 
 
 def _scaffold_input_from_manifest(manifest_path: Path) -> ScaffoldInput:
+    if not manifest_path.exists():
+        raise ToolError(
+            "MANIFEST_NOT_FOUND",
+            "Provider manifest was not found.",
+            retryable=False,
+            manifest=manifest_path.as_posix(),
+            task_id="scaffold-validate-manifest",
+            details={"path": manifest_path.as_posix()},
+        )
     manifest = _load_provider_manifest(manifest_path)
     name = str(manifest["name"])
     display_source = str(manifest["display_source"])
@@ -820,7 +860,7 @@ def _print_checklist(paths: list[Path], root: Path, *, docs_paths: list[Path]) -
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = ScaffoldArgumentParser(
         description="Scaffold provider-owned bundle, tests, and golden fixture placeholders."
     )
     parser.add_argument("--from-manifest", help="provider manifest YAML input path")
@@ -865,6 +905,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _validate_input_mode(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    del parser
     legacy_values = {
         "--name": args.name,
         "--doi": args.doi,
@@ -877,30 +918,105 @@ def _validate_input_mode(parser: argparse.ArgumentParser, args: argparse.Namespa
         if args.html_capable is not None:
             mixed.append("--html-capable")
         if mixed:
-            parser.error("--from-manifest cannot be combined with " + ", ".join(mixed))
+            raise ToolError(
+                "SCAFFOLD_FORBIDDEN_FLAG_COMBINATION",
+                "--from-manifest cannot be combined with " + ", ".join(mixed),
+                retryable=False,
+                manifest=args.from_manifest,
+                task_id="scaffold-validate-input-mode",
+                details={"forbidden_flags": mixed},
+            )
         return
     missing = [flag for flag in ("--name", "--doi") if getattr(args, flag[2:]) is None]
     if missing:
-        parser.error("the following arguments are required: " + ", ".join(missing))
+        raise ToolError(
+            "SCAFFOLD_FORBIDDEN_FLAG_COMBINATION",
+            "the following arguments are required: " + ", ".join(missing),
+            retryable=False,
+            task_id="scaffold-validate-input-mode",
+            details={"missing_flags": missing},
+        )
+
+
+def _provider_hint_from_manifest(path_value: str | None) -> str | None:
+    if not path_value:
+        return None
+    try:
+        import yaml
+
+        data = yaml.safe_load(Path(path_value).read_text(encoding="utf-8"))
+    except Exception:
+        return None
+    if isinstance(data, dict) and isinstance(data.get("name"), str):
+        return str(data["name"])
+    return None
+
+
+def _task_id_for_scaffold(args: argparse.Namespace, default: str) -> str:
+    provider = args.name or _provider_hint_from_manifest(args.from_manifest)
+    if provider:
+        return f"{provider}-step4-scaffold"
+    return default
 
 
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    _validate_input_mode(parser, args)
     try:
+        _validate_input_mode(parser, args)
         paths, docs_paths, spec = scaffold(args)
-    except ManifestSchemaError as exc:
-        print(
-            json.dumps(
-                {"status": MANIFEST_SCHEMA_INVALID, "reason": str(exc)},
-                ensure_ascii=False,
-            ),
-            file=sys.stderr,
+    except ToolError as exc:
+        emit_error(
+            error_payload(
+                exc.code,
+                exc.message,
+                provider=exc.provider or args.name or _provider_hint_from_manifest(args.from_manifest),
+                manifest=exc.manifest or args.from_manifest,
+                task_id=exc.task_id or _task_id_for_scaffold(args, "scaffold"),
+                retryable=exc.retryable,
+                details=exc.details,
+            )
         )
         return 2
-    except (FileExistsError, ValueError) as exc:
-        parser.exit(2, f"error: {exc}\n")
+    except ManifestSchemaError as exc:
+        payload = error_payload(
+            MANIFEST_SCHEMA_INVALID,
+            "Manifest failed schema validation.",
+            provider=_provider_hint_from_manifest(args.from_manifest),
+            manifest=args.from_manifest,
+            task_id=_task_id_for_scaffold(args, "scaffold-validate-manifest"),
+            retryable=False,
+            details=exc.details or {"reason": str(exc)},
+            extras={"status": MANIFEST_SCHEMA_INVALID, "reason": str(exc)},
+        )
+        emit_error(payload)
+        return 2
+    except FileExistsError as exc:
+        emit_error(
+            error_payload(
+                "SCAFFOLD_OUTPUT_EXISTS",
+                str(exc),
+                provider=args.name or _provider_hint_from_manifest(args.from_manifest),
+                manifest=args.from_manifest,
+                task_id=_task_id_for_scaffold(args, "scaffold"),
+                retryable=False,
+                details={"path": str(exc).removeprefix("refusing to overwrite existing path: ")},
+            )
+        )
+        return 2
+    except ValueError as exc:
+        emit_error(
+            error_payload(
+                "SCAFFOLD_TEMPLATE_RENDER_FAILED",
+                str(exc),
+                provider=args.name or _provider_hint_from_manifest(args.from_manifest),
+                manifest=args.from_manifest,
+                task_id=_task_id_for_scaffold(args, "scaffold"),
+                retryable=False,
+                details={"reason": str(exc)},
+            )
+        )
+        return 2
     root = Path(args.output_dir).resolve()
     if args.from_manifest:
         print(

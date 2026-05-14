@@ -7,10 +7,17 @@ import argparse
 import json
 import os
 import re
+import sys
 from pathlib import Path
 from typing import Any, NamedTuple
 
 import yaml
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _structured_errors import ToolError, emit_error, error_payload  # noqa: E402
 
 
 PROVIDER_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
@@ -58,6 +65,22 @@ CENTRAL_PROVIDER_LOGIC_PATHS = [
     "src/paper_fetch/quality/html_signals.py",
     "src/paper_fetch/quality/html_availability.py",
 ]
+
+
+class CoordinatorArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        emit_error(
+            error_payload(
+                "TASK_BRIEF_INVALID",
+                message,
+                provider=None,
+                manifest=None,
+                task_id="coordinator-parse-args",
+                retryable=False,
+                details={"reason": message},
+            )
+        )
+        raise SystemExit(2)
 
 
 class DagStep(NamedTuple):
@@ -117,9 +140,35 @@ def _repo_root() -> Path:
 
 
 def _read_manifest(path: Path) -> dict[str, Any]:
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not path.exists():
+        raise ToolError(
+            "MANIFEST_NOT_FOUND",
+            "Provider manifest was not found.",
+            retryable=False,
+            manifest=path.as_posix(),
+            task_id="start-validate-manifest",
+            details={"path": path.as_posix()},
+        )
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ToolError(
+            "MANIFEST_SCHEMA_INVALID",
+            "Manifest YAML is invalid.",
+            retryable=False,
+            manifest=path.as_posix(),
+            task_id="start-validate-manifest",
+            details={"reason": str(exc)},
+        ) from exc
     if not isinstance(data, dict):
-        raise ValueError(f"manifest root must be a mapping: {path}")
+        raise ToolError(
+            "MANIFEST_SCHEMA_INVALID",
+            "Manifest root must be a mapping.",
+            retryable=False,
+            manifest=path.as_posix(),
+            task_id="start-validate-manifest",
+            details={"path": path.as_posix()},
+        )
     return data
 
 
@@ -130,7 +179,14 @@ def _manifest_source(path_value: str) -> OnboardingSource:
     manifest = _read_manifest(manifest_path)
     provider_value = manifest.get("name")
     if not isinstance(provider_value, str):
-        raise ValueError(f"manifest must contain string name: {path_value}")
+        raise ToolError(
+            "MANIFEST_SCHEMA_INVALID",
+            "Manifest must contain string name.",
+            retryable=False,
+            manifest=path_value,
+            task_id="start-validate-manifest",
+            details={"field": "name", "expected": "string"},
+        )
     provider = _provider_slug(provider_value)
     manifest_yaml = manifest_path.read_text(encoding="utf-8")
     return OnboardingSource(
@@ -417,9 +473,14 @@ def _ensure_single_active_provider(state: dict[str, Any], provider: str) -> None
         providers = state.get("providers", {})
         active_state = providers.get(active_provider, {})
         if active_state.get("status") == "in_progress":
-            raise SystemExit(
+            raise ToolError(
+                "TASK_BRIEF_INVALID",
                 "another provider is already in_progress: "
-                f"{active_provider}; finish or block it before starting {provider}"
+                f"{active_provider}; finish or block it before starting {provider}",
+                retryable=False,
+                provider=provider,
+                task_id=f"{provider}-coordinator-state-conflict",
+                details={"active_provider": active_provider},
             )
 
 
@@ -666,6 +727,15 @@ def run_next(args: argparse.Namespace) -> int:
 
 def run_verify(args: argparse.Namespace) -> int:
     provider = _provider_slug(args.provider)
+    if args.task not in _dag_step_ids(include_discovery=True):
+        raise ToolError(
+            "TASK_BRIEF_INVALID",
+            f"unknown task for provider {provider}: {args.task}",
+            retryable=False,
+            provider=provider,
+            task_id=f"{provider}-verify-{args.task}",
+            details={"task": args.task},
+        )
     state_path = _state_path(args.state)
     state = _load_state(state_path)
     provider_state = _ensure_provider_state(state, provider=provider)
@@ -700,7 +770,14 @@ def run_advance(args: argparse.Namespace) -> int:
     provider_state = _ensure_provider_state(state, provider=provider)
     task_statuses = provider_state["task_statuses"]
     if args.task not in task_statuses:
-        raise SystemExit(f"unknown task for provider {provider}: {args.task}")
+        raise ToolError(
+            "TASK_BRIEF_INVALID",
+            f"unknown task for provider {provider}: {args.task}",
+            retryable=False,
+            provider=provider,
+            task_id=f"{provider}-advance-{args.task}",
+            details={"task": args.task},
+        )
     task_statuses[args.task] = "completed"
     completed_steps = provider_state["completed_steps"]
     if args.task not in completed_steps:
@@ -731,10 +808,10 @@ def run_advance(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
+    parser = CoordinatorArgumentParser(
         description="Generate manifest-driven provider onboarding dry-run artifacts."
     )
-    subparsers = parser.add_subparsers(dest="command", required=True)
+    subparsers = parser.add_subparsers(dest="command", required=True, parser_class=CoordinatorArgumentParser)
 
     discover = subparsers.add_parser(
         "discover",
@@ -809,10 +886,63 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _provider_from_args(args: argparse.Namespace) -> str | None:
+    provider = getattr(args, "provider", None)
+    if isinstance(provider, str):
+        try:
+            return _provider_slug(provider)
+        except ValueError:
+            return provider
+    return None
+
+
+def _manifest_from_args(args: argparse.Namespace) -> str | None:
+    manifest = getattr(args, "manifest", None)
+    return manifest if isinstance(manifest, str) else None
+
+
+def _task_id_from_args(args: argparse.Namespace) -> str:
+    provider = _provider_from_args(args)
+    command = getattr(args, "command", None) or "coordinator"
+    task = getattr(args, "task", None)
+    if provider and task:
+        return f"{provider}-{command}-{task}"
+    if provider:
+        return f"{provider}-{command}"
+    return str(command)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    return args.func(args)
+    try:
+        return args.func(args)
+    except ToolError as exc:
+        emit_error(
+            error_payload(
+                exc.code,
+                exc.message,
+                provider=exc.provider or _provider_from_args(args),
+                manifest=exc.manifest or _manifest_from_args(args),
+                task_id=exc.task_id or _task_id_from_args(args),
+                retryable=exc.retryable,
+                details=exc.details,
+            )
+        )
+        return 1
+    except ValueError as exc:
+        emit_error(
+            error_payload(
+                "TASK_BRIEF_INVALID",
+                str(exc),
+                provider=_provider_from_args(args),
+                manifest=_manifest_from_args(args),
+                task_id=_task_id_from_args(args),
+                retryable=False,
+                details={"reason": str(exc)},
+            )
+        )
+        return 1
 
 
 if __name__ == "__main__":

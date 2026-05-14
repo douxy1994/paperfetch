@@ -11,10 +11,14 @@ from typing import Any
 import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
 SRC_PATH = REPO_ROOT / "src"
 if SRC_PATH.is_dir() and str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
+from _structured_errors import ToolError, emit_error, error_payload  # noqa: E402
 from paper_fetch.extraction.html.signals import CHALLENGE_PATTERNS, contains_access_gate_text, summarize_html  # noqa: E402
 from paper_fetch.http import (  # noqa: E402
     HttpTransport,
@@ -44,6 +48,22 @@ PURPOSE_ALIASES = {
 }
 CLI_PURPOSES = sorted(set(PURPOSES) | set(PURPOSE_ALIASES))
 RETRY_VIA_ERROR_CODES = {"HTTP_FORBIDDEN", "HTTP_RATE_LIMITED", "CHALLENGE_DETECTED"}
+
+
+class CaptureArgumentParser(argparse.ArgumentParser):
+    def error(self, message: str) -> None:
+        emit_error(
+            error_payload(
+                "UNSUITABLE_DOI_SAMPLE",
+                message,
+                provider=None,
+                manifest=None,
+                task_id="capture-fixtures-parse-args",
+                retryable=False,
+                details={"reason": message},
+            )
+        )
+        raise SystemExit(2)
 
 
 class ManifestContext:
@@ -90,25 +110,36 @@ class CaptureFixtureError(Exception):
         provider: str | None = None,
         manifest: str | None = None,
         purpose: str | None = None,
+        task_id: str | None = None,
     ) -> dict[str, Any]:
-        payload: dict[str, Any] = {
-            "code": self.code,
-            "message": self.message,
-            "retryable": self.retryable,
-        }
+        details: dict[str, Any] = {}
+        extras: dict[str, Any] = {}
         if provider:
-            payload["provider"] = provider
+            extras["provider"] = provider
         if manifest:
-            payload["manifest"] = manifest
+            extras["manifest"] = manifest
         if purpose:
-            payload["purpose"] = purpose
+            details["purpose"] = purpose
+            extras["purpose"] = purpose
         if self.status_code is not None:
-            payload["status_code"] = self.status_code
+            details["status_code"] = self.status_code
+            extras["status_code"] = self.status_code
         if self.route:
-            payload["route"] = self.route
+            details["route"] = self.route
+            extras["route"] = self.route
         if self.previous_code:
-            payload["previous_code"] = self.previous_code
-        return payload
+            details["previous_code"] = self.previous_code
+            extras["previous_code"] = self.previous_code
+        return error_payload(
+            self.code,
+            self.message,
+            provider=provider,
+            manifest=manifest,
+            task_id=task_id,
+            retryable=self.retryable,
+            details=details,
+            extras=extras,
+        )
 
 
 def _repo_root() -> Path:
@@ -137,17 +168,33 @@ def _load_manifest(path: Path) -> dict[str, Any]:
 
 def _load_provider_manifest(path: Path) -> dict[str, Any]:
     if not path.exists():
-        raise CaptureFixtureError(
-            "UNSUITABLE_DOI_SAMPLE",
-            f"provider manifest does not exist: {path}",
+        raise ToolError(
+            "MANIFEST_NOT_FOUND",
+            "Provider manifest was not found.",
             retryable=False,
-)
-    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            manifest=path.as_posix(),
+            task_id="capture-fixtures-validate-manifest",
+            details={"path": path.as_posix()},
+        )
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ToolError(
+            "MANIFEST_SCHEMA_INVALID",
+            "Manifest YAML is invalid.",
+            retryable=False,
+            manifest=path.as_posix(),
+            task_id="capture-fixtures-validate-manifest",
+            details={"reason": str(exc)},
+        ) from exc
     if not isinstance(data, dict):
-        raise CaptureFixtureError(
-            "UNSUITABLE_DOI_SAMPLE",
-            f"provider manifest root must be an object: {path}",
+        raise ToolError(
+            "MANIFEST_SCHEMA_INVALID",
+            "Manifest root must be an object.",
             retryable=False,
+            manifest=path.as_posix(),
+            task_id="capture-fixtures-validate-manifest",
+            details={"path": path.as_posix()},
         )
     return data
 
@@ -588,7 +635,7 @@ def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Capture a DOI replay fixture and register it in the golden manifest.")
+    parser = CaptureArgumentParser(description="Capture a DOI replay fixture and register it in the golden manifest.")
     parser.add_argument("--doi", help="DOI to capture, for example 10.1234/sample")
     parser.add_argument("--provider", help="provider name; defaults to DOI/catalog inference")
     parser.add_argument("--via", choices=("http", "playwright", "flaresolverr"), default="http")
@@ -608,7 +655,7 @@ def _error_context(args: argparse.Namespace) -> dict[str, str | None]:
     if getattr(args, "from_manifest", None):
         try:
             manifest = _manifest_context(args.from_manifest, purpose)
-        except CaptureFixtureError:
+        except Exception:
             manifest = None
         if manifest and manifest.provider:
             provider = provider or manifest.provider
@@ -616,6 +663,7 @@ def _error_context(args: argparse.Namespace) -> dict[str, str | None]:
         "provider": provider,
         "manifest": getattr(args, "from_manifest", None),
         "purpose": purpose,
+        "task_id": f"{provider}-step3-capture-fixtures" if provider else "capture-fixtures",
     }
 
 
@@ -628,18 +676,36 @@ def main(argv: list[str] | None = None) -> int:
             "--doi is required unless --from-manifest is provided",
             retryable=False,
         )
-        print(json.dumps(error.to_payload(purpose=normalize_purpose(args.purpose)), sort_keys=True), file=sys.stderr)
+        context = _error_context(args)
+        emit_error(error.to_payload(**context))
         return 1
     try:
         summary = capture_fixture(args)
+    except ToolError as exc:
+        context = _error_context(args)
+        details = dict(exc.details)
+        if context.get("purpose"):
+            details.setdefault("purpose", context["purpose"])
+        emit_error(
+            error_payload(
+                exc.code,
+                exc.message,
+                provider=exc.provider or context["provider"],
+                manifest=exc.manifest or context["manifest"],
+                task_id=exc.task_id or context["task_id"],
+                retryable=exc.retryable,
+                details=details,
+            )
+        )
+        return 1
     except CaptureFixtureError as exc:
         context = _error_context(args)
-        print(json.dumps(exc.to_payload(**context), sort_keys=True), file=sys.stderr)
+        emit_error(exc.to_payload(**context))
         return 1
     except Exception as exc:
         context = _error_context(args)
         error = CaptureFixtureError("UNSUITABLE_DOI_SAMPLE", str(exc), retryable=False)
-        print(json.dumps(error.to_payload(**context), sort_keys=True), file=sys.stderr)
+        emit_error(error.to_payload(**context))
         return 1
     print(json.dumps(summary, indent=2, sort_keys=True))
     return 0
