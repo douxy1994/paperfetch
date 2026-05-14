@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 import threading
 from typing import Any, Callable, Mapping
 
@@ -25,6 +24,7 @@ from .shared import (
     build_browser_workflow_html_candidates,
     build_browser_workflow_pdf_candidates,
     extract_pdf_url_from_crossref,
+    facade_attr,
 )
 from .._flaresolverr import (
     FlareSolverrFailure,
@@ -78,11 +78,6 @@ from .pdf_fallback import (
 from .profile import ProviderBrowserProfile
 
 
-def _facade_attr(name: str, fallback):
-    facade = sys.modules.get("paper_fetch.providers.browser_workflow")
-    return getattr(facade, name, fallback) if facade is not None else fallback
-
-
 class BrowserWorkflowClient(ProviderClient):
     name = "browser_workflow"
     article_source_name: str | None = None
@@ -94,7 +89,7 @@ class BrowserWorkflowClient(ProviderClient):
         self.user_agent = build_user_agent(env)
 
     def probe_status(self):
-        return _facade_attr("probe_runtime_status", _probe_runtime_status)(
+        return facade_attr("probe_runtime_status", _probe_runtime_status)(
             self.env, provider=self.name
         )
 
@@ -162,13 +157,13 @@ class BrowserWorkflowClient(ProviderClient):
         html_failure_reason = ABSTRACT_ONLY
         html_failure_message = f"{self.name} HTML route only exposed abstract-level content after markdown extraction."
         recovery_warning = f"{self.name} HTML route only exposed abstract-level content after markdown extraction; attempting PDF fallback."
-        runtime = _facade_attr("load_runtime_config", _load_runtime_config)(
+        runtime = facade_attr("load_runtime_config", _load_runtime_config)(
             self.env,
             provider=self.name,
             doi=normalized_doi,
         )
-        _facade_attr("ensure_runtime_ready", _ensure_runtime_ready)(runtime)
-        return _facade_attr(
+        facade_attr("ensure_runtime_ready", _ensure_runtime_ready)(runtime)
+        return facade_attr(
             "fetch_seeded_browser_pdf_payload", _fetch_seeded_browser_pdf_payload
         )(
             provider=self.name,
@@ -227,7 +222,7 @@ class BrowserWorkflowClient(ProviderClient):
     ) -> tuple[str, dict[str, Any]]:
         profile = self.require_profile()
         publisher = normalize_text(profile.markdown_publisher) or profile.name
-        return _facade_attr(
+        return facade_attr(
             "extract_atypon_browser_workflow_markdown", _extract_atypon_browser_workflow_markdown
         )(
             html_text,
@@ -244,7 +239,7 @@ class BrowserWorkflowClient(ProviderClient):
         context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         context = self._runtime_context(context)
-        bootstrap = _facade_attr(
+        bootstrap = facade_attr(
             "bootstrap_browser_workflow", _bootstrap_browser_workflow
         )(
             self,
@@ -279,7 +274,7 @@ class BrowserWorkflowClient(ProviderClient):
 
         def run_pdf_fallback(_state) -> RawFulltextPayload:
             try:
-                return _facade_attr(
+                return facade_attr(
                     "fetch_seeded_browser_pdf_payload",
                     _fetch_seeded_browser_pdf_payload,
                 )(
@@ -330,7 +325,7 @@ class BrowserWorkflowClient(ProviderClient):
         metadata: Mapping[str, Any],
         context: RuntimeContext,
     ) -> tuple[str, Mapping[str, Any]]:
-        return _facade_attr(
+        return facade_attr(
             "_cached_browser_workflow_markdown", _cached_browser_workflow_markdown
         )(
             self,
@@ -436,7 +431,7 @@ class BrowserWorkflowClient(ProviderClient):
 
         html_text = decode_html(raw_payload.body)
         try:
-            article_assets = _facade_attr(
+            article_assets = facade_attr(
                 "_cached_browser_workflow_assets", _cached_browser_workflow_assets
             )(
                 self,
@@ -458,12 +453,12 @@ class BrowserWorkflowClient(ProviderClient):
         if not normalized_doi:
             return empty_asset_results()
 
-        runtime = _facade_attr("load_runtime_config", _load_runtime_config)(
+        runtime = facade_attr("load_runtime_config", _load_runtime_config)(
             self.env,
             provider=self.name,
             doi=normalized_doi,
         )
-        _facade_attr("ensure_runtime_ready", _ensure_runtime_ready)(runtime)
+        facade_attr("ensure_runtime_ready", _ensure_runtime_ready)(runtime)
         browser_context_seed = merge_browser_context_seeds(
             content.browser_context_seed if content is not None else None
         )
@@ -526,7 +521,7 @@ class BrowserWorkflowClient(ProviderClient):
                 attempts: list[dict[str, Any]] = []
                 for recovery_url in asset_recovery_urls(image_url, asset):
                     try:
-                        html_result = _facade_attr(
+                        html_result = facade_attr(
                             "fetch_html_with_flaresolverr",
                             _fetch_html_with_flaresolverr,
                         )(
@@ -604,7 +599,7 @@ class BrowserWorkflowClient(ProviderClient):
                 attempts: list[dict[str, Any]] = []
                 for recovery_url in supplementary_recovery_urls(file_url, asset):
                     try:
-                        html_result = _facade_attr(
+                        html_result = facade_attr(
                             "fetch_html_with_flaresolverr",
                             _fetch_html_with_flaresolverr,
                         )(
@@ -674,7 +669,7 @@ class BrowserWorkflowClient(ProviderClient):
                 return None
             # Asset workers may run in parallel threads, so they must not borrow
             # the RuntimeContext-owned shared browser/context.
-            fetcher = _facade_attr(
+            fetcher = facade_attr(
                 "_build_shared_playwright_image_fetcher",
                 _default_build_shared_playwright_image_fetcher,
             )(
@@ -702,7 +697,7 @@ class BrowserWorkflowClient(ProviderClient):
             profile = self.profile
             if profile is None or not profile.shared_playwright_image_fetcher:
                 return None
-            return _facade_attr(
+            return facade_attr(
                 "_build_shared_playwright_file_fetcher",
                 _default_build_shared_playwright_file_fetcher,
             )(
@@ -730,7 +725,7 @@ class BrowserWorkflowClient(ProviderClient):
 
             def raw_figure_page_fetcher(figure_page_url: str) -> tuple[str, str] | None:
                 try:
-                    html_result = _facade_attr(
+                    html_result = facade_attr(
                         "fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr
                     )(
                         [figure_page_url],
@@ -762,7 +757,7 @@ class BrowserWorkflowClient(ProviderClient):
             )
             try:
                 body_result = (
-                    _facade_attr(
+                    facade_attr(
                         "download_figure_assets_with_image_document_fetcher",
                         _download_figure_assets_with_image_document_fetcher,
                     )(
@@ -781,7 +776,7 @@ class BrowserWorkflowClient(ProviderClient):
                     else empty_asset_results()
                 )
                 supplementary_result = (
-                    _facade_attr(
+                    facade_attr(
                         "download_supplementary_assets", _download_supplementary_assets
                     )(
                         self.transport,
@@ -836,7 +831,7 @@ class BrowserWorkflowClient(ProviderClient):
         if not failed_body_assets and not failed_supplementary_assets:
             return initial_result
 
-        refreshed_seed = _facade_attr(
+        refreshed_seed = facade_attr(
             "warm_browser_context_with_flaresolverr",
             _warm_browser_context_with_flaresolverr,
         )(

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import sys
 from typing import TYPE_CHECKING
 
 from ...extraction.html.signals import HtmlExtractionFailure
@@ -18,6 +17,7 @@ from .html_extraction import (
     fetch_html_with_direct_playwright as _fetch_html_with_direct_playwright,
 )
 from .shared import (
+    facade_attr,
     preferred_html_candidate_from_landing_page as _preferred_html_candidate_from_landing_page,
 )
 from .._pdf_candidates import extract_pdf_candidate_urls_from_html
@@ -37,15 +37,10 @@ if TYPE_CHECKING:
 logger = logging.getLogger("paper_fetch.providers.browser_workflow")
 
 
-def _facade_attr(name: str, fallback):
-    facade = sys.modules.get("paper_fetch.providers.browser_workflow")
-    return getattr(facade, name, fallback) if facade is not None else fallback
-
-
 def _fetch_flaresolverr_html_payload(*args, **kwargs):
     kwargs.setdefault(
         "html_fetcher",
-        _facade_attr("fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr),
+        facade_attr("fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr),
     )
     return _html_extraction._fetch_flaresolverr_html_payload(*args, **kwargs)
 
@@ -53,7 +48,7 @@ def _fetch_flaresolverr_html_payload(*args, **kwargs):
 def _fetch_flaresolverr_html_payload_with_fast_path(*args, **kwargs):
     kwargs.setdefault(
         "html_fetcher",
-        _facade_attr("fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr),
+        facade_attr("fetch_html_with_flaresolverr", _fetch_html_with_flaresolverr),
     )
     return _html_extraction._fetch_flaresolverr_html_payload_with_fast_path(
         *args, **kwargs
@@ -107,7 +102,7 @@ def bootstrap_browser_workflow(
 
     if profile.direct_playwright_html_preflight:
         try:
-            html_result = _facade_attr(
+            html_result = facade_attr(
                 "fetch_html_with_direct_playwright", _fetch_html_with_direct_playwright
             )(
                 html_candidates,
@@ -149,12 +144,12 @@ def bootstrap_browser_workflow(
             )
 
     try:
-        result.runtime = _facade_attr("load_runtime_config", _load_runtime_config)(
+        result.runtime = facade_attr("load_runtime_config", _load_runtime_config)(
             client.env,
             provider=client.name,
             doi=normalized_doi,
         )
-        _facade_attr("ensure_runtime_ready", _ensure_runtime_ready)(result.runtime)
+        facade_attr("ensure_runtime_ready", _ensure_runtime_ready)(result.runtime)
     except ProviderFailure as exc:
         if not allow_runtime_failure:
             raise

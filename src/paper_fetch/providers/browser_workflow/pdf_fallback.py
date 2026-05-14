@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import sys
 from typing import Any, Mapping
 
 from ...http import PDF_MIME_TYPE
@@ -15,11 +14,7 @@ from .._flaresolverr import (
 from .._pdf_fallback import fetch_pdf_with_playwright as _fetch_pdf_with_playwright
 from ..base import ProviderContent, RawFulltextPayload
 from .fetchers import _choose_playwright_seed_url
-
-
-def _facade_attr(name: str, fallback):
-    facade = sys.modules.get("paper_fetch.providers.browser_workflow")
-    return getattr(facade, name, fallback) if facade is not None else fallback
+from .shared import facade_attr
 
 
 def fetch_seeded_browser_pdf_payload(
@@ -39,7 +34,7 @@ def fetch_seeded_browser_pdf_payload(
     artifact_subdir: str = PDF_FALLBACK,
     context: RuntimeContext | None = None,
 ) -> RawFulltextPayload:
-    pdf_browser_context_seed = _facade_attr(
+    pdf_browser_context_seed = facade_attr(
         "warm_browser_context_with_flaresolverr",
         _warm_browser_context_with_flaresolverr,
     )(
@@ -54,7 +49,7 @@ def fetch_seeded_browser_pdf_payload(
         landing_page_url,
         pdf_browser_context_seed.get("browser_final_url"),
     )
-    pdf_result = _facade_attr("fetch_pdf_with_playwright", _fetch_pdf_with_playwright)(
+    pdf_result = facade_attr("fetch_pdf_with_playwright", _fetch_pdf_with_playwright)(
         pdf_candidates,
         artifact_dir=runtime.artifact_dir / artifact_subdir,
         browser_cookies=list(pdf_browser_context_seed.get("browser_cookies") or []),

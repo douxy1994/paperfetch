@@ -120,3 +120,10 @@ def build_browser_workflow_pdf_candidates(
     if not inserted:
         _append_unique(candidates, crossref_candidate)
     return candidates
+
+
+def facade_attr(name: str, fallback):
+    import sys
+
+    facade = sys.modules.get(__package__)
+    return getattr(facade, name, fallback) if facade is not None else fallback
