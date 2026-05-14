@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field, replace
+import importlib.util
 from pathlib import Path
 import time
 from typing import TYPE_CHECKING, Any, Mapping
@@ -234,6 +235,13 @@ def _dedupe_strings(values: list[str] | tuple[str, ...] | None) -> list[str]:
         if value and value not in deduped:
             deduped.append(value)
     return deduped
+
+
+def _module_available(module_name: str) -> bool:
+    try:
+        return importlib.util.find_spec(module_name) is not None
+    except (ModuleNotFoundError, ValueError):
+        return False
 
 
 def build_provider_status_check(
@@ -685,17 +693,110 @@ class ProviderClient:
         return empty_asset_results()
 
     def probe_status(self) -> ProviderStatusResult:
+        from ._registry import provider_bundle
+
+        try:
+            catalog = provider_bundle(self.name).catalog
+        except KeyError as exc:
+            return ProviderStatusResult(
+                provider=self.name,
+                status=ERROR,
+                available=False,
+                official_provider=self.official_provider,
+                notes=["Provider catalog entry was not found for this client."],
+                checks=[
+                    build_provider_status_check(
+                        "provider_catalog",
+                        ERROR,
+                        str(exc),
+                    )
+                ],
+            )
+
+        env = getattr(self, "env", {}) or {}
+        checks: list[ProviderStatusCheck] = []
+        env_requirements = tuple(catalog.env_requirements or ())
+        missing_env = [
+            env_name
+            for env_name in env_requirements
+            if not str(env.get(env_name, "")).strip()
+        ]
+        if env_requirements:
+            checks.append(
+                build_provider_status_check(
+                    "environment",
+                    NOT_CONFIGURED if missing_env else OK,
+                    (
+                        f"{catalog.display_name} required environment variables are configured."
+                        if not missing_env
+                        else f"{catalog.display_name} is missing required environment variables."
+                    ),
+                    missing_env=missing_env,
+                    details={"env_requirements": list(env_requirements)},
+                )
+            )
+
+        if catalog.requires_playwright:
+            playwright_available = _module_available("playwright.sync_api")
+            checks.append(
+                build_provider_status_check(
+                    "playwright",
+                    OK if playwright_available else NOT_CONFIGURED,
+                    (
+                        "Playwright Python package is importable; browser installation is not probed."
+                        if playwright_available
+                        else "Playwright Python package is not installed."
+                    ),
+                    details={"probe": "importlib.find_spec"},
+                )
+            )
+
+        if catalog.requires_flaresolverr:
+            env_file_value = str(env.get("FLARESOLVERR_ENV_FILE", "")).strip()
+            env_file = Path(env_file_value).expanduser() if env_file_value else None
+            flaresolverr_ready = env_file is not None and env_file.exists()
+            checks.append(
+                build_provider_status_check(
+                    "flaresolverr_config",
+                    OK if flaresolverr_ready else NOT_CONFIGURED,
+                    (
+                        "FlareSolverr env file is configured locally; service health is not probed."
+                        if flaresolverr_ready
+                        else "FLARESOLVERR_ENV_FILE must point to a local FlareSolverr preset."
+                    ),
+                    missing_env=[] if flaresolverr_ready else ["FLARESOLVERR_ENV_FILE"],
+                    details={
+                        "env_file": str(env_file) if env_file is not None else None,
+                        "probe": "env_file_exists",
+                    },
+                )
+            )
+
+        if not checks:
+            checks.append(
+                build_provider_status_check(
+                    "local_requirements",
+                    OK,
+                    f"{catalog.display_name} has no local provider requirements.",
+                )
+            )
+
+        result_missing_env: list[str] = []
+        for check in checks:
+            for env_name in check.missing_env:
+                if env_name not in result_missing_env:
+                    result_missing_env.append(env_name)
+        if any(check.status == ERROR for check in checks):
+            status = ERROR
+        elif any(check.status == NOT_CONFIGURED for check in checks):
+            status = NOT_CONFIGURED
+        else:
+            status = READY
         return ProviderStatusResult(
             provider=self.name,
-            status=ERROR,
-            available=False,
-            official_provider=self.official_provider,
-            notes=["Provider diagnostics are not implemented for this client."],
-            checks=[
-                build_provider_status_check(
-                    "diagnostics",
-                    ERROR,
-                    f"{self.name} provider diagnostics are not implemented.",
-                )
-            ],
+            status=status,
+            available=status == READY,
+            official_provider=catalog.official,
+            missing_env=result_missing_env,
+            checks=checks,
         )

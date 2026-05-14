@@ -9,6 +9,10 @@ from pathlib import Path
 
 NAME_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
 DOI_RE = re.compile(r"^10\.[^/\s]+/.+")
+PROVIDERS_MATRIX_MARKER = "<!-- SCAFFOLD: providers-capability-matrix -->"
+PROVIDERS_DETAILS_MARKER = "<!-- SCAFFOLD: provider-docs -->"
+EXTRACTION_RULES_MARKER = "<!-- SCAFFOLD: extraction-rules-unstable-doi -->"
+CHANGELOG_UNRELEASED_MARKER = "<!-- SCAFFOLD: changelog-unreleased -->"
 
 
 def _repo_root() -> Path:
@@ -37,6 +41,103 @@ def _write_new(path: Path, content: str = "") -> None:
         raise FileExistsError(f"refusing to overwrite existing path: {path}")
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(content, encoding="utf-8")
+
+
+def _ensure_scaffold_doc(path: Path, content: str) -> None:
+    if path.exists():
+        return
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
+
+
+def _minimal_providers_doc() -> str:
+    return "\n".join(
+        [
+            "# Providers",
+            "",
+            "## Provider 能力矩阵",
+            "",
+            PROVIDERS_MATRIX_MARKER,
+            "| Provider | 元数据 | 全文主路径 | 资产下载 | Markdown 能力 | 备注 |",
+            "| --- | --- | --- | --- | --- | --- |",
+            "",
+            PROVIDERS_DETAILS_MARKER,
+            "",
+        ]
+    )
+
+
+def _minimal_extraction_rules_doc() -> str:
+    return "\n".join(
+        [
+            "# Extraction Rules",
+            "",
+            "### 无稳定 DOI 样本规则汇总表",
+            "",
+            EXTRACTION_RULES_MARKER,
+            "| 规则 | 当前证据状态 | 后续补样本触发 | 下一步候选 fixture |",
+            "| --- | --- | --- | --- |",
+            "",
+        ]
+    )
+
+
+def _minimal_changelog_doc() -> str:
+    return "\n".join(
+        [
+            "# Changelog",
+            "",
+            "## Unreleased",
+            "",
+            CHANGELOG_UNRELEASED_MARKER,
+            "",
+        ]
+    )
+
+
+def _insert_table_row_after_marker(text: str, marker: str, row: str) -> tuple[str, bool]:
+    if row in text:
+        return text, False
+    if marker not in text:
+        raise ValueError(f"missing scaffold marker: {marker}")
+    lines = text.splitlines()
+    marker_index = next(index for index, line in enumerate(lines) if marker in line)
+    table_start = None
+    for index in range(marker_index + 1, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("|") and stripped.endswith("|"):
+            table_start = index
+            break
+        if stripped and not stripped.startswith("<!--"):
+            break
+    if table_start is None:
+        raise ValueError(f"missing markdown table after scaffold marker: {marker}")
+    insert_at = table_start
+    for index in range(table_start, len(lines)):
+        stripped = lines[index].strip()
+        if not (stripped.startswith("|") and stripped.endswith("|")):
+            break
+        insert_at = index + 1
+    lines.insert(insert_at, row)
+    return "\n".join(lines) + "\n", True
+
+
+def _insert_before_marker(text: str, marker: str, block: str) -> tuple[str, bool]:
+    if block in text:
+        return text, False
+    if marker not in text:
+        raise ValueError(f"missing scaffold marker: {marker}")
+    return text.replace(marker, f"{block.rstrip()}\n\n{marker}", 1), True
+
+
+def _insert_after_marker(text: str, marker: str, block: str) -> tuple[str, bool]:
+    if block in text:
+        return text, False
+    if marker not in text:
+        raise ValueError(f"missing scaffold marker: {marker}")
+    updated = text.replace(marker, f"{marker}\n\n{block.rstrip()}", 1)
+    updated = updated.replace("\n_No unreleased changes._\n", "\n", 1)
+    return updated if updated.endswith("\n") else updated + "\n", True
 
 
 def _load_manifest(path: Path) -> dict[str, object]:
@@ -289,7 +390,89 @@ def _manifest_entry(*, name: str, doi: str, html_capable: bool) -> dict[str, obj
     }
 
 
-def scaffold(args: argparse.Namespace) -> list[Path]:
+def _sync_docs_placeholders(root: Path, *, name: str) -> list[Path]:
+    docs_paths = [
+        root / "docs" / "providers.md",
+        root / "docs" / "extraction-rules.md",
+        root / "CHANGELOG.md",
+    ]
+    _ensure_scaffold_doc(docs_paths[0], _minimal_providers_doc())
+    _ensure_scaffold_doc(docs_paths[1], _minimal_extraction_rules_doc())
+    _ensure_scaffold_doc(docs_paths[2], _minimal_changelog_doc())
+
+    todo = f"TODO(scaffold-{name}): fill"
+    providers_path, extraction_path, changelog_path = docs_paths
+
+    providers_text = providers_path.read_text(encoding="utf-8")
+    provider_anchor = f'<a id="{name.replace("_", "-")}"></a>'
+    providers_row = (
+        f"| `{name}` | TODO | TODO | TODO | TODO | <!-- {todo} --> |"
+    )
+    if todo in providers_text or provider_anchor in providers_text:
+        providers_changed = False
+        provider_section_changed = False
+    else:
+        providers_text, providers_changed = _insert_table_row_after_marker(
+            providers_text,
+            PROVIDERS_MATRIX_MARKER,
+            providers_row,
+        )
+        provider_section = "\n".join(
+            [
+                provider_anchor,
+                f"### {name.replace('_', ' ').title()}",
+                "",
+                f"<!-- {todo} routing / waterfall / asset_profile / status docs. -->",
+                "",
+                "- routing: TODO",
+                "- waterfall: TODO",
+                "- asset_profile: TODO",
+                "- status: TODO",
+            ]
+        )
+        providers_text, provider_section_changed = _insert_before_marker(
+            providers_text,
+            PROVIDERS_DETAILS_MARKER,
+            provider_section,
+        )
+    if providers_changed or provider_section_changed:
+        providers_path.write_text(providers_text, encoding="utf-8")
+
+    extraction_text = extraction_path.read_text(encoding="utf-8")
+    extraction_row = (
+        f"| `{name}` | <!-- {todo} --> | 新 provider scaffold 占位，"
+        "补真实 replay 或 scenario 后更新。 | TODO |"
+    )
+    if todo in extraction_text:
+        extraction_changed = False
+    else:
+        extraction_text, extraction_changed = _insert_table_row_after_marker(
+            extraction_text,
+            EXTRACTION_RULES_MARKER,
+            extraction_row,
+        )
+    if extraction_changed:
+        extraction_path.write_text(extraction_text, encoding="utf-8")
+
+    changelog_text = changelog_path.read_text(encoding="utf-8")
+    changelog_entry = (
+        f"- <!-- {todo} --> Add `{name}` provider scaffold docs before enabling the provider."
+    )
+    if todo in changelog_text:
+        changelog_changed = False
+    else:
+        changelog_text, changelog_changed = _insert_after_marker(
+            changelog_text,
+            CHANGELOG_UNRELEASED_MARKER,
+            changelog_entry,
+        )
+    if changelog_changed:
+        changelog_path.write_text(changelog_text, encoding="utf-8")
+
+    return docs_paths
+
+
+def scaffold(args: argparse.Namespace) -> tuple[list[Path], list[Path]]:
     root = Path(args.output_dir).resolve()
     name = args.name
     source = args.source or name
@@ -356,10 +539,11 @@ def scaffold(args: argparse.Namespace) -> list[Path]:
         encoding="utf-8",
     )
     written.append(manifest_path)
-    return written
+    docs_paths = _sync_docs_placeholders(root, name=name) if args.sync_docs else []
+    return written, docs_paths
 
 
-def _print_checklist(paths: list[Path], root: Path) -> None:
+def _print_checklist(paths: list[Path], root: Path, *, docs_paths: list[Path]) -> None:
     print("PR-checklist TODO:")
     print("- Fill ProviderSpec domains, aliases, routing templates, and status_order.")
     print("- Replace placeholder HTML rules with provider-owned cleanup and availability signals.")
@@ -373,6 +557,14 @@ def _print_checklist(paths: list[Path], root: Path) -> None:
         except ValueError:
             rel = path
         print(f"- {rel.as_posix()}")
+    if docs_paths:
+        print("Docs placeholders to fill:")
+        for path in docs_paths:
+            try:
+                rel = path.relative_to(root)
+            except ValueError:
+                rel = path
+            print(f"- {rel.as_posix()}")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -402,6 +594,20 @@ def build_parser() -> argparse.ArgumentParser:
         default=_repo_root(),
         help="repo root to write into; defaults to this checkout",
     )
+    docs_group = parser.add_mutually_exclusive_group()
+    docs_group.add_argument(
+        "--sync-docs",
+        dest="sync_docs",
+        action="store_true",
+        help="write docs and changelog scaffold placeholders (default)",
+    )
+    docs_group.add_argument(
+        "--no-sync-docs",
+        dest="sync_docs",
+        action="store_false",
+        help="skip docs and changelog scaffold placeholders",
+    )
+    parser.set_defaults(sync_docs=True)
     return parser
 
 
@@ -409,10 +615,10 @@ def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
-        paths = scaffold(args)
+        paths, docs_paths = scaffold(args)
     except (FileExistsError, ValueError) as exc:
         parser.exit(2, f"error: {exc}\n")
-    _print_checklist(paths, Path(args.output_dir).resolve())
+    _print_checklist(paths, Path(args.output_dir).resolve(), docs_paths=docs_paths)
     return 0
 
 

@@ -355,6 +355,8 @@ python3 scripts/validate_extraction_rules.py
 - `CHANGELOG.md`
   - 对用户可见的新 provider 能力和限制做简短记录
 
+`scripts/scaffold_provider.py` 默认会同步 `docs/providers.md`、`docs/extraction-rules.md` 和 `CHANGELOG.md` 的 scaffold 占位；这些占位由 `<!-- SCAFFOLD: ... -->` marker 定位，并带 `TODO(scaffold-<provider>)` 注释。生成后必须把能力矩阵、routing、waterfall、`asset_profile`、status/env 和低稳定样本说明改成真实内容；只有临时验证脚手架结构时才使用 `--no-sync-docs` 跳过文档占位。
+
 `references/api_notes.md` 和 `references/routing_rules.md` 的定位以 [`providers.md`](providers.md#provider-canonical-sources) 为准。
 
 ## 10. 完成定义

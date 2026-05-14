@@ -4,6 +4,8 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 ## Unreleased
 
+<!-- SCAFFOLD: changelog-unreleased -->
+
 _No unreleased changes._
 
 ## 1.4 - 2026-05-12

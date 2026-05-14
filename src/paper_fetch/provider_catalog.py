@@ -54,8 +54,12 @@ class ProviderSpec:
     persist_provider_html: bool = False
     xml_root_tags: tuple[str, ...] = ()
     xml_file_tokens: tuple[str, ...] = ()
-    emits_html_managed_marker: bool = True; html_capable: bool = True
+    emits_html_managed_marker: bool = True
+    html_capable: bool = True
     body_text_thresholds: BodyTextThresholds = DEFAULT_BODY_TEXT_THRESHOLDS
+    env_requirements: tuple[str, ...] = ()
+    requires_playwright: bool = False
+    requires_flaresolverr: bool = False
 _METADATA_PROBE_SHORT_CIRCUITS: dict[str, MetadataProbeShortCircuit] = {}
 _PROVIDER_CATALOG_CACHE: MappingABC[str, ProviderSpec] | None = None
 _SOURCE_PROVIDER_MAP_CACHE: MappingABC[str, str] | None = None
@@ -107,14 +111,19 @@ def _normalize_catalog_token(value: str | None) -> str:
     return str(value or "").strip().lower().rstrip(".")
 def _normalize_hostname(value: str | None) -> str:
     normalized = _normalize_catalog_token(value)
-    if not normalized: return ""
+    if not normalized:
+        return ""
     if "://" in normalized:
         from urllib.parse import urlparse
         return _normalize_catalog_token(urlparse(normalized).hostname)
-    if "/" in normalized: normalized = normalized.split("/", 1)[0]
-    if "@" in normalized: normalized = normalized.rsplit("@", 1)[-1]
-    if normalized.startswith("["): return normalized.strip("[]")
-    if ":" in normalized: normalized = normalized.split(":", 1)[0]
+    if "/" in normalized:
+        normalized = normalized.split("/", 1)[0]
+    if "@" in normalized:
+        normalized = normalized.rsplit("@", 1)[-1]
+    if normalized.startswith("["):
+        return normalized.strip("[]")
+    if ":" in normalized:
+        normalized = normalized.split(":", 1)[0]
     return normalized
 def host_matches_domain(hostname: str | None, domain: str | None) -> bool:
     host = _normalize_hostname(hostname)
@@ -129,7 +138,8 @@ def provider_domains(provider_name: str | None) -> tuple[str, ...]:
     return spec.domains + spec.domain_suffixes if spec is not None else ()
 def provider_base_domains(provider_name: str | None) -> tuple[str, ...]:
     spec = _provider_spec(provider_name)
-    if spec is None: return ()
+    if spec is None:
+        return ()
     return spec.base_domains or spec.domains
 def provider_html_path_templates(provider_name: str | None) -> tuple[str, ...]:
     spec = _provider_spec(provider_name)
@@ -151,7 +161,8 @@ def provider_crossref_pdf_position(provider_name: str | None) -> int:
     return int(spec.crossref_pdf_position) if spec is not None else 0
 def matching_provider_domain(provider_name: str | None, hostname: str | None) -> str | None:
     for domain in provider_domains(provider_name):
-        if host_matches_domain(hostname, domain): return domain
+        if host_matches_domain(hostname, domain):
+            return domain
     return None
 def provider_domain_matches(provider_name: str | None, hostname: str | None) -> bool:
     return matching_provider_domain(provider_name, hostname) is not None
@@ -166,9 +177,11 @@ def is_declared_api_host(hostname: str | None) -> bool:
     return _normalize_hostname(hostname) in api_like_hosts()
 def provider_api_url_template(provider_name: str | None, template_name: str) -> str | None:
     spec = _provider_spec(provider_name)
-    if spec is None: return None
+    if spec is None:
+        return None
     for name, template in spec.api_url_templates:
-        if name == template_name: return template
+        if name == template_name:
+            return template
     return None
 def provider_sensitive_header_names() -> frozenset[str]:
     return frozenset(
@@ -200,12 +213,15 @@ def provider_metadata_probe_short_circuit(
     provider_name: str | None,
 ) -> MetadataProbeShortCircuit | None:
     normalized = _normalize_catalog_token(provider_name)
-    if not normalized: return None
+    if not normalized:
+        return None
     callback = _METADATA_PROBE_SHORT_CIRCUITS.get(normalized)
-    if callback is not None: return callback
+    if callback is not None:
+        return callback
     spec = _provider_spec(normalized)
     declared = spec.metadata_probe_short_circuit if spec is not None else None
-    if declared is None: return None
+    if declared is None:
+        return None
     callback = _load_callable(declared) if isinstance(declared, str) else declared
     _METADATA_PROBE_SHORT_CIRCUITS[normalized] = callback
     return callback
@@ -216,9 +232,11 @@ def provider_for_xml_source(root_tag: str | None, xml_path: str | None) -> str:
     root_name = _normalize_catalog_token(root_tag)
     lower_path = str(xml_path or "").lower()
     for spec in ordered_provider_specs():
-        if any(token and token.lower() in lower_path for token in spec.xml_file_tokens): return spec.name
+        if any(token and token.lower() in lower_path for token in spec.xml_file_tokens):
+            return spec.name
     for spec in ordered_provider_specs():
-        if root_name and root_name in {_normalize_catalog_token(tag) for tag in spec.xml_root_tags}: return spec.name
+        if root_name and root_name in {_normalize_catalog_token(tag) for tag in spec.xml_root_tags}:
+            return spec.name
     return "unknown"
 def provider_emits_html_managed_marker(provider_name: str | None) -> bool:
     spec = _provider_spec(provider_name)

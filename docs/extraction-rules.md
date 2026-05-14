@@ -122,6 +122,7 @@ metadata
 
 ### 无稳定 DOI 样本规则汇总表
 
+<!-- SCAFFOLD: extraction-rules-unstable-doi -->
 | 规则 | 当前证据状态 | 后续补样本触发 | 下一步候选 fixture |
 | --- | --- | --- | --- |
 | [通用元数据边界](#rule-generic-metadata-boundaries) | 无 DOI 级 replay；已有 `_scenarios/generic_metadata_boundaries`。 | 出现真实 redirect stub 或站点 description 污染回归。 | redirect stub HTML，优先 Elsevier linkinghub / ScienceDirect 跳转页。 |

@@ -20,6 +20,7 @@
 
 ## Provider 能力矩阵
 
+<!-- SCAFFOLD: providers-capability-matrix -->
 | Provider | 元数据 | 全文主路径 | 资产下载 | Markdown 能力 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | `crossref` | 支持 | 不负责 publisher fulltext | 不支持 | 不适用 | 负责 resolve、routing signal、metadata merge 与 metadata-only fallback |
@@ -802,6 +803,8 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 本地 FlareSolverr 限速变量与账本已移除；browser workflow 不再读取 `FLARESOLVERR_MIN_INTERVAL_SECONDS`、`FLARESOLVERR_MAX_REQUESTS_PER_HOUR` 或 `FLARESOLVERR_MAX_REQUESTS_PER_DAY`。
 
 更具体的启动与排障步骤见 [`flaresolverr.md`](flaresolverr.md)。
+
+<!-- SCAFFOLD: provider-docs -->
 
 ## 运行时护栏
 

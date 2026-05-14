@@ -7,7 +7,6 @@ import re
 from typing import Any, Callable, Literal, Sequence
 
 from ...markdown.citations import (
-    NUMERIC_CITATION_SENTINEL_PATTERN,
     NUMERIC_CITATION_SENTINEL_PREFIX,
 )
 from ...markdown.inline_spacing import normalize_inline_sup_sub_tag_bodies

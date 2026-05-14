@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from ..extraction.html.provider_rules import (
-    DEFAULT_SITE_RULE,
-    merged_site_rule,
-    provider_html_rules,
+    DEFAULT_SITE_RULE as DEFAULT_SITE_RULE,
+    merged_site_rule as merged_site_rule,
+    provider_html_rules as provider_html_rules,
 )
 from ..utils import normalize_text
 from .html_signals import (
