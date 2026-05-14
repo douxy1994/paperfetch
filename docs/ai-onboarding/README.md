@@ -140,6 +140,14 @@ Coordinator 跑：
 - `snapshot_expected.py`：把 provider 对 fixture 的当前产出固化成 expected snapshot
 - `manifest_sync_back.py`：把代码里的 signal set、asset retry、metadata merge、success criteria 回写 manifest
 
+```bash
+PYTHONPATH=src python3 scripts/manifest_sync_back.py \
+  --provider mdpi \
+  --manifest docs/ai-onboarding/manifests/mdpi.yml
+```
+
+脚本 stdout 是 JSON summary，包含 `status`、`provider`、`manifest_path`、`updated_fields`。脚本只写入传入的 manifest 文件；未传 `--manifest` 时从 `known-providers.yml` 解析当前 provider 的 manifest path。
+
 这一步之后，manifest 从“AI discovery 输入种子”变成“输入种子 + 实现事实底稿”。
 
 ### Step 8. Provider 局部验收
