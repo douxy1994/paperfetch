@@ -22,7 +22,10 @@
   - commit: 34d44aa
   - 摘要: `ProviderSpec` 增加 `html_capable`，`AvailabilityPolicy` 增加显式 `no_signals` opt-out，新增 bundle 完整性和中心 provider 分支 lint。
   - 验收: S4 新增测试 9 passed；`validate_extraction_rules.py` 通过；全量 unit 1166 passed + 264 subtests；S3 catalog/rules grep 仍为空且 `provider_catalog.py` 保持 280 行。
-- [ ] S5: Scaffold 脚本
+- [x] S5: Scaffold 脚本
+  - commit: 0915df5
+  - 摘要: 新增 `scripts/scaffold_provider.py`，支持 provider name/DOI/source/fulltext-client/html-capable/output-dir，生成 provider bundle 骨架、fixture 占位、manifest pending 条目和 starter unit test。
+  - 验收: `scaffold_provider.py --help` 通过；`test_scaffold_provider.py` 5 passed；`validate_extraction_rules.py` 通过；全量 unit 1171 passed + 264 subtests。
 - [ ] S6: 文档对齐 + checklist 化
 - [ ] S7: Fixture 录制 + expected.json 工具
 - [ ] S8: ProviderClient / Waterfall 脚手架
