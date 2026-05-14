@@ -20,11 +20,7 @@ from .dom import (
     looks_like_full_size_asset_url,
 )
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 FigurePageFetcher = Callable[[str], tuple[str, str] | None]
 NOISY_IMAGE_ALT_TEXTS = frozenset({"refer to caption"})
@@ -116,7 +112,7 @@ def _caption_for_image_index(captions: list[str], image_index: int) -> str:
 
 
 def _figure_caption_from_soup(node: Any, soup: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
 
     figcaption = node.find("figcaption")
@@ -138,7 +134,7 @@ def _figure_caption_from_soup(node: Any, soup: Any) -> str:
 
 
 def _figure_page_url_from_soup(node: Any, source_url: str) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
 
     contexts: list[Any] = [node]
@@ -162,7 +158,7 @@ def _figure_page_url_from_soup(node: Any, source_url: str) -> str:
 
 
 def _figure_full_size_url_from_soup(node: Any, source_url: str) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
 
     contexts: list[Any] = [node]
@@ -194,7 +190,7 @@ def _figure_full_size_url_from_soup(node: Any, source_url: str) -> str:
 
 
 def _image_source_candidate(image: Any) -> Any:
-    if Tag is None or not isinstance(image, Tag):
+    if not isinstance(image, Tag):
         return None
     picture = image.find_parent("picture")
     if isinstance(picture, Tag):
@@ -205,7 +201,7 @@ def _image_source_candidate(image: Any) -> Any:
 
 
 def _image_anchor_url(image: Any, node: Any, source_url: str) -> str:
-    if Tag is None or not isinstance(image, Tag):
+    if not isinstance(image, Tag):
         return ""
     anchor = image.find_parent("a", href=True)
     if not isinstance(anchor, Tag):
@@ -222,7 +218,7 @@ def _image_anchor_url(image: Any, node: Any, source_url: str) -> str:
 
 
 def _image_full_size_url_from_soup(image: Any, node: Any, source_url: str, *, single_image: bool) -> str:
-    if Tag is None or not isinstance(image, Tag):
+    if not isinstance(image, Tag):
         return ""
     full_size_url = _soup_attr_url(image, *FULL_SIZE_IMAGE_ATTRS)
     source = _image_source_candidate(image)
@@ -241,7 +237,7 @@ def _image_full_size_url_from_soup(image: Any, node: Any, source_url: str, *, si
 
 
 def _image_preview_url_from_soup(image: Any, source_url: str) -> str:
-    if Tag is None or not isinstance(image, Tag):
+    if not isinstance(image, Tag):
         return ""
     source = _image_source_candidate(image)
     preview_url = _soup_attr_url(image, *PREVIEW_IMAGE_ATTRS)
@@ -251,7 +247,7 @@ def _image_preview_url_from_soup(image: Any, source_url: str) -> str:
 
 
 def _figure_caption_texts_from_soup(node: Any) -> list[str]:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return []
     captions: list[str] = []
     for figcaption in node.find_all("figcaption"):
@@ -264,7 +260,7 @@ def _figure_caption_texts_from_soup(node: Any) -> list[str]:
 
 
 def _figure_assets_from_soup_node(node: Any, soup: Any, source_url: str) -> list[dict[str, str]]:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return []
 
     figure_page_url = _figure_page_url_from_soup(node, source_url)
@@ -339,8 +335,6 @@ def _figure_assets_from_soup_node(node: Any, soup: Any, source_url: str) -> list
 
 
 def _extract_figure_assets_with_soup(html_text: str, source_url: str) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return []
 
     soup = BeautifulSoup(html_text, choose_parser())
     candidates: list[Any] = []
@@ -382,10 +376,9 @@ def _extract_figure_assets_with_soup(html_text: str, source_url: str) -> list[di
 
 
 def extract_figure_assets(html_text: str, source_url: str) -> list[dict[str, str]]:
-    if BeautifulSoup is not None:
-        assets = _extract_figure_assets_with_soup(html_text, source_url)
-        if assets:
-            return assets
+    assets = _extract_figure_assets_with_soup(html_text, source_url)
+    if assets:
+        return assets
 
     parser = _FigureParser()
     parser.feed(html_text)
@@ -418,8 +411,6 @@ def extract_full_size_figure_image_url(html_text: str, source_url: str) -> str |
                 if candidate:
                     return candidate
 
-    if BeautifulSoup is None:
-        return None
 
     soup = BeautifulSoup(html_text, choose_parser())
     fallback_candidate = None

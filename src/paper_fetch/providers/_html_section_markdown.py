@@ -37,12 +37,7 @@ from ..models import normalize_text
 from ..markdown.citations import is_citation_link, numeric_citation_payload
 from .html_noise import HTML_BLOCK_TAGS, HTML_DROP_TAGS, should_drop_html_element
 
-try:
-    from bs4 import BeautifulSoup, NavigableString, Tag
-except ImportError:  # pragma: no cover - exercised implicitly when dependency is absent
-    BeautifulSoup = None
-    NavigableString = None
-    Tag = None
+from bs4 import NavigableString, Tag
 
 INLINE_IMAGE_SPACING_PATTERN = re.compile(r"(?<=[^\s])(!\[)")
 LINE_EDGE_WHITESPACE_PATTERN = re.compile(r" *\n *")
@@ -60,7 +55,7 @@ def render_heading_text_from_html(node: Any) -> str:
 
 
 def extract_section_title(section: Any) -> str:
-    if BeautifulSoup is None or section is None:
+    if section is None:
         return ""
     heading = section.find(HEADING_TAG_PATTERN)
     if heading is None:
@@ -69,7 +64,7 @@ def extract_section_title(section: Any) -> str:
 
 
 def _select_first(node: Any, selectors: tuple[str, ...]) -> Any:
-    if BeautifulSoup is None or node is None:
+    if node is None:
         return None
     for selector in selectors:
         match = node.select_one(selector)
@@ -83,7 +78,7 @@ def section_has_direct_renderable_content(
     *,
     section_content_selectors: tuple[str, ...] = ("div.c-article-section__content",),
 ) -> bool:
-    if BeautifulSoup is None or section is None:
+    if section is None:
         return False
     content_root = _select_first(section, section_content_selectors) or section
     for child in content_root.children:
@@ -140,7 +135,7 @@ def render_container_markdown(
     skip_first_heading: str | None = None,
     section_content_selectors: tuple[str, ...] = ("div.c-article-section__content",),
 ) -> None:
-    if BeautifulSoup is None or node is None:
+    if node is None:
         return
 
     for child in node.children:

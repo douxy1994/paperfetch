@@ -22,12 +22,7 @@ from ...utils import normalize_text
 from .._article_markdown_math import render_external_mathml_expression
 from .profile import _dedupe_top_level_nodes
 
-try:
-    from bs4 import BeautifulSoup, NavigableString, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    NavigableString = None
-    Tag = None
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 EQUATION_NUMBER_PATTERN = re.compile(r"(\d+[A-Za-z]?)")
 

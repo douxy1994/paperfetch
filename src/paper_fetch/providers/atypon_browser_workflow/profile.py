@@ -52,11 +52,7 @@ from .._atypon_browser_workflow_profiles import (
 )
 from .. import html_noise as _html_noise
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 clean_markdown = _html_noise.clean_markdown
 

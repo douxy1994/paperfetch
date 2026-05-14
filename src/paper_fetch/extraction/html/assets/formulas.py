@@ -19,11 +19,7 @@ from ..formula_rules import (
 from ..parsing import choose_parser
 from .dom import _soup_attr_url
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 def _looks_like_formula_image(
     tag: Any,
@@ -33,7 +29,7 @@ def _looks_like_formula_image(
 ) -> bool:
     if looks_like_formula_image(tag, url, noise_profile=noise_profile):
         return True
-    if Tag is None or not isinstance(tag, Tag):
+    if not isinstance(tag, Tag):
         return False
     if FORMULA_IMAGE_URL_PATTERN.search(url):
         return True
@@ -65,7 +61,7 @@ def _formula_asset_candidate_nodes(
     seen_nodes: set[int] = set()
 
     def add(node: Any) -> None:
-        if Tag is None or not isinstance(node, Tag):
+        if not isinstance(node, Tag):
             return
         node_id = id(node)
         if node_id in seen_nodes:
@@ -91,8 +87,6 @@ def extract_formula_assets(
     *,
     noise_profile: str | None = None,
 ) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return []
 
     soup = BeautifulSoup(html_text, choose_parser())
     assets: list[dict[str, str]] = []

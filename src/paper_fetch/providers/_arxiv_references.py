@@ -37,7 +37,7 @@ _ARXIV_CAPTION_LABEL_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 def _extract_reference_doi(node: Any) -> str | None:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     for anchor in node.find_all("a", href=True):
         href = normalize_text(str(anchor.get("href") or ""))
@@ -59,7 +59,7 @@ def _reference_doi_match(value: str) -> re.Match[str] | None:
 
 
 def _extract_reference_year(text: str, node: Any) -> str | None:
-    if Tag is not None and isinstance(node, Tag):
+    if isinstance(node, Tag):
         year_node = _arxiv_select_one(node, "reference_year")
         year_text = normalize_text(
             year_node.get_text(" ", strip=True) if isinstance(year_node, Tag) else ""
@@ -72,7 +72,7 @@ def _extract_reference_year(text: str, node: Any) -> str | None:
 
 
 def _extract_reference_title(node: Any) -> str | None:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     title_node = _arxiv_select_one(node, "reference_title")
     title = normalize_text(
@@ -82,7 +82,7 @@ def _extract_reference_title(node: Any) -> str | None:
 
 
 def _clean_arxiv_reference_node(node: Any) -> Any:
-    if BeautifulSoup is None or Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     clone_soup = BeautifulSoup(str(node), "html.parser")
     clone = clone_soup.find()
@@ -111,13 +111,13 @@ def _normalize_reference_text(text: str) -> str:
 
 def _arxiv_reference_text(node: Any) -> str:
     clone = _clean_arxiv_reference_node(node)
-    if Tag is None or not isinstance(clone, Tag):
+    if not isinstance(clone, Tag):
         return ""
     return _normalize_reference_text(clone.get_text(" ", strip=True))
 
 
 def _candidate_arxiv_bibliography_containers(root: Any) -> list[Any]:
-    if Tag is None or not isinstance(root, Tag):
+    if not isinstance(root, Tag):
         return []
     containers: list[Any] = []
     seen: set[int] = set()
@@ -144,7 +144,7 @@ def _candidate_arxiv_bibliography_containers(root: Any) -> list[Any]:
 
 
 def _candidate_arxiv_bibitems(root: Any) -> list[Any]:
-    if Tag is None or not isinstance(root, Tag):
+    if not isinstance(root, Tag):
         return []
     containers = _candidate_arxiv_bibliography_containers(root)
     scopes = containers or [root]
@@ -186,8 +186,7 @@ def _extract_arxiv_html_references(root: Any) -> list[dict[str, str | None]]:
 
 def _is_arxiv_table_figure(node: Any) -> bool:
     return (
-        Tag is not None
-        and isinstance(node, Tag)
+        isinstance(node, Tag)
         and node.name == "figure"
         and _arxiv_node_has_class(node, "ltx_table")
         and node.find("table") is not None
@@ -196,8 +195,7 @@ def _is_arxiv_table_figure(node: Any) -> bool:
 
 def _is_arxiv_tabular_table(node: Any) -> bool:
     return (
-        Tag is not None
-        and isinstance(node, Tag)
+        isinstance(node, Tag)
         and node.name == "table"
         and _arxiv_node_has_class(node, "ltx_tabular")
     )
@@ -205,15 +203,14 @@ def _is_arxiv_tabular_table(node: Any) -> bool:
 
 def _is_arxiv_listing_node(node: Any) -> bool:
     return (
-        Tag is not None
-        and isinstance(node, Tag)
+        isinstance(node, Tag)
         and node.name == "div"
         and _arxiv_node_has_class(node, "ltx_listing")
     )
 
 
 def _is_arxiv_algorithm_figure(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag) or node.name != "figure":
+    if not isinstance(node, Tag) or node.name != "figure":
         return False
     classes = _arxiv_node_classes(node)
     if "ltx_algorithm" not in classes and "ltx_float" not in classes:
@@ -222,7 +219,7 @@ def _is_arxiv_algorithm_figure(node: Any) -> bool:
 
 
 def _is_arxiv_inline_figure_container(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag) or node.name != "figure":
+    if not isinstance(node, Tag) or node.name != "figure":
         return False
     classes = _arxiv_node_classes(node)
     if classes.intersection(
@@ -234,14 +231,14 @@ def _is_arxiv_inline_figure_container(node: Any) -> bool:
 def _arxiv_parent_identities(node: Any) -> set[int]:
     identities: set[int] = set()
     current = getattr(node, "parent", None)
-    while Tag is not None and isinstance(current, Tag):
+    while isinstance(current, Tag):
         identities.add(id(current))
         current = getattr(current, "parent", None)
     return identities
 
 
 def _arxiv_topmost_figure_ancestor(node: Any, article: Any) -> Any:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     topmost = None
     current = getattr(node, "parent", None)
@@ -255,7 +252,7 @@ def _arxiv_topmost_figure_ancestor(node: Any, article: Any) -> Any:
 def _replace_arxiv_semantic_node_with_placeholder(
     node: Any, article: Any, soup: Any, placeholder: str
 ) -> None:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return
     placeholder_node = soup.new_string(f"\n\n{placeholder}\n\n")
     if node.name == "figure":
@@ -269,7 +266,7 @@ def _replace_arxiv_semantic_node_with_placeholder(
     node.replace_with(placeholder_node)
 
 def _arxiv_label_from_identifier(node: Any, *, default_label: str) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return default_label
     current: Any = node
     while isinstance(current, Tag):
@@ -290,7 +287,7 @@ def _normalize_arxiv_caption_text(text: str) -> str:
 
 def _arxiv_caption_label_and_text(node: Any, *, default_label: str) -> tuple[str, str]:
     caption = ""
-    if Tag is not None and isinstance(node, Tag):
+    if isinstance(node, Tag):
         caption_node = node.find("figcaption")
         if isinstance(caption_node, Tag):
             caption = _normalize_arxiv_caption_text(
@@ -331,7 +328,7 @@ def _arxiv_table_markdown_is_key_value_fallback(markdown_text: str) -> bool:
 
 
 def _render_arxiv_table_block(node: Any) -> tuple[str, bool, bool]:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return "", False, False
     label, caption = _arxiv_caption_label_and_text(node, default_label="Table")
     if label == "Table" and not caption:
@@ -351,7 +348,7 @@ def _render_arxiv_table_block(node: Any) -> tuple[str, bool, bool]:
 
 
 def _clean_arxiv_listing_line_node(line_node: Any) -> Any:
-    if BeautifulSoup is None or Tag is None or not isinstance(line_node, Tag):
+    if not isinstance(line_node, Tag):
         return None
     clone_soup = BeautifulSoup(str(line_node), "html.parser")
     clone = clone_soup.find()
@@ -364,7 +361,7 @@ def _clean_arxiv_listing_line_node(line_node: Any) -> Any:
 
 
 def _render_arxiv_listing_lines(listing_node: Any) -> list[str]:
-    if Tag is None or not isinstance(listing_node, Tag):
+    if not isinstance(listing_node, Tag):
         return []
     lines: list[str] = []
     for line_node in _arxiv_select(listing_node, "listing_lines"):
@@ -380,7 +377,7 @@ def _render_arxiv_listing_lines(listing_node: Any) -> list[str]:
 
 
 def _render_arxiv_listing_block(node: Any) -> tuple[str, bool]:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return "", False
     listing = (
         _arxiv_select_one(node, "algorithm_listing") if node.name == "figure" else node
@@ -399,7 +396,7 @@ def _render_arxiv_listing_block(node: Any) -> tuple[str, bool]:
 
 
 def _prepare_arxiv_semantic_blocks(article: Any, soup: Any) -> ArxivSemanticPreparation:
-    if BeautifulSoup is None or Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return ArxivSemanticPreparation(entries=[], diagnostics={}, warnings=[])
 
     entries: list[dict[str, Any]] = []

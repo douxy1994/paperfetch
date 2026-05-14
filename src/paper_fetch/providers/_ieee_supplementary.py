@@ -36,11 +36,7 @@ from ._ieee_url import (
     _is_ignored_ieee_asset_url,
 )
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 IEEE_SUPPLEMENTARY_SEMANTIC_TOKENS = (
     *GENERIC_SUPPLEMENTARY_TEXT_TOKENS,
@@ -337,8 +333,6 @@ def _supplementary_asset_key(asset: Mapping[str, Any]) -> str:
 
 
 def _extract_ieee_supplementary_assets(html_text: str, source_url: str) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return []
     soup = BeautifulSoup(html_text, choose_parser())
     assets: list[dict[str, str]] = []
     seen: set[str] = set()

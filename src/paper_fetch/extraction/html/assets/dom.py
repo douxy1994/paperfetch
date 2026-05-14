@@ -21,10 +21,7 @@ from ..shared import (
     html_title_snippet as _html_title_snippet,
 )
 
-try:
-    from bs4 import Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    Tag = None
+from bs4 import Tag
 
 FULL_SIZE_URL_TOKENS = (
     "/full/",
@@ -155,7 +152,7 @@ def _first_url_from_srcset(value: str | None) -> str:
 
 
 def _soup_attr_url(tag: Any, *attrs: str) -> str:
-    if Tag is None or not isinstance(tag, Tag):
+    if not isinstance(tag, Tag):
         return ""
     for attr in attrs:
         raw = tag.get(attr)
@@ -180,7 +177,7 @@ def looks_like_full_size_asset_url(url: str | None) -> bool:
 
 
 def _collect_tag_attr_urls(tag: Any, source_url: str, *attrs: str) -> list[str]:
-    if Tag is None or not isinstance(tag, Tag):
+    if not isinstance(tag, Tag):
         return []
     urls: list[str] = []
     for attr in attrs:

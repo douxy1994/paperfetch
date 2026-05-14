@@ -38,10 +38,7 @@ from .base import (
 )
 from ..reason_codes import ERROR, NOT_CONFIGURED, OK, READY
 
-try:
-    from bs4 import BeautifulSoup
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
+from bs4 import BeautifulSoup
 
 CLOUDFLARE_COOKIE_NAMES = frozenset(
     {
@@ -943,10 +940,7 @@ def fetch_html_with_flaresolverr(
                     final_url = str(solution.get("url") or url)
                     response_status = parse_optional_int(solution.get("status"))
                     response_headers = solution.get("headers") if isinstance(solution.get("headers"), dict) else {}
-                    if BeautifulSoup is not None:
-                        title = extract_page_title(BeautifulSoup(html, choose_parser()))
-                    else:
-                        title = None
+                    title = extract_page_title(BeautifulSoup(html, choose_parser()))
                     summary = summarize_html(html)
                     browser_context_seed = extract_flaresolverr_browser_context_seed(solution)
                     if browser_context_seed.get("browser_cookies") or browser_context_seed.get("browser_user_agent"):

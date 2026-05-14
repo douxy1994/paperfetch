@@ -71,12 +71,7 @@ from .profile import (
     _is_descendant,
 )
 
-try:
-    from bs4 import BeautifulSoup, NavigableString, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    NavigableString = None
-    Tag = None
+from bs4 import NavigableString, Tag
 
 
 def _normalize_table_inline_text(value: str) -> str:

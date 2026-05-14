@@ -16,14 +16,14 @@ from ...extraction.html.front_matter import (
     COMMON_FRONT_MATTER_LINE_PATTERNS,
 )
 from ...extraction.html.cleanup_policy import (
-    HTML_DROP_SELECTORS,
-    HTML_EXACT_NOISE_TEXTS,
-    HTML_NOISE_ATTR_TOKENS,
-    HTML_PREFIX_NOISE_TEXTS,
+    HTML_DROP_SELECTORS as HTML_DROP_SELECTORS,
+    HTML_EXACT_NOISE_TEXTS as HTML_EXACT_NOISE_TEXTS,
+    HTML_NOISE_ATTR_TOKENS as HTML_NOISE_ATTR_TOKENS,
+    HTML_PREFIX_NOISE_TEXTS as HTML_PREFIX_NOISE_TEXTS,
     MARKDOWN_CHROME_SECTION_HEADINGS,
-    MARKDOWN_EXACT_NOISE_TEXTS,
-    MARKDOWN_PREFIX_NOISE_TEXTS,
-    MARKDOWN_SHORT_NOISE_TOKENS,
+    MARKDOWN_EXACT_NOISE_TEXTS as MARKDOWN_EXACT_NOISE_TEXTS,
+    MARKDOWN_PREFIX_NOISE_TEXTS as MARKDOWN_PREFIX_NOISE_TEXTS,
+    MARKDOWN_SHORT_NOISE_TOKENS as MARKDOWN_SHORT_NOISE_TOKENS,
     CleanupPolicy,
     classify_dom_cleanup_node,
     classify_markdown_cleanup_line,
@@ -49,8 +49,6 @@ from ...publisher_identity import normalize_doi
 from ...publisher_identity import extract_doi as extract_doi_from_text
 from .provider_rules import (
     cleanup_policy_for_profile,
-    extraction_cleanup_selectors_for_profile,
-    extraction_drop_keywords_for_profile,
     front_matter_exact_texts_for_profile,
     front_matter_footer_prefixes,
     front_matter_publication_keywords_for_profile,
@@ -62,11 +60,7 @@ try:
 except ImportError:  # pragma: no cover - exercised implicitly when dependency is absent
     trafilatura = None
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - exercised implicitly when dependency is absent
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup
 
 HTML_ROOT_SELECTORS = ("article", "main", '[role="main"]')
 # Publication-watermark heuristic only: these English masthead nouns are used
@@ -219,8 +213,6 @@ def _markdown_promo_tokens(noise_profile: str | None) -> tuple[str, ...]:
 
 
 def select_html_content_root(root: Any):
-    if BeautifulSoup is None:
-        return None
 
     best_candidate = None
     best_words = 0
@@ -234,8 +226,6 @@ def select_html_content_root(root: Any):
 
 
 def prune_html_tree(root: Any, *, noise_profile: str | None = None) -> None:
-    if BeautifulSoup is None:
-        return
 
     rules = html_cleanup_rules(noise_profile)
     for tag in root(HTML_DROP_TAGS):
@@ -259,8 +249,6 @@ def should_drop_html_element(
     noise_profile: str | None = None,
     rules: HtmlCleanupRules | None = None,
 ) -> bool:
-    if BeautifulSoup is None:
-        return False
     cleanup_rules = rules or html_cleanup_rules(noise_profile)
     return (
         classify_dom_cleanup_node(
@@ -275,8 +263,6 @@ def should_drop_html_element(
 def prepare_html_extraction_tree(
     html_text: str, *, noise_profile: str | None = None
 ) -> tuple[str, Any]:
-    if BeautifulSoup is None:
-        return html_text, None
 
     soup = BeautifulSoup(html_text, choose_parser())
     root = select_html_content_root(soup)

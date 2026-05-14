@@ -19,10 +19,7 @@ from ..provider_catalog import (
 )
 from ..utils import normalize_text
 
-try:
-    from bs4 import BeautifulSoup
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
+from bs4 import BeautifulSoup
 
 PDF_LINK_TEXT_TOKENS = ("pdf", DOWNLOAD_PDF_LABEL, "full text pdf", "view pdf")
 PDF_URL_COMMON_TOKENS = (".pdf", "download=true")
@@ -113,8 +110,6 @@ def extract_pdf_url_from_crossref(metadata: Mapping[str, Any]) -> str | None:
 
 def extract_pdf_candidate_urls_from_html(html_text: str, source_url: str) -> list[str]:
     candidates: list[str] = []
-    if BeautifulSoup is None:
-        return candidates
 
     soup = BeautifulSoup(html_text, choose_parser())
 

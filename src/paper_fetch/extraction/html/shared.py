@@ -9,16 +9,10 @@ from typing import Any
 from ...utils import normalize_text
 from ..image_payloads import image_mime_type_from_bytes
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 
 def direct_child_tags(node: Tag) -> list[Tag]:
-    if Tag is None:
-        return []
     return [child for child in node.find_all(recursive=False) if isinstance(child, Tag)]
 
 
@@ -40,7 +34,7 @@ def soup_root(node: Tag | None) -> BeautifulSoup | None:
     node_types = tuple(item for item in (Tag, BeautifulSoup) if item is not None)
     current: Any = node
     while current is not None:
-        if BeautifulSoup is not None and isinstance(current, BeautifulSoup):
+        if isinstance(current, BeautifulSoup):
             return current
         parent = getattr(current, "parent", None)
         current = parent if node_types and isinstance(parent, node_types) else None

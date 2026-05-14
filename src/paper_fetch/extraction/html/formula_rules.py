@@ -13,10 +13,7 @@ from .provider_rules import (
     provider_formula_container_tokens,
 )
 
-try:
-    from bs4 import Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    Tag = None
+from bs4 import Tag
 
 FORMULA_IMAGE_URL_PATTERN = re.compile(
     r"(?:^|[-_/])(?:math|ieq|equ)[-_]?\d|_(?:IEq|Equ)\d|math-\d|equation",
@@ -100,7 +97,7 @@ def first_url_from_srcset(value: str | None) -> str:
 
 
 def formula_node_identity_text(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     attrs = getattr(node, "attrs", None) or {}
     parts = [normalize_text(str(node.name or ""))]
@@ -117,7 +114,7 @@ def formula_ancestor_identity_text(node: Any, *, max_depth: int = 6) -> str:
     parts: list[str] = []
     current = node
     depth = 0
-    while Tag is not None and isinstance(current, Tag) and depth < max_depth:
+    while isinstance(current, Tag) and depth < max_depth:
         parts.append(formula_node_identity_text(current))
         current = current.parent if isinstance(getattr(current, "parent", None), Tag) else None
         depth += 1
@@ -125,7 +122,7 @@ def formula_ancestor_identity_text(node: Any, *, max_depth: int = 6) -> str:
 
 
 def is_formula_container(node: Any, *, noise_profile: str | None = None) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     identity = formula_node_identity_text(node)
     role = normalize_text(str((getattr(node, "attrs", None) or {}).get("role") or "")).lower()
@@ -133,7 +130,7 @@ def is_formula_container(node: Any, *, noise_profile: str | None = None) -> bool
 
 
 def is_display_formula_node(node: Any, *, noise_profile: str | None = None) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     attrs = getattr(node, "attrs", None) or {}
     if normalize_text(str(attrs.get("display") or "")).lower() == "block":
@@ -146,7 +143,7 @@ def is_display_formula_node(node: Any, *, noise_profile: str | None = None) -> b
 
 
 def _candidate_urls(tag: Any) -> list[str]:
-    if Tag is None or not isinstance(tag, Tag):
+    if not isinstance(tag, Tag):
         return []
     urls: list[str] = []
     for attr in FORMULA_IMAGE_ATTRS:
@@ -163,7 +160,7 @@ def _candidate_urls(tag: Any) -> list[str]:
 
 
 def formula_image_url_from_node(node: Any, *, include_adjacent: bool = False) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     tags_to_check: list[Tag] = [node]
     tags_to_check.extend(tag for tag in node.find_all(True) if isinstance(tag, Tag))
@@ -190,7 +187,7 @@ def formula_image_url_from_node(node: Any, *, include_adjacent: bool = False) ->
 
 
 def looks_like_formula_image(node: Any, url: str | None = None, *, noise_profile: str | None = None) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     if normalize_text(node.name or "").lower() != "img":
         return False
@@ -210,7 +207,7 @@ def looks_like_formula_image(node: Any, url: str | None = None, *, noise_profile
 
 
 def formula_heading_for_image(node: Any, index: int, *, noise_profile: str | None = None) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return f"Formula {index}"
     current = node
     depth = 0
@@ -225,7 +222,7 @@ def formula_heading_for_image(node: Any, index: int, *, noise_profile: str | Non
 
 
 def mathml_element_from_html_node(node: Any) -> ET.Element | None:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     math_node = node if normalize_text(node.name or "").lower() == "math" else node.find("math")
     if isinstance(math_node, Tag):
@@ -258,7 +255,7 @@ def _parse_mathml(raw_mathml: str) -> ET.Element | None:
 
 
 def display_formula_nodes(container: Any, *, noise_profile: str | None = None) -> list[Any]:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return []
     nodes: list[Any] = []
     for selector in display_formula_selectors_for_profile(noise_profile):

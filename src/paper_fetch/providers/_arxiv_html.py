@@ -14,16 +14,12 @@ from ..extraction.html.tables import TABLE_PLACEHOLDER_PREFIX, inject_inline_tab
 from ..models.markdown import normalize_markdown_text
 from ..quality.html_availability import assess_plain_text_fulltext_availability
 from ..quality.reason_codes import FULLTEXT
-from ..reason_codes import NO_RESULT, NOT_CONFIGURED
+from ..reason_codes import NO_RESULT
 from ..utils import normalize_text
 from ._html_section_markdown import render_clean_text_from_html, render_container_markdown, render_heading_text_from_html
 from .base import ProviderFailure
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 MIN_HTML_MARKDOWN_WORDS = 500
 _WORD_PATTERN = WORD_TOKEN_PATTERN
@@ -93,7 +89,7 @@ def _arxiv_ar5iv_selectors(name: str) -> tuple[str, ...]:
 
 
 def _arxiv_select(node: Any, selector_group: str) -> list[Any]:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return []
     matches: list[Any] = []
     for selector in _arxiv_ar5iv_selectors(selector_group):
@@ -102,7 +98,7 @@ def _arxiv_select(node: Any, selector_group: str) -> list[Any]:
 
 
 def _arxiv_select_one(node: Any, selector_group: str) -> Any:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     for selector in _arxiv_ar5iv_selectors(selector_group):
         match = node.select_one(selector)
@@ -110,7 +106,7 @@ def _arxiv_select_one(node: Any, selector_group: str) -> Any:
             return match
     return None
 def _clean_arxiv_frontmatter_text(node: Any, *, remove_line_breaks: bool = True) -> str:
-    if BeautifulSoup is None or Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     clone_soup = BeautifulSoup(str(node), "html.parser")
     clone = clone_soup.find()
@@ -127,7 +123,7 @@ def _clean_arxiv_frontmatter_text(node: Any, *, remove_line_breaks: bool = True)
 
 
 def _arxiv_node_classes(node: Any) -> set[str]:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return set()
     raw_classes = (getattr(node, "attrs", None) or {}).get("class") or []
     if isinstance(raw_classes, str):
@@ -290,7 +286,7 @@ def _arxiv_html_contains_fatal_conversion_error(markdown_text: str) -> bool:
 
 
 def _is_arxiv_bibliography_title_heading(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     if _arxiv_node_has_class(node, "ltx_title_bibliography"):
         return True
@@ -299,7 +295,7 @@ def _is_arxiv_bibliography_title_heading(node: Any) -> bool:
 
 
 def _arxiv_heading_in_skipped_hint_scope(node: Any, article: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return True
     current: Any = node
     while isinstance(current, Tag) and current is not article:
@@ -333,7 +329,7 @@ def _arxiv_section_hint_kind(
 def _collect_arxiv_html_section_hints(
     article: Any, *, title: str | None = None
 ) -> list[dict[str, Any]]:
-    if Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return []
     hints: list[dict[str, Any]] = []
     for node in article.find_all(SECTION_HEADING_PATTERN):
@@ -373,11 +369,6 @@ def _extract_arxiv_html_markdown(
     *,
     metadata: Mapping[str, Any],
 ) -> ArxivHtmlExtraction:
-    if BeautifulSoup is None:
-        raise ProviderFailure(
-            NOT_CONFIGURED,
-            "beautifulsoup4 is not installed; cannot parse arXiv HTML.",
-        )
     soup = BeautifulSoup(html_text, "html.parser")
     article = _arxiv_select_one(soup, "article_root") or soup.find("article")
     if not isinstance(article, Tag):

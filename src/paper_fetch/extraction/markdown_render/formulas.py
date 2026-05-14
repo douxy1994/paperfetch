@@ -16,10 +16,7 @@ from ...providers._article_markdown_math import render_external_mathml_expressio
 from ...utils import normalize_text
 from ._ir import MarkdownFormula
 
-try:
-    from bs4 import Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    Tag = None
+from bs4 import Tag
 
 
 def render_formula(formula: MarkdownFormula) -> list[str]:

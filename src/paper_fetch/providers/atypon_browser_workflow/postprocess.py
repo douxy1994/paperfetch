@@ -35,10 +35,7 @@ from .profile import (
     _structural_abstract_nodes,
 )
 
-try:
-    from bs4 import Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    Tag = None
+from bs4 import Tag
 
 def _abstract_section_payloads(container: Tag) -> list[dict[str, Any]]:
     structural_nodes = _structural_abstract_nodes(container)

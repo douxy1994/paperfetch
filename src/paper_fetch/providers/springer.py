@@ -59,11 +59,7 @@ from .base import (
     summarize_capability_status,
 )
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 MAX_SPRINGER_HTML_REDIRECTS = 5
 MARKDOWN_TEXT_KEY = "markdown_text"
@@ -525,12 +521,6 @@ class SpringerClient(ProviderClient):
                 None,
             )
 
-        if BeautifulSoup is None:
-            reason = f"Springer inline table supplement for {fallback_label} requires BeautifulSoup."
-            if allow_degraded_placeholder:
-                return _springer_degraded_table_placeholder(fallback_label, reason), reason, None
-            return None, reason, None
-
         if allow_image_asset and _springer_looks_like_image_response(response, response_url):
             asset = _springer_table_image_asset(
                 label=fallback_label,
@@ -578,8 +568,6 @@ class SpringerClient(ProviderClient):
         html_text: str,
         source_url: str,
     ) -> tuple[str, list[dict[str, str]], list[str], list[dict[str, Any]]]:
-        if BeautifulSoup is None:
-            return html_text, [], [], []
 
         soup = BeautifulSoup(html_text, choose_parser())
         table_entries: list[dict[str, str]] = []

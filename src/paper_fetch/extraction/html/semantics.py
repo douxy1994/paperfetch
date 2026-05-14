@@ -6,7 +6,7 @@ import re
 from typing import Any, Callable
 
 from ...common_patterns import HEADING_LEVEL_PATTERN, REFERENCE_TOKEN_VOCABULARY
-from ...section_vocab import MARKDOWN_ABSTRACT_HEADINGS, SIGNIFICANCE_ABSTRACT_HEADINGS
+from ...section_vocab import MARKDOWN_ABSTRACT_HEADINGS
 from ...utils import normalize_text
 from ..citation_anchors import looks_like_reference_href
 from ..section_hints import (
@@ -21,10 +21,7 @@ from .ui_tokens import (
     RELATED_CONTENT_CHROME_TOKENS,
 )
 
-try:
-    from bs4 import Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    Tag = None
+from bs4 import Tag
 
 HTML_BLOCK_TAGS = frozenset(
     {
@@ -318,7 +315,7 @@ def normalize_section_title(title: str) -> str:
 
 
 def node_identity_text(node: Any) -> str:
-    if Tag is None or node is None:
+    if node is None:
         return ""
     attrs = getattr(node, "attrs", None) or {}
     parts = [normalize_text(getattr(node, "name", "") or "")]
@@ -334,7 +331,7 @@ def node_identity_text(node: Any) -> str:
 def ancestor_identity_text(node: Any) -> str:
     identities: list[str] = []
     current = node
-    while Tag is not None and isinstance(current, Tag):
+    while isinstance(current, Tag):
         identity = node_identity_text(current)
         if identity:
             identities.append(identity)
@@ -391,7 +388,7 @@ def heading_category(node_name: str, text: str, *, title: str | None = None) -> 
 
 
 def node_source_selector(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     attrs = getattr(node, "attrs", None) or {}
     parts = [normalize_text(node.name or "").lower() or "node"]
@@ -409,7 +406,7 @@ def node_source_selector(node: Any) -> str:
 
 
 def _node_class_tokens(node: Any) -> set[str]:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return set()
     attrs = getattr(node, "attrs", None) or {}
     class_values = attrs.get("class")
@@ -420,7 +417,7 @@ def _node_class_tokens(node: Any) -> set[str]:
 
 
 def has_explicit_reference_marker(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     attrs = getattr(node, "attrs", None) or {}
     if "citation-ref" in attrs:
@@ -443,7 +440,7 @@ def has_explicit_reference_marker(node: Any) -> bool:
 
 
 def looks_like_reference_anchor(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     if normalize_text(getattr(node, "name", "")).lower() != "a":
         return False
@@ -516,7 +513,7 @@ def markdown_heading_category(
 
 
 def container_has_explicit_body_container(container: Any) -> bool:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return False
     if looks_like_explicit_body_container(container):
         return True
@@ -524,7 +521,7 @@ def container_has_explicit_body_container(container: Any) -> bool:
 
 
 def iter_html_blocks(container: Any) -> list[dict[str, Any]]:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return []
     blocks: list[dict[str, Any]] = []
     seen_markers: set[int] = set()
@@ -612,7 +609,7 @@ def collect_html_section_hints(
     title: str | None = None,
     language_hint_resolver: Callable[[Any], str | None] | None = None,
 ) -> list[dict[str, Any]]:
-    if Tag is None or not isinstance(root, Tag):
+    if not isinstance(root, Tag):
         return []
     hints: list[dict[str, Any]] = []
     for node in root.find_all(SECTION_HEADING_PATTERN):

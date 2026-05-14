@@ -9,11 +9,7 @@ from ..extraction.html.parsing import choose_parser
 from ..publisher_identity import DOI_CORE_PATTERN
 from ..utils import normalize_text
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 DOI_URL_PATTERN = re.compile(
     rf"https?://(?:dx\.)?doi\.org/(?P<doi>{DOI_CORE_PATTERN})",
@@ -66,7 +62,7 @@ def _normalized_label(value: Any) -> str:
 
 
 def _reference_label(node: Any, *, fallback_index: int) -> str | None:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
 
     explicit_label = _normalized_label(node.get("data-counter"))
@@ -87,7 +83,7 @@ def _reference_label(node: Any, *, fallback_index: int) -> str | None:
 
 
 def _reference_content_node(node: Any) -> Any:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     for selector in REFERENCE_CONTENT_SELECTORS:
         match = node.select_one(selector)
@@ -98,24 +94,23 @@ def _reference_content_node(node: Any) -> Any:
 
 def _reference_text(node: Any) -> str:
     content_node = _reference_content_node(node)
-    if Tag is None or not isinstance(content_node, Tag):
+    if not isinstance(content_node, Tag):
         return ""
     active_node = content_node
-    if BeautifulSoup is not None:
-        clone_soup = BeautifulSoup(str(content_node), choose_parser())
-        clone = clone_soup.find()
-        if isinstance(clone, Tag):
-            for selector in REFERENCE_NOISE_SELECTORS:
-                for match in clone.select(selector):
-                    match.decompose()
-            active_node = clone
+    clone_soup = BeautifulSoup(str(content_node), choose_parser())
+    clone = clone_soup.find()
+    if isinstance(clone, Tag):
+        for selector in REFERENCE_NOISE_SELECTORS:
+            for match in clone.select(selector):
+                match.decompose()
+        active_node = clone
     text = normalize_text(active_node.get_text(" ", strip=True))
     text = REFERENCE_LINKOUT_LABEL_PATTERN.sub("", text)
     return normalize_text(text)
 
 
 def _reference_doi(node: Any) -> str | None:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     for anchor in node.find_all("a", href=True):
         href = normalize_text(anchor.get("href"))
@@ -133,7 +128,7 @@ def _reference_year(text: str) -> str | None:
 
 
 def _candidate_reference_nodes(soup: Any) -> list[Any]:
-    if BeautifulSoup is None or soup is None:
+    if soup is None:
         return []
 
     for selector in NUMBERED_BIBLIOGRAPHY_SELECTORS:
@@ -147,7 +142,7 @@ def _candidate_reference_nodes(soup: Any) -> list[Any]:
 
 
 def extract_numbered_references_from_html(html_text: str) -> list[dict[str, str | None]]:
-    if BeautifulSoup is None or not normalize_text(html_text):
+    if not normalize_text(html_text):
         return []
 
     soup = BeautifulSoup(html_text, choose_parser())

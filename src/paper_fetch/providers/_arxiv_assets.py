@@ -204,7 +204,7 @@ def _postprocess_arxiv_html_asset(asset: Mapping[str, Any]) -> dict[str, Any]:
 def _arxiv_parent_figures(node: Any, article: Any) -> list[Any]:
     figures: list[Any] = []
     current = getattr(node, "parent", None)
-    while Tag is not None and isinstance(current, Tag) and current is not article:
+    while isinstance(current, Tag) and current is not article:
         if current.name == "figure":
             figures.append(current)
         current = getattr(current, "parent", None)
@@ -212,7 +212,7 @@ def _arxiv_parent_figures(node: Any, article: Any) -> list[Any]:
 
 
 def _arxiv_inline_figure_for_image(image: Any, article: Any) -> Any:
-    if Tag is None or not isinstance(image, Tag):
+    if not isinstance(image, Tag):
         return None
     figures = _arxiv_parent_figures(image, article)
     if not figures:
@@ -278,7 +278,7 @@ def _arxiv_url_candidate_sets_match(left: set[str], right: set[str]) -> bool:
 
 
 def _arxiv_image_url_candidates(image: Any, source_url: str) -> set[str]:
-    if Tag is None or not isinstance(image, Tag):
+    if not isinstance(image, Tag):
         return set()
     candidates: set[str] = set()
     for attr in ("src", "data-src", "data-lazy-src"):
@@ -344,7 +344,7 @@ def _arxiv_asset_order(asset: Mapping[str, Any]) -> int | None:
 
 
 def _arxiv_inline_images_for_figure(figure: Any, article: Any) -> list[Any]:
-    if Tag is None or not isinstance(figure, Tag):
+    if not isinstance(figure, Tag):
         return []
     images: list[Any] = []
     for image in figure.find_all("img"):
@@ -363,7 +363,7 @@ def _annotate_arxiv_inline_figure_images(
     extracted_assets: Sequence[Mapping[str, Any]],
     source_url: str,
 ) -> dict[str, int]:
-    if Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return {
             "inline_figure_image_count": 0,
             "inline_figure_asset_match_count": 0,

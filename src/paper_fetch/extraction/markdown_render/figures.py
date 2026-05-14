@@ -11,10 +11,7 @@ from ...extraction.html.ui_tokens import FIGURE_FULL_SIZE_IMAGE_LABEL, FIGURE_PO
 from ...utils import normalize_text
 from ._ir import MarkdownFigure
 
-try:
-    from bs4 import Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    Tag = None
+from bs4 import Tag
 
 FIGURE_LABEL_PATTERN = re.compile(
     rf"^\s*{FIGURE_LABEL_CORE_PATTERN}\s*[:.]?\s*(.*)$",

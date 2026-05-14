@@ -78,11 +78,7 @@ from ._html_section_markdown import (
     render_clean_text_from_html,
 )
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 SPRINGER_MEDIA_SIZE_SEGMENT_PATTERN = re.compile(r"^(?:lw|w|m|h)\d+(?:h\d+)?$")
 SPRINGER_INLINE_FIGURE_SELECTORS = (".c-article-section__figure-item",)
@@ -202,7 +198,7 @@ def _extract_jsonld_authors(html_text: str) -> list[str]:
 def _node_author_text(node: Any) -> str:
     return (
         normalize_text(node.get_text(" ", strip=True))
-        if Tag is not None and isinstance(node, Tag)
+        if isinstance(node, Tag)
         else ""
     )
 
@@ -337,7 +333,7 @@ def _clean_springer_abstract_sections(
 
 
 def _springer_node_context_text(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     attrs = getattr(node, "attrs", None) or {}
     parts = [normalize_text(getattr(node, "name", "") or "")]
@@ -353,7 +349,7 @@ def _springer_node_context_text(node: Any) -> str:
 
 def _springer_is_figure_or_illustration_context(node: Any) -> bool:
     current = node
-    while Tag is not None and isinstance(current, Tag):
+    while isinstance(current, Tag):
         context_text = _springer_node_context_text(current)
         if (
             current.name == "figure"
@@ -370,7 +366,7 @@ def _springer_is_figure_or_illustration_context(node: Any) -> bool:
 
 
 def _strip_ai_alt_disclaimer_references(root: Any) -> None:
-    if Tag is None or not isinstance(root, Tag):
+    if not isinstance(root, Tag):
         return
     for node in root.select(
         f"[aria-describedby*='{SPRINGER_AI_ALT_DISCLAIMER_ID_TOKEN}']"
@@ -392,7 +388,7 @@ def _strip_ai_alt_disclaimer_references(root: Any) -> None:
 
 
 def _remove_springer_ai_alt_disclaimers(root: Any) -> None:
-    if Tag is None or not isinstance(root, Tag):
+    if not isinstance(root, Tag):
         return
     removable_nodes: list[Tag] = []
     seen: set[int] = set()
@@ -409,8 +405,6 @@ def _remove_springer_ai_alt_disclaimers(root: Any) -> None:
 
 
 def _normalized_root_html(html_text: str) -> tuple[str, Any]:
-    if BeautifulSoup is None:
-        return html_text, None
     soup = BeautifulSoup(html_text, choose_parser())
     root = (
         select_springer_nature_article_root(soup)
@@ -569,7 +563,7 @@ def extract_source_data_html_scope(
 
 
 def _springer_section_title_key(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     attrs = getattr(node, "attrs", None) or {}
     for key in ("data-title", "aria-label"):
@@ -608,7 +602,7 @@ def _springer_is_supplementary_like_section_title(title_key: str) -> bool:
 
 
 def _springer_collect_asset_sections(article_root: Any) -> tuple[list[Any], list[Any]]:
-    if Tag is None or not isinstance(article_root, Tag):
+    if not isinstance(article_root, Tag):
         return [], []
     supplementary_sections: list[Any] = []
     source_data_sections: list[Any] = []
@@ -668,7 +662,7 @@ def _extract_asset_html_scope_fragments(
 
 
 def _springer_figure_caption(node: Any, soup: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     figcaption = node.find("figcaption")
     if isinstance(figcaption, Tag):
@@ -701,7 +695,7 @@ def _springer_figure_caption(node: Any, soup: Any) -> str:
 
 
 def _springer_figure_page_url(node: Any, source_url: str) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     contexts = [node]
     if isinstance(node.parent, Tag):
@@ -825,8 +819,6 @@ def extract_full_size_figure_image_url(html_text: str, source_url: str) -> str |
                 )
                 if candidate:
                     return candidate
-    if BeautifulSoup is None:
-        return None
     soup = BeautifulSoup(html_text, choose_parser())
     fallback_candidate = None
     promoted_candidate = None
@@ -867,8 +859,6 @@ def extract_formula_assets(html_text: str, source_url: str) -> list[dict[str, st
 
 
 def extract_figure_assets(html_text: str, source_url: str) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return extract_generic_figure_assets(html_text, source_url)
     soup = BeautifulSoup(html_text, choose_parser())
     candidates: list[Any] = []
     seen_nodes: set[int] = set()
@@ -975,10 +965,6 @@ def extract_figure_assets(html_text: str, source_url: str) -> list[dict[str, str
 def extract_supplementary_assets(
     html_text: str, source_url: str
 ) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return extract_generic_supplementary_assets(
-            html_text, source_url, noise_profile="springer_nature"
-        )
     assets: list[dict[str, str]] = []
     for asset in extract_generic_supplementary_assets(
         html_text, source_url, noise_profile="springer_nature"
@@ -1019,7 +1005,7 @@ def _mark_source_data_assets(
 
 
 def _anchor_text_candidates(anchor: Any) -> list[str]:
-    if Tag is None or not isinstance(anchor, Tag):
+    if not isinstance(anchor, Tag):
         return []
     candidates = [
         normalize_text(anchor.get_text(" ", strip=True)),
@@ -1038,7 +1024,7 @@ def _anchor_mentions_source_data(anchor: Any) -> bool:
 
 
 def _anchor_target_id(anchor: Any) -> str:
-    if Tag is None or not isinstance(anchor, Tag):
+    if not isinstance(anchor, Tag):
         return ""
     href = normalize_text(str(anchor.get("href") or ""))
     if not href:
@@ -1048,8 +1034,6 @@ def _anchor_target_id(anchor: Any) -> str:
 
 
 def extract_source_data_assets(html_text: str, source_url: str) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return []
 
     soup = BeautifulSoup(html_text, choose_parser())
     root = soup.body or soup

@@ -40,10 +40,7 @@ from .profile import (
     _noise_profile_for_publisher,
 )
 
-try:
-    from bs4 import BeautifulSoup
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
+from bs4 import BeautifulSoup
 
 
 def extract_browser_workflow_markdown(
@@ -53,12 +50,6 @@ def extract_browser_workflow_markdown(
     *,
     metadata: ProviderMetadata | Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    if BeautifulSoup is None:
-        raise HtmlExtractionFailure(
-            "missing_bs4",
-            "BeautifulSoup is required for browser-workflow HTML extraction.",
-        )
-
     soup = BeautifulSoup(html_text, choose_parser())
     title = extract_page_title(soup)
     container = select_best_container(

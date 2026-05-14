@@ -11,10 +11,7 @@ from typing import Any, Mapping, Pattern
 from ..extraction.html.signals import ACCESS_GATE_PATTERNS
 from ..utils import normalize_text
 
-try:
-    from bs4 import BeautifulSoup
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
+from bs4 import BeautifulSoup
 
 def _attr_markers(name: str, value: str) -> tuple[str, str]:
     return (f'{name}="{value}"', f"{name}='{value}'")
@@ -358,18 +355,17 @@ def ieee_blocking_fallback_signals(html_text: str) -> list[str]:
         for token in provider_html_rules("ieee").cleanup.access_block_text_tokens
     ):
         signals.append("ieee_access_or_challenge_page")
-    if BeautifulSoup is not None:
-        soup = BeautifulSoup(html_text, "html.parser")
-        article = soup.select_one("#article")
-        if article is not None:
-            text = normalize_text(article.get_text(" ", strip=True))
-            has_body_nodes = bool(
-                article.select(
-                    "p, h2, h3, div.section, div.section_2, figure, table, tex-math"
-                )
+    soup = BeautifulSoup(html_text, "html.parser")
+    article = soup.select_one("#article")
+    if article is not None:
+        text = normalize_text(article.get_text(" ", strip=True))
+        has_body_nodes = bool(
+            article.select(
+                "p, h2, h3, div.section, div.section_2, figure, table, tex-math"
             )
-            if not text and not has_body_nodes:
-                signals.append("ieee_empty_article_shell")
+        )
+        if not text and not has_body_nodes:
+            signals.append("ieee_empty_article_shell")
     return dedupe_signals(signals)
 
 

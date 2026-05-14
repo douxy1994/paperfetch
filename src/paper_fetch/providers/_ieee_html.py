@@ -12,7 +12,7 @@ from ..extraction.html.parsing import choose_parser
 from ..extraction.html.provider_rules import IEEE_EXTRACTION_CLEANUP_SELECTORS
 from ..extraction.html.renderer import clean_rendered_markdown
 from ..extraction.html.semantics import collect_html_section_hints
-from ..reason_codes import ERROR, NO_RESULT
+from ..reason_codes import NO_RESULT
 from ..runtime import RuntimeContext
 from ..utils import normalize_text
 from ._html_section_markdown import render_container_markdown
@@ -31,11 +31,7 @@ from ._ieee_url import (
 )
 from .base import ProviderFailure
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 IEEE_ASSET_KIND_PRIORITY = {"formula": 10, "figure": 20, "table": 30}
 IEEE_ASSET_URL_FIELDS = (*DEFAULT_ASSET_URL_FIELDS, "download_url", "figure_page_url")
 IEEE_STRONG_ASSET_IDENTITY_FIELDS = tuple(
@@ -230,8 +226,6 @@ def _ieee_asset_from_figure_full_block(block: Tag, source_url: str) -> dict[str,
 
 
 def _extract_ieee_body_media_assets(article_html: str, source_url: str) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return []
     soup = BeautifulSoup(article_html, choose_parser())
     assets: list[dict[str, str]] = []
     for block in soup.select("div.figure.figure-full"):
@@ -456,8 +450,6 @@ def _extract_ieee_html(
     metadata: Mapping[str, Any],
     context: RuntimeContext | None = None,
 ) -> IeeeHtmlExtraction:
-    if BeautifulSoup is None:
-        raise ProviderFailure(ERROR, "IEEE HTML extraction requires BeautifulSoup.")
     if _looks_like_ieee_block_page(html_text, context=context, source_url=source_url):
         raise ProviderFailure(NO_RESULT, "IEEE dynamic HTML endpoint returned an access, challenge, or unable page.")
 

@@ -40,11 +40,7 @@ from ._html_section_markdown import (
 )
 from .html_noise import clean_markdown, count_words
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - exercised implicitly when dependency is absent
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 SPRINGER_NATURE_ROOT_SELECTORS = (
     "article",
@@ -111,7 +107,7 @@ def is_nature_url(url: str) -> bool:
 
 
 def _candidate_score(node: Any) -> int:
-    if BeautifulSoup is None or node is None:
+    if node is None:
         return 0
     text = normalize_text(node.get_text(" ", strip=True))
     if not text:
@@ -128,8 +124,6 @@ def _candidate_score(node: Any) -> int:
 
 
 def select_springer_nature_article_root(root: Any):
-    if BeautifulSoup is None:
-        return None
 
     best_candidate = None
     best_score = 0
@@ -227,7 +221,7 @@ def _has_policy_license_link(node: Any, cleanup_policy: Any) -> bool:
 
 
 def _prune_springer_nature_chrome(root: Any) -> None:
-    if BeautifulSoup is None or not isinstance(root, Tag):
+    if not isinstance(root, Tag):
         return
     cleanup_policy = cleanup_policy_for_profile("springer_nature")
     for node in list(root.find_all(True)):
@@ -315,7 +309,7 @@ def _render_scientific_back_matter_sections(
 
 
 def select_nature_abstract_section(body: Any):
-    if BeautifulSoup is None or body is None:
+    if body is None:
         return None
     direct_children = [
         child
@@ -427,7 +421,7 @@ def _remove_duplicate_title_headings(markdown_text: str, title_text: str) -> str
 
 
 def extract_springer_nature_markdown(html_text: str, source_url: str) -> str:
-    if BeautifulSoup is None or not is_springer_nature_url(source_url):
+    if not is_springer_nature_url(source_url):
         return ""
 
     soup = BeautifulSoup(html_text, choose_parser())

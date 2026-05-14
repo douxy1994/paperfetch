@@ -13,11 +13,7 @@ from ..provider_rules import provider_supplementary_text_tokens
 from .figures import extract_figure_assets
 from .formulas import extract_formula_assets
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 GENERIC_SUPPLEMENTARY_TEXT_TOKENS = (
     "supplementary",
@@ -63,7 +59,7 @@ def has_supplementary_file_suffix(url: str, *, extra_suffixes: tuple[str, ...] =
 
 
 def _supplementary_anchor_is_supported(anchor: Any, *, noise_profile: str | None = None) -> bool:
-    if Tag is None or not isinstance(anchor, Tag):
+    if not isinstance(anchor, Tag):
         return False
 
     href = normalize_text(str(anchor.get("href") or ""))
@@ -82,7 +78,7 @@ def _supplementary_asset_from_anchor(
     *,
     noise_profile: str | None = None,
 ) -> dict[str, str] | None:
-    if Tag is None or not isinstance(anchor, Tag):
+    if not isinstance(anchor, Tag):
         return None
     if not _supplementary_anchor_is_supported(anchor, noise_profile=noise_profile):
         return None
@@ -106,8 +102,6 @@ def extract_supplementary_assets(
     *,
     noise_profile: str | None = None,
 ) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return []
 
     soup = BeautifulSoup(html_text, choose_parser())
     assets_by_key: dict[tuple[str, str, str], dict[str, str]] = {}

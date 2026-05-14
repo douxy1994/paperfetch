@@ -141,7 +141,7 @@ def _trim_arxiv_author_text_at_boundary(text: str) -> str:
         return normalize_text(text)
     return normalize_text(text[:boundary_start])
 def _candidate_arxiv_author_text_from_person_node(node: Any) -> str:
-    if BeautifulSoup is None or Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     clone_soup = BeautifulSoup(str(node), "html.parser")
     clone = clone_soup.find()
@@ -153,7 +153,7 @@ def _candidate_arxiv_author_text_from_person_node(node: Any) -> str:
 
     pieces: list[str] = []
     for child in list(clone.children):
-        if Tag is not None and isinstance(child, Tag):
+        if isinstance(child, Tag):
             child_name = normalize_text(child.name or "").lower()
             if child_name == "sup":
                 break
@@ -246,8 +246,6 @@ def _split_arxiv_author_text(text: str) -> list[str]:
 
 
 def _arxiv_author_article_from_html(html_text: str) -> Any:
-    if BeautifulSoup is None:
-        return None
     soup = BeautifulSoup(html_text, "html.parser")
     article = soup.find("article")
     if isinstance(article, Tag):
@@ -258,7 +256,7 @@ def _arxiv_author_article_from_html(html_text: str) -> Any:
 
 def _extract_arxiv_creator_authors(html_text: str) -> list[str]:
     article = _arxiv_author_article_from_html(html_text)
-    if Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return []
     creators = [
         node
@@ -278,7 +276,7 @@ def _extract_arxiv_creator_authors(html_text: str) -> list[str]:
 
 def _extract_arxiv_person_authors(html_text: str) -> list[str]:
     article = _arxiv_author_article_from_html(html_text)
-    if Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return []
     authors = []
     for person_node in _arxiv_select(article, "author_person_names"):
@@ -297,7 +295,7 @@ _ARXIV_UNDEFINED_MACRO_PATTERN = re.compile(r"^\\[A-Za-z@]+\*?$")
 _ARXIV_UNESCAPED_DOLLAR_PATTERN = re.compile(r"(?<!\\)\$")
 
 def _clean_official_html_latexml_noise(article: Any) -> dict[str, int]:
-    if Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return {
             "latexml_error_nodes_removed": 0,
             "figure_alt_placeholders_removed": 0,
@@ -338,7 +336,7 @@ def _clean_official_html_latexml_noise(article: Any) -> dict[str, int]:
 
 
 def _arxiv_math_annotation_latex(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     for annotation in node.find_all("annotation"):
         if not isinstance(annotation, Tag):
@@ -385,7 +383,7 @@ def _sanitize_arxiv_math_annotation_latex(value: str) -> str:
 
 
 def _arxiv_math_is_display(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     return normalize_text(str(node.get("display") or "")).lower() == "block"
 
@@ -400,7 +398,7 @@ def _arxiv_math_markdown(node: Any) -> str:
 
 
 def _normalize_official_html_latexml_math_nodes(article: Any) -> int:
-    if BeautifulSoup is None or Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return 0
     normalized_count = 0
     for node in list(_arxiv_select(article, "math_nodes")):
@@ -415,7 +413,7 @@ def _normalize_official_html_latexml_math_nodes(article: Any) -> int:
 
 
 def _normalize_official_html_latexml_notes(article: Any) -> int:
-    if BeautifulSoup is None or Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return 0
     normalized_count = 0
     for note in list(_arxiv_select(article, "note_nodes")):

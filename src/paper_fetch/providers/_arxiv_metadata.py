@@ -287,7 +287,7 @@ def _arxiv_date_to_iso(value: str | None) -> str | None:
 
 
 def _extract_arxiv_watermark_metadata(root: Any) -> dict[str, Any]:
-    if Tag is None or not isinstance(root, Tag):
+    if not isinstance(root, Tag):
         return {}
     candidates = []
     for selector in _arxiv_ar5iv_selectors("watermark"):
@@ -312,7 +312,7 @@ def _extract_arxiv_watermark_metadata(root: Any) -> dict[str, Any]:
     return {}
 
 def _arxiv_node_identity_text(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     attrs = getattr(node, "attrs", None) or {}
     parts = [normalize_text(getattr(node, "name", "") or "")]
@@ -330,14 +330,14 @@ def _select_arxiv_title_node(article: Any) -> Any:
     title_node = _arxiv_select_one(article, "document_title")
     if isinstance(title_node, Tag):
         return title_node
-    return article.find("h1") if Tag is not None and isinstance(article, Tag) else None
+    return article.find("h1") if isinstance(article, Tag) else None
 
 
 def _select_arxiv_abstract_node(article: Any) -> Any:
     abstract_node = _arxiv_select_one(article, "abstract")
     if isinstance(abstract_node, Tag):
         return abstract_node
-    if Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return None
     for candidate in article.find_all(["section", "div"]):
         if not isinstance(candidate, Tag):
@@ -361,7 +361,7 @@ def _extract_arxiv_html_frontmatter(
     *,
     metadata: Mapping[str, Any],
 ) -> dict[str, Any]:
-    if Tag is None or not isinstance(article, Tag):
+    if not isinstance(article, Tag):
         return {}
     arxiv_id = _arxiv_id_from_metadata_or_doi(
         str(metadata.get("doi") or ""), metadata

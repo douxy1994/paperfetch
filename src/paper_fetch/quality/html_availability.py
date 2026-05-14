@@ -67,11 +67,7 @@ from .reason_codes import (
     WT_ABSTRACT_PAGE_TYPE,
 )
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 # Narrative labels relax structural availability thresholds for short
 # commentary/news-style content. They are not front-matter cleanup tokens; the
@@ -176,8 +172,6 @@ def _looks_like_explicit_body_container(node: Tag | None) -> bool:
 
 
 def _normalized_page_text(html_text: str) -> str:
-    if BeautifulSoup is None:
-        return normalize_text(re.sub(r"<[^>]+>", " ", html_text))
     soup = BeautifulSoup(html_text, choose_parser())
     return normalize_text(" ".join(soup.stripped_strings))
 
@@ -194,7 +188,7 @@ def _extract_article_type(
         value = normalize_text(metadata_map.get(key))
         if value:
             return value
-    if not html_text or BeautifulSoup is None:
+    if not html_text:
         return None
     soup = BeautifulSoup(html_text, choose_parser())
     for selector in (
@@ -639,8 +633,6 @@ def _analyze_html_structure(
     analysis = StructuredBodyAnalysis(
         narrative_article_type=_is_narrative_article_type(_extract_article_type(metadata, provider=provider, html_text=html_text))
     )
-    if BeautifulSoup is None:
-        return analysis, None, None
 
     soup = BeautifulSoup(html_text, choose_parser())
     container = select_best_container(soup, provider)
@@ -899,16 +891,6 @@ def _dom_access_hints(
     hard_negative_signals: list[str] = []
     abstract_only_hints: list[str] = []
     blocking_fallback_signals: list[str] = []
-    if BeautifulSoup is None:
-        if _final_url_looks_like_access_page(final_url):
-            abstract_only_hints.append(ACCESS_PAGE_URL)
-            blocking_fallback_signals.append(ACCESS_PAGE_URL)
-        return (
-            _dedupe_signals(hard_negative_signals),
-            _dedupe_signals(abstract_only_hints),
-            _dedupe_signals(blocking_fallback_signals),
-        )
-
     soup = BeautifulSoup(html_text, choose_parser())
     if soup.select_one(".accessDenialWidget"):
         hard_negative_signals.append(PUBLISHER_PAYWALL)
@@ -955,9 +937,6 @@ def _dom_access_hints(
 
 
 def _count_figures_from_html(html_text: str) -> int:
-    lowered = html_text.lower()
-    if BeautifulSoup is None:
-        return lowered.count("<figure")
     soup = BeautifulSoup(html_text, choose_parser())
     figure_count = len(soup.find_all("figure"))
     if figure_count:

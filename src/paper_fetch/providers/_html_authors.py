@@ -10,11 +10,7 @@ from ..extraction.html.parsing import choose_parser
 from ..utils import dedupe_authors, normalize_text
 from ._script_json import extract_assignment_json, extract_script_json
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 COMMON_COLLECTIVE_AUTHOR_TOKENS = frozenset(
     {
@@ -245,8 +241,6 @@ def extract_jsonld_authors(
     article_types: set[str] | frozenset[str],
     author_paths: tuple[str, ...] = ("author",),
 ) -> list[str]:
-    if BeautifulSoup is None:
-        return []
     authors: list[str] = []
     for payload in extract_script_json(html_text, type_pattern="ld+json"):
         for node in iter_jsonld_nodes(payload):
@@ -257,12 +251,10 @@ def extract_jsonld_authors(
 
 
 def extract_meta_authors(html_text: str, *, keys: set[str]) -> list[str]:
-    if BeautifulSoup is None:
-        return []
     soup = BeautifulSoup(html_text, choose_parser())
     authors: list[str] = []
     for meta in soup.find_all("meta"):
-        if Tag is not None and not isinstance(meta, Tag):
+        if not isinstance(meta, Tag):
             continue
         key = normalize_text(
             str(meta.get("name") or meta.get("property") or "")
@@ -283,12 +275,10 @@ def extract_property_authors(
     count_pattern: Pattern[str] | None = None,
     reject_email: bool = False,
 ) -> list[str]:
-    if BeautifulSoup is None:
-        return []
     soup = BeautifulSoup(html_text, choose_parser())
     authors: list[str] = []
     for node in soup.select(selectors):
-        if Tag is not None and not isinstance(node, Tag):
+        if not isinstance(node, Tag):
             continue
         given_node = node.select_one("[property='givenName']")
         family_node = node.select_one("[property='familyName']")
@@ -339,14 +329,12 @@ def extract_selector_authors(
     reject_affiliation: bool = False,
     reject_affiliation_prefixes: tuple[str, ...] = (),
 ) -> list[str]:
-    if BeautifulSoup is None:
-        return []
     soup = BeautifulSoup(html_text, choose_parser())
     authors: list[str] = []
     seen_nodes: set[int] = set()
     for selector in selectors:
         for node in soup.select(selector):
-            if Tag is not None and not isinstance(node, Tag):
+            if not isinstance(node, Tag):
                 continue
             if id(node) in seen_nodes:
                 continue

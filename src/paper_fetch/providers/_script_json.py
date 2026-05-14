@@ -9,11 +9,7 @@ from typing import Any, Pattern
 from ..extraction.html.parsing import choose_parser
 from ..utils import normalize_text
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 _JSON_CLOSERS = {"{": "}", "[": "]"}
 
@@ -118,12 +114,10 @@ def extract_script_json(
     type_pattern: str | Pattern[str] | None = None,
     id_pattern: str | Pattern[str] | None = None,
 ) -> list[Any]:
-    if BeautifulSoup is None:
-        return []
     soup = BeautifulSoup(html_text, choose_parser())
     payloads: list[Any] = []
     for script in soup.find_all("script"):
-        if Tag is not None and not isinstance(script, Tag):
+        if not isinstance(script, Tag):
             continue
         script_type = normalize_text(str(script.get("type") or ""))
         script_id = normalize_text(str(script.get("id") or ""))

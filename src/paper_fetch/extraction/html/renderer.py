@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
+from bs4 import BeautifulSoup, Tag
+
 from .language import collect_html_abstract_blocks
 from .parsing import choose_parser
 from .semantics import collect_html_section_hints
@@ -18,12 +20,6 @@ HtmlMarkdownRenderFn = Callable[[str, str], str]
 MarkdownPostprocessor = Callable[[str], str]
 
 _DEFAULT_TRAFILATURA = object()
-
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
 
 
 @dataclass(frozen=True)
@@ -107,8 +103,6 @@ class RenderedHtmlFragment:
 
 
 def _fragment_root(html_fragment: str):
-    if BeautifulSoup is None or Tag is None:
-        return None
     soup = BeautifulSoup(
         f"<article data-paper-fetch-renderer-root='1'>{html_fragment}</article>",
         choose_parser(),

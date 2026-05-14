@@ -33,11 +33,7 @@ from .profile import (
     _publisher_profile,
 )
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 ATYPON_BROWSER_WORKFLOW_SUPPLEMENTARY_SECTION_SELECTORS = (
     "section#supplementary-materials",
@@ -61,7 +57,7 @@ def _atypon_browser_workflow_supplementary_heading_key(node: Tag) -> str:
 
 
 def _is_atypon_browser_workflow_supplementary_section(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     if normalize_text(node.name or "").lower() != "section":
         return False
@@ -173,12 +169,6 @@ def extract_browser_workflow_asset_html_scopes(
     publisher: str,
 ) -> tuple[str, str]:
     del source_url
-    if BeautifulSoup is None:
-        raise HtmlExtractionFailure(
-            "missing_bs4",
-            "BeautifulSoup is required for browser-workflow HTML asset extraction.",
-        )
-
     soup = BeautifulSoup(html_text, choose_parser())
     container = select_best_container(
         soup, publisher, policy=_container_selection_policy(publisher)

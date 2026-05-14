@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 
 from ...utils import normalize_text
 from ...quality.reason_codes import (
@@ -19,10 +18,7 @@ from ...quality.reason_codes import (
 from .parsing import choose_parser
 from .ui_tokens import SPRINGER_PREVIEW_PHRASE
 
-try:
-    from bs4 import BeautifulSoup
-except ImportError:  # pragma: no cover - exercised implicitly when dependency is absent
-    BeautifulSoup = None
+from bs4 import BeautifulSoup
 
 CHALLENGE_PATTERNS = (
     "just a moment",
@@ -145,8 +141,6 @@ class HtmlExtractionFailure(Exception):
 
 
 def summarize_html(html_text: str, limit: int = 1000) -> str:
-    if BeautifulSoup is None:
-        return normalize_text(re.sub(r"<[^>]+>", " ", html_text))[:limit]
     soup = BeautifulSoup(html_text, choose_parser())
     return " ".join(soup.stripped_strings)[:limit]
 

@@ -40,11 +40,7 @@ from ._html_asset_engine import (
 )
 from ._html_references import extract_numbered_references_from_html
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 NUMBERED_SECTION_HEADING_PATTERN = re.compile(r"^\d+(?:\.\d+)*\s+\S")
 WILEY_AUTHOR_NOISE_TEXT = {
@@ -77,7 +73,7 @@ blocking_fallback_signals = wiley_blocking_fallback_signals
 
 
 def find_supporting_information_sections(container: Any) -> list[Any]:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return []
 
     sections: list[Any] = []
@@ -107,7 +103,7 @@ def find_supporting_information_sections(container: Any) -> list[Any]:
 
 
 def _wiley_author_noise_node(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     data_test = normalize_text(str(node.get("data-test") or "")).lower()
     href = normalize_text(str(node.get("href") or "")).lower()
@@ -128,7 +124,7 @@ def _wiley_node_visible_author_text(node: Tag) -> str:
     fragments: list[str] = []
     for descendant in node.descendants:
         parent = getattr(descendant, "parent", None)
-        if Tag is not None and isinstance(parent, Tag):
+        if isinstance(parent, Tag):
             current: Tag | None = parent
             blocked = False
             while current is not None and current is not node:
@@ -158,7 +154,7 @@ def _strip_wiley_author_noise_text(text: str) -> str:
 
 
 def _node_author_text(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     if _wiley_author_noise_node(node):
         return ""
@@ -487,7 +483,7 @@ def _wiley_supplementary_filename_is_supported(filename: str) -> bool:
 
 
 def _wiley_supplementary_anchor_is_supported(anchor: Any) -> bool:
-    if Tag is None or not isinstance(anchor, Tag):
+    if not isinstance(anchor, Tag):
         return False
 
     href = normalize_text(str(anchor.get("href") or ""))
@@ -541,8 +537,6 @@ def _wiley_supplementary_filename(anchor: Any) -> str:
 def extract_supplementary_assets(
     html_text: str, source_url: str
 ) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return []
 
     soup = BeautifulSoup(html_text, choose_parser())
     assets_by_url: dict[str, dict[str, str]] = {}

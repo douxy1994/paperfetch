@@ -124,6 +124,7 @@ provider 内部多步骤 fallback 应使用 `paper_fetch.providers._waterfall.ru
 - Landing HTML：`paper_fetch.extraction.html.landing.fetch_landing_html`
 - Metadata parsing：`paper_fetch.extraction.html._metadata`
 - HTML-to-Markdown 编排：`paper_fetch.extraction.html.renderer`
+- HTML DOM parsing：`beautifulsoup4` 是主依赖，provider / extraction 代码直接 `from bs4 import ...`；不要新增 `BeautifulSoup is None` / `Tag is None` 运行时 fallback。
 - Fulltext / abstract-only 判定：`paper_fetch.quality.html_availability`
 - Section hints：`paper_fetch.extraction.section_hints`、`paper_fetch.extraction.html.semantics`
 - Access-gate 文案与匹配顺序：`paper_fetch.extraction.html.signals.ACCESS_GATE_LABELS` / `ACCESS_GATE_PATTERNS`

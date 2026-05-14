@@ -33,12 +33,7 @@ from ._html_authors import (
 )
 from ._html_references import extract_numbered_references_from_html
 
-try:
-    from bs4 import BeautifulSoup, NavigableString, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    NavigableString = None
-    Tag = None
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 
 # AMS Atypon XSL emits display equation ids as E1/E02/E2a and unnumbered
@@ -78,7 +73,7 @@ AMS_INLINE_SKIP_ANCESTOR_TAGS = {"math", "script", "style", "table"}
 
 
 def _ams_node_text(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     return normalize_text(node.get_text(" ", strip=True))
 
@@ -122,8 +117,6 @@ def extract_authors(html_text: str) -> list[str]:
 
 
 def extract_references(html_text: str) -> list[dict[str, str | None]]:
-    if BeautifulSoup is None:
-        return []
     numbered_references = extract_numbered_references_from_html(html_text)
     if numbered_references:
         return numbered_references
@@ -229,7 +222,7 @@ def ams_body_container(container: Any) -> None: _normalize_ams_dom(container)
 def ams_asset_body_container(container: Any) -> None: _normalize_ams_dom(container)
 def ams_asset_figure_extraction(container: Any) -> None: _normalize_ams_dom(container)
 def _normalize_nested_sup_sub(container: Any) -> None:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return
     for node in list(container.find_all(["sup", "sub"])):
         if not isinstance(node, Tag):
@@ -248,7 +241,7 @@ def _normalize_nested_sup_sub(container: Any) -> None:
 
 
 def _normalize_ams_formula_dom(container: Any) -> None:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return
     for node in list(container.select("div.formula")):
         if not isinstance(node, Tag):
@@ -288,7 +281,7 @@ def _normalize_ams_formula_dom(container: Any) -> None:
 
 
 def _ams_equation_label(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     candidates: list[str] = []
     for attr_name in ("data-label", "aria-label", "title"):
@@ -316,14 +309,14 @@ def _ams_equation_label(node: Any) -> str:
 
 
 def _is_ams_unnumbered_formula(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     node_id = normalize_text(str(node.get("id") or ""))
     return bool(AMS_UNNUMBERED_EQUATION_ID_PATTERN.match(node_id))
 
 
 def _is_mathml_script(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     if normalize_text(node.name or "").lower() != "script":
         return False
@@ -332,13 +325,13 @@ def _is_mathml_script(node: Any) -> bool:
 
 
 def _math_node_has_payload(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     return bool(normalize_text(node.get_text(" ", strip=True)))
 
 
 def _has_mathml_outside_node(parent: Any, node: Any) -> bool:
-    if Tag is None or not isinstance(parent, Tag) or not isinstance(node, Tag):
+    if not isinstance(parent, Tag) or not isinstance(node, Tag):
         return False
     for math_node in parent.find_all("math"):
         if not isinstance(math_node, Tag):
@@ -356,7 +349,7 @@ def _has_mathml_outside_node(parent: Any, node: Any) -> bool:
 
 
 def _move_rendered_mathml_source_before_node(node: Any) -> None:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return
     parent = node.parent if isinstance(node.parent, Tag) else None
     if parent is None or _has_mathml_outside_node(parent, node):
@@ -372,7 +365,7 @@ def _move_rendered_mathml_source_before_node(node: Any) -> None:
 
 
 def _insert_mathml_from_script(script: Any) -> bool:
-    if BeautifulSoup is None or Tag is None or not isinstance(script, Tag):
+    if not isinstance(script, Tag):
         return False
     raw_mathml = (
         script.string if script.string is not None else script.decode_contents()
@@ -388,7 +381,7 @@ def _insert_mathml_from_script(script: Any) -> bool:
 
 
 def _render_ams_mathml_inline(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     element = mathml_element_from_html_node(node)
     if element is None:
@@ -402,7 +395,7 @@ def _render_ams_mathml_inline(node: Any) -> str:
 
 
 def _math_node_from_mathml_script(node: Any) -> Any:
-    if BeautifulSoup is None or Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     if not _is_mathml_script(node):
         return None
@@ -415,7 +408,7 @@ def _math_node_from_mathml_script(node: Any) -> Any:
 
 
 def _ams_raw_inline_markdown_from_node(node: Any) -> str | None:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     name = normalize_text(node.name or "").lower()
     if name == "inline-formula":
@@ -441,7 +434,7 @@ def _ams_raw_inline_markdown_from_node(node: Any) -> str | None:
 def _first_text_in_ams_subtree(node: Any) -> str | None:
     if NavigableString is not None and isinstance(node, NavigableString):
         return str(node)
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     if normalize_text(node.name or "").lower() in {"math", "script", "style"}:
         return None
@@ -452,7 +445,7 @@ def _first_text_in_ams_subtree(node: Any) -> str | None:
 
 
 def _next_ams_text_after_node(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     current: Any = node
     while isinstance(getattr(current, "parent", None), Tag):
@@ -469,7 +462,7 @@ def _next_ams_text_after_node(node: Any) -> str:
 
 
 def _restore_ams_supsub_parenthesis_spacing(source_node: Any, text: str) -> str:
-    if Tag is None or not isinstance(source_node, Tag) or not text:
+    if not isinstance(source_node, Tag) or not text:
         return text
     candidates: list[Any] = []
     if normalize_text(source_node.name or "").lower() in {"sub", "sup"}:
@@ -511,7 +504,7 @@ def _render_ams_inline_text(node: Any) -> str:
 
 
 def _caption_paragraph_texts(wrapper: Any) -> list[str]:
-    if Tag is None or not isinstance(wrapper, Tag):
+    if not isinstance(wrapper, Tag):
         return []
     texts: list[str] = []
     for paragraph in wrapper.find_all("p", recursive=False):
@@ -530,7 +523,7 @@ def _caption_paragraph_texts(wrapper: Any) -> list[str]:
 
 
 def _normalize_ams_figure_captions(container: Any) -> None:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return
     for wrapper in list(container.select(".figure-text-wrapper")):
         if not isinstance(wrapper, Tag):
@@ -551,7 +544,7 @@ def _normalize_ams_figure_captions(container: Any) -> None:
 
 
 def _normalize_ams_table_captions(container: Any) -> None:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return
     for table_wrap in list(container.select(".tableWrap")):
         if not isinstance(table_wrap, Tag):
@@ -577,7 +570,7 @@ def _normalize_ams_table_captions(container: Any) -> None:
 
 
 def _footnote_label_text(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     for selector in (".label", "label"):
         label_node = node.select_one(selector)
@@ -591,7 +584,7 @@ def _footnote_label_text(node: Any) -> str:
 
 
 def _normalize_ams_footnotes(container: Any) -> None:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return
     soup = _soup_root(container)
     if soup is None:
@@ -625,7 +618,7 @@ def _normalize_ams_footnotes(container: Any) -> None:
 
 
 def _is_descendant_of_any_ams_node(node: Any, ancestors: list[Any]) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     return any(
         isinstance(ancestor, Tag) and ancestor in getattr(node, "parents", ())
@@ -634,7 +627,7 @@ def _is_descendant_of_any_ams_node(node: Any, ancestors: list[Any]) -> bool:
 
 
 def _has_ams_inline_skip_ancestor(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return True
     for parent in getattr(node, "parents", ()):
         if not isinstance(parent, Tag):
@@ -646,7 +639,7 @@ def _has_ams_inline_skip_ancestor(node: Any) -> bool:
 
 
 def _should_normalize_ams_inline_node(node: Any) -> bool:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return False
     name = normalize_text(node.name or "").lower()
     if name not in AMS_INLINE_MARKDOWN_TAGS:
@@ -667,7 +660,7 @@ def _should_normalize_ams_inline_node(node: Any) -> bool:
 
 
 def _normalize_ams_inline_markup_nodes(container: Any) -> None:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return
     selected: list[Any] = []
     for node in list(container.find_all(AMS_INLINE_MARKDOWN_TAGS)):
@@ -691,7 +684,7 @@ def _normalize_ams_inline_markup_nodes(container: Any) -> None:
 
 
 def _normalize_ams_asset_nodes(container: Any) -> None:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return
     nodes: list[Tag] = []
     for selector in ("figure", ".tableWrap"):
@@ -719,7 +712,7 @@ def _normalize_ams_asset_nodes(container: Any) -> None:
 
 
 def _drop_ams_chrome(container: Any) -> None:
-    if Tag is None or not isinstance(container, Tag):
+    if not isinstance(container, Tag):
         return
     cleanup_policy = cleanup_policy_for_profile("ams")
     for selector in cleanup_policy.dom_postprocess_cleanup_selectors:
@@ -744,7 +737,7 @@ def _normalize_ams_dom(container: Any) -> None:
 
 
 def _ams_gallery_href(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     for anchor in node.find_all("a", href=True):
         href = normalize_text(str(anchor.get("href") or ""))
@@ -764,7 +757,7 @@ def _ams_gallery_href(node: Any) -> str:
 
 
 def _ams_full_image_src(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     for image in node.find_all("img"):
         candidate = normalize_text(str(image.get("data-image-src") or ""))
@@ -774,7 +767,7 @@ def _ams_full_image_src(node: Any) -> str:
 
 
 def _ams_inline_image(node: Any) -> Any:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return None
     for image in node.find_all("img"):
         if not isinstance(image, Tag):
@@ -786,15 +779,13 @@ def _ams_inline_image(node: Any) -> Any:
 
 
 def _normalize_ams_asset_html(html_text: str) -> str:
-    if BeautifulSoup is None:
-        return html_text
     soup = BeautifulSoup(html_text, choose_parser())
     _normalize_ams_dom(soup)
     return str(soup)
 
 
 def _table_label_text(node: Any) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return "Table"
     for selector in (".tableWrapLabel", ".label"):
         candidate = node.select_one(selector)
@@ -816,7 +807,7 @@ def _table_label_text(node: Any) -> str:
 
 
 def _table_caption_text(node: Any, label: str) -> str:
-    if Tag is None or not isinstance(node, Tag):
+    if not isinstance(node, Tag):
         return ""
     candidates: list[str] = []
     for selector in (".tableWrapCaption", ".caption", "figcaption", "caption"):
@@ -860,8 +851,6 @@ def _ams_asset_url_keys(asset: dict[str, str]) -> set[str]:
 
 
 def _extract_ams_table_assets(html_text: str, source_url: str) -> list[dict[str, str]]:
-    if BeautifulSoup is None:
-        return []
     soup = BeautifulSoup(_normalize_ams_asset_html(html_text), choose_parser())
     assets: list[dict[str, str]] = []
     seen: set[str] = set()

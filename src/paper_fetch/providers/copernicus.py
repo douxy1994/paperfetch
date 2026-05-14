@@ -51,11 +51,7 @@ from .base import (
     summarize_capability_status,
 )
 
-try:
-    from bs4 import BeautifulSoup, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    BeautifulSoup = None
-    Tag = None
+from bs4 import BeautifulSoup, Tag
 
 
 MIN_BODY_CHARS = provider_body_text_thresholds("copernicus").min_chars
@@ -146,8 +142,6 @@ def _raw_meta_urls(metadata: Mapping[str, Any], key: str, base_url: str) -> list
 
 
 def _discover_link_urls(html_text: str, base_url: str, *, suffix: str) -> list[str]:
-    if BeautifulSoup is None:
-        return []
     soup = BeautifulSoup(html_text, "html.parser")
     urls: list[str] = []
     for node in soup.select("a[href], link[href], meta[content]"):

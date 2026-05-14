@@ -9,11 +9,7 @@ from ...models import normalize_markdown_text
 from ...utils import normalize_text
 from .inline import normalize_html_inline_text, render_html_inline_node, wrap_html_inline_text_fragment
 
-try:
-    from bs4 import NavigableString, Tag
-except ImportError:  # pragma: no cover - dependency is declared in pyproject
-    NavigableString = None
-    Tag = None
+from bs4 import Tag
 
 TABLE_PLACEHOLDER_PREFIX = "PAPER_FETCH_TABLE_PLACEHOLDER_"
 TABLE_CELL_LINE_BREAK_PATTERN = re.compile(r"\s*\n+\s*")
