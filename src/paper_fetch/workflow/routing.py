@@ -30,10 +30,17 @@ from ..publisher_identity import (
 )
 from ..utils import choose_public_landing_page_url, extend_unique, normalize_text, safe_text
 from .resolution import resolve_paper
+from .session_cache import (
+    CROSSREF_METADATA_KEY,
+    LANDING_PDF_PROBE_KEY,
+    PROVIDER_PROBE_KEY,
+    RESOLVED_QUERY_KEY,
+    cached_call,
+    get_cached,
+)
 from .types import FetchStrategy, HasFulltextProbeResult, PaperFetchFailure, RouteProbeResult
 
 OFFICIAL_PROVIDER_NAMES = official_provider_names()
-_CACHE_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -56,12 +63,7 @@ def crossref_allowed_as_source(strategy: FetchStrategy) -> bool:
     return provider_allowed("crossref", strategy)
 
 
-def route_signal_markers(
-    *,
-    landing_urls: list[str | None] | None = None,
-    publishers: list[str | None] | None = None,
-    doi: str | None = None,
-) -> list[str]:
+def route_signal_markers(*, landing_urls: list[str | None] | None = None, publishers: list[str | None] | None = None, doi: str | None = None) -> list[str]:
     markers: list[str] = []
     for url in landing_urls or []:
         provider = infer_provider_from_url(url)
@@ -77,17 +79,9 @@ def route_signal_markers(
     return markers
 
 
-def build_official_provider_candidates(
-    resolved,
-    *,
-    routing_metadata: Mapping[str, Any] | None,
-    strategy: FetchStrategy,
-) -> list[tuple[str, str]]:
+def build_official_provider_candidates(resolved, *, routing_metadata: Mapping[str, Any] | None, strategy: FetchStrategy) -> list[tuple[str, str]]:
     candidates = ordered_provider_candidates(
-        landing_urls=[
-            resolved.landing_url,
-            safe_text((routing_metadata or {}).get("landing_page_url")),
-        ],
+        landing_urls=[resolved.landing_url, safe_text((routing_metadata or {}).get("landing_page_url"))],
         publishers=[safe_text((routing_metadata or {}).get("publisher"))],
         doi=resolved.doi,
     )
@@ -146,22 +140,6 @@ def _landing_page_citation_pdf_probe(
     )
 
 
-def _session_cache_key_resolved_query(query: str) -> tuple[str, str]:
-    return ("resolved_query", normalize_text(query) or str(query))
-
-
-def _session_cache_key_crossref_metadata(doi: str) -> tuple[str, str, str]:
-    return ("metadata", "crossref", normalize_doi(doi) or doi)
-
-
-def _session_cache_key_provider_metadata_probe(provider_name: str, doi: str) -> tuple[str, str, str]:
-    return ("metadata_probe", normalize_text(provider_name).lower(), normalize_doi(doi) or doi)
-
-
-def _session_cache_key_landing_citation_pdf_probe(landing_url: str) -> tuple[str, str]:
-    return ("landing_page_citation_pdf_probe", normalize_text(landing_url) or landing_url)
-
-
 def resolve_query_with_session_cache(
     query: str,
     *,
@@ -170,32 +148,16 @@ def resolve_query_with_session_cache(
     env: Mapping[str, str],
     context: RuntimeContext,
 ):
-    cache_key = _session_cache_key_resolved_query(query)
-    return context.get_or_set_session_cache(
-        cache_key,
-        lambda: resolver(query, transport=transport, env=env),
-        copy_value=True,
-    )
+    return cached_call(RESOLVED_QUERY_KEY, (normalize_text(query) or str(query),), context, lambda: resolver(query, transport=transport, env=env))
 
 
-def fetch_crossref_metadata_with_session_cache(
-    doi: str | None,
-    crossref_client: object,
-    *,
-    context: RuntimeContext | None = None,
-) -> ProviderMetadata | None:
+def fetch_crossref_metadata_with_session_cache(doi: str | None, crossref_client: object, *, context: RuntimeContext | None = None) -> ProviderMetadata | None:
     if not doi or not isinstance(crossref_client, MetadataProvider):
         return None
     normalized_doi = normalize_doi(doi) or doi
-    cache_key = _session_cache_key_crossref_metadata(normalized_doi)
-    if context is not None:
-        cached = context.get_session_cache(cache_key, default=_CACHE_MISSING)
-        if cached is not _CACHE_MISSING:
-            return cast(ProviderMetadata, cached)
-    metadata = cast(ProviderMetadata, dict(crossref_client.fetch_metadata({"doi": normalized_doi})))
-    if metadata and context is not None:
-        context.set_session_cache(cache_key, metadata)
-    return metadata
+    def fetch_metadata() -> ProviderMetadata:
+        return cast(ProviderMetadata, dict(crossref_client.fetch_metadata({"doi": normalized_doi})))
+    return cached_call(CROSSREF_METADATA_KEY, (normalized_doi,), context, fetch_metadata) if context is not None else fetch_metadata()
 
 
 def fetch_provider_metadata_probe_with_session_cache(
@@ -211,16 +173,9 @@ def fetch_provider_metadata_probe_with_session_cache(
     if not isinstance(client, MetadataProvider):
         return None
     normalized_doi = normalize_doi(doi) or doi
-    cache_key = _session_cache_key_provider_metadata_probe(provider_name, normalized_doi)
-    if context is not None:
-        cached = context.get_session_cache(cache_key, default=_CACHE_MISSING)
-        if cached is not _CACHE_MISSING:
-            return cast(ProviderMetadata, cached)
-    metadata = client.fetch_metadata({"doi": normalized_doi})
-    result = cast(ProviderMetadata, dict(metadata)) if metadata else None
-    if result and context is not None:
-        context.set_session_cache(cache_key, result)
-    return result
+    def fetch_metadata() -> ProviderMetadata | None:
+        return cast(ProviderMetadata, dict(metadata)) if (metadata := client.fetch_metadata({"doi": normalized_doi})) else None
+    return cached_call(PROVIDER_PROBE_KEY, (normalize_text(provider_name).lower(), normalized_doi), context, fetch_metadata) if context is not None else fetch_metadata()
 
 
 def landing_page_citation_pdf_probe_with_session_cache(
@@ -230,19 +185,9 @@ def landing_page_citation_pdf_probe_with_session_cache(
     env: Mapping[str, str],
     context: RuntimeContext | None = None,
 ) -> LandingPageCitationPdfProbeResult:
-    cache_key = _session_cache_key_landing_citation_pdf_probe(landing_url)
-    if context is not None:
-        cached = context.get_session_cache(cache_key, default=_CACHE_MISSING)
-        if cached is not _CACHE_MISSING:
-            return cast(LandingPageCitationPdfProbeResult, cached)
-    result = _landing_page_citation_pdf_probe(
-        landing_url,
-        transport=transport,
-        env=env,
-    )
-    if result and context is not None:
-        context.set_session_cache(cache_key, result)
-    return result
+    def fetch_probe() -> LandingPageCitationPdfProbeResult:
+        return _landing_page_citation_pdf_probe(landing_url, transport=transport, env=env)
+    return cached_call(LANDING_PDF_PROBE_KEY, (normalize_text(landing_url) or landing_url,), context, fetch_probe) if context is not None else fetch_probe()
 
 
 def get_cached_landing_page_citation_pdf_probe(
@@ -252,13 +197,10 @@ def get_cached_landing_page_citation_pdf_probe(
 ) -> LandingPageCitationPdfProbeResult | None:
     if context is None or not landing_url:
         return None
-    cached = context.get_session_cache(
-        _session_cache_key_landing_citation_pdf_probe(landing_url),
-        default=_CACHE_MISSING,
+    return cast(
+        LandingPageCitationPdfProbeResult | None,
+        get_cached(LANDING_PDF_PROBE_KEY, (normalize_text(landing_url) or landing_url,), context),
     )
-    if cached is _CACHE_MISSING:
-        return None
-    return cast(LandingPageCitationPdfProbeResult, cached)
 
 
 def probe_official_provider(
@@ -295,19 +237,10 @@ def probe_official_provider(
     return RouteProbeResult(provider=provider_name, state="negative")
 
 
-def metadata_api_probe_provider_names(
-    resolved,
-    *,
-    routing_metadata: Mapping[str, Any] | None,
-    strategy: FetchStrategy,
-) -> list[str]:
+def metadata_api_probe_provider_names(resolved, *, routing_metadata: Mapping[str, Any] | None, strategy: FetchStrategy) -> list[str]:
     return [
         provider_name
-        for provider_name, _signal in build_official_provider_candidates(
-            resolved,
-            routing_metadata=routing_metadata,
-            strategy=strategy,
-        )
+        for provider_name, _signal in build_official_provider_candidates(resolved, routing_metadata=routing_metadata, strategy=strategy)
         if provider_supports_metadata_api_probe(provider_name)
     ]
 
@@ -336,19 +269,9 @@ def probe_has_fulltext(
     active_transport = runtime.transport
     client_registry = dict(runtime.get_clients())
     resolver = resolve_paper_fn or resolve_paper
-    resolved = resolve_query_with_session_cache(
-        query,
-        resolver=resolver,
-        transport=active_transport,
-        env=active_env,
-        context=runtime,
-    )
+    resolved = resolve_query_with_session_cache(query, resolver=resolver, transport=active_transport, env=active_env, context=runtime)
     if resolved.candidates and not resolved.doi:
-        raise PaperFetchFailure(
-            "ambiguous",
-            "Query resolution is ambiguous; choose one of the DOI candidates.",
-            candidates=resolved.candidates,
-        )
+        raise PaperFetchFailure("ambiguous", "Query resolution is ambiguous; choose one of the DOI candidates.", candidates=resolved.candidates)
 
     warnings: list[str] = []
     evidence: list[str] = []
@@ -358,34 +281,16 @@ def probe_has_fulltext(
     crossref_client = client_registry.get("crossref")
 
     strategy = FetchStrategy()
-    initial_metadata_probe_providers = (
-        metadata_api_probe_provider_names(
-            resolved,
-            routing_metadata=None,
-            strategy=strategy,
-        )
-        if doi
-        else []
-    )
+    initial_metadata_probe_providers = metadata_api_probe_provider_names(resolved, routing_metadata=None, strategy=strategy) if doi else []
 
     def fetch_crossref_metadata() -> ProviderMetadata | None:
         return fetch_crossref_metadata_with_session_cache(doi, crossref_client, context=runtime)
 
     def fetch_provider_probe_metadata(provider_name: str) -> ProviderMetadata | None:
-        return fetch_provider_metadata_probe_with_session_cache(
-            provider_name,
-            doi,
-            clients=client_registry,
-            context=runtime,
-        )
+        return fetch_provider_metadata_probe_with_session_cache(provider_name, doi, clients=client_registry, context=runtime)
 
     def fetch_landing_probe(landing_url: str) -> LandingPageCitationPdfProbeResult:
-        return landing_page_citation_pdf_probe_with_session_cache(
-            landing_url,
-            transport=active_transport,
-            env=active_env,
-            context=runtime,
-        )
+        return landing_page_citation_pdf_probe_with_session_cache(landing_url, transport=active_transport, env=active_env, context=runtime)
 
     landing_probe_by_url: dict[str, LandingPageCitationPdfProbeResult] = {}
     landing_probe_errors: dict[str, RequestFailure] = {}
@@ -431,11 +336,7 @@ def probe_has_fulltext(
         extend_unique(warnings, [_probe_warning("Crossref metadata probe unavailable", crossref_error.message)])
 
     if doi:
-        for provider_name in metadata_api_probe_provider_names(
-            resolved,
-            routing_metadata=crossref_metadata,
-            strategy=strategy,
-        ):
+        for provider_name in metadata_api_probe_provider_names(resolved, routing_metadata=crossref_metadata, strategy=strategy):
             if provider_name not in metadata_probe_provider_order:
                 metadata_probe_provider_order.append(provider_name)
             if provider_name in provider_probe_metadata or provider_name in provider_probe_errors:
@@ -457,10 +358,7 @@ def probe_has_fulltext(
         if error is not None and _is_unknown_has_fulltext_probe_failure(error):
             extend_unique(warnings, [_probe_warning(f"{provider_name} metadata probe unavailable", error.message)])
 
-    landing_url = choose_public_landing_page_url(
-        resolved.landing_url,
-        (crossref_metadata or {}).get("landing_page_url"),
-    )
+    landing_url = choose_public_landing_page_url(resolved.landing_url, (crossref_metadata or {}).get("landing_page_url"))
     if landing_url:
         if landing_url not in landing_probe_by_url and landing_url not in landing_probe_errors:
             try:
@@ -476,11 +374,4 @@ def probe_has_fulltext(
             extend_unique(warnings, [_probe_warning("Landing-page metadata probe unavailable", str(landing_probe_errors[landing_url]))])
 
     state = "likely_yes" if evidence else "unknown"
-    return HasFulltextProbeResult(
-        query=resolved.query,
-        doi=doi,
-        title=title,
-        state=state,
-        evidence=evidence,
-        warnings=warnings,
-    )
+    return HasFulltextProbeResult(query=resolved.query, doi=doi, title=title, state=state, evidence=evidence, warnings=warnings)

@@ -515,7 +515,7 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 - `parse_cache` 避免 Elsevier XML、Springer HTML、browser-workflow Markdown 和 HTML asset 重复解析。
 - IEEE dynamic HTML block-page token 判定也按 payload 缓存。
 - 同一个 `RuntimeContext` 生命周期内还会复用 `session_cache`。
-- `has_fulltext` 与 `fetch_paper` 可共享 query resolution、Crossref DOI metadata、Elsevier metadata probe 和 landing page probe。
+- workflow session cache key 由 `paper_fetch.workflow.session_cache.SessionCacheKey` 常量统一生成；`has_fulltext` 与 `fetch_paper` 可共享 query resolution、Crossref DOI metadata、Elsevier metadata probe 和 landing page probe。
 - fetch 阶段命中 landing probe 时，会把 citation PDF URL 合并到 metadata `fulltext_links`。
 - `PlaywrightContextManager` 会在同一 `RuntimeContext` 内 lazy 复用 Chromium browser。
 - PNAS preflight、正文图片/文件 fetcher 与 PDF/ePDF fallback 仍按阶段创建独立 browser context/page。
