@@ -38,7 +38,10 @@
   - commit: af61293
   - 摘要: 新增 `WaterfallStep` 声明式 step 名称并保留 `ProviderWaterfallStep` 兼容 alias；`ProviderClient.fetch_raw_fulltext()` 默认运行 class-level `waterfall_steps`，空 steps 明确提示覆盖方法或声明 steps；scaffold 生成 fulltext client 时写入 `waterfall_steps` 与 provider-owned fallback step 占位函数。
   - 验收: S8 grep 通过；scaffold probe 生成 `waterfall_steps` 与 `ProviderFailure(NOT_SUPPORTED, ...)` 占位 step；`test_waterfall_default_fetch.py` / `test_scaffold_provider.py` 8 passed；`validate_extraction_rules.py` 通过；ruff touched Python files 通过；全量 unit 1181 passed + 264 subtests。
-- [ ] S9: 重构对齐 grep lint 测试
+- [x] S9: 重构对齐 grep lint 测试
+  - commit: 7fe6c2a
+  - 摘要: 新增 owner-reuse grep pattern helper 与 `test_provider_owner_reuse.py`，从 provider bundle 枚举 provider，扫描 `X.py` / `_X_html.py` 中附录 B 的重复 owner helper；仅允许同行或上一行带非空 `# OWNER_REUSE_EXCEPTION: ...` 的命中。
+  - 验收: S9 文件存在检查通过；`test_provider_owner_reuse.py` 6 passed；`validate_extraction_rules.py` 通过；ruff 新增测试文件通过；全量 unit 1187 passed + 264 subtests。
 - [ ] S10: docs 占位生成 + probe_status 默认实现
 
 ### 阶段 B：AI 接入最小闭环（S11A-S13）
