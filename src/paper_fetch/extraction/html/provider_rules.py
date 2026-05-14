@@ -5,7 +5,7 @@ from __future__ import annotations
 import copy
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Callable, Mapping
+from typing import Any, Mapping
 
 from ...common_patterns import EXTENDED_DATA_LABEL
 from ...quality.html_signals import (
@@ -358,7 +358,17 @@ IEEE_SITE_RULE_OVERRIDES: dict[str, Any] = {
 
 @dataclass(frozen=True)
 class ProviderCleanupRules:
-    policy: CleanupPolicy
+    markdown_promo_tokens: tuple[str, ...] = ()
+    extraction_cleanup_selectors: tuple[str, ...] = ()
+    dom_postprocess_cleanup_selectors: tuple[str, ...] = ()
+    chrome_section_headings: tuple[str, ...] = ()
+    chrome_attr_tokens: tuple[str, ...] = ()
+    license_link_hosts: tuple[str, ...] = ()
+    license_link_path_prefixes: tuple[str, ...] = ()
+    license_word_limit: int = 0
+    extraction_drop_keywords: tuple[str, ...] = ()
+    access_block_text_tokens: tuple[str, ...] = ()
+    post_content_break_tokens: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -370,8 +380,8 @@ class ProviderFrontMatterRules:
 
 @dataclass(frozen=True)
 class ProviderFormulaRules:
-    formula_container_tokens: tuple[str, ...] = ()
-    display_formula_selectors: tuple[str, ...] = ()
+    container_tokens: tuple[str, ...] = ()
+    display_selectors: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -385,76 +395,112 @@ class ProviderHeadingRules:
 
 
 @dataclass(frozen=True)
+class DomHooks:
+    pass
+
+
+@dataclass(frozen=True)
+class MarkdownHooks:
+    pass
+
+
+def _empty_blocking_fallback_signals(_html: str) -> list[str]:
+    return []
+
+
+def _empty_availability_policy() -> AvailabilityPolicy:
+    return AvailabilityPolicy(name="")
+
+
+def _merged_site_rule_from_overrides(
+    site_rule_overrides: Mapping[str, Any],
+) -> dict[str, Any]:
+    merged = copy.deepcopy(DEFAULT_SITE_RULE)
+    for key, value in site_rule_overrides.items():
+        default_value = merged.get(key)
+        if isinstance(default_value, list):
+            merged[key] = [
+                *default_value,
+                *[item for item in value if item not in default_value],
+            ]
+            continue
+        if isinstance(default_value, set):
+            merged[key] = set(default_value) | set(value)
+            continue
+        merged[key] = copy.deepcopy(value)
+    return merged
+
+
+def _availability_container_rules_from_site_rule_overrides(
+    site_rule_overrides: Mapping[str, Any],
+) -> AvailabilityContainerRules:
+    site_rule = _merged_site_rule_from_overrides(site_rule_overrides)
+    return AvailabilityContainerRules(
+        candidate_selectors=tuple(site_rule.get("candidate_selectors") or ()),
+        remove_selectors=tuple(site_rule.get("remove_selectors") or ()),
+        drop_keywords=tuple(site_rule.get("drop_keywords") or ()),
+        drop_texts=tuple(site_rule.get("drop_text") or ()),
+        drop_tags=AVAILABILITY_DROP_TAGS,
+        browser_workflow_drop_tags=BROWSER_WORKFLOW_DROP_TAGS,
+        browser_workflow_short_text_patterns=BROWSER_WORKFLOW_SHORT_TEXT_PATTERNS,
+    )
+
+
+def _availability_policy_with_defaults(
+    provider_name: str,
+    cleanup: ProviderCleanupRules,
+    availability: AvailabilityPolicy,
+) -> AvailabilityPolicy:
+    empty_container_rules = AvailabilityContainerRules()
+    container_rules = availability.container_rules
+    if container_rules == empty_container_rules:
+        container_rules = _availability_container_rules_from_site_rule_overrides(
+            availability.site_rule_overrides
+        )
+    return AvailabilityPolicy(
+        name=availability.name or provider_name,
+        container_rules=container_rules,
+        site_rule_overrides=availability.site_rule_overrides,
+        positive_signals=availability.positive_signals or default_positive_signals,
+        blocking_fallback_signals=(
+            availability.blocking_fallback_signals
+            or _empty_blocking_fallback_signals
+        ),
+        availability_overrides=(
+            availability.availability_overrides or no_availability_overrides
+        ),
+        access_block_text_tokens=(
+            availability.access_block_text_tokens or cleanup.access_block_text_tokens
+        ),
+    )
+
+
+@dataclass(frozen=True)
 class ProviderHtmlRules:
     name: str
     aliases: tuple[str, ...] = ()
     noise_profile: str = DEFAULT_NOISE_PROFILE
-    markdown_promo_tokens: tuple[str, ...] = ()
-    formula_container_tokens: tuple[str, ...] = ()
-    display_formula_selectors: tuple[str, ...] = ()
-    supplementary_text_tokens: tuple[str, ...] = ()
-    extraction_cleanup_selectors: tuple[str, ...] = ()
-    dom_postprocess_cleanup_selectors: tuple[str, ...] = ()
-    chrome_section_headings: tuple[str, ...] = ()
-    chrome_attr_tokens: tuple[str, ...] = ()
-    license_link_hosts: tuple[str, ...] = ()
-    license_link_path_prefixes: tuple[str, ...] = ()
-    license_word_limit: int = 0
-    extraction_drop_keywords: tuple[str, ...] = ()
-    heading_normalizations: Mapping[str, str] = field(default_factory=dict)
-    availability_site_rule_overrides: Mapping[str, Any] = field(default_factory=dict)
-    access_block_text_tokens: tuple[str, ...] = ()
-    front_matter_exact_texts: tuple[str, ...] = GENERIC_FRONT_MATTER_EXACT_TEXTS
-    front_matter_contains_tokens: tuple[str, ...] = ()
-    front_matter_publication_keywords: tuple[str, ...] = ()
-    positive_signals: Callable[[str], tuple[list[str], list[str], list[str]]] = (
-        default_positive_signals
+    cleanup: ProviderCleanupRules = field(default_factory=ProviderCleanupRules)
+    front_matter: ProviderFrontMatterRules = field(
+        default_factory=ProviderFrontMatterRules
     )
-    blocking_fallback_signals: Callable[[str], list[str]] = lambda _html: []
-    availability_overrides: Callable[..., tuple[list[str], list[str], list[str]]] = (
-        no_availability_overrides
-    )
+    formula: ProviderFormulaRules = field(default_factory=ProviderFormulaRules)
+    assets: ProviderAssetRules = field(default_factory=ProviderAssetRules)
+    heading: ProviderHeadingRules = field(default_factory=ProviderHeadingRules)
+    availability: AvailabilityPolicy = field(default_factory=_empty_availability_policy)
+    dom_hooks: DomHooks = field(default_factory=DomHooks)
+    markdown_hooks: MarkdownHooks = field(default_factory=MarkdownHooks)
 
-    @property
-    def cleanup(self) -> ProviderCleanupRules:
-        return ProviderCleanupRules(policy=_cleanup_policy_from_rules(self))
-
-    @property
-    def availability(self) -> AvailabilityPolicy:
-        return AvailabilityPolicy(
-            name=self.name,
-            container_rules=_availability_container_rules_from_rules(self),
-            site_rule_overrides=self.availability_site_rule_overrides,
-            positive_signals=self.positive_signals,
-            blocking_fallback_signals=self.blocking_fallback_signals,
-            availability_overrides=self.availability_overrides,
-            access_block_text_tokens=self.access_block_text_tokens,
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "availability",
+            _availability_policy_with_defaults(
+                self.name,
+                self.cleanup,
+                self.availability,
+            ),
         )
-
-    @property
-    def front_matter(self) -> ProviderFrontMatterRules:
-        return ProviderFrontMatterRules(
-            exact_texts=self.front_matter_exact_texts,
-            contains_tokens=self.front_matter_contains_tokens,
-            publication_keywords=self.front_matter_publication_keywords,
-        )
-
-    @property
-    def formula(self) -> ProviderFormulaRules:
-        return ProviderFormulaRules(
-            formula_container_tokens=self.formula_container_tokens,
-            display_formula_selectors=self.display_formula_selectors,
-        )
-
-    @property
-    def assets(self) -> ProviderAssetRules:
-        return ProviderAssetRules(
-            supplementary_text_tokens=self.supplementary_text_tokens,
-        )
-
-    @property
-    def heading(self) -> ProviderHeadingRules:
-        return ProviderHeadingRules(normalizations=self.heading_normalizations)
 
 
 GENERIC_HTML_RULES = ProviderHtmlRules(name=DEFAULT_NOISE_PROFILE)
@@ -464,75 +510,120 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
         "science": ProviderHtmlRules(
             name="science",
             aliases=("aaas",),
-            availability_site_rule_overrides=SCIENCE_SITE_RULE_OVERRIDES,
-            front_matter_exact_texts=SCIENCE_FRONT_MATTER_EXACT_TEXTS,
-            front_matter_contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
-            front_matter_publication_keywords=SCIENCE_FRONT_MATTER_PUBLICATION_KEYWORDS,
-            positive_signals=science_positive_signals,
-            blocking_fallback_signals=science_blocking_fallback_signals,
-            availability_overrides=science_availability_overrides,
+            availability=AvailabilityPolicy(
+                name="science",
+                site_rule_overrides=SCIENCE_SITE_RULE_OVERRIDES,
+                positive_signals=science_positive_signals,
+                blocking_fallback_signals=science_blocking_fallback_signals,
+                availability_overrides=science_availability_overrides,
+            ),
+            front_matter=ProviderFrontMatterRules(
+                exact_texts=SCIENCE_FRONT_MATTER_EXACT_TEXTS,
+                contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
+                publication_keywords=SCIENCE_FRONT_MATTER_PUBLICATION_KEYWORDS,
+            ),
         ),
         "pnas": ProviderHtmlRules(
             name="pnas",
             noise_profile="pnas",
-            markdown_promo_tokens=PNAS_MARKDOWN_PROMO_TOKENS,
-            extraction_drop_keywords=("signup-alert-ad", "tab-nav"),
-            availability_site_rule_overrides=PNAS_SITE_RULE_OVERRIDES,
-            front_matter_exact_texts=PNAS_FRONT_MATTER_EXACT_TEXTS,
-            front_matter_contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
-            front_matter_publication_keywords=PNAS_FRONT_MATTER_PUBLICATION_KEYWORDS,
-            blocking_fallback_signals=pnas_blocking_fallback_signals,
+            cleanup=ProviderCleanupRules(
+                markdown_promo_tokens=PNAS_MARKDOWN_PROMO_TOKENS,
+                extraction_drop_keywords=("signup-alert-ad", "tab-nav"),
+            ),
+            availability=AvailabilityPolicy(
+                name="pnas",
+                site_rule_overrides=PNAS_SITE_RULE_OVERRIDES,
+                blocking_fallback_signals=pnas_blocking_fallback_signals,
+            ),
+            front_matter=ProviderFrontMatterRules(
+                exact_texts=PNAS_FRONT_MATTER_EXACT_TEXTS,
+                contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
+                publication_keywords=PNAS_FRONT_MATTER_PUBLICATION_KEYWORDS,
+            ),
         ),
         "elsevier": ProviderHtmlRules(
             name="elsevier",
-            availability_overrides=elsevier_availability_overrides,
+            availability=AvailabilityPolicy(
+                name="elsevier",
+                availability_overrides=elsevier_availability_overrides,
+            ),
         ),
         "springer_nature": ProviderHtmlRules(
             name="springer_nature",
             aliases=("springer", "nature"),
             noise_profile="springer_nature",
-            markdown_promo_tokens=SPRINGER_NATURE_MARKDOWN_PROMO_TOKENS,
-            formula_container_tokens=SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS,
-            display_formula_selectors=SPRINGER_NATURE_DISPLAY_FORMULA_SELECTORS,
-            supplementary_text_tokens=SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS,
-            chrome_section_headings=SPRINGER_NATURE_CHROME_SECTION_HEADINGS,
-            chrome_attr_tokens=SPRINGER_NATURE_CHROME_ATTR_TOKENS,
-            license_link_hosts=SPRINGER_NATURE_LICENSE_LINK_HOSTS,
-            license_link_path_prefixes=SPRINGER_NATURE_LICENSE_LINK_PATH_PREFIXES,
-            license_word_limit=SPRINGER_NATURE_LICENSE_WORD_LIMIT,
-            heading_normalizations={"online methods": "Methods"},
-            availability_overrides=springer_availability_overrides,
+            cleanup=ProviderCleanupRules(
+                markdown_promo_tokens=SPRINGER_NATURE_MARKDOWN_PROMO_TOKENS,
+                chrome_section_headings=SPRINGER_NATURE_CHROME_SECTION_HEADINGS,
+                chrome_attr_tokens=SPRINGER_NATURE_CHROME_ATTR_TOKENS,
+                license_link_hosts=SPRINGER_NATURE_LICENSE_LINK_HOSTS,
+                license_link_path_prefixes=SPRINGER_NATURE_LICENSE_LINK_PATH_PREFIXES,
+                license_word_limit=SPRINGER_NATURE_LICENSE_WORD_LIMIT,
+            ),
+            formula=ProviderFormulaRules(
+                container_tokens=SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS,
+                display_selectors=SPRINGER_NATURE_DISPLAY_FORMULA_SELECTORS,
+            ),
+            assets=ProviderAssetRules(
+                supplementary_text_tokens=SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS,
+            ),
+            heading=ProviderHeadingRules(normalizations={"online methods": "Methods"}),
+            availability=AvailabilityPolicy(
+                name="springer_nature",
+                availability_overrides=springer_availability_overrides,
+            ),
         ),
         "wiley": ProviderHtmlRules(
             name="wiley",
-            formula_container_tokens=WILEY_FORMULA_CONTAINER_TOKENS,
-            extraction_drop_keywords=("citation-tools", "publicationhistory"),
-            availability_site_rule_overrides=WILEY_SITE_RULE_OVERRIDES,
-            front_matter_exact_texts=WILEY_FRONT_MATTER_EXACT_TEXTS,
-            front_matter_contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
-            blocking_fallback_signals=wiley_blocking_fallback_signals,
+            cleanup=ProviderCleanupRules(
+                extraction_drop_keywords=("citation-tools", "publicationhistory"),
+            ),
+            formula=ProviderFormulaRules(
+                container_tokens=WILEY_FORMULA_CONTAINER_TOKENS,
+            ),
+            availability=AvailabilityPolicy(
+                name="wiley",
+                site_rule_overrides=WILEY_SITE_RULE_OVERRIDES,
+                blocking_fallback_signals=wiley_blocking_fallback_signals,
+            ),
+            front_matter=ProviderFrontMatterRules(
+                exact_texts=WILEY_FRONT_MATTER_EXACT_TEXTS,
+                contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
+            ),
         ),
         "ams": ProviderHtmlRules(
             name="ams",
-            markdown_promo_tokens=AMS_MARKDOWN_PROMO_TOKENS,
-            dom_postprocess_cleanup_selectors=AMS_DOM_POSTPROCESS_CLEANUP_SELECTORS,
-            availability_site_rule_overrides=AMS_SITE_RULE_OVERRIDES,
-            front_matter_exact_texts=AMS_FRONT_MATTER_EXACT_TEXTS,
-            front_matter_contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
-            front_matter_publication_keywords=AMS_FRONT_MATTER_PUBLICATION_KEYWORDS,
-            positive_signals=ams_positive_signals,
-            blocking_fallback_signals=ams_blocking_fallback_signals,
+            cleanup=ProviderCleanupRules(
+                markdown_promo_tokens=AMS_MARKDOWN_PROMO_TOKENS,
+                dom_postprocess_cleanup_selectors=AMS_DOM_POSTPROCESS_CLEANUP_SELECTORS,
+            ),
+            availability=AvailabilityPolicy(
+                name="ams",
+                site_rule_overrides=AMS_SITE_RULE_OVERRIDES,
+                positive_signals=ams_positive_signals,
+                blocking_fallback_signals=ams_blocking_fallback_signals,
+            ),
+            front_matter=ProviderFrontMatterRules(
+                exact_texts=AMS_FRONT_MATTER_EXACT_TEXTS,
+                contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
+                publication_keywords=AMS_FRONT_MATTER_PUBLICATION_KEYWORDS,
+            ),
         ),
         "ieee": ProviderHtmlRules(
             name="ieee",
             noise_profile="ieee",
-            markdown_promo_tokens=IEEE_MARKDOWN_PROMO_TOKENS,
-            extraction_cleanup_selectors=IEEE_EXTRACTION_CLEANUP_SELECTORS,
-            extraction_drop_keywords=IEEE_AVAILABILITY_DROP_KEYWORDS,
-            availability_site_rule_overrides=IEEE_SITE_RULE_OVERRIDES,
-            access_block_text_tokens=IEEE_ACCESS_BLOCK_TEXT_TOKENS,
-            positive_signals=ieee_positive_signals,
-            blocking_fallback_signals=ieee_blocking_fallback_signals,
+            cleanup=ProviderCleanupRules(
+                markdown_promo_tokens=IEEE_MARKDOWN_PROMO_TOKENS,
+                extraction_cleanup_selectors=IEEE_EXTRACTION_CLEANUP_SELECTORS,
+                extraction_drop_keywords=IEEE_AVAILABILITY_DROP_KEYWORDS,
+                access_block_text_tokens=IEEE_ACCESS_BLOCK_TEXT_TOKENS,
+            ),
+            availability=AvailabilityPolicy(
+                name="ieee",
+                site_rule_overrides=IEEE_SITE_RULE_OVERRIDES,
+                positive_signals=ieee_positive_signals,
+                blocking_fallback_signals=ieee_blocking_fallback_signals,
+            ),
         ),
     }
 )
@@ -566,61 +657,44 @@ def provider_html_rules(name: str | None) -> ProviderHtmlRules:
 
 
 def merged_site_rule(rules: ProviderHtmlRules) -> dict[str, Any]:
-    merged = copy.deepcopy(DEFAULT_SITE_RULE)
-    for key, value in rules.availability_site_rule_overrides.items():
-        default_value = merged.get(key)
-        if isinstance(default_value, list):
-            merged[key] = [
-                *default_value,
-                *[item for item in value if item not in default_value],
-            ]
-            continue
-        if isinstance(default_value, set):
-            merged[key] = set(default_value) | set(value)
-            continue
-        merged[key] = copy.deepcopy(value)
-    return merged
+    return _merged_site_rule_from_overrides(rules.availability.site_rule_overrides)
 
 
 def _availability_container_rules_from_rules(
     rules: ProviderHtmlRules,
 ) -> AvailabilityContainerRules:
-    site_rule = merged_site_rule(rules)
-    return AvailabilityContainerRules(
-        candidate_selectors=tuple(site_rule.get("candidate_selectors") or ()),
-        remove_selectors=tuple(site_rule.get("remove_selectors") or ()),
-        drop_keywords=tuple(site_rule.get("drop_keywords") or ()),
-        drop_texts=tuple(site_rule.get("drop_text") or ()),
-        drop_tags=AVAILABILITY_DROP_TAGS,
-        browser_workflow_drop_tags=BROWSER_WORKFLOW_DROP_TAGS,
-        browser_workflow_short_text_patterns=BROWSER_WORKFLOW_SHORT_TEXT_PATTERNS,
+    return _availability_container_rules_from_site_rule_overrides(
+        rules.availability.site_rule_overrides
     )
 
 
 def _cleanup_policy_from_rules(rules: ProviderHtmlRules) -> CleanupPolicy:
+    cleanup = rules.cleanup
+    front_matter = rules.front_matter
     return build_cleanup_policy(
         rules.noise_profile,
         markdown_contains_tokens=(
             *COMMON_MARKDOWN_PROMO_TOKENS,
-            *rules.markdown_promo_tokens,
+            *cleanup.markdown_promo_tokens,
         ),
-        provider_markdown_promo_tokens=rules.markdown_promo_tokens,
-        extraction_cleanup_selectors=rules.extraction_cleanup_selectors,
-        dom_postprocess_cleanup_selectors=rules.dom_postprocess_cleanup_selectors,
-        chrome_section_headings=rules.chrome_section_headings,
-        chrome_attr_tokens=rules.chrome_attr_tokens,
-        license_link_hosts=rules.license_link_hosts,
-        license_link_path_prefixes=rules.license_link_path_prefixes,
-        license_word_limit=rules.license_word_limit,
-        extraction_drop_keywords=rules.extraction_drop_keywords,
-        front_matter_exact_texts=rules.front_matter_exact_texts,
-        front_matter_contains_tokens=rules.front_matter_contains_tokens,
-        front_matter_publication_keywords=rules.front_matter_publication_keywords,
+        provider_markdown_promo_tokens=cleanup.markdown_promo_tokens,
+        extraction_cleanup_selectors=cleanup.extraction_cleanup_selectors,
+        dom_postprocess_cleanup_selectors=cleanup.dom_postprocess_cleanup_selectors,
+        chrome_section_headings=cleanup.chrome_section_headings,
+        chrome_attr_tokens=cleanup.chrome_attr_tokens,
+        license_link_hosts=cleanup.license_link_hosts,
+        license_link_path_prefixes=cleanup.license_link_path_prefixes,
+        license_word_limit=cleanup.license_word_limit,
+        extraction_drop_keywords=cleanup.extraction_drop_keywords,
+        front_matter_exact_texts=front_matter.exact_texts,
+        front_matter_contains_tokens=front_matter.contains_tokens,
+        front_matter_publication_keywords=front_matter.publication_keywords,
+        post_content_cutoff_tokens=cleanup.post_content_break_tokens,
     )
 
 
 def cleanup_policy_for_profile(noise_profile: str | None) -> CleanupPolicy:
-    return provider_html_rules(noise_profile).cleanup.policy
+    return _cleanup_policy_from_rules(provider_html_rules(noise_profile))
 
 
 def availability_rules_for_provider(provider: str | None) -> AvailabilityPolicy:
@@ -694,11 +768,11 @@ def _dedupe_tuple(values: list[str]) -> tuple[str, ...]:
 
 
 def provider_formula_container_tokens(noise_profile: str | None) -> tuple[str, ...]:
-    return formula_rules_for_provider(noise_profile).formula_container_tokens
+    return formula_rules_for_provider(noise_profile).container_tokens
 
 
 def provider_display_formula_selectors(noise_profile: str | None) -> tuple[str, ...]:
-    return formula_rules_for_provider(noise_profile).display_formula_selectors
+    return formula_rules_for_provider(noise_profile).display_selectors
 
 
 def provider_supplementary_text_tokens(noise_profile: str | None) -> tuple[str, ...]:
@@ -708,14 +782,14 @@ def provider_supplementary_text_tokens(noise_profile: str | None) -> tuple[str, 
 def all_provider_formula_container_tokens() -> tuple[str, ...]:
     values: list[str] = []
     for rules in PROVIDER_HTML_RULES.values():
-        values.extend(rules.formula_container_tokens)
+        values.extend(rules.formula.container_tokens)
     return _dedupe_tuple(values)
 
 
 def all_provider_display_formula_selectors() -> tuple[str, ...]:
     values: list[str] = []
     for rules in PROVIDER_HTML_RULES.values():
-        values.extend(rules.display_formula_selectors)
+        values.extend(rules.formula.display_selectors)
     return _dedupe_tuple(values)
 
 
@@ -732,6 +806,8 @@ __all__ = [
     "IEEE_EXTRACTION_CLEANUP_SELECTORS",
     "IEEE_MARKDOWN_PROMO_TOKENS",
     "IEEE_SITE_RULE_OVERRIDES",
+    "DomHooks",
+    "MarkdownHooks",
     "PNAS_MARKDOWN_PROMO_TOKENS",
     "PNAS_SITE_RULE_OVERRIDES",
     "PNAS_FRONT_MATTER_PUBLICATION_KEYWORDS",

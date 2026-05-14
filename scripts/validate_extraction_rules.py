@@ -37,31 +37,31 @@ UNLINKED_FIXTURES_END = "<!-- extraction-rules-unlinked-fixtures:end -->"
 LOW_COVERAGE_MARKERS = ("测试覆盖度低", "单测试规则")
 PROVIDER_RULE_REQUIREMENTS = {
     "science": {
-        "availability_site_rule_overrides",
+        "availability.site_rule_overrides",
     },
     "pnas": {
-        "availability_site_rule_overrides",
-        "markdown_promo_tokens",
+        "availability.site_rule_overrides",
+        "cleanup.markdown_promo_tokens",
     },
     "springer_nature": {
-        "chrome_attr_tokens",
-        "chrome_section_headings",
-        "license_link_hosts",
-        "license_link_path_prefixes",
-        "license_word_limit",
-        "markdown_promo_tokens",
+        "cleanup.chrome_attr_tokens",
+        "cleanup.chrome_section_headings",
+        "cleanup.license_link_hosts",
+        "cleanup.license_link_path_prefixes",
+        "cleanup.license_word_limit",
+        "cleanup.markdown_promo_tokens",
     },
     "wiley": {
-        "availability_site_rule_overrides",
+        "availability.site_rule_overrides",
     },
     "ieee": {
-        "access_block_text_tokens",
-        "availability_site_rule_overrides",
-        "extraction_cleanup_selectors",
-        "markdown_promo_tokens",
+        "availability.site_rule_overrides",
+        "cleanup.access_block_text_tokens",
+        "cleanup.extraction_cleanup_selectors",
+        "cleanup.markdown_promo_tokens",
     },
     "ams": {
-        "dom_postprocess_cleanup_selectors",
+        "cleanup.dom_postprocess_cleanup_selectors",
     },
 }
 
@@ -547,7 +547,9 @@ def validate_provider_rule_registry() -> list[str]:
                     f"provider HTML rules registry alias `{alias}` does not resolve to provider: {provider}"
                 )
         for field_name in sorted(required_fields):
-            value = getattr(rules, field_name)
+            value: object = rules
+            for field_part in field_name.split("."):
+                value = getattr(value, field_part)
             if not value:
                 errors.append(
                     f"provider HTML rules registry provider `{provider}` is missing required `{field_name}`"

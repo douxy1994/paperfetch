@@ -355,7 +355,7 @@ def ieee_blocking_fallback_signals(html_text: str) -> list[str]:
     signals: list[str] = []
     if any(
         token in lowered
-        for token in provider_html_rules("ieee").access_block_text_tokens
+        for token in provider_html_rules("ieee").cleanup.access_block_text_tokens
     ):
         signals.append("ieee_access_or_challenge_page")
     if BeautifulSoup is not None:

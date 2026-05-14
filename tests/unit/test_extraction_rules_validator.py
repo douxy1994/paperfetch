@@ -251,7 +251,7 @@ class ExtractionRulesValidatorUnitTests(unittest.TestCase):
     def test_provider_rule_registry_reports_missing_required_rule_field(self) -> None:
         with mock.patch.dict(
             validator.PROVIDER_RULE_REQUIREMENTS,
-            {"science": {"markdown_promo_tokens"}},
+            {"science": {"cleanup.markdown_promo_tokens"}},
             clear=True,
         ):
             errors = validator.validate_provider_rule_registry()
@@ -260,7 +260,7 @@ class ExtractionRulesValidatorUnitTests(unittest.TestCase):
             errors,
             [
                 "provider HTML rules registry provider `science` is missing required "
-                "`markdown_promo_tokens`"
+                "`cleanup.markdown_promo_tokens`"
             ],
         )
 

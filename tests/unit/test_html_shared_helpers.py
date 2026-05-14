@@ -35,7 +35,9 @@ from paper_fetch.extraction.html.provider_rules import (
     front_matter_exact_texts_for_profile,
     front_matter_publication_keywords_for_profile,
     markdown_promo_tokens_for_profile,
+    provider_display_formula_selectors,
     provider_html_rules,
+    provider_supplementary_text_tokens,
 )
 from paper_fetch.extraction.html.inline import normalize_html_inline_text
 from paper_fetch.extraction.html.tables import render_table_markdown
@@ -1091,20 +1093,20 @@ Important body text.
         self.assertNotIn("Sign up for PNAS alerts.", pnas_cleaned)
 
     def test_html_cleanup_rules_merge_generic_and_provider_tokens(self) -> None:
-        generic_rules = html_runtime.html_cleanup_rules()
-        pnas_rules = html_runtime.html_cleanup_rules("pnas")
+        generic_cleanup = html_runtime.html_cleanup_rules()
+        pnas_cleanup = html_runtime.html_cleanup_rules("pnas")
 
-        self.assertIn("toolbar", generic_rules.attr_tokens)
-        self.assertIn("toolbar", pnas_rules.attr_tokens)
-        self.assertNotIn("signup-alert-ad", generic_rules.attr_tokens)
-        self.assertIn("signup-alert-ad", pnas_rules.attr_tokens)
+        self.assertIn("toolbar", generic_cleanup.attr_tokens)
+        self.assertIn("toolbar", pnas_cleanup.attr_tokens)
+        self.assertNotIn("signup-alert-ad", generic_cleanup.attr_tokens)
+        self.assertIn("signup-alert-ad", pnas_cleanup.attr_tokens)
         self.assertNotIn(
             "sign up for pnas alerts",
-            generic_rules.markdown_promo_tokens,
+            generic_cleanup.markdown_promo_tokens,
         )
         self.assertIn(
             "sign up for pnas alerts",
-            pnas_rules.markdown_promo_tokens,
+            pnas_cleanup.markdown_promo_tokens,
         )
 
     def test_cleanup_policy_preserves_generic_runtime_tokens(self) -> None:
@@ -1133,7 +1135,7 @@ Important body text.
         self.assertIn("learn more", pnas_policy.markdown_contains_tokens)
         self.assertIn("sign up for pnas alerts", pnas_policy.markdown_contains_tokens)
         self.assertEqual(
-            provider_html_rules("pnas").markdown_promo_tokens,
+            provider_html_rules("pnas").cleanup.markdown_promo_tokens,
             pnas_policy.provider_markdown_promo_tokens,
         )
 
@@ -1193,25 +1195,32 @@ Important body text.
             extraction_cleanup_selectors_for_profile("ams"),
         )
 
-    def test_provider_html_rules_exposes_compatible_child_rule_objects(self) -> None:
+    def test_provider_html_rules_exposes_facet_rule_objects(self) -> None:
         rules = provider_html_rules("springer_nature")
 
-        self.assertEqual(rules.cleanup.policy.name, rules.noise_profile)
         self.assertEqual(
-            rules.availability.availability_overrides,
-            rules.availability_overrides,
+            cleanup_policy_for_profile("springer_nature").name,
+            rules.noise_profile,
         )
         self.assertEqual(
-            rules.formula.display_formula_selectors,
-            rules.display_formula_selectors,
+            rules.availability.availability_overrides,
+            availability_rules_for_provider(
+                "springer_nature"
+            ).availability_overrides,
+        )
+        self.assertEqual(
+            rules.formula.display_selectors,
+            provider_display_formula_selectors("springer_nature"),
         )
         self.assertEqual(
             rules.assets.supplementary_text_tokens,
-            rules.supplementary_text_tokens,
+            provider_supplementary_text_tokens("springer_nature"),
         )
         self.assertEqual(
-            availability_rules_for_provider("springer_nature").availability_overrides,
-            rules.availability_overrides,
+            rules.availability.availability_overrides,
+            availability_rules_for_provider(
+                "springer_nature"
+            ).availability_overrides,
         )
 
     def test_front_matter_publication_keywords_keep_atypon_browser_workflow_provider_scoped(
@@ -1588,9 +1597,9 @@ Important body text.
         self.assertNotIn("c-article-equation", GENERIC_FORMULA_CONTAINER_TOKENS)
         self.assertNotIn("fallback__mathequation", GENERIC_FORMULA_CONTAINER_TOKENS)
         self.assertNotIn(".c-article-equation", GENERIC_DISPLAY_FORMULA_SELECTORS)
-        self.assertIn("c-article-equation", springer_rules.formula_container_tokens)
-        self.assertIn(".c-article-equation", springer_rules.display_formula_selectors)
-        self.assertIn("fallback__mathequation", wiley_rules.formula_container_tokens)
+        self.assertIn("c-article-equation", springer_rules.formula.container_tokens)
+        self.assertIn(".c-article-equation", springer_rules.formula.display_selectors)
+        self.assertIn("fallback__mathequation", wiley_rules.formula.container_tokens)
 
     def test_provider_formula_container_tokens_require_explicit_profile(self) -> None:
         soup = BeautifulSoup(

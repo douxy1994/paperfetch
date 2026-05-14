@@ -4,7 +4,10 @@ from dataclasses import FrozenInstanceError
 
 import pytest
 
-from paper_fetch.extraction.html.availability_policy import AvailabilityContainerRules
+from paper_fetch.extraction.html.availability_policy import (
+    AvailabilityContainerRules,
+    AvailabilityPolicy,
+)
 from paper_fetch.extraction.html.cleanup_policy import (
     AVAILABILITY_DROP_TAGS,
     BROWSER_WORKFLOW_DROP_TAGS,
@@ -21,12 +24,15 @@ from paper_fetch.extraction.html.provider_rules import (
 def test_availability_container_rules_round_trip_from_site_rule_overrides() -> None:
     rules = ProviderHtmlRules(
         name="custom",
-        availability_site_rule_overrides={
-            "candidate_selectors": ["article", ".custom-article"],
-            "remove_selectors": [".custom-remove"],
-            "drop_keywords": {"custom-chrome"},
-            "drop_text": {"Custom action"},
-        },
+        availability=AvailabilityPolicy(
+            name="custom",
+            site_rule_overrides={
+                "candidate_selectors": ["article", ".custom-article"],
+                "remove_selectors": [".custom-remove"],
+                "drop_keywords": {"custom-chrome"},
+                "drop_text": {"Custom action"},
+            },
+        ),
     )
 
     merged = merged_site_rule(rules)

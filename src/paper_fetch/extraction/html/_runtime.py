@@ -501,8 +501,8 @@ def _looks_like_promo_block(
     lowered = normalize_text(text).lower()
     if not lowered:
         return False
-    cleanup_rules = rules or html_cleanup_rules(noise_profile)
-    return any(token in lowered for token in cleanup_rules.markdown_promo_tokens)
+    cleanup_profile = rules or html_cleanup_rules(noise_profile)
+    return any(token in lowered for token in cleanup_profile.markdown_promo_tokens)
 
 
 def _looks_like_caption_block(text: str) -> bool:

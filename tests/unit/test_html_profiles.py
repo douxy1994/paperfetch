@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from paper_fetch.extraction.html.availability_policy import AvailabilityPolicy
 from paper_fetch.extraction.html.provider_rules import (
     ProviderHtmlRules,
     merged_site_rule,
@@ -35,11 +36,14 @@ def test_site_rule_for_publisher_matches_merged_site_rule(
 def test_merged_site_rule_returns_independent_copy() -> None:
     rules = ProviderHtmlRules(
         name="custom",
-        availability_site_rule_overrides={
-            "candidate_selectors": ["article", ".custom-article"],
-            "drop_keywords": {"custom-chrome"},
-            "nested": {"selectors": [".custom-nested"]},
-        },
+        availability=AvailabilityPolicy(
+            name="custom",
+            site_rule_overrides={
+                "candidate_selectors": ["article", ".custom-article"],
+                "drop_keywords": {"custom-chrome"},
+                "nested": {"selectors": [".custom-nested"]},
+            },
+        ),
     )
 
     first = merged_site_rule(rules)

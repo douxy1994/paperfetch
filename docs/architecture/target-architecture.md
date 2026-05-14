@@ -199,7 +199,7 @@ Date: 2026-05-12
 - availability verdict、abstract-only/access hint 和 provider/workflow failure/status 的运行时 reason code 分别集中在 `paper_fetch.quality.reason_codes` 与 `paper_fetch.reason_codes`；`models.schema.ContentKind` 保持显式 Literal，作为 public wire/schema contract，不从运行时常量生成。
 - HTML `HTML_BLOCK_TAGS`、JATS `JATS_BLOCK_LOCAL_NAMES` 和 Elsevier XML block local names 服务三种不同输入标准；它们概念平行但不共享同一个 `BlockElementVocabulary`，除非后续新增 XML dialect 证明抽象能减少真实重复。
 - `paper_fetch.extraction.html.semantics.ANCILLARY_HEADINGS` 负责 DOM section 分类，`MARKDOWN_AUXILIARY_HEADINGS` 负责渲染后 Markdown 清理；两者可有词面重叠但不能合并为同一集合。
-- 旧 Nature `Methods Summary` / `Online Methods` 归一化只作为渲染后兼容逻辑保留在 section model 层，Springer/Nature provider 仍通过 `ProviderHtmlRules.heading_normalizations` 声明自己的 heading normalizer。
+- 旧 Nature `Methods Summary` / `Online Methods` 归一化只作为渲染后兼容逻辑保留在 section model 层，Springer/Nature provider 仍通过 `ProviderHtmlRules.heading.normalizations` 声明自己的 heading normalizer。
 - Research Briefing 这类 authorless 质量豁免位于 `paper_fetch.quality.html_signals`，不挂在通用 HTML extraction rule registry 上
 - publisher 私有的 availability override 必须挂在 provider `AvailabilityPolicy` / `ProviderHtmlRules.availability`；promo / front-matter token 扩展必须挂在 provider cleanup/front-matter 子规则，`html_availability` 只负责通用结构分析和驱动注册回调
 - HTML container scoring / selection / cleanup 也位于 `paper_fetch.quality.html_availability`；provider-owned browser workflow 只能通过 selection policy 传入评分 profile、完整祖先优先、页面级 container 避让与 provider refine hook
