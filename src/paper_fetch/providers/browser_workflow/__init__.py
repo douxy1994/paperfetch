@@ -50,11 +50,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "browser_workflow_article_from_payload": (".article", "browser_workflow_article_from_payload"),
     "build_browser_workflow_html_candidates": (".shared", "build_browser_workflow_html_candidates"),
     "build_browser_workflow_pdf_candidates": (".shared", "build_browser_workflow_pdf_candidates"),
-    "download_figure_assets_with_image_document_fetcher": (
-        "paper_fetch.extraction.html.assets",
-        "download_figure_assets_with_image_document_fetcher",
-    ),
-    "download_supplementary_assets": ("paper_fetch.extraction.html.assets", "download_supplementary_assets"),
+    "download_assets": ("paper_fetch.extraction.html.assets", "download_assets"),
     "ensure_runtime_ready": ("paper_fetch.providers._flaresolverr", "ensure_runtime_ready"),
     "extract_pdf_url_from_crossref": (".shared", "extract_pdf_url_from_crossref"),
     "extract_atypon_browser_workflow_markdown": (".html_extraction", "extract_atypon_browser_workflow_markdown"),

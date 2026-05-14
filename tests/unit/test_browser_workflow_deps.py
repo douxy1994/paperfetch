@@ -28,8 +28,7 @@ def test_default_browser_workflow_deps_match_production_functions() -> None:
     assert deps.warm_browser_context_with_flaresolverr is _flaresolverr.warm_browser_context_with_flaresolverr
     assert deps.fetch_seeded_browser_pdf_payload is pdf_fallback.fetch_seeded_browser_pdf_payload
     assert deps.fetch_pdf_with_playwright is _pdf_fallback.fetch_pdf_with_playwright
-    assert deps.download_figure_assets_with_image_document_fetcher is html_assets.download_figure_assets_with_image_document_fetcher
-    assert deps.download_supplementary_assets is html_assets.download_supplementary_assets
+    assert deps.download_assets is html_assets.download_assets
     assert deps.split_body_and_supplementary_assets is html_assets.split_body_and_supplementary_assets
     assert deps.bootstrap_browser_workflow is bootstrap.bootstrap_browser_workflow
     assert deps._build_shared_playwright_file_fetcher is fetchers._build_shared_playwright_file_fetcher

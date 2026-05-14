@@ -397,7 +397,8 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_figure_assets(
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
                 transport,
                 article_id="10.1000/example",
                 assets=[
@@ -433,7 +434,8 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = asset_impl.download_figure_assets(
+            result = asset_impl.download_assets(
+                asset_impl.FIGURE_KIND,
                 transport,
                 article_id="10.1000/example",
                 assets=[
@@ -469,7 +471,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertEqual(transport.calls, [])
         self.assertEqual(result["assets"][0]["downloaded_bytes"], len(png_body(b"injected-image")))
 
-    def test_html_asset_facade_passes_patchable_hooks_without_mutating_asset_impl_globals(self) -> None:
+    def test_html_asset_downloads_pass_patchable_hooks_without_mutating_asset_impl_globals(self) -> None:
         transport = RecordingTransport({})
         impl_opener_builder = mock.Mock(return_value=object())
         facade_opener_builder = mock.Mock(return_value=object())
@@ -488,7 +490,8 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             mock.patch.object(html_assets, "_build_cookie_seeded_opener", facade_opener_builder),
             mock.patch.object(html_assets, "_request_with_opener", facade_requester),
         ):
-            result = html_assets.download_figure_assets(
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
                 transport,
                 article_id="10.1000/example",
                 assets=[
@@ -549,7 +552,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = asset_impl.download_supplementary_assets(
+            result = asset_impl.download_assets(asset_impl.SUPPLEMENTARY_KIND,
                 transport,
                 article_id="10.1000/example",
                 assets=[
@@ -1132,7 +1135,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertEqual(fetcher._recovered_payload_by_url[image_url]["body"], image_body)
         self.assertNotIn("image_payload", fetcher.failure_for(image_url)["recovery_attempts"][0])
 
-    def test_download_figure_assets_with_image_document_fetcher_runs_in_parallel_and_keeps_order(self) -> None:
+    def test_download_assets_figure_kind_with_image_document_fetcher_runs_in_parallel_and_keeps_order(self) -> None:
         class TrackingFetcher:
             def __init__(self) -> None:
                 self.lock = threading.Lock()
@@ -1192,7 +1195,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = asset_impl.download_figure_assets_with_image_document_fetcher(
+            result = asset_impl.download_assets(asset_impl.FIGURE_KIND,
                 RecordingTransport({}),
                 article_id="10.1000/example",
                 assets=assets,
@@ -1206,7 +1209,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertGreaterEqual(fetcher.max_active, 2)
         self.assertEqual([asset["heading"] for asset in result["assets"]], ["Figure 1", "Figure 2", "Figure 3"])
 
-    def test_download_figure_assets_with_image_document_fetcher_runs_single_asset_in_worker_thread(self) -> None:
+    def test_download_assets_figure_kind_with_image_document_fetcher_runs_single_asset_in_worker_thread(self) -> None:
         image_url = "https://example.test/single-figure.png"
         main_thread_id = threading.get_ident()
         thread_ids: list[int] = []
@@ -1233,7 +1236,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = asset_impl.download_figure_assets_with_image_document_fetcher(
+            result = asset_impl.download_assets(asset_impl.FIGURE_KIND,
                 RecordingTransport({}),
                 article_id="10.1000/example",
                 assets=assets,
@@ -1250,7 +1253,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertEqual(len(thread_ids), 1)
         self.assertNotEqual(thread_ids[0], main_thread_id)
 
-    def test_download_figure_assets_with_image_document_fetcher_single_asset_survives_main_thread_conflict(self) -> None:
+    def test_download_assets_figure_kind_with_image_document_fetcher_single_asset_survives_main_thread_conflict(self) -> None:
         image_url = "https://example.test/playwright-conflict.png"
 
         class MainThreadFailingFetcher:
@@ -1294,7 +1297,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = asset_impl.download_figure_assets_with_image_document_fetcher(
+            result = asset_impl.download_assets(asset_impl.FIGURE_KIND,
                 RecordingTransport({}),
                 article_id="10.1000/example",
                 assets=assets,
@@ -1312,7 +1315,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertTrue(fetcher.thread_ids)
         self.assertNotEqual(fetcher.thread_ids[0], fetcher.main_thread_id)
 
-    def test_download_figure_assets_with_image_document_fetcher_preserves_context_error_diagnostic(self) -> None:
+    def test_download_assets_figure_kind_with_image_document_fetcher_preserves_context_error_diagnostic(self) -> None:
         image_url = "https://example.test/context-error.png"
 
         class FailingFetcher:
@@ -1338,7 +1341,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = asset_impl.download_figure_assets_with_image_document_fetcher(
+            result = asset_impl.download_assets(asset_impl.FIGURE_KIND,
                 RecordingTransport({}),
                 article_id="10.1000/example",
                 assets=assets,
@@ -1356,7 +1359,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertEqual(failure["error_type"], "RuntimeError")
         self.assertEqual(failure["error_message"], "sync Playwright context already active")
 
-    def test_download_figure_assets_with_image_document_fetcher_saves_svg_payload(self) -> None:
+    def test_download_assets_figure_kind_with_image_document_fetcher_saves_svg_payload(self) -> None:
         svg_body = b"<svg xmlns='http://www.w3.org/2000/svg'><path d='M0 0h1v1H0z'/></svg>"
         image_url = "https://example.test/figure.svg"
 
@@ -1380,7 +1383,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = asset_impl.download_figure_assets_with_image_document_fetcher(
+            result = asset_impl.download_assets(asset_impl.FIGURE_KIND,
                 RecordingTransport({}),
                 article_id="10.1000/example",
                 assets=assets,
@@ -1423,10 +1426,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                 browser_context_seed={"browser_final_url": "https://www.science.org/doi/full/10.1126/science.assets"},
             ),
         )
-        mocked_figures = mock.Mock(return_value={"assets": [], "asset_failures": []})
-        mocked_supplementary = mock.Mock(
-            return_value={"assets": [], "asset_failures": []}
-        )
+        mocked_download_assets = mock.Mock(return_value={"assets": [], "asset_failures": []})
         deps = browser_workflow_deps(
             load_runtime_config=mock.Mock(return_value=runtime),
             ensure_runtime_ready=mock.Mock(),
@@ -1446,8 +1446,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                     },
                 ]
             ),
-            download_figure_assets_with_image_document_fetcher=mocked_figures,
-            download_supplementary_assets=mocked_supplementary,
+            download_assets=mocked_download_assets,
         )
         client = browser_workflow.BrowserWorkflowClient(
             RecordingTransport({}), {}, deps=deps
@@ -1462,11 +1461,17 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                 Path(tmpdir),
                 asset_profile="body",
                 context=RuntimeContext(env={"PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY": "6"}),
-            )
+        )
 
         self.assertEqual(result, {"assets": [], "asset_failures": []})
-        self.assertEqual(mocked_figures.call_args.kwargs["asset_download_concurrency"], 6)
-        self.assertEqual(mocked_supplementary.call_args.kwargs["asset_download_concurrency"], 6)
+        self.assertEqual(
+            [call.kwargs["asset_download_concurrency"] for call in mocked_download_assets.call_args_list],
+            [6, 6],
+        )
+        self.assertEqual(
+            [call.args[0] for call in mocked_download_assets.call_args_list],
+            [html_assets.FIGURE_KIND, html_assets.SUPPLEMENTARY_KIND],
+        )
 
     def test_shared_playwright_file_fetcher_recovers_after_cloudflare_challenge(self) -> None:
         file_url = "https://example.test/supplement.pdf"
@@ -1555,7 +1560,8 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_figure_assets(
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
                 transport,
                 article_id="10.1000/example",
                 assets=[
@@ -1610,7 +1616,8 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_figure_assets(
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
                 transport,
                 article_id="10.1000/example",
                 assets=[
@@ -1661,7 +1668,8 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             }
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_figure_assets(
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
                 RecordingTransport({}),
                 article_id="10.1109/example",
                 assets=[
@@ -1723,7 +1731,8 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             }
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_figure_assets(
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
                 RecordingTransport({}),
                 article_id="10.1109/example",
                 assets=[

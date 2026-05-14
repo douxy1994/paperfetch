@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import TestCase, mock
 
+from paper_fetch.extraction.html.assets import FIGURE_KIND, SUPPLEMENTARY_KIND
 from paper_fetch.providers.browser_workflow.asset_download import (
     BrowserAssetDownloadPlan,
     BrowserAssetDownloadResult,
@@ -106,12 +107,12 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
             "asset_failures": [],
         }
 
-        mocked_figures = mock.Mock(return_value=body_result)
-        mocked_supplementary = mock.Mock(return_value=supplementary_result)
-        deps = browser_workflow_deps(
-            download_figure_assets_with_image_document_fetcher=mocked_figures,
-            download_supplementary_assets=mocked_supplementary,
+        mocked_download_assets = mock.Mock(
+            side_effect=lambda kind, *_args, **_kwargs: (
+                body_result if kind is FIGURE_KIND else supplementary_result
+            )
         )
+        deps = browser_workflow_deps(download_assets=mocked_download_assets)
 
         result = run_browser_asset_download_attempt(
             plan,
@@ -140,20 +141,23 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
             file_fetcher_factory.call_args.kwargs["attempt_supplementary_assets"],
             plan.supplementary_assets,
         )
-        mocked_figures.assert_called_once()
-        self.assertIs(mocked_figures.call_args.kwargs["image_document_fetcher"], image_fetcher)
-        self.assertEqual(mocked_figures.call_args.kwargs["asset_download_concurrency"], 3)
-        mocked_supplementary.assert_called_once()
+        self.assertEqual(mocked_download_assets.call_count, 2)
+        figure_call = mocked_download_assets.call_args_list[0]
+        supplementary_call = mocked_download_assets.call_args_list[1]
+        self.assertIs(figure_call.args[0], FIGURE_KIND)
+        self.assertIs(figure_call.kwargs["image_document_fetcher"], image_fetcher)
+        self.assertEqual(figure_call.kwargs["asset_download_concurrency"], 3)
+        self.assertIs(supplementary_call.args[0], SUPPLEMENTARY_KIND)
         self.assertIs(
-            mocked_supplementary.call_args.kwargs["file_document_fetcher"],
+            supplementary_call.kwargs["file_document_fetcher"],
             file_fetcher,
         )
         self.assertIs(
-            mocked_supplementary.call_args.kwargs["opener_requester"],
+            supplementary_call.kwargs["opener_requester"],
             opener_requester,
         )
         self.assertEqual(
-            mocked_supplementary.call_args.kwargs["seed_urls"],
+            supplementary_call.kwargs["seed_urls"],
             ["https://example.test/article", "https://example.test/final"],
         )
         image_fetcher.close.assert_called_once()
@@ -237,12 +241,10 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
         mocked_warm = mock.Mock(
             return_value={"browser_final_url": "https://example.test/refreshed"}
         )
-        mocked_figures = mock.Mock(return_value=retry_body_result)
-        mocked_supplementary = mock.Mock()
+        mocked_download_assets = mock.Mock(return_value=retry_body_result)
         deps = browser_workflow_deps(
             refresh_browser_context_seed=mocked_warm,
-            download_figure_assets_with_image_document_fetcher=mocked_figures,
-            download_supplementary_assets=mocked_supplementary,
+            download_assets=mocked_download_assets,
         )
 
         result = retry_failed_browser_assets(
@@ -256,8 +258,9 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
         )
 
         mocked_warm.assert_called_once()
-        self.assertEqual(mocked_figures.call_args.kwargs["assets"], [failed_figure])
-        mocked_supplementary.assert_not_called()
+        mocked_download_assets.assert_called_once()
+        self.assertIs(mocked_download_assets.call_args.args[0], FIGURE_KIND)
+        self.assertEqual(mocked_download_assets.call_args.kwargs["assets"], [failed_figure])
         self.assertEqual(
             sorted(asset["download_url"] for asset in result.body_results),
             [

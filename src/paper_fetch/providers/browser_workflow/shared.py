@@ -28,8 +28,7 @@ class BrowserWorkflowDeps:
     warm_browser_context_with_flaresolverr: Callable[..., Any]
     fetch_seeded_browser_pdf_payload: Callable[..., Any]
     fetch_pdf_with_playwright: Callable[..., Any]
-    download_figure_assets_with_image_document_fetcher: Callable[..., Any]
-    download_supplementary_assets: Callable[..., Any]
+    download_assets: Callable[..., Any]
     split_body_and_supplementary_assets: Callable[..., Any]
     bootstrap_browser_workflow: Callable[..., Any]
     _build_shared_playwright_file_fetcher: Callable[..., Any]
@@ -47,8 +46,7 @@ class BrowserWorkflowDeps:
 def default_browser_workflow_deps() -> BrowserWorkflowDeps:
     """返回生产默认依赖。"""
     from ...extraction.html.assets import (
-        download_figure_assets_with_image_document_fetcher,
-        download_supplementary_assets,
+        download_assets,
         split_body_and_supplementary_assets,
     )
     from .._flaresolverr import (
@@ -84,8 +82,7 @@ def default_browser_workflow_deps() -> BrowserWorkflowDeps:
         warm_browser_context_with_flaresolverr=warm_browser_context_with_flaresolverr,
         fetch_seeded_browser_pdf_payload=fetch_seeded_browser_pdf_payload,
         fetch_pdf_with_playwright=fetch_pdf_with_playwright,
-        download_figure_assets_with_image_document_fetcher=download_figure_assets_with_image_document_fetcher,
-        download_supplementary_assets=download_supplementary_assets,
+        download_assets=download_assets,
         split_body_and_supplementary_assets=split_body_and_supplementary_assets,
         bootstrap_browser_workflow=bootstrap_browser_workflow,
         _build_shared_playwright_file_fetcher=_build_shared_playwright_file_fetcher,

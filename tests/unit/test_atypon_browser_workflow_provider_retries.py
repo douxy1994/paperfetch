@@ -136,9 +136,11 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "science", doi)
             mocked_warm = mock.Mock(return_value={"browser_final_url": article_url})
-            mocked_figures = mock.Mock(return_value=figure_result)
-            mocked_supplementary = mock.Mock(
-                side_effect=[supplementary_failure, supplementary_success]
+            supplementary_results = iter([supplementary_failure, supplementary_success])
+            mocked_download_assets = mock.Mock(
+                side_effect=lambda kind, *_args, **_kwargs: (
+                    figure_result if kind is html_assets.FIGURE_KIND else next(supplementary_results)
+                )
             )
             client = browser_workflow.BrowserWorkflowClient(
                 AssetTransport({}),
@@ -150,8 +152,7 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                         return_value=[figure_asset, supplementary_asset]
                     ),
                     refresh_browser_context_seed=mocked_warm,
-                    download_figure_assets_with_image_document_fetcher=mocked_figures,
-                    download_supplementary_assets=mocked_supplementary,
+                    download_assets=mocked_download_assets,
                 ),
             )
             client.name = "science"
@@ -172,11 +173,15 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
             )
 
         mocked_warm.assert_called_once()
-        mocked_figures.assert_called_once()
-        self.assertEqual(mocked_figures.call_args.kwargs["assets"], [figure_asset])
-        self.assertEqual(mocked_supplementary.call_count, 2)
-        self.assertEqual(mocked_supplementary.call_args_list[0].kwargs["assets"], [supplementary_asset])
-        self.assertEqual(mocked_supplementary.call_args_list[1].kwargs["assets"], [supplementary_asset])
+        figure_calls = [call for call in mocked_download_assets.call_args_list if call.args[0] is html_assets.FIGURE_KIND]
+        supplementary_calls = [
+            call for call in mocked_download_assets.call_args_list if call.args[0] is html_assets.SUPPLEMENTARY_KIND
+        ]
+        self.assertEqual(len(figure_calls), 1)
+        self.assertEqual(figure_calls[0].kwargs["assets"], [figure_asset])
+        self.assertEqual(len(supplementary_calls), 2)
+        self.assertEqual(supplementary_calls[0].kwargs["assets"], [supplementary_asset])
+        self.assertEqual(supplementary_calls[1].kwargs["assets"], [supplementary_asset])
         self.assertEqual(
             [(asset["kind"], asset["download_url"]) for asset in result["assets"]],
             [
@@ -260,10 +265,12 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "science", doi)
             mocked_warm = mock.Mock(return_value={"browser_final_url": article_url})
-            mocked_figures = mock.Mock(
-                side_effect=[initial_body_result, retry_body_result]
+            body_results = iter([initial_body_result, retry_body_result])
+            mocked_download_assets = mock.Mock(
+                side_effect=lambda kind, *_args, **_kwargs: (
+                    next(body_results) if kind is html_assets.FIGURE_KIND else supplementary_result
+                )
             )
-            mocked_supplementary = mock.Mock(return_value=supplementary_result)
             client = browser_workflow.BrowserWorkflowClient(
                 AssetTransport({}),
                 {},
@@ -274,8 +281,7 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                         return_value=[first_figure, second_figure, supplementary_asset]
                     ),
                     refresh_browser_context_seed=mocked_warm,
-                    download_figure_assets_with_image_document_fetcher=mocked_figures,
-                    download_supplementary_assets=mocked_supplementary,
+                    download_assets=mocked_download_assets,
                 ),
             )
             client.name = "science"
@@ -296,11 +302,15 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
             )
 
         mocked_warm.assert_called_once()
-        self.assertEqual(mocked_figures.call_count, 2)
-        self.assertEqual(mocked_figures.call_args_list[0].kwargs["assets"], [first_figure, second_figure])
-        self.assertEqual(mocked_figures.call_args_list[1].kwargs["assets"], [first_figure])
-        mocked_supplementary.assert_called_once()
-        self.assertEqual(mocked_supplementary.call_args.kwargs["assets"], [supplementary_asset])
+        figure_calls = [call for call in mocked_download_assets.call_args_list if call.args[0] is html_assets.FIGURE_KIND]
+        supplementary_calls = [
+            call for call in mocked_download_assets.call_args_list if call.args[0] is html_assets.SUPPLEMENTARY_KIND
+        ]
+        self.assertEqual(len(figure_calls), 2)
+        self.assertEqual(figure_calls[0].kwargs["assets"], [first_figure, second_figure])
+        self.assertEqual(figure_calls[1].kwargs["assets"], [first_figure])
+        self.assertEqual(len(supplementary_calls), 1)
+        self.assertEqual(supplementary_calls[0].kwargs["assets"], [supplementary_asset])
         self.assertEqual(
             sorted((asset["kind"], asset["download_url"]) for asset in result["assets"]),
             [

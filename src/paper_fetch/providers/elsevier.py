@@ -57,7 +57,7 @@ from ..quality.html_availability import (
     assess_plain_text_fulltext_availability,
     assess_structured_article_fulltext_availability,
 )
-from ..extraction.html.assets import download_supplementary_assets as download_generic_supplementary_assets
+from ..extraction.html.assets import SUPPLEMENTARY_KIND, download_assets
 from ..extraction.html.signals import ASSET_BLOCKING_REASON_TOKENS
 from .base import (
     ProviderArtifacts,
@@ -545,7 +545,8 @@ def download_elsevier_related_assets(
     downloads.extend(list(body_result.get("assets") or []))
     failures.extend(list(body_result.get("asset_failures") or []))
 
-    supplementary_result = download_generic_supplementary_assets(
+    supplementary_result = download_assets(
+        SUPPLEMENTARY_KIND,
         transport,
         article_id=doi,
         assets=[

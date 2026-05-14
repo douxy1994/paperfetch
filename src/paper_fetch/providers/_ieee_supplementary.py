@@ -12,8 +12,9 @@ from typing import Any, Mapping
 from ..config import resolve_asset_download_concurrency
 from ..extraction.html import decode_html
 from ..extraction.html.assets import (
-    download_figure_assets,
-    download_supplementary_assets,
+    FIGURE_KIND,
+    SUPPLEMENTARY_KIND,
+    download_assets,
     split_body_and_supplementary_assets,
 )
 from ..extraction.html.assets.supplementary import (
@@ -411,7 +412,8 @@ def download_ieee_related_assets(
     seed_urls = [canonical_landing_url] if canonical_landing_url else []
     concurrency = resolve_asset_download_concurrency(env)
     body_result = (
-        download_figure_assets(
+        download_assets(
+            FIGURE_KIND,
             transport,
             article_id=article_id,
             assets=body_assets,
@@ -426,7 +428,8 @@ def download_ieee_related_assets(
         else empty_asset_results()
     )
     supplementary_result = (
-        download_supplementary_assets(
+        download_assets(
+            SUPPLEMENTARY_KIND,
             transport,
             article_id=article_id,
             assets=supplementary_assets,

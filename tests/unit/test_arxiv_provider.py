@@ -1530,7 +1530,7 @@ class ArxivProviderTests(unittest.TestCase):
                 tempfile.TemporaryDirectory() as tmpdir,
                 mock.patch.object(
                     html_assets,
-                    "download_figure_assets",
+                    "download_assets",
                     side_effect=[
                         {
                             "assets": [initial_download],

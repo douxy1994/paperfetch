@@ -446,7 +446,8 @@ class ArxivClient(ProviderClient):
         ) or _arxiv_id_from_metadata_or_doi(doi, merged_metadata or {})
         article_id = arxiv_id or normalize_text(doi) or raw_payload.source_url
         asset_download_concurrency = _arxiv_asset_download_concurrency(context.env)
-        initial_result = html_assets.download_figure_assets(
+        initial_result = html_assets.download_assets(
+            html_assets.FIGURE_KIND,
             self.transport,
             article_id=article_id,
             assets=extracted_assets,
@@ -462,7 +463,8 @@ class ArxivClient(ProviderClient):
         )
         if not retry_assets:
             return initial_result
-        retry_result = html_assets.download_figure_assets(
+        retry_result = html_assets.download_assets(
+            html_assets.FIGURE_KIND,
             self.transport,
             article_id=article_id,
             assets=retry_assets,

@@ -822,7 +822,7 @@ class SpringerClient(ProviderClient):
             or normalize_text(str(metadata.get("title") or ""))
             or raw_payload.source_url
         )
-        return _springer_html.download_figure_assets(
+        return _springer_html.download_assets_for_springer(
             self.transport,
             article_id=article_id,
             assets=article_assets,

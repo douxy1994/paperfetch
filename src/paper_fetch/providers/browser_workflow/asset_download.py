@@ -8,6 +8,8 @@ import threading
 from typing import Any, Callable, Mapping
 
 from ...extraction.html.assets import (
+    FIGURE_KIND,
+    SUPPLEMENTARY_KIND,
     extract_scoped_html_assets,
 )
 from ...models import AssetProfile
@@ -241,7 +243,9 @@ def _run_browser_asset_download_attempt(
         if callable(figure_page_fetcher_factory)
         else raw_figure_page_fetcher
     )
-    seed_urls_getter = lambda: _seed_urls_for(recovery, attempt_seed)
+    def seed_urls_getter() -> list[str]:
+        return _seed_urls_for(recovery, attempt_seed)
+
     image_document_fetcher = _build_attempt_image_fetcher(
         recovery,
         attempt_seed=attempt_seed,
@@ -262,7 +266,8 @@ def _run_browser_asset_download_attempt(
     )
     try:
         body_result = (
-            deps.download_figure_assets_with_image_document_fetcher(
+            deps.download_assets(
+                FIGURE_KIND,
                 attempt_settings.get("transport"),
                 article_id=plan.article_id,
                 assets=attempt_body_assets,
@@ -289,7 +294,8 @@ def _run_browser_asset_download_attempt(
                 "opener_requester"
             ]
         supplementary_result = (
-            deps.download_supplementary_assets(
+            deps.download_assets(
+                SUPPLEMENTARY_KIND,
                 attempt_settings.get("transport"),
                 article_id=plan.article_id,
                 assets=attempt_supplementary_assets,

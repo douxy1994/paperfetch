@@ -33,7 +33,7 @@ class AtyponBrowserWorkflowProviderAssetFailureTests(AtyponBrowserWorkflowProvid
         )
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_figure_assets_with_image_document_fetcher(
+            result = html_assets.download_assets(html_assets.FIGURE_KIND,
                 AssetTransport({}),
                 article_id="10.1126/science.adz3492",
                 assets=[asset],

@@ -483,7 +483,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
         )
         self.assertNotIn("gcb16414-sup-0001-FigureS1.docx", body_html)
 
-    def test_download_supplementary_assets_uses_wiley_filename_hint_for_octet_stream(
+    def test_download_assets_supplementary_kind_uses_wiley_filename_hint_for_octet_stream(
         self,
     ) -> None:
         supplement_url = (
@@ -502,7 +502,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
             }
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_supplementary_assets(
+            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.1111/gcb.16414",
                 assets=[
@@ -526,7 +526,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
             Path(result["assets"][0]["path"]).name, "gcb16414-sup-0001-FigureS1.docx"
         )
 
-    def test_download_supplementary_assets_routes_source_data_into_subdirectory(
+    def test_download_assets_supplementary_kind_routes_source_data_into_subdirectory(
         self,
     ) -> None:
         """rule: rule-springer-supplementary-scope"""
@@ -550,7 +550,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
             return responses[url]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_supplementary_assets(
+            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.1000/example",
                 assets=[
@@ -584,7 +584,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
                 asset_paths[1].parent.parent.name, "10.1000_example_assets"
             )
 
-    def test_download_supplementary_assets_with_only_source_data_creates_only_source_data_subdirectory(
+    def test_download_assets_supplementary_kind_with_only_source_data_creates_only_source_data_subdirectory(
         self,
     ) -> None:
         """rule: rule-springer-supplementary-scope"""
@@ -600,7 +600,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
-            result = html_assets.download_supplementary_assets(
+            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.1000/source-only",
                 assets=[
@@ -816,7 +816,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
 
         self.assertEqual(candidates[0], "https://example.test/full.png")
 
-    def test_download_figure_assets_resolves_http_candidates_in_parallel_but_writes_in_order(
+    def test_download_assets_figure_kind_resolves_http_candidates_in_parallel_but_writes_in_order(
         self,
     ) -> None:
         urls = [f"https://example.test/fig{i}.png" for i in range(4)]
@@ -833,7 +833,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_figure_assets(
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
                 transport,
                 article_id="10.5555/parallel",
                 assets=assets,
@@ -849,7 +850,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
         )
         self.assertEqual(result["asset_failures"], [])
 
-    def test_download_figure_assets_respects_explicit_concurrency_limit(self) -> None:
+    def test_download_assets_figure_kind_respects_explicit_concurrency_limit(self) -> None:
         urls = [f"https://example.test/serial-fig{i}.png" for i in range(3)]
         transport = _DelayedAssetTransport({url: 0.01 for url in urls})
         assets = [
@@ -864,7 +865,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_figure_assets(
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
                 transport,
                 article_id="10.5555/serial",
                 assets=assets,
@@ -880,7 +882,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
             [asset["heading"] for asset in assets],
         )
 
-    def test_download_supplementary_assets_resolves_files_in_parallel_but_writes_in_order(
+    def test_download_assets_supplementary_kind_resolves_files_in_parallel_but_writes_in_order(
         self,
     ) -> None:
         urls = [f"https://example.test/supp{i}.pdf" for i in range(4)]
@@ -915,7 +917,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_supplementary_assets(
+            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.5555/parallel",
                 assets=assets,
@@ -933,7 +935,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
         )
         self.assertEqual(result["asset_failures"], [])
 
-    def test_download_supplementary_assets_respects_explicit_concurrency_limit(
+    def test_download_assets_supplementary_kind_respects_explicit_concurrency_limit(
         self,
     ) -> None:
         urls = [f"https://example.test/serial-supp{i}.pdf" for i in range(3)]
@@ -968,7 +970,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_supplementary_assets(
+            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.5555/serial",
                 assets=assets,

@@ -35,25 +35,20 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(
                 _ieee_supplementary,
-                "download_figure_assets",
+                "download_assets",
                 return_value={"assets": [], "asset_failures": []},
             ) as mocked_download:
-                with mock.patch.object(
-                    _ieee_supplementary,
-                    "download_supplementary_assets",
-                    return_value={"assets": [], "asset_failures": []},
-                ) as mocked_supplementary:
-                    result = client.download_related_assets(
-                        doi,
-                        {"doi": doi, "landing_page_url": landing_url},
-                        raw_payload,
-                        Path(tmpdir),
-                        asset_profile="body",
-                    )
+                result = client.download_related_assets(
+                    doi,
+                    {"doi": doi, "landing_page_url": landing_url},
+                    raw_payload,
+                    Path(tmpdir),
+                    asset_profile="body",
+                )
 
         self.assertEqual(result, {"assets": [], "asset_failures": []})
         mocked_download.assert_called_once()
-        mocked_supplementary.assert_not_called()
+        self.assertIs(mocked_download.call_args.args[0], _ieee_supplementary.FIGURE_KIND)
         self.assertEqual(mocked_download.call_args.kwargs["seed_urls"], [landing_url])
         self.assertEqual(mocked_download.call_args.kwargs["headers"]["Referer"], landing_url)
         passed_assets = mocked_download.call_args.kwargs["assets"]

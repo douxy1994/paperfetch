@@ -12,8 +12,9 @@ import xml.etree.ElementTree as ET
 from ..config import build_user_agent, resolve_asset_download_concurrency
 from ..extraction.html._metadata import merge_html_metadata
 from ..extraction.html.assets import (
-    download_figure_assets,
-    download_supplementary_assets,
+    FIGURE_KIND,
+    SUPPLEMENTARY_KIND,
+    download_assets,
     html_asset_identity_key,
     split_body_and_supplementary_assets,
 )
@@ -624,7 +625,8 @@ class CopernicusClient(ProviderClient):
         )
         seed_urls: list[str] = []
         body_result = (
-            download_figure_assets(
+            download_assets(
+                FIGURE_KIND,
                 self.transport,
                 article_id=article_id,
                 assets=downloadable_body_assets,
@@ -639,7 +641,8 @@ class CopernicusClient(ProviderClient):
             else empty_asset_results()
         )
         supplementary_result = (
-            download_supplementary_assets(
+            download_assets(
+                SUPPLEMENTARY_KIND,
                 self.transport,
                 article_id=article_id,
                 assets=supplementary_assets,

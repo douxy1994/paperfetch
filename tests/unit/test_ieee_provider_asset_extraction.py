@@ -368,7 +368,7 @@ class IeeeProviderAssetExtractionTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             with mock.patch.object(
                 _ieee_supplementary,
-                "download_figure_assets",
+                "download_assets",
                 return_value={"assets": [], "asset_failures": []},
             ) as mocked_download:
                 client.download_related_assets(
@@ -379,6 +379,7 @@ class IeeeProviderAssetExtractionTests(unittest.TestCase):
                     asset_profile="body",
                 )
 
+        self.assertIs(mocked_download.call_args.args[0], _ieee_supplementary.FIGURE_KIND)
         passed_assets = mocked_download.call_args.kwargs["assets"]
         self.assertTrue(all(str(item["url"]).startswith("https://") for item in passed_assets))
         self.assertTrue(all(str(item["full_size_url"]).startswith("https://") for item in passed_assets))

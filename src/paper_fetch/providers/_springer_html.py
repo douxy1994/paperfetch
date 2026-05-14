@@ -10,11 +10,12 @@ from ..common_patterns import EXTENDED_DATA_LABEL, FIGURE_LABEL_CORE_PATTERN
 from ..extraction.html import decode_html as _decode_html
 from ..extraction.html.assets import (
     FULL_SIZE_IMAGE_ATTRS,
+    FIGURE_KIND,
     PREVIEW_IMAGE_ATTRS,
     FigurePageFetcher,
+    SUPPLEMENTARY_KIND,
     _soup_attr_url,
-    download_figure_assets as download_generic_figure_assets,
-    download_supplementary_assets as download_generic_supplementary_assets,
+    download_assets,
     extract_figure_assets as extract_generic_figure_assets,
     extract_formula_assets as extract_generic_formula_assets,
     extract_supplementary_assets as extract_generic_supplementary_assets,
@@ -1253,7 +1254,7 @@ def figure_download_candidates(
     return deduped
 
 
-def download_figure_assets(
+def download_assets_for_springer(
     transport,
     *,
     article_id: str,
@@ -1267,7 +1268,8 @@ def download_figure_assets(
     asset_download_concurrency: int | None = None,
 ):
     body_assets, supplementary_assets = split_body_and_supplementary_assets(assets)
-    body_result = download_generic_figure_assets(
+    body_result = download_assets(
+        FIGURE_KIND,
         transport,
         article_id=article_id,
         assets=body_assets,
@@ -1280,7 +1282,8 @@ def download_figure_assets(
         candidate_builder=figure_download_candidates,
         asset_download_concurrency=asset_download_concurrency,
     )
-    supplementary_result = download_generic_supplementary_assets(
+    supplementary_result = download_assets(
+        SUPPLEMENTARY_KIND,
         transport,
         article_id=article_id,
         assets=supplementary_assets,
