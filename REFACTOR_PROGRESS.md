@@ -52,7 +52,10 @@
   - commit: 64a96f5
   - 摘要: 新增 `onboard_from_manifests.py` discovery/start dry-run 入口，生成 `discover-manifest` task DAG 与 worker brief；补齐 discovery brief 机器合约文档和 `agent-task-brief.md`；测试覆盖 brief 搜索要求、allow/deny 写入范围、无 LLM SDK 依赖和 manifest replay 路径。
   - 验收: S11A 文件/help/dry-run grep 通过；`test_manifest_discovery_brief.py` / `test_onboard_from_manifests.py` 7 passed；`python3 -m ruff check .` 通过；`validate_extraction_rules.py` 通过；全量 unit 1200 passed + 264 subtests。
-- [ ] S11: ProviderManifest schema + manifests
+- [x] S11: ProviderManifest schema + manifests
+  - commit: ac4b669
+  - 摘要: 新增 AI onboarding README、ProviderManifest JSON Schema/字段说明、`known-providers.yml`，以及 `arxiv` / `copernicus` / `wiley` 三份现有 provider replay manifest；dev 依赖加入 `jsonschema`，测试校验 schema 合法、manifest 样例、禁用占位值和 known-providers 与 runtime catalog 同步。
+  - 验收: S11 文件/禁词 grep 通过；`test_provider_manifest_schema.py` / `test_known_providers_sync.py` 5 passed；`python3 -m ruff check .` 通过；`validate_extraction_rules.py` 通过；全量 unit 1205 passed + 264 subtests。
 - [ ] S12: scaffold --from-manifest
 - [ ] S13: manifest ↔ bundle 同步 lint（含 sync-back）
 
