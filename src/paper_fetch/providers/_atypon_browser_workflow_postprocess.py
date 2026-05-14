@@ -3,8 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
 
+from ..extraction.html.provider_rules import MarkdownHooks
 from ..markdown.citations import (
     clean_citation_markers,
     normalize_inline_citation_markdown,
@@ -31,12 +31,15 @@ def normalize_equation_markdown_blocks(markdown_text: str) -> str:
 def normalize_browser_workflow_markdown(
     markdown_text: str,
     *,
-    markdown_postprocess: Callable[..., Any] | None = None,
+    markdown_hooks: MarkdownHooks | None = None,
 ) -> str:
     # Shared cleanup runs for every browser-workflow publisher before any
     # provider-specific markdown hook, such as Science citation italic repair.
     normalized = normalize_equation_markdown_blocks(markdown_text)
     normalized = clean_citation_markers(normalized)
-    if markdown_postprocess is not None:
-        normalized = str(markdown_postprocess(normalized))
+    normalize_markdown = (
+        markdown_hooks.normalize_markdown if markdown_hooks is not None else None
+    )
+    if normalize_markdown is not None:
+        normalized = normalize_markdown(normalized)
     return normalize_inline_citation_markdown(normalized)

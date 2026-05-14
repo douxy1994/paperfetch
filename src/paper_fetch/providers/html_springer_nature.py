@@ -97,6 +97,7 @@ SPRINGER_NATURE_FIGURE_LINE_PATTERNS = (
     SPRINGER_NATURE_EXTENDED_DATA_FIGURE_LINE_PATTERN,
     SPRINGER_NATURE_SOURCE_DATA_LINE_PATTERN,
 )
+SPRINGER_NATURE_CLEANUP_CONTEXT = "extraction"
 
 
 def is_springer_nature_url(url: str) -> bool:
@@ -241,7 +242,7 @@ def _prune_springer_nature_chrome(root: Any) -> None:
             classify_dom_cleanup_node(
                 node,
                 policy=cleanup_policy,
-                stage="extraction",
+                stage=SPRINGER_NATURE_CLEANUP_CONTEXT,
                 text=text,
             ).action
             == "drop"

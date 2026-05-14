@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from functools import partial
-from typing import Any, Callable, Mapping
+import re
+from typing import Any, Mapping
 
+from ..extraction.html.semantics import normalize_heading, parse_markdown_heading
 from ..quality.html_profiles import pnas_blocking_fallback_signals
 from ..utils import normalize_text
 from ._html_authors import (
@@ -47,31 +49,34 @@ def extract_authors(html_text: str) -> list[str]:
     return _AUTHOR_EXTRACTION_PIPELINE(html_text)
 
 
-def dom_postprocess(container: Any, *, stage: str | None = None) -> None:
-    if normalize_text(stage).lower() != "before_block_normalization":
-        return
-
-    from .atypon_browser_workflow.profile import _drop_promotional_blocks, _promo_block_tokens
+def pnas_before_block_normalization(container: Any) -> None:
+    from .atypon_browser_workflow.profile import (
+        _drop_promotional_blocks,
+        _promo_block_tokens,
+    )
 
     _drop_promotional_blocks(container, promo_block_tokens=_promo_block_tokens("pnas"))
 
 
-def markdown_postprocess(
-    markdown_text: str,
-    *,
-    stage: str | None = None,
-    original_markdown: str | None = None,
-    has_heading: Callable[[str, str], bool] | None = None,
-    **context: Any,
-) -> str:
-    del context
-    if stage == "missing_abstract" and has_heading is not None:
-        source_markdown = original_markdown or ""
-        if has_heading(source_markdown, "significance") and has_heading(
-            source_markdown, "abstract"
-        ):
-            return ""
-    return markdown_text
+def _pnas_markdown_has_heading(markdown_text: str, heading_text: str) -> bool:
+    normalized_target = normalize_heading(heading_text)
+    if not normalized_target:
+        return False
+    for block in re.split(r"\n\s*\n", markdown_text):
+        heading_info = parse_markdown_heading(block)
+        if heading_info is None:
+            continue
+        _, current_heading = heading_info
+        if normalize_heading(current_heading) == normalized_target:
+            return True
+    return False
+
+
+def pnas_suppress_missing_abstract(source_markdown: str) -> bool:
+    return _pnas_markdown_has_heading(
+        source_markdown,
+        "significance",
+    ) and _pnas_markdown_has_heading(source_markdown, "abstract")
 
 
 def extract_asset_html_scopes(

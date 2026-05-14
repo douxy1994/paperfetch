@@ -777,7 +777,10 @@ def _normalize_figure_blocks(container: Tag, publisher: str) -> None:
 
 
 def _normalize_special_blocks(container: Tag, publisher: str) -> list[dict[str, str]]:
-    _apply_dom_postprocess(container, publisher, stage="before_block_normalization")
+    profile = _publisher_profile(publisher)
+    hook = profile.dom_hooks.before_block_normalization
+    if hook is not None:
+        hook(container)
     _normalize_abstract_blocks(container)
     _normalize_display_formula_blocks(container)
     _normalize_inline_math_nodes(container)
@@ -785,14 +788,10 @@ def _normalize_special_blocks(container: Tag, publisher: str) -> list[dict[str, 
     table_entries = _normalize_table_blocks(container)
     _normalize_figure_blocks(container, publisher)
     _normalize_non_table_inline_blocks(container)
-    _apply_dom_postprocess(container, publisher, stage="after_block_normalization")
+    hook = profile.dom_hooks.after_block_normalization
+    if hook is not None:
+        hook(container)
     return table_entries
-
-
-def _apply_dom_postprocess(container: Tag, publisher: str, *, stage: str) -> None:
-    profile = _publisher_profile(publisher)
-    if profile.dom_postprocess is not None:
-        profile.dom_postprocess(container, stage=stage)
 
 
 __all__ = [
@@ -842,7 +841,6 @@ __all__ = [
     "_drop_front_matter_teaser_figures",
     "_drop_table_blocks",
     "_figure_like_nodes",
-    "_apply_dom_postprocess",
     "_table_cell_data",
     "_table_rows",
     "_table_header_row_count",

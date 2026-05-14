@@ -24,10 +24,7 @@ from .._html_asset_engine import (
     HtmlAssetExtractionPolicy,
     extract_scoped_assets_with_policy,
 )
-from .normalization import (
-    _apply_dom_postprocess,
-    _normalize_abstract_blocks,
-)
+from .normalization import _normalize_abstract_blocks
 from .profile import (
     HEADING_TAG_PATTERN,
     _container_selection_policy,
@@ -199,9 +196,11 @@ def extract_browser_workflow_asset_html_scopes(
     supplementary_container = copy.deepcopy(container)
     body_container = copy.deepcopy(container)
     _normalize_abstract_blocks(body_container)
-    _apply_dom_postprocess(body_container, publisher, stage="asset_body_container")
 
     profile = _publisher_profile(publisher)
+    hook = profile.dom_hooks.asset_body_container
+    if hook is not None:
+        hook(body_container)
     if profile.extract_asset_html_scopes is not None:
         return profile.extract_asset_html_scopes(
             body_container,

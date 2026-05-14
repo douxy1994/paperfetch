@@ -20,7 +20,6 @@ from ...quality.html_availability import (
 from ...utils import normalize_text
 from .._atypon_browser_workflow_profiles import publisher_profile as _publisher_profile
 from .normalization import (
-    _apply_dom_postprocess,
     _drop_table_blocks,
     _normalize_abstract_blocks,
     _normalize_special_blocks,
@@ -76,9 +75,12 @@ def extract_browser_workflow_markdown(
     )
     from ...extraction.html.assets import extract_figure_assets
 
+    profile = _publisher_profile(publisher)
     asset_container = copy.deepcopy(container)
     _normalize_abstract_blocks(asset_container)
-    _apply_dom_postprocess(asset_container, publisher, stage="asset_figure_extraction")
+    hook = profile.dom_hooks.asset_figure_extraction
+    if hook is not None:
+        hook(asset_container)
     _drop_table_blocks(asset_container)
     figure_assets = extract_figure_assets(
         _content_fragment_html(asset_container, publisher=publisher), source_url
@@ -88,7 +90,9 @@ def extract_browser_workflow_markdown(
     abstract_sections = _abstract_section_payloads(container)
     abstract_block_texts = _abstract_block_texts_from_payloads(abstract_sections)
     body_container = copy.deepcopy(container)
-    _apply_dom_postprocess(body_container, publisher, stage="body_container")
+    hook = profile.dom_hooks.body_container
+    if hook is not None:
+        hook(body_container)
     section_hints = collect_html_section_hints(
         body_container,
         title=title,

@@ -202,6 +202,7 @@ Date: 2026-05-12
 - 旧 Nature `Methods Summary` / `Online Methods` 归一化只作为渲染后兼容逻辑保留在 section model 层，Springer/Nature provider 仍通过 `ProviderHtmlRules.heading.normalizations` 声明自己的 heading normalizer。
 - Research Briefing 这类 authorless 质量豁免位于 `paper_fetch.quality.html_signals`，不挂在通用 HTML extraction rule registry 上
 - publisher 私有的 availability override 必须挂在 provider `AvailabilityPolicy` / `ProviderHtmlRules.availability`；promo / front-matter token 扩展必须挂在 provider cleanup/front-matter 子规则，`html_availability` 只负责通用结构分析和驱动注册回调
+- provider-owned browser workflow 的 DOM / Markdown 后处理只能通过 `ProviderHtmlRules.dom_hooks` / `ProviderHtmlRules.markdown_hooks` 的 typed callable 字段注册；不得恢复 `stage="..."` 字符串 dispatch 或 provider 模块反射表。
 - HTML container scoring / selection / cleanup 也位于 `paper_fetch.quality.html_availability`；provider-owned browser workflow 只能通过 selection policy 传入评分 profile、完整祖先优先、页面级 container 避让与 provider refine hook
 - section hint heading key、dict/object coercion 与顺序匹配位于 `paper_fetch.extraction.section_hints`，HTML semantics 层复用该实现；`models.SectionHint` 只是 dataclass 适配层
 - 旧的 `paper_fetch.providers._html_access_signals`、`_html_availability`、`_html_citations`、`_html_semantics`、`_html_tables` 与 `_language_filter` 兼容转发入口已移除；测试和新代码必须直接使用上述 canonical owner

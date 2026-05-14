@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import fields
 import unittest
 
 from paper_fetch.providers import (
@@ -48,7 +49,12 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
         for name in ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES:
             with self.subTest(provider=name):
                 profile = publisher_profile(name)
-                self.assertIsNotNone(profile.dom_postprocess)
+                self.assertTrue(
+                    any(
+                        getattr(profile.dom_hooks, field.name) is not None
+                        for field in fields(profile.dom_hooks)
+                    )
+                )
                 self.assertIsNotNone(profile.scoped_asset_extractor)
 
         self.assertIsNotNone(publisher_profile("science").is_front_matter_teaser_figure)

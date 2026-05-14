@@ -9,7 +9,7 @@ from importlib import import_module
 from types import ModuleType
 from typing import Any, Callable, Mapping
 
-from ..extraction.html.provider_rules import provider_html_rules
+from ..extraction.html.provider_rules import DomHooks, MarkdownHooks, provider_html_rules
 from ..provider_catalog import (
     PROVIDER_CATALOG,
     provider_base_domains,
@@ -56,9 +56,8 @@ class PublisherProfile:
         _html_profiles.default_positive_signals
     )
     blocking_fallback_signals: Callable[[str], list[str]] = lambda _html_text: []
-    markdown_postprocess: Callable[..., Any] | None = None
-    dom_postprocess: Callable[..., None] | None = None
-    post_content_break_tokens: tuple[str, ...] = ()
+    dom_hooks: DomHooks = field(default_factory=DomHooks)
+    markdown_hooks: MarkdownHooks = field(default_factory=MarkdownHooks)
     refine_selected_container: Callable[..., Any] | None = None
     select_content_nodes: Callable[..., list[Any]] | None = None
     finalize_extraction: Callable[..., tuple[str, dict[str, Any]]] | None = None
@@ -70,10 +69,6 @@ class PublisherProfile:
 ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES = tuple(
     name for name in ("science", "pnas", "wiley", "ams") if name in PROVIDER_CATALOG
 )
-POST_CONTENT_BREAK_TOKEN_ATTR_BY_PROVIDER = {
-    "ams": "AMS_POST_CONTENT_BREAK_TOKENS",
-    "science": "SCIENCE_POST_CONTENT_BREAK_TOKENS",
-}
 
 
 def _unsupported_atypon_publisher_message(route_kind: str, publisher: str) -> str:
@@ -110,13 +105,6 @@ def preferred_html_candidate_from_landing_page(
 GENERIC_PROFILE = PublisherProfile(name="generic", hosts=tuple())
 
 
-def _provider_post_content_break_tokens(provider: str, module: ModuleType) -> tuple[str, ...]:
-    attr_name = POST_CONTENT_BREAK_TOKEN_ATTR_BY_PROVIDER.get(provider)
-    if not attr_name:
-        return ()
-    return tuple(getattr(module, attr_name))
-
-
 def publisher_profile(publisher: str | None) -> PublisherProfile:
     normalized = normalize_text(publisher or "").lower()
     module = _publisher_module(normalized)
@@ -135,9 +123,8 @@ def publisher_profile(publisher: str | None) -> PublisherProfile:
         blocking_fallback_signals=(
             availability.blocking_fallback_signals or (lambda _html_text: [])
         ),
-        markdown_postprocess=getattr(module, "markdown_postprocess", None),
-        dom_postprocess=getattr(module, "dom_postprocess", None),
-        post_content_break_tokens=_provider_post_content_break_tokens(normalized, module),
+        dom_hooks=rules.dom_hooks,
+        markdown_hooks=rules.markdown_hooks,
         refine_selected_container=getattr(module, "refine_selected_container", None),
         select_content_nodes=getattr(module, "select_content_nodes", None),
         finalize_extraction=getattr(module, "finalize_extraction", None),

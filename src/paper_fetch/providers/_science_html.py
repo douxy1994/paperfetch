@@ -32,15 +32,6 @@ SCIENCE_IGNORED_AUTHOR_TEXT = {
 }
 SCIENCE_CANONICAL_ABSTRACT_HEADING = "abstract"
 SCIENCE_STRUCTURED_ABSTRACT_HEADING = "structured abstract"
-# SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
-# when publisher text changes.
-# STRUCTURAL_UI_COPY_HOOK: provider-specific post-content cutoff, not generic
-# body denylist.
-SCIENCE_POST_CONTENT_BREAK_TOKENS = (
-    "purchase access to other journals in the science family",
-    "become a aaas member",
-    "activate your aaas id",
-)
 SCIENCE_CITATION_TOKEN_PATTERN = r"(?:\d+[A-Za-z]*|[A-Za-z]+\d+[A-Za-z0-9]*)"
 SCIENCE_CITATION_ITALIC_PATTERNS = (
     re.compile(
@@ -224,17 +215,32 @@ def is_front_matter_teaser_figure(
     return _is_front_matter_teaser_figure(node, abstract_anchor=abstract_anchor)
 
 
-def dom_postprocess(container: Any, *, stage: str | None = None) -> None:
-    if normalize_text(stage).lower() not in {
-        "asset_body_container",
-        "asset_figure_extraction",
-        "before_block_normalization",
-    }:
-        return
-
-    from .atypon_browser_workflow.normalization import _drop_front_matter_teaser_figures
+def _drop_science_front_matter_teaser_figures(container: Any) -> None:
+    from .atypon_browser_workflow.normalization import (
+        _drop_front_matter_teaser_figures,
+    )
 
     _drop_front_matter_teaser_figures(container)
+
+
+def science_before_block_normalization(container: Any) -> None:
+    _drop_science_front_matter_teaser_figures(container)
+
+
+def science_asset_body_container(container: Any) -> None:
+    _drop_science_front_matter_teaser_figures(container)
+
+
+def science_asset_figure_extraction(container: Any) -> None:
+    _drop_science_front_matter_teaser_figures(container)
+
+
+def science_normalize_markdown(markdown_text: str) -> str:
+    return merge_science_citation_italics(markdown_text)
+
+
+def science_keep_unknown_abstract_block(block: str) -> bool:
+    return bool(normalize_text(block))
 
 
 def extract_asset_html_scopes(
@@ -256,14 +262,6 @@ def extract_asset_html_scopes(
     return content_fragment_html(
         body_container, publisher=publisher
     ), supplementary_html
-
-
-def markdown_postprocess(
-    markdown_text: str, *, stage: str | None = None, **context: Any
-) -> str | bool:
-    if stage == "keep_first_unknown_abstract_block":
-        return int(context.get("abstract_prose_blocks_seen") or 0) == 0
-    return merge_science_citation_italics(markdown_text)
 
 
 def merge_science_citation_italics(markdown_text: str) -> str:

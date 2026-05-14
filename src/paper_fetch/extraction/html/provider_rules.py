@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import copy
+import importlib
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Any, Mapping
+from typing import Any, Callable, Mapping
 
 from ...common_patterns import EXTENDED_DATA_LABEL
 from ...quality.html_signals import (
@@ -163,6 +164,15 @@ SCIENCE_FRONT_MATTER_EXACT_TEXTS = (
     *ATYPON_FRONT_MATTER_EXACT_TEXTS,
     *SCIENCE_MASTHEAD_TEXTS,
 )
+# SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
+# when publisher text changes.
+# STRUCTURAL_UI_COPY_HOOK: provider-specific post-content cutoff, not generic
+# body denylist.
+SCIENCE_POST_CONTENT_BREAK_TOKENS = (
+    "purchase access to other journals in the science family",
+    "become a aaas member",
+    "activate your aaas id",
+)
 PNAS_FRONT_MATTER_EXACT_TEXTS = (
     *ATYPON_FRONT_MATTER_EXACT_TEXTS,
     *PNAS_MASTHEAD_TEXTS,
@@ -257,6 +267,19 @@ AMS_MARKDOWN_PROMO_TOKENS = (
     *RELATED_CONTENT_CHROME_TOKENS,
     "most read",
     "most cited",
+)
+# SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
+# when publisher text changes. These tokens stop scanning after the article
+# body; provider_rules handles availability/container chrome before this stage.
+# STRUCTURAL_UI_COPY_HOOK: provider-specific post-content cutoff, not generic
+# body denylist.
+AMS_POST_CONTENT_BREAK_TOKENS = (
+    "article type",
+    "issue section",
+    "most read",
+    "most cited",
+    *RELATED_CONTENT_CHROME_TOKENS,
+    "ams publications",
 )
 AMS_MASTHEAD_TEXTS = ("ams", "bams")
 AMS_FRONT_MATTER_EXACT_TEXTS = (
@@ -396,12 +419,112 @@ class ProviderHeadingRules:
 
 @dataclass(frozen=True)
 class DomHooks:
-    pass
+    before_block_normalization: Callable[[Any], None] | None = None
+    after_block_normalization: Callable[[Any], None] | None = None
+    body_container: Callable[[Any], None] | None = None
+    asset_body_container: Callable[[Any], None] | None = None
+    asset_figure_extraction: Callable[[Any], None] | None = None
 
 
 @dataclass(frozen=True)
 class MarkdownHooks:
-    pass
+    normalize_markdown: Callable[[str], str] | None = None
+    classify_heading: Callable[[str, str | None], str | None] | None = None
+    keep_unknown_abstract_block: Callable[[str], bool] | None = None
+    suppress_missing_abstract: Callable[[str], bool] | None = None
+
+
+def _pnas_hooks_module() -> Any:
+    return importlib.import_module("paper_fetch.providers._pnas_html")
+
+
+def _science_hooks_module() -> Any:
+    return importlib.import_module("paper_fetch.providers._science_html")
+
+
+def _wiley_hooks_module() -> Any:
+    return importlib.import_module("paper_fetch.providers._wiley_html")
+
+
+def _ams_hooks_module() -> Any:
+    return importlib.import_module("paper_fetch.providers._ams_html")
+
+
+def pnas_before_block_normalization(container: Any) -> None:
+    _pnas_hooks_module().pnas_before_block_normalization(container)
+
+
+def pnas_suppress_missing_abstract(source_markdown: str) -> bool:
+    return bool(_pnas_hooks_module().pnas_suppress_missing_abstract(source_markdown))
+
+
+def science_before_block_normalization(container: Any) -> None:
+    _science_hooks_module().science_before_block_normalization(container)
+
+
+def science_asset_body_container(container: Any) -> None:
+    _science_hooks_module().science_asset_body_container(container)
+
+
+def science_asset_figure_extraction(container: Any) -> None:
+    _science_hooks_module().science_asset_figure_extraction(container)
+
+
+def science_normalize_markdown(markdown_text: str) -> str:
+    return str(_science_hooks_module().science_normalize_markdown(markdown_text))
+
+
+def science_keep_unknown_abstract_block(block: str) -> bool:
+    return bool(_science_hooks_module().science_keep_unknown_abstract_block(block))
+
+
+def wiley_before_block_normalization(container: Any) -> None:
+    _wiley_hooks_module().wiley_before_block_normalization(container)
+
+
+def wiley_after_block_normalization(container: Any) -> None:
+    _wiley_hooks_module().wiley_after_block_normalization(container)
+
+
+def wiley_body_container(container: Any) -> None:
+    _wiley_hooks_module().wiley_body_container(container)
+
+
+def wiley_asset_body_container(container: Any) -> None:
+    _wiley_hooks_module().wiley_asset_body_container(container)
+
+
+def ams_before_block_normalization(container: Any) -> None:
+    _ams_hooks_module().ams_before_block_normalization(container)
+
+
+def ams_after_block_normalization(container: Any) -> None:
+    _ams_hooks_module().ams_after_block_normalization(container)
+
+
+def ams_body_container(container: Any) -> None:
+    _ams_hooks_module().ams_body_container(container)
+
+
+def ams_asset_body_container(container: Any) -> None:
+    _ams_hooks_module().ams_asset_body_container(container)
+
+
+def ams_asset_figure_extraction(container: Any) -> None:
+    _ams_hooks_module().ams_asset_figure_extraction(container)
+
+
+def ams_normalize_markdown(markdown_text: str) -> str:
+    return str(_ams_hooks_module().ams_normalize_markdown(markdown_text))
+
+
+def ams_classify_heading(heading: str, title: str | None) -> str | None:
+    result = _ams_hooks_module().ams_classify_heading(heading, title)
+    return str(result) if result is not None else None
+
+
+def ams_keep_unknown_abstract_block(block: str) -> bool:
+    return bool(_ams_hooks_module().ams_keep_unknown_abstract_block(block))
 
 
 def _empty_blocking_fallback_signals(_html: str) -> list[str]:
@@ -510,6 +633,9 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
         "science": ProviderHtmlRules(
             name="science",
             aliases=("aaas",),
+            cleanup=ProviderCleanupRules(
+                post_content_break_tokens=SCIENCE_POST_CONTENT_BREAK_TOKENS,
+            ),
             availability=AvailabilityPolicy(
                 name="science",
                 site_rule_overrides=SCIENCE_SITE_RULE_OVERRIDES,
@@ -521,6 +647,15 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
                 exact_texts=SCIENCE_FRONT_MATTER_EXACT_TEXTS,
                 contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
                 publication_keywords=SCIENCE_FRONT_MATTER_PUBLICATION_KEYWORDS,
+            ),
+            dom_hooks=DomHooks(
+                before_block_normalization=science_before_block_normalization,
+                asset_body_container=science_asset_body_container,
+                asset_figure_extraction=science_asset_figure_extraction,
+            ),
+            markdown_hooks=MarkdownHooks(
+                normalize_markdown=science_normalize_markdown,
+                keep_unknown_abstract_block=science_keep_unknown_abstract_block,
             ),
         ),
         "pnas": ProviderHtmlRules(
@@ -539,6 +674,12 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
                 exact_texts=PNAS_FRONT_MATTER_EXACT_TEXTS,
                 contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
                 publication_keywords=PNAS_FRONT_MATTER_PUBLICATION_KEYWORDS,
+            ),
+            dom_hooks=DomHooks(
+                before_block_normalization=pnas_before_block_normalization,
+            ),
+            markdown_hooks=MarkdownHooks(
+                suppress_missing_abstract=pnas_suppress_missing_abstract,
             ),
         ),
         "elsevier": ProviderHtmlRules(
@@ -590,12 +731,19 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
                 exact_texts=WILEY_FRONT_MATTER_EXACT_TEXTS,
                 contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
             ),
+            dom_hooks=DomHooks(
+                before_block_normalization=wiley_before_block_normalization,
+                after_block_normalization=wiley_after_block_normalization,
+                body_container=wiley_body_container,
+                asset_body_container=wiley_asset_body_container,
+            ),
         ),
         "ams": ProviderHtmlRules(
             name="ams",
             cleanup=ProviderCleanupRules(
                 markdown_promo_tokens=AMS_MARKDOWN_PROMO_TOKENS,
                 dom_postprocess_cleanup_selectors=AMS_DOM_POSTPROCESS_CLEANUP_SELECTORS,
+                post_content_break_tokens=AMS_POST_CONTENT_BREAK_TOKENS,
             ),
             availability=AvailabilityPolicy(
                 name="ams",
@@ -607,6 +755,18 @@ PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = MappingProxyType(
                 exact_texts=AMS_FRONT_MATTER_EXACT_TEXTS,
                 contains_tokens=ATYPON_FRONT_MATTER_CONTAINS_TOKENS,
                 publication_keywords=AMS_FRONT_MATTER_PUBLICATION_KEYWORDS,
+            ),
+            dom_hooks=DomHooks(
+                before_block_normalization=ams_before_block_normalization,
+                after_block_normalization=ams_after_block_normalization,
+                body_container=ams_body_container,
+                asset_body_container=ams_asset_body_container,
+                asset_figure_extraction=ams_asset_figure_extraction,
+            ),
+            markdown_hooks=MarkdownHooks(
+                normalize_markdown=ams_normalize_markdown,
+                classify_heading=ams_classify_heading,
+                keep_unknown_abstract_block=ams_keep_unknown_abstract_block,
             ),
         ),
         "ieee": ProviderHtmlRules(
@@ -814,6 +974,7 @@ __all__ = [
     "AMS_DOM_POSTPROCESS_CLEANUP_SELECTORS",
     "AMS_FRONT_MATTER_PUBLICATION_KEYWORDS",
     "AMS_MARKDOWN_PROMO_TOKENS",
+    "AMS_POST_CONTENT_BREAK_TOKENS",
     "AMS_SITE_RULE_OVERRIDES",
     "PROVIDER_HTML_RULES",
     "ProviderAssetRules",
@@ -824,6 +985,7 @@ __all__ = [
     "ProviderHtmlRules",
     "REGISTERED_NOISE_PROFILES",
     "SCIENCE_FRONT_MATTER_PUBLICATION_KEYWORDS",
+    "SCIENCE_POST_CONTENT_BREAK_TOKENS",
     "SCIENCE_SITE_RULE_OVERRIDES",
     "SPRINGER_NATURE_CHROME_ATTR_TOKENS",
     "SPRINGER_NATURE_CHROME_SECTION_HEADINGS",

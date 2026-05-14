@@ -25,6 +25,7 @@ from ...extraction.html.provider_rules import (
     front_matter_contains_tokens_for_profile,
     front_matter_exact_texts_for_profile,
     front_matter_publication_keywords_for_profile,
+    provider_html_rules,
 )
 from ...extraction.html._runtime import (
     FRONT_MATTER_PUBLICATION_KEYWORDS,
@@ -175,7 +176,7 @@ def _front_matter_publication_keywords(publisher: str | None) -> set[str]:
 def _post_content_break_tokens(publisher: str | None) -> tuple[str, ...]:
     return (
         *POST_CONTENT_BREAK_TOKENS,
-        *_publisher_profile(publisher).post_content_break_tokens,
+        *provider_html_rules(publisher).cleanup.post_content_break_tokens,
     )
 
 

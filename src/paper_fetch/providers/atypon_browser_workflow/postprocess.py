@@ -151,15 +151,14 @@ def _missing_abstract_markdown(container: Tag, markdown_text: str, *, publisher:
         "\n\n".join(abstract_blocks),
         noise_profile=_noise_profile_for_publisher(publisher),
     )
-    return str(
-        _apply_profile_markdown_postprocess(
-            abstract_markdown,
-            publisher=publisher,
-            stage="missing_abstract",
-            original_markdown=markdown_text,
-            has_heading=_markdown_has_heading,
-        )
+    suppress_missing_abstract = (
+        _publisher_profile(publisher).markdown_hooks.suppress_missing_abstract
     )
+    if suppress_missing_abstract is not None and suppress_missing_abstract(
+        markdown_text
+    ):
+        return ""
+    return abstract_markdown
 
 
 def _inject_inline_figure_links(
@@ -275,20 +274,6 @@ def _leading_semantic_markdown_text(markdown_text: str, *, limit: int = 6) -> st
     return "\n\n".join(leading_blocks)
 
 
-def _markdown_has_heading(markdown_text: str, heading_text: str) -> bool:
-    normalized_target = normalize_heading(heading_text)
-    if not normalized_target:
-        return False
-    for block in re.split(r"\n\s*\n", markdown_text):
-        heading_info = _markdown_heading_info(block)
-        if heading_info is None:
-            continue
-        _, current_heading = heading_info
-        if normalize_heading(current_heading) == normalized_target:
-            return True
-    return False
-
-
 def _block_matches_known_abstract_text(block: str, abstract_block_texts: list[str]) -> bool:
     normalized_block = normalize_text(normalize_markdown_text(block))
     if not normalized_block:
@@ -306,15 +291,8 @@ def _block_matches_known_abstract_text(block: str, abstract_block_texts: list[st
 def _normalize_browser_workflow_markdown(markdown_text: str, *, publisher: str) -> str:
     return normalize_browser_workflow_markdown(
         markdown_text,
-        markdown_postprocess=_publisher_profile(publisher).markdown_postprocess,
+        markdown_hooks=_publisher_profile(publisher).markdown_hooks,
     )
-
-
-def _apply_profile_markdown_postprocess(markdown_text: str, *, publisher: str, **context: Any) -> Any:
-    hook = _publisher_profile(publisher).markdown_postprocess
-    if hook is None:
-        return markdown_text
-    return hook(markdown_text, **context)
 
 
 def _postprocess_browser_workflow_markdown(
@@ -328,6 +306,8 @@ def _postprocess_browser_workflow_markdown(
 ) -> str:
     markdown_text = _normalize_browser_workflow_markdown(markdown_text, publisher=publisher)
     blocks = [normalize_markdown_text(block) for block in re.split(r"\n\s*\n", markdown_text) if normalize_text(block)]
+    profile = _publisher_profile(publisher)
+    markdown_hooks = profile.markdown_hooks
     kept: list[str] = []
     normalized_title = normalize_text(title or "")
     normalized_title_lower = normalized_title.lower()
@@ -350,21 +330,18 @@ def _postprocess_browser_workflow_markdown(
                 abstract_prose_blocks_seen = 0
                 continue
 
-            category = _heading_category(f"h{min(level, 6)}", heading_text, title=normalized_title or None)
-            override_category = normalize_text(
-                str(
-                    _apply_profile_markdown_postprocess(
-                        "",
-                        publisher=publisher,
-                        stage="heading_category",
-                        heading_text=heading_text,
-                        level=level,
-                        category=category,
-                    )
-                    or ""
-                )
+            category = _heading_category(
+                f"h{min(level, 6)}",
+                heading_text,
+                title=normalized_title or None,
             )
-            if override_category:
+            classify_heading = markdown_hooks.classify_heading
+            override_category = (
+                classify_heading(heading_text, normalized_title or None)
+                if classify_heading is not None
+                else None
+            )
+            if override_category is not None:
                 category = override_category
             if category == "front_matter":
                 state.transition(category, is_heading=True)
@@ -426,15 +403,13 @@ def _postprocess_browser_workflow_markdown(
                 and not is_auxiliary_block
                 and not _block_matches_known_abstract_text(block, known_abstract_blocks)
             ):
-                keep_in_abstract = bool(
-                    _apply_profile_markdown_postprocess(
-                        "",
-                        publisher=publisher,
-                        stage="keep_first_unknown_abstract_block",
-                        block=block,
-                        abstract_prose_blocks_seen=abstract_prose_blocks_seen,
-                        known_abstract_blocks=known_abstract_blocks,
-                    )
+                keep_unknown_abstract_block = (
+                    markdown_hooks.keep_unknown_abstract_block
+                )
+                keep_in_abstract = (
+                    abstract_prose_blocks_seen == 0
+                    and keep_unknown_abstract_block is not None
+                    and keep_unknown_abstract_block(block)
                 )
                 if keep_in_abstract:
                     if not title_kept and normalized_title:

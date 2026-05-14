@@ -334,17 +334,28 @@ def move_wiley_abbreviations_to_end(container: Tag) -> None:
 
 
 def _drop_abstract_sections_from_body_container(container: Any) -> None:
-    from .atypon_browser_workflow.profile import _drop_abstract_sections_from_body_container
+    from .atypon_browser_workflow.profile import (
+        _drop_abstract_sections_from_body_container,
+    )
 
     _drop_abstract_sections_from_body_container(container)
 
 
-def dom_postprocess(container: Any, *, stage: str | None = None) -> None:
-    stage_name = normalize_text(stage or "after_block_normalization").lower()
-    if stage_name in {"asset_body_container", "body_container"}:
-        _drop_abstract_sections_from_body_container(container)
-    if stage_name in {"after_block_normalization", "body_container"}:
-        move_wiley_abbreviations_to_end(container)
+def wiley_before_block_normalization(container: Any) -> None:
+    del container
+
+
+def wiley_after_block_normalization(container: Any) -> None:
+    move_wiley_abbreviations_to_end(container)
+
+
+def wiley_body_container(container: Any) -> None:
+    _drop_abstract_sections_from_body_container(container)
+    move_wiley_abbreviations_to_end(container)
+
+
+def wiley_asset_body_container(container: Any) -> None:
+    _drop_abstract_sections_from_body_container(container)
 
 
 def extract_asset_html_scopes(

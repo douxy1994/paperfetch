@@ -753,7 +753,7 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
                     rendered.index("## APPENDIX"),
                 )
 
-    def test_ams_markdown_postprocess_moves_data_availability_before_appendix(self) -> None:
+    def test_ams_normalize_markdown_moves_data_availability_before_appendix(self) -> None:
         """rule: rule-ams-html-body-assets-formulas"""
         markdown = "\n\n".join(
             [
@@ -767,7 +767,7 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
             ]
         )
 
-        normalized = _ams_html.markdown_postprocess(markdown)
+        normalized = _ams_html.ams_normalize_markdown(markdown)
 
         self.assertLess(
             normalized.index("## Acknowledgments"),

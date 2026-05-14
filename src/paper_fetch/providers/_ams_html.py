@@ -17,7 +17,6 @@ from ..extraction.html.formula_rules import (
 )
 from ..extraction.html.inline import render_html_inline_node
 from ..extraction.html.shared import soup_root as _soup_root
-from ..extraction.html.ui_tokens import RELATED_CONTENT_CHROME_TOKENS
 from ..quality.html_signals import ams_blocking_fallback_signals
 from ..utils import normalize_text
 from ._article_markdown_math import (
@@ -40,20 +39,6 @@ except ImportError:  # pragma: no cover - dependency is declared in pyproject
     NavigableString = None
     Tag = None
 
-
-# SITE_UI_COPY_REGRESSION_MARKER: site-owned UI copy; rerun extraction rules
-# when publisher text changes. These tokens stop scanning after the article
-# body; provider_rules handles availability/container chrome before this stage.
-# STRUCTURAL_UI_COPY_HOOK: provider-specific post-content cutoff, not generic
-# body denylist.
-AMS_POST_CONTENT_BREAK_TOKENS = (
-    "article type",
-    "issue section",
-    "most read",
-    "most cited",
-    *RELATED_CONTENT_CHROME_TOKENS,
-    "ams publications",
-)
 
 # AMS Atypon XSL emits display equation ids as E1/E02/E2a and unnumbered
 # equation ids as UE1/UE02. Keep this provider-owned because it is DOM-source
@@ -148,229 +133,97 @@ def extract_references(html_text: str) -> list[dict[str, str | None]]:
         seen.add(raw)
         references.append({"raw": raw})
     return references
-
-
 blocking_fallback_signals = ams_blocking_fallback_signals
-
-
-def dom_postprocess(container: Any, *, stage: str | None = None) -> None:
-    if Tag is None or not isinstance(container, Tag):
-        return
-    if normalize_text(stage).lower() not in {
-        "asset_figure_extraction",
-        "asset_body_container",
-        "before_block_normalization",
-        "body_container",
-        "after_block_normalization",
-    }:
-        return
-    _normalize_ams_dom(container)
-
-
-def markdown_postprocess(
-    markdown_text: str,
-    *,
-    stage: str | None = None,
-    heading_text: str | None = None,
-    **context: Any,
-) -> str:
-    del context
-    if stage == "heading_category":
-        normalized_heading = normalize_text(heading_text or "").rstrip(".").lower()
-        # AMS fixtures place Acknowledgments before Data availability/Appendix;
-        # keeping it in body preserves that author-intended order for rendering.
-        if normalized_heading in {
-            "acknowledgment",
-            "acknowledgments",
-            "acknowledgement",
-            "acknowledgements",
-        }:
-            return "body_heading"
-        return ""
-    return _normalize_ams_markdown_text(markdown_text)
-
-
-def _normalize_ams_markdown_text(markdown_text: str) -> str:
-    text = re.sub(r"\bFig\s+\.\s+", "Fig. ", markdown_text)
-    text = re.sub(r"\bFigure\s+\.\s+", "Figure ", text)
-    text = re.sub(r"\bTable\s+\.\s+", "Table ", text)
-    text = re.sub(
-        r"<(sup|sub)>\s*<\1>(.*?)</\1>\s*</\1>",
-        r"<\1>\2</\1>",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"<sub>\s*([^<>]*?)\s*</sub>\s*<sub>\s*([,;])\s*</sub>\s*<sub>\s*([^<>]*?)\s*</sub>",
-        r"<sub>\1\2\3</sub>",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"<sub>\s*([^<>]*?)\s*</sub>\s*<sub>\s*([,;][^<>]*?)\s*</sub>",
-        r"<sub>\1\2</sub>",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"</sup>\s*<sup>\s*([,;])\s*</sup>\s*<sup>",
-        r"</sup>\1<sup>",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = re.sub(
-        r"(\*[\w\u0370-\u03ffµμ]+\*)\s+<(sub|sup)>",
-        r"\1<\2>",
-        text,
-        flags=re.IGNORECASE,
-    )
-    text = AMS_PROSE_PARENTHESIS_PATTERN.sub(_restore_ams_prose_parenthesis_match, text)
-    return _reorder_ams_backmatter_sections(text)
-
-
 def _ams_parenthetical_looks_like_math_argument(value: str) -> bool:
     normalized = normalize_text(value)
     if not normalized:
         return True
-    if re.fullmatch(
+    token_match = re.fullmatch(
         r"[\w\u0370-\u03ffµμ]+\s*(?:[,;]\s*[\w\u0370-\u03ffµμ]+)*",
         normalized,
         flags=re.IGNORECASE,
-    ):
-        tokens = re.findall(r"[\w\u0370-\u03ffµμ]+", normalized)
-        return bool(tokens) and all(
-            len(token) == 1 or token.isdigit() for token in tokens
-        )
-    return bool(
-        re.fullmatch(
-            r"[0-9\s,.;:+\-−*/=<>^_{}\[\]\\|]+",
-            normalized,
-            flags=re.IGNORECASE,
-        )
     )
-
-
+    if token_match:
+        tokens = re.findall(r"[\w\u0370-\u03ffµμ]+", normalized)
+        return bool(tokens) and all(len(token) == 1 or token.isdigit() for token in tokens)
+    return bool(re.fullmatch(r"[0-9\s,.;:+\-−*/=<>^_{}\[\]\\|]+", normalized))
 def _restore_ams_prose_parenthesis_match(match: re.Match[str]) -> str:
-    closing_tag = match.group(1)
-    parenthetical = match.group(2)
     inner = match.group("inner")
     if _ams_parenthetical_looks_like_math_argument(inner):
         return match.group(0)
     if re.search(r"[A-Za-z\u0370-\u03ffµμ]{2,}", normalize_text(inner)):
-        return f"{closing_tag} {parenthetical}"
+        return f"{match.group(1)} {match.group(2)}"
     return match.group(0)
-
-
-def _markdown_heading_info(block: str) -> tuple[int, str] | None:
-    first_line = normalize_text(block.splitlines()[0] if block.splitlines() else "")
-    match = re.match(r"^(#{1,6})\s+(.+?)\s*$", first_line)
-    if not match:
-        return None
-    return len(match.group(1)), normalize_text(match.group(2)).rstrip(".:")
-
-
-def _is_markdown_heading(block: str, target: str) -> bool:
-    heading = _markdown_heading_info(block)
+def _ams_markdown_heading(block: str) -> tuple[int, str] | None:
+    match = re.match(r"^(#{1,6})\s+(.+?)\s*$", normalize_text(block.splitlines()[0] if block.splitlines() else ""))
+    return (len(match.group(1)), normalize_text(match.group(2)).rstrip(".:")) if match else None
+def _is_ams_markdown_heading(block: str, target: str) -> bool:
+    heading = _ams_markdown_heading(block)
     if heading is None:
         return False
-    _, text = heading
-    normalized = normalize_text(text).lower()
-    if target == "appendix":
-        return normalized == target or normalized.startswith(f"{target} ")
-    return normalized == target
-
-
-def _heading_level(block: str) -> int | None:
-    heading = _markdown_heading_info(block)
-    return heading[0] if heading is not None else None
-
-
-def _section_end_index(blocks: list[str], start: int) -> int:
-    start_level = _heading_level(blocks[start])
-    if start_level is None:
-        return start + 1
+    normalized = normalize_text(heading[1]).lower()
+    return normalized == target or (target == "appendix" and normalized.startswith("appendix "))
+def _ams_section_end_index(blocks: list[str], start: int) -> int:
+    start_level = (_ams_markdown_heading(blocks[start]) or (None, ""))[0]
     index = start + 1
-    while index < len(blocks):
-        level = _heading_level(blocks[index])
+    while start_level is not None and index < len(blocks):
+        level = (_ams_markdown_heading(blocks[index]) or (None, ""))[0]
         if level is not None and level <= start_level:
             break
         index += 1
     return index
-
-
 def _reorder_ams_backmatter_sections(markdown_text: str) -> str:
-    # AMS pages can render Data availability after Appendix even when the
-    # source article treats it as pre-appendix back matter. This remains
-    # provider-owned until another publisher shows the same ordering artifact.
-    blocks = [
-        block for block in re.split(r"\n\s*\n", markdown_text) if normalize_text(block)
-    ]
-    data_start = next(
-        (
-            index
-            for index, block in enumerate(blocks)
-            if _is_markdown_heading(block, "data availability statement")
-        ),
-        -1,
-    )
-    appendix_start = next(
-        (
-            index
-            for index, block in enumerate(blocks)
-            if _is_markdown_heading(block, "appendix")
-        ),
-        -1,
-    )
+    blocks = [block for block in re.split(r"\n\s*\n", markdown_text) if normalize_text(block)]
+    data_start = next((i for i, block in enumerate(blocks) if _is_ams_markdown_heading(block, "data availability statement")), -1)
+    appendix_start = next((i for i, block in enumerate(blocks) if _is_ams_markdown_heading(block, "appendix")), -1)
     if data_start < 0 or appendix_start < 0 or data_start < appendix_start:
         return markdown_text
-
-    data_end = _section_end_index(blocks, data_start)
+    data_end = _ams_section_end_index(blocks, data_start)
     data_section = blocks[data_start:data_end]
     del blocks[data_start:data_end]
-
-    appendix_start = next(
-        (
-            index
-            for index, block in enumerate(blocks)
-            if _is_markdown_heading(block, "appendix")
-        ),
-        len(blocks),
-    )
-    ack_start = next(
-        (
-            index
-            for index, block in enumerate(blocks)
-            if _is_markdown_heading(block, "acknowledgments")
-        ),
-        -1,
-    )
-    insert_at = appendix_start
-    if ack_start >= 0 and ack_start < appendix_start:
-        insert_at = _section_end_index(blocks, ack_start)
+    appendix_start = next((i for i, block in enumerate(blocks) if _is_ams_markdown_heading(block, "appendix")), len(blocks))
+    ack_start = next((i for i, block in enumerate(blocks) if _is_ams_markdown_heading(block, "acknowledgments")), -1)
+    insert_at = _ams_section_end_index(blocks, ack_start) if 0 <= ack_start < appendix_start else appendix_start
     blocks[insert_at:insert_at] = data_section
     return "\n\n".join(blocks)
-
-
+def _normalize_ams_markdown_text(markdown_text: str) -> str:
+    text = re.sub(r"\bFig\s+\.\s+", "Fig. ", markdown_text)
+    text = re.sub(r"\bFigure\s+\.\s+", "Figure ", text)
+    text = re.sub(r"\bTable\s+\.\s+", "Table ", text)
+    for pattern, replacement in (
+        (r"<(sup|sub)>\s*<\1>(.*?)</\1>\s*</\1>", r"<\1>\2</\1>"),
+        (r"<sub>\s*([^<>]*?)\s*</sub>\s*<sub>\s*([,;])\s*</sub>\s*<sub>\s*([^<>]*?)\s*</sub>", r"<sub>\1\2\3</sub>"),
+        (r"<sub>\s*([^<>]*?)\s*</sub>\s*<sub>\s*([,;][^<>]*?)\s*</sub>", r"<sub>\1\2</sub>"),
+        (r"</sup>\s*<sup>\s*([,;])\s*</sup>\s*<sup>", r"</sup>\1<sup>"),
+        (r"(\*[\w\u0370-\u03ffµμ]+\*)\s+<(sub|sup)>", r"\1<\2>"),
+    ):
+        text = re.sub(pattern, replacement, text, flags=re.IGNORECASE)
+    text = AMS_PROSE_PARENTHESIS_PATTERN.sub(_restore_ams_prose_parenthesis_match, text)
+    return _reorder_ams_backmatter_sections(text)
 def _normalize_ams_label_text(text: str, *, kind: str | None = None) -> str:
     normalized = normalize_text(text)
     if not normalized:
         return ""
-
-    def figure_replacement(match: re.Match[str]) -> str:
-        raw = match.group(0).lower()
-        number = match.group(1)
-        return f"Figure {number}." if raw.startswith("figure") else f"Fig. {number}."
-
-    def table_replacement(match: re.Match[str]) -> str:
-        return f"Table {match.group(1)}."
-
     if kind in {None, "figure"}:
-        normalized = FIGURE_LABEL_PATTERN.sub(figure_replacement, normalized)
+        normalized = FIGURE_LABEL_PATTERN.sub(lambda m: f"{'Figure' if m.group(0).lower().startswith('figure') else 'Fig.'} {m.group(1)}.", normalized)
     if kind in {None, "table"}:
-        normalized = TABLE_LABEL_PATTERN.sub(table_replacement, normalized)
+        normalized = TABLE_LABEL_PATTERN.sub(lambda m: f"Table {m.group(1)}.", normalized)
     return normalized
+def ams_normalize_markdown(markdown_text: str) -> str:
+    return _normalize_ams_markdown_text(markdown_text)
+def ams_classify_heading(heading: str, title: str | None) -> str | None:
+    del title
+    normalized_heading = normalize_text(heading).rstrip(".").lower()
+    return "body_heading" if normalized_heading in {"acknowledgment", "acknowledgments", "acknowledgement", "acknowledgements"} else None
+def ams_keep_unknown_abstract_block(block: str) -> bool:
+    del block
+    return False
 
-
+def ams_before_block_normalization(container: Any) -> None: _normalize_ams_dom(container)
+def ams_after_block_normalization(container: Any) -> None: _normalize_ams_dom(container)
+def ams_body_container(container: Any) -> None: _normalize_ams_dom(container)
+def ams_asset_body_container(container: Any) -> None: _normalize_ams_dom(container)
+def ams_asset_figure_extraction(container: Any) -> None: _normalize_ams_dom(container)
 def _normalize_nested_sup_sub(container: Any) -> None:
     if Tag is None or not isinstance(container, Tag):
         return
