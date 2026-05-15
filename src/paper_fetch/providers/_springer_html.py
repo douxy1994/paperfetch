@@ -6,7 +6,13 @@ import re
 import urllib.parse
 from typing import Any, Mapping
 
-from ..common_patterns import EXTENDED_DATA_LABEL, FIGURE_LABEL_CORE_PATTERN
+from ..common_patterns import (
+    EXTENDED_DATA_LABEL,
+    EXTENDED_DATA_TABLE_PREFIX_PATTERN,
+    FIGURE_LABEL_CORE_PATTERN,
+    LABEL_NUMBER_PATTERN,
+    TABLE_LABEL_PREFIX_PATTERN,
+)
 from ..extraction.html import decode_html as _decode_html
 from ..extraction.html.assets import (
     FULL_SIZE_IMAGE_ATTRS,
@@ -29,6 +35,7 @@ from ..extraction.html._runtime import (
     clean_markdown,
     prune_html_tree,
 )
+from ..extraction.html.figure_links import inject_inline_figure_links
 from ..extraction.html.renderer import render_html_markdown
 from ..extraction.html.language import (
     collect_html_abstract_blocks,
@@ -94,6 +101,80 @@ SPRINGER_FIGURE_PAGE_NUMBER_PATTERN = re.compile(
 )
 SPRINGER_INLINE_EQUATION_URL_PATTERN = re.compile(
     r"(?:ieq|math)[-_]?\d+", flags=re.IGNORECASE
+)
+SPRINGER_TABLE_LABEL_PATTERN = re.compile(
+    rf"\b(?:{EXTENDED_DATA_TABLE_PREFIX_PATTERN}|{TABLE_LABEL_PREFIX_PATTERN})"
+    rf"\s*\.?\s*(?P<number>{LABEL_NUMBER_PATTERN})\b",
+    flags=re.IGNORECASE,
+)
+SPRINGER_TABLE_PAGE_NUMBER_PATTERN = re.compile(
+    r"/tables/(\d+[A-Za-z]?)\b", flags=re.IGNORECASE
+)
+SPRINGER_TABLE_IMAGE_NUMBER_PATTERN = re.compile(
+    r"(?:^|[^a-z0-9])(?:tab|table)[\s_.%-]*0*([a-z]?\d+[a-z]?)"
+    r"(?:[^a-z0-9]|$)",
+    flags=re.IGNORECASE,
+)
+SPRINGER_TABLE_IMAGE_EXTENSION_PATTERN = re.compile(
+    r"\.(?:avif|gif|jpe?g|png|tiff?|webp)(?:[?#]|$)",
+    flags=re.IGNORECASE,
+)
+SPRINGER_TABLE_IMAGE_HINT_PATTERN = re.compile(
+    r"(?:^|[^a-z0-9])(?:tab|table)(?:[\s_.%-]*\d|[^a-z0-9])",
+    flags=re.IGNORECASE,
+)
+SPRINGER_TABLE_IMAGE_ROOT_SELECTORS = (
+    ".c-article-table-container",
+    "[data-track-component='table']",
+    "[data-component='article-container']",
+    "[data-container-type='article']",
+    ".container-type-article",
+    "[role='main']",
+    "main",
+    "article",
+    ".c-article-body",
+    ".main-content",
+)
+SPRINGER_TABLE_IMAGE_CHROME_NODE_NAMES = frozenset({"header", "nav", "footer", "aside"})
+SPRINGER_TABLE_IMAGE_CHROME_CONTEXT_TOKENS = (
+    "account",
+    "advert",
+    "breadcrumb",
+    "c-ad",
+    "citation",
+    "cookie",
+    "footer",
+    "gpt",
+    "header",
+    "identity",
+    "journal-header",
+    "login",
+    "logo",
+    "menu",
+    "metrics",
+    "newsletter",
+    "recommend",
+    "related",
+    "search",
+    "share",
+    "social",
+)
+SPRINGER_TABLE_IMAGE_REJECT_URL_TOKENS = (
+    "/favicons/",
+    "/logos/",
+    "/static/images/",
+    "account",
+    "advert",
+    "crossmark",
+    "favicon",
+    "gpt-advert",
+    "header-",
+    "logo",
+    "nature-cms/uploads/product",
+    "newsletter",
+    "orcid",
+    "social",
+    "verify.nature.com",
 )
 SPRINGER_SUPPLEMENTARY_HOST_TOKENS = (
     "static-content.springer.com/esm/",
@@ -494,9 +575,28 @@ def extract_article_markdown(cleaned_html: str, source_url: str) -> str:
         cleaned_html=True,
         renderer=render_springer_html,
     )
-    if custom_markdown:
-        return custom_markdown
-    return render_html_markdown(cleaned_html, source_url, cleaned_html=True)
+    markdown_text = custom_markdown or render_html_markdown(
+        cleaned_html,
+        source_url,
+        cleaned_html=True,
+    )
+    return _inject_remote_figure_links(markdown_text, cleaned_html, source_url)
+
+
+def _inject_remote_figure_links(markdown_text: str, cleaned_html: str, source_url: str) -> str:
+    if not markdown_text:
+        return markdown_text
+    figure_assets = extract_figure_assets(cleaned_html, source_url)
+    if not figure_assets:
+        return markdown_text
+    return inject_inline_figure_links(
+        markdown_text,
+        figure_assets=figure_assets,
+        clean_markdown_fn=lambda value: clean_markdown(
+            value,
+            noise_profile="springer_nature",
+        ),
+    )
 
 
 def extract_html_payload(
@@ -848,6 +948,273 @@ def extract_full_size_figure_image_url(html_text: str, source_url: str) -> str |
         if fallback_candidate is None:
             fallback_candidate = absolute_candidate
     return promoted_candidate or fallback_candidate
+
+
+def _springer_table_number_from_label(label: str) -> str:
+    match = SPRINGER_TABLE_LABEL_PATTERN.search(normalize_text(label).lower())
+    return normalize_text(match.group("number")).lower() if match else ""
+
+
+def _springer_table_number_from_url(table_url: str) -> str:
+    match = SPRINGER_TABLE_PAGE_NUMBER_PATTERN.search(
+        urllib.parse.urlparse(table_url).path
+    )
+    return normalize_text(match.group(1)).lower() if match else ""
+
+
+def _springer_expected_table_number(label: str, table_url: str) -> str:
+    return _springer_table_number_from_label(label) or _springer_table_number_from_url(
+        table_url
+    )
+
+
+def _springer_table_image_url_blob(url: str) -> str:
+    return urllib.parse.unquote(normalize_text(url)).lower()
+
+
+def _springer_table_image_number_from_url(url: str) -> str:
+    match = SPRINGER_TABLE_IMAGE_NUMBER_PATTERN.search(
+        _springer_table_image_url_blob(url)
+    )
+    return normalize_text(match.group(1)).lower() if match else ""
+
+
+def _springer_table_image_url_has_expected_number(url: str, table_number: str) -> bool:
+    if not table_number:
+        return False
+    return _springer_table_image_number_from_url(url) == table_number.lower()
+
+
+def _springer_table_image_url_has_table_semantics(url: str) -> bool:
+    blob = _springer_table_image_url_blob(url)
+    if SPRINGER_TABLE_IMAGE_HINT_PATTERN.search(blob):
+        return True
+    return (
+        "/springer-static/esm/" in blob
+        and "/mediaobjects/" in blob
+        and "_tab" in blob
+    )
+
+
+def _springer_table_image_url_is_springer_esm_mediaobject(url: str) -> bool:
+    blob = _springer_table_image_url_blob(url)
+    return "/springer-static/esm/" in blob and "/mediaobjects/" in blob
+
+
+def _springer_table_image_url_is_chrome(url: str) -> bool:
+    blob = _springer_table_image_url_blob(url)
+    if not blob or blob.startswith(("data:", "javascript:", "mailto:")):
+        return True
+    return any(token in blob for token in SPRINGER_TABLE_IMAGE_REJECT_URL_TOKENS)
+
+
+def _springer_node_is_table_image_chrome(node: Any) -> bool:
+    current = node
+    while isinstance(current, Tag):
+        name = normalize_text(getattr(current, "name", "")).lower()
+        if name in SPRINGER_TABLE_IMAGE_CHROME_NODE_NAMES:
+            return True
+        context_text = _springer_node_context_text(current)
+        if any(
+            token in context_text
+            for token in SPRINGER_TABLE_IMAGE_CHROME_CONTEXT_TOKENS
+        ):
+            return True
+        current = (
+            current.parent
+            if isinstance(getattr(current, "parent", None), Tag)
+            else None
+        )
+    return False
+
+
+def _springer_node_is_table_content_context(node: Any) -> bool:
+    current = node
+    while isinstance(current, Tag):
+        context_text = _springer_node_context_text(current)
+        data_container_section = normalize_text(
+            str(current.get("data-container-section") or "")
+        ).lower()
+        data_track_component = normalize_text(
+            str(current.get("data-track-component") or "")
+        ).lower()
+        if (
+            current.name == "table"
+            or "c-article-table" in context_text
+            or "table-container" in context_text
+            or data_container_section == "table"
+            or data_track_component == "table"
+        ):
+            return True
+        current = (
+            current.parent
+            if isinstance(getattr(current, "parent", None), Tag)
+            else None
+        )
+    return False
+
+
+def _springer_table_image_roots(soup: BeautifulSoup) -> list[Tag]:
+    roots: list[Tag] = []
+    seen: set[int] = set()
+    for selector in SPRINGER_TABLE_IMAGE_ROOT_SELECTORS:
+        try:
+            matches = soup.select(selector)
+        except Exception:
+            continue
+        for match in matches:
+            if isinstance(match, Tag) and id(match) not in seen:
+                seen.add(id(match))
+                roots.append(match)
+    if roots:
+        return roots
+    body = soup.body
+    return [body] if isinstance(body, Tag) else [soup]
+
+
+def _springer_table_image_candidate_urls(
+    root: Tag,
+    source_url: str,
+) -> list[tuple[str, Tag]]:
+    candidates: list[tuple[str, Tag]] = []
+    for tag in root.find_all(["img", "source", "a"]):
+        if not isinstance(tag, Tag):
+            continue
+        if tag.name == "a":
+            candidate = normalize_text(str(tag.get("href") or ""))
+        else:
+            candidate = _soup_attr_url(
+                tag,
+                *FULL_SIZE_IMAGE_ATTRS,
+                "data-src",
+                "src",
+                "data-lazy-src",
+                "srcset",
+                "data-srcset",
+            )
+        if candidate:
+            candidates.append((urllib.parse.urljoin(source_url, candidate), tag))
+    return candidates
+
+
+def _springer_table_meta_image_urls(
+    soup: BeautifulSoup,
+    source_url: str,
+) -> list[str]:
+    urls: list[str] = []
+    for tag in soup.find_all("meta"):
+        if not isinstance(tag, Tag):
+            continue
+        key = normalize_text(
+            str(tag.get("property") or tag.get("name") or "")
+        ).lower()
+        if key not in {"og:image", "twitter:image", "twitter:image:src"}:
+            continue
+        candidate = normalize_text(str(tag.get("content") or ""))
+        if candidate:
+            urls.append(urllib.parse.urljoin(source_url, candidate))
+    return urls
+
+
+def _springer_table_image_candidate_score(
+    url: str,
+    *,
+    node: Tag | None,
+    table_number: str,
+    from_meta: bool,
+) -> int:
+    if not SPRINGER_TABLE_IMAGE_EXTENSION_PATTERN.search(url):
+        return -1
+    if _springer_table_image_url_is_chrome(url):
+        return -1
+    if node is not None and _springer_node_is_table_image_chrome(node):
+        return -1
+
+    candidate_number = _springer_table_image_number_from_url(url)
+    if candidate_number and table_number and candidate_number != table_number:
+        return -1
+
+    number_matches = _springer_table_image_url_has_expected_number(url, table_number)
+    has_table_semantics = _springer_table_image_url_has_table_semantics(url)
+    is_esm_mediaobject = _springer_table_image_url_is_springer_esm_mediaobject(url)
+    is_table_context = node is not None and _springer_node_is_table_content_context(node)
+    if not (
+        number_matches
+        or (is_esm_mediaobject and has_table_semantics)
+        or (is_table_context and has_table_semantics)
+    ):
+        return -1
+    if from_meta and not (number_matches or (is_esm_mediaobject and has_table_semantics)):
+        return -1
+
+    blob = _springer_table_image_url_blob(url)
+    score = 0
+    if number_matches:
+        score += 120
+    if has_table_semantics:
+        score += 60
+    if is_esm_mediaobject:
+        score += 55
+    if "media.springernature.com" in urllib.parse.urlparse(url).netloc.lower():
+        score += 25
+    if looks_like_full_size_asset_url(blob):
+        score += 10
+    if is_table_context:
+        score += 20
+    if node is not None and node.name == "img":
+        score += 5
+    if "as=webp" in blob or blob.endswith(".webp"):
+        score -= 5
+    return score
+
+
+def extract_springer_table_image_url(
+    html_text: str,
+    source_url: str,
+    *,
+    label: str = "",
+    table_url: str = "",
+) -> str | None:
+    """Return a trusted image fallback for a Springer/Nature table page."""
+    soup = BeautifulSoup(html_text, choose_parser())
+    table_number = _springer_expected_table_number(label, table_url or source_url)
+    scored_candidates: list[tuple[int, int, str]] = []
+    order = 0
+
+    for meta_url in _springer_table_meta_image_urls(soup, source_url):
+        score = _springer_table_image_candidate_score(
+            meta_url,
+            node=None,
+            table_number=table_number,
+            from_meta=True,
+        )
+        if score >= 0:
+            scored_candidates.append((score, order, meta_url))
+            order += 1
+
+    seen_roots: set[int] = set()
+    for root in _springer_table_image_roots(soup):
+        if id(root) in seen_roots:
+            continue
+        seen_roots.add(id(root))
+        for candidate_url, tag in _springer_table_image_candidate_urls(
+            root,
+            source_url,
+        ):
+            score = _springer_table_image_candidate_score(
+                candidate_url,
+                node=tag,
+                table_number=table_number,
+                from_meta=False,
+            )
+            if score >= 0:
+                scored_candidates.append((score, order, candidate_url))
+                order += 1
+
+    if not scored_candidates:
+        return None
+    scored_candidates.sort(key=lambda item: (-item[0], item[1]))
+    return scored_candidates[0][2]
 
 
 def extract_formula_assets(html_text: str, source_url: str) -> list[dict[str, str]]:

@@ -216,6 +216,38 @@ class McpLoggingInlineImageTests(unittest.TestCase):
         self.assertIsNone(result.structuredContent["article"])
         self.assertEqual(result.structuredContent["metadata"]["title"], "Example Article")
         self.assertEqual([content.type for content in result.content], ["text"])
+    def test_build_fetch_tool_result_asset_profile_none_keeps_remote_markdown_without_inline_images(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            figure_path = Path(tmpdir) / "figure-1.png"
+            write_binary(figure_path, size=32)
+
+            article = sample_article()
+            article.assets = [
+                Asset(kind="figure", heading="Figure 1", caption="Body figure", path=str(figure_path), section="body")
+            ]
+            envelope = FetchEnvelope(
+                doi=article.doi,
+                source="elsevier_xml",
+                has_fulltext=True,
+                warnings=[],
+                source_trail=["source:ok"],
+                token_estimate=article.quality.token_estimate,
+                token_estimate_breakdown=article.quality.token_estimate_breakdown,
+                article=article,
+                markdown="# Example Article\n\n![Figure 1](https://example.test/figure-1.png)\n\nBody text.\n",
+                metadata=None,
+            )
+            request = mcp_tools.FetchPaperRequest(
+                query="10.1000/example",
+                modes=["markdown"],
+                strategy={"asset_profile": "none", "inline_image_budget": {"max_images": 1}},
+            )
+
+            result = mcp_tools.build_fetch_tool_result(envelope, request)
+
+        self.assertFalse(result.isError)
+        self.assertIn("![Figure 1](https://example.test/figure-1.png)", result.structuredContent["markdown"])
+        self.assertEqual([content.type for content in result.content], ["text"])
     def test_build_fetch_tool_result_uses_provider_default_asset_profile_for_inline_images(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             figure_path = Path(tmpdir) / "figure-1.png"

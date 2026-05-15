@@ -362,6 +362,7 @@ resolve
   - provider 自管 `direct HTML -> direct HTTP PDF`
   - Springer/Nature chrome 清理以结构信号为主：AI alt disclaimer 只按 `ai-alt-disclaimer` ID/ARIA 关系删除，license 段落以 `creativecommons.org/licenses/*` 链接为主、短文本阈值为辅助
   - Nature heading cosmetic normalization 注册在 provider rule profile；例如 `Online Methods` 规范为 `Methods`
+  - `Extended Data Table` 页缺少 HTML `<table>` 时，只从表格页正文/表格容器和可信表格 meta 图片提取图片 fallback；header、logo、nav、footer、advert 等站点资源不会生成 `kind="table"` 资产
   - 成功轨迹是 `fulltext:springer_html_*`，PDF fallback 成功时会带 `fulltext:springer_pdf_fallback_ok`
 - `wiley`
   - provider 自管 FlareSolverr HTML + Wiley TDM API PDF + seeded-browser publisher PDF/ePDF waterfall
@@ -432,7 +433,8 @@ CLI、Python API、MCP 当前统一采用这些默认值：
   - `springer` / `wiley` / `science` / `pnas` / `ams` / `ieee` / `copernicus` 默认等价于 `body`
   - 其他默认等价于 `none`
 - `none`
-  - 不下载资产
+  - 不下载本地资产
+  - 不主动清除 Markdown 中已有或 provider 可解析出的远程图片链接
   - Markdown 保留 figure caption
   - 不输出 supplementary 链接
 - `body`
@@ -565,21 +567,24 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 <a id="mcp-download-and-markdown-save"></a>
 ### 下载行为
 
-- CLI `--artifact-mode` 控制 artifact 保留范围，`--asset-profile` 只控制内容资产范围。
-- `--artifact-mode markdown-assets` 是 CLI 默认值：保存 Markdown 和 `--asset-profile` 允许的本地资产，不保存 provider 原始 HTML/XML、fetch-envelope/cache-index JSON、格式化 JSON 副本或 `<download_dir>/.paper-fetch-http-cache/` textual cache。
+CLI 主输出、artifact 与命令组合的用户语义见 [`cli.md`](cli.md)；本节只记录 provider/runtime 侧的下载和 artifact 保留规则。
+
+- CLI `--artifact-mode` 和 MCP `artifact_mode` 控制 provider artifact 保留范围，`--asset-profile` / `strategy.asset_profile` 只控制本地内容资产下载范围；`asset_profile=none` 不会主动移除 Markdown 中可解析的远程图片链接。
+- `markdown-assets` 是 CLI 和 MCP `fetch_paper` 默认值：保存 Markdown 和资产策略允许的本地资产，不保存 provider 原始 HTML/XML、额外格式副本或 `<download_dir>/.paper-fetch-http-cache/` textual cache；未显式传 `--output` 且指定 `--output-dir` 时写入的 CLI 主输出文件不属于额外副本。
 - 当正文来自 `pdf_fallback` 时，`markdown-assets` 仍会保存 PDF 源文件；PDF fallback 的 Markdown 转换质量通常低于 XML/provider HTML，需要保留来源便于溯源和排查。
-- `--artifact-mode all` 保留旧行为：provider HTML/PDF、辅助 artifact、HTTP textual cache、MCP fetch-envelope sidecar/cache-index，以及显式 `--format` + `--output-dir` 产生的同格式副本都可落盘。
-- `--artifact-mode none` 不保存 provider artifact 或资产；显式 `--output <path>` / `--save-markdown` 仍可写 Markdown。
+- `all` 保留旧式完整调试 artifact：provider HTML/PDF、辅助 artifact、HTTP textual cache 和 provider structured sidecar 都可落盘；MCP fetch-envelope sidecar/cache-index 仍按 MCP adapter cache 语义单独管理。
+- `none` 不保存 provider artifact 或资产；显式 `--output <path>`、`--save-markdown`，以及未显式 `--output` 时由 `--output-dir` 承接的 CLI 主输出仍可写文件。MCP 中 `artifact_mode="none"` 仍可写 fetch-envelope sidecar/cache-index 以支持 `prefer_cache`、`list_cached` 和 resources。
 - `--no-download` 已弃用但保留兼容，等价于 `--artifact-mode none`。
 - 对 provider artifact 来说，`download_dir=None` 优先级最高
 - CLI/MCP 通过 `workflow.request_builder.build_fetch_pipeline_request()` 统一装配 `FetchPipelineRequest`。
 - `FetchPipeline` 负责创建 `RuntimeContext`。
 - Provider payload、Springer HTML local copy、Markdown 保存和 asset 诊断仍由 `ArtifactStore` 应用。
-- CLI 的 `--output-dir` 是 Markdown、PDF fallback 来源文件和本地资产目录；在 `--artifact-mode all` 下也会接收 provider HTML/PDF/图片等旧 artifact。额外地，当用户显式传入 `--format`、保留 `--output -`、指定 `--output-dir` 且 artifact mode 允许时，CLI 会把同格式主输出副本写入该目录，文件名为 `<doi>.md`、`<doi>.json` 或 `<doi>.both.json`。
+- CLI 的 `--output-dir` 是默认主输出、Markdown、PDF fallback 来源文件和本地资产目录；在 `--artifact-mode all` 下也会接收 provider HTML/PDF/图片等旧 artifact。未显式传 `--output` 且指定 `--output-dir` 时，CLI 会把主输出写入该目录，文件名为 `<doi>.md`、`<doi>.json` 或 `<doi>.both.json`，stdout 不再输出正文；显式 `--output -` 会强制保留 stdout，显式 `--output <path>` 则使用该路径作为主输出。
 - 既有 warning 与 `download:*` source trail marker 保持不变。
-- MCP fetch-envelope sidecar/cache-index 的 JSON 写入也复用 `ArtifactStore` 的原子 writer。
+- MCP `download_dir` 是 cache/artifact scope，不是 CLI `--output-dir` 那样的主输出目录；MCP 只有 `save_markdown=true` 才会单独写 Markdown 主体文件并返回 `saved_markdown_path`。
+- MCP fetch-envelope sidecar/cache-index 是 adapter cache，不按 provider artifact 处理；JSON 写入复用 `ArtifactStore` 的原子 writer，但不受 `artifact_mode=markdown-assets|none` 禁止。
 - 当 artifact mode 或 MCP `no_download=true` 禁止资产落盘时，即使 `asset_profile` 是 `body` / `all`，资产也不会落盘。
-- 没有本地文件时，Markdown 会自动退回 captions-only 或不展示本地资源链接
+- 没有本地文件时，Markdown 可保留 provider 已解析出的远程图片链接；只有无法解析远程图片时才退回 captions-only 或不展示资源链接。
 - MCP `no_download=true` 会让 service/provider 阶段使用 `RuntimeContext(download_dir=None)`，因此不会写 provider payload、PDF、HTML、资产或 fetch-envelope sidecar；`prefer_cache=true` 仍可显式读取已存在的 fetch-envelope sidecar。
 - MCP `save_markdown=true` 是独立的 Markdown 保存步骤：成功时写 `.md` 并返回 `saved_markdown_path`，追加 `download:markdown_saved`；没有 fulltext Markdown 时不写文件，追加 `download:markdown_skipped_no_fulltext`。
 - MCP `save_markdown=true` 的工具响应默认是紧凑结果：`markdown=null`、`article=null`，不把全文正文或 article sections 放入当前上下文；响应仍保留 `saved_markdown_path`、`metadata`、`quality`、`warnings`、`source_trail`、`trace` 和 `token_estimate_breakdown` 等诊断字段。

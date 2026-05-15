@@ -256,6 +256,63 @@ class ElsevierMarkdownTests(unittest.TestCase):
         self.assertEqual(rendered.count("![Fig. 1](body_assets/figure-preserve-fig1.jpeg)"), 1)
         self.assertIn("Observed response figure.", rendered)
         self.assertNotIn("## Additional Figures", rendered)
+    def test_article_from_structure_preserves_remote_elsevier_figure_links_without_local_assets(self) -> None:
+        xml_body = b"""<?xml version="1.0"?>
+<full-text-retrieval-response xmlns="http://www.elsevier.com/xml/svapi/article/dtd" xmlns:ce="http://www.elsevier.com/xml/common/dtd">
+  <body>
+    <ce:sections>
+      <ce:section>
+        <ce:section-title>Results</ce:section-title>
+        <ce:para>Observed patterns are shown in <ce:cross-ref refid="fig1">Fig. 1</ce:cross-ref>.</ce:para>
+      </ce:section>
+    </ce:sections>
+    <ce:floats>
+      <ce:figure id="fig1">
+        <ce:label>Fig. 1</ce:label>
+        <ce:caption>
+          <ce:simple-para>Observed response figure.</ce:simple-para>
+        </ce:caption>
+        <ce:link locator="gr1" />
+      </ce:figure>
+    </ce:floats>
+  </body>
+</full-text-retrieval-response>
+"""
+        remote_url = "https://api.elsevier.com/content/object/eid/gr1?httpAccept=%2A%2F%2A"
+        structure = elsevier_document.build_article_structure(
+            provider="elsevier",
+            metadata={"doi": "10.1016/figure-preserve", "title": "Elsevier Figure Preserve"},
+            xml_body=xml_body,
+            xml_path=Path("10.1016_figure-preserve.xml"),
+            assets=[
+                {
+                    "asset_type": "image",
+                    "source_ref": "gr1",
+                    "source_url": remote_url,
+                }
+            ],
+        )
+
+        assert structure is not None
+        self.assertEqual(structure.figure_entries[0]["link"], remote_url)
+        self.assertNotIn("path", structure.figure_entries[0])
+        article = article_from_structure(
+            source="elsevier_xml",
+            metadata={"doi": "10.1016/figure-preserve", "title": "Elsevier Figure Preserve"},
+            doi="10.1016/figure-preserve",
+            abstract_lines=structure.abstract_lines,
+            body_lines=structure.body_lines,
+            figure_entries=structure.figure_entries,
+            table_entries=structure.table_entries,
+            supplement_entries=structure.supplement_entries,
+            conversion_notes=structure.conversion_notes,
+            inline_figure_keys=sorted(structure.used_figure_keys),
+            inline_table_keys=sorted(structure.used_table_keys),
+        )
+        rendered = article.to_ai_markdown(asset_profile="none", max_tokens="full_text")
+
+        self.assertEqual(rendered.count(f"![Fig. 1]({remote_url})"), 1)
+        self.assertEqual(article.assets[0].original_url, remote_url)
 
     def test_mathml_nested_subscripts_are_grouped_for_katex(self) -> None:
         math_node = ET.fromstring(

@@ -21,6 +21,7 @@
 - `max_tokens="full_text"`
 - `prefer_cache=false`
 - `no_download=false`
+- `artifact_mode="markdown-assets"`
 - `save_markdown=false`
 - `markdown_output_dir=null`
 - `markdown_filename=null`
@@ -31,6 +32,7 @@
 ## Fetch Notes
 
 - `prefer_cache=true` 会先把查询解析为 DOI，再尝试命中本地匹配的 FetchEnvelope sidecar，之后才走完整抓取流程。
+- `artifact_mode="none"` 会关闭 provider artifact 和资产落盘，但仍保留 MCP fetch-envelope sidecar/cache-index 用于 `prefer_cache`、`list_cached` 和资源暴露。
 - `no_download=true` 会避免写入 provider 载荷、资源文件和 fetch-envelope sidecar。
 - `save_markdown=true` 会把渲染后的全文 Markdown 写盘，并在成功时返回 `saved_markdown_path`。本轮 MCP 响应会设置 `markdown=null`、`article=null`，避免把全文正文放入上下文；仍保留 `metadata`、`quality`、`warnings`、`source_trail`、`trace` 和 `token_estimate_breakdown` 等诊断字段。
 - 传入 `download_dir` 时，MCP 服务器还能在当前会话里暴露这个隔离目录对应的缓存资源。

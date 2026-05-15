@@ -80,6 +80,7 @@ class McpPayloadCacheTests(unittest.TestCase):
         self.assertEqual(captured["query"], "10.1000/example")
         self.assertEqual(captured["modes"], {"article", "markdown"})
         self.assertEqual(captured["context"].download_dir, default_download_dir)
+        self.assertEqual(captured["context"].artifact_mode, "markdown-assets")
         self.assertEqual(captured["context"].env, runtime_env)
         self.assertEqual(captured["render"], RenderOptions(include_refs=None, asset_profile=None, max_tokens="full_text"))
         self.assertEqual(
@@ -90,6 +91,61 @@ class McpPayloadCacheTests(unittest.TestCase):
                 asset_profile=None,
             ),
         )
+    def test_fetch_paper_payload_passes_explicit_artifact_mode_to_runtime(self) -> None:
+        for artifact_mode in ("all", "none"):
+            with self.subTest(artifact_mode=artifact_mode), tempfile.TemporaryDirectory() as tmpdir:
+                captured: dict[str, object] = {}
+                download_dir = Path(tmpdir)
+
+                def fake_fetch_paper(query, **kwargs):
+                    captured.update(kwargs)
+                    return sample_envelope(modes=kwargs["modes"], doi=query)
+
+                with (
+                    mock.patch.object(mcp_tools, "build_runtime_env", return_value={}),
+                    mock.patch.object(mcp_tools, "service_fetch_paper", side_effect=fake_fetch_paper),
+                ):
+                    payload = mcp_tools.fetch_paper_payload(
+                        query="10.1000/example",
+                        artifact_mode=artifact_mode,
+                        download_dir=download_dir,
+                    )
+
+                self.assertEqual(payload["doi"], "10.1000/example")
+                self.assertEqual(captured["context"].download_dir, download_dir)
+                self.assertEqual(captured["context"].artifact_mode, artifact_mode)
+
+    def test_fetch_paper_payload_artifact_mode_none_still_writes_mcp_sidecar(self) -> None:
+        captured: dict[str, object] = {}
+
+        def fake_fetch_paper(query, **kwargs):
+            captured.update(kwargs)
+            return sample_envelope(modes=kwargs["modes"], doi=query)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            download_dir = Path(tmpdir)
+            with (
+                mock.patch.object(mcp_tools, "build_runtime_env", return_value={}),
+                mock.patch.object(mcp_tools, "service_fetch_paper", side_effect=fake_fetch_paper),
+            ):
+                payload = mcp_tools.fetch_paper_payload(
+                    query="10.1000/example",
+                    artifact_mode="none",
+                    download_dir=download_dir,
+                )
+
+            sidecar_path = download_dir / "10.1000_example.fetch-envelope.json"
+            sidecar_exists = sidecar_path.exists()
+            listed_kinds = {
+                entry["kind"]
+                for entry in mcp_tools.list_cached_payload(download_dir=download_dir)["entries"]
+            }
+
+        self.assertEqual(payload["doi"], "10.1000/example")
+        self.assertEqual(captured["context"].artifact_mode, "none")
+        self.assertTrue(sidecar_exists)
+        self.assertIn("fetch_envelope", listed_kinds)
+
     def test_fetch_paper_payload_explicit_download_dir_overrides_env_default(self) -> None:
         captured: dict[str, object] = {}
         explicit_download_dir = Path("/tmp/isolated-paper-fetch")
@@ -156,6 +212,7 @@ class McpPayloadCacheTests(unittest.TestCase):
 
             self.assertEqual(payload["doi"], "10.1000/example")
             self.assertIsNone(captured["context"].download_dir)
+            self.assertEqual(captured["context"].artifact_mode, "none")
             self.assertFalse(download_dir.exists())
             mocked_refresh.assert_not_called()
     def test_fetch_paper_payload_save_markdown_writes_file_and_returns_path(self) -> None:
@@ -296,6 +353,17 @@ class McpPayloadCacheTests(unittest.TestCase):
         self.assertTrue(result.isError)
         self.assertIn("unsupported asset_profile value", result.structuredContent["reason"])
         mocked_fetch.assert_not_called()
+    def test_fetch_paper_tool_rejects_invalid_artifact_mode_before_service_call(self) -> None:
+        with mock.patch.object(mcp_tools, "service_fetch_paper") as mocked_fetch:
+            result = mcp_tools.fetch_paper_tool(
+                query="10.1000/example",
+                artifact_mode="debug",
+            )
+
+        self.assertTrue(result.isError)
+        self.assertIn("unsupported artifact_mode value", result.structuredContent["reason"])
+        mocked_fetch.assert_not_called()
+
     def test_fetch_paper_payload_prefer_cache_short_circuits_network_when_cached_envelope_matches(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             download_dir = Path(tmpdir)
@@ -321,6 +389,32 @@ class McpPayloadCacheTests(unittest.TestCase):
         self.assertEqual(payload["markdown"], "# Example Article\n\nExample body.\n")
         self.assertIn(QUALITY_FLAG_CACHED_WITH_CURRENT_REVISION, payload["quality"]["flags"])
         mocked_fetch.assert_not_called()
+    def test_fetch_paper_payload_prefer_cache_reads_sidecar_with_artifact_mode_none(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            download_dir = Path(tmpdir)
+            create_cached_fetch_envelope(download_dir, "10.1000/example", modes=["markdown"])
+
+            with (
+                mock.patch.object(mcp_tools, "build_runtime_env", return_value={}),
+                mock.patch.object(
+                    mcp_tools,
+                    "service_resolve_paper",
+                    return_value=sample_resolved_query("10.1000/example"),
+                ),
+                mock.patch.object(mcp_tools, "service_fetch_paper") as mocked_fetch,
+            ):
+                payload = mcp_tools.fetch_paper_payload(
+                    query="10.1000/example",
+                    modes=["markdown"],
+                    prefer_cache=True,
+                    artifact_mode="none",
+                    download_dir=download_dir,
+                )
+
+        self.assertEqual(payload["doi"], "10.1000/example")
+        self.assertEqual(payload["markdown"], "# Example Article\n\nExample body.\n")
+        mocked_fetch.assert_not_called()
+
     def test_fetch_paper_payload_save_markdown_compacts_cached_sidecar_response(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             download_dir = Path(tmpdir)

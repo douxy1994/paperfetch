@@ -407,7 +407,7 @@ PAPER_FETCH_ENV_FILE=/path/to/.env
 
 当前 MCP server 适合挂到支持 stdio MCP 的 host。
 
-常用抓取参数的默认模式、`prefer_cache`、`no_download` 和 `save_markdown` 语义见 [`providers.md`](providers.md#mcp-download-and-markdown-save)。
+常用抓取参数的默认模式、`artifact_mode`、`prefer_cache`、`no_download` 和 `save_markdown` 语义见 [`providers.md`](providers.md#mcp-download-and-markdown-save)。
 
 ## 9. 更新方式
 
@@ -435,7 +435,7 @@ python3 -m pip install .
 paper-fetch --query "10.1186/1471-2105-11-421"
 ```
 
-CLI 输出参数的语义是：`--format` 控制 stdout / `--output` 的序列化格式，`--output` 控制格式化结果的文件路径，`--output-dir` 控制 Markdown、PDF fallback 来源文件和本地资产目录。CLI 默认 `--artifact-mode markdown-assets --asset-profile body`，会保存 Markdown 和正文资产，但不保留 provider 原始 HTML/XML、JSON sidecar 或 HTTP textual cache；需要旧式完整调试 artifact 时使用 `--artifact-mode all`。为避免 `--format markdown --output-dir ./papers` 只打印 Markdown 而不保存 Markdown 的误解，当用户显式传入 `--format markdown`、保留默认 `--output -` 且指定 `--output-dir` 时，CLI 会额外在该目录保存 Markdown 文档；JSON/`both` 的同格式副本只在 `--artifact-mode all` 下保留。
+CLI 默认打印 Markdown 到终端；如果指定 `--output-dir` 且未显式传 `--output`，主输出会写入 `<doi>.md`、`<doi>.json` 或 `<doi>.both.json`，不再把正文打印到终端。完整输出、artifact、资产下载和错误码语义见 [`cli.md`](cli.md)。
 
 如果你在仓库源码目录里做 repo-local 验证，先安装测试依赖，并推荐显式带上 `PYTHONPATH=src`。默认 `pytest` 覆盖 `tests/unit` + `tests/integration` + `tests/devtools` 并启用多进程并行；`tests/live` 需要显式指定路径并串行运行：
 

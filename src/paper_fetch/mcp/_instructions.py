@@ -12,6 +12,7 @@ DEFAULT_FETCH_VALUES: tuple[tuple[str, str], ...] = (
     ("max_tokens", '"full_text"'),
     ("prefer_cache", "false"),
     ("no_download", "false"),
+    ("artifact_mode", '"markdown-assets"'),
     ("save_markdown", "false"),
     ("markdown_output_dir", "null"),
     ("markdown_filename", "null"),
@@ -77,7 +78,7 @@ def server_instructions() -> str:
         "validation and autocomplete. "
         "Defaults: modes=['article','markdown'], strategy.asset_profile omitted (provider default), "
         "strategy.allow_metadata_only_fallback=true, "
-        "include_refs=null, max_tokens='full_text', prefer_cache=false, no_download=false, "
+        "include_refs=null, max_tokens='full_text', prefer_cache=false, no_download=false, artifact_mode='markdown-assets', "
         "save_markdown=false. In full_text mode include_refs=null "
         "behaves like 'all'. When asset_profile is body/all, optional "
         "strategy.inline_image_budget can tune the default inline ImageContent caps of "
@@ -100,6 +101,8 @@ def server_instructions() -> str:
         "requires no FlareSolverr or provider credentials, and publishes `copernicus_xml` or `copernicus_pdf`. "
         "Elsevier PDF fallback currently returns text-only markdown even when "
         "`asset_profile` is `body` or `all`. On successful HTML/XML routes, "
+        "`asset_profile='none'` disables local asset downloads but does not remove "
+        "remote image links already present in rendered Markdown. "
         "`asset_profile='body'` means provider-cleaned body figure/table/formula assets only, "
         "while `asset_profile='all'` additionally downloads supplementary files. "
         "Inline ImageContent still only comes from body figures. Wiley/Science/PNAS/AMS support "
@@ -121,16 +124,18 @@ def fetch_tool_description() -> str:
         "result validation. "
         "Defaults: modes=['article','markdown'], strategy.asset_profile omitted (provider default), "
         "strategy.allow_metadata_only_fallback=true, "
-        "include_refs=null, max_tokens='full_text', prefer_cache=false, no_download=false, "
+        "include_refs=null, max_tokens='full_text', prefer_cache=false, no_download=false, artifact_mode='markdown-assets', "
         "save_markdown=false, markdown_output_dir=null, markdown_filename=null. Set "
         "prefer_cache=true to resolve the query to a DOI, then try a matching local cached "
-        "FetchEnvelope sidecar before running the full fetch waterfall. Use "
+        "FetchEnvelope sidecar before running the full fetch waterfall. Use artifact_mode='none' "
+        "to disable provider artifacts and assets while keeping MCP fetch-envelope cache sidecars. Use "
         "no_download=true to avoid writing provider payloads, PDFs, HTML, assets, and "
         "fetch-envelope sidecars. Set save_markdown=true to write the rendered Markdown "
         "full text to disk; successful saves return saved_markdown_path, while "
         "metadata-only or abstract-only results add a warning and "
         "download:markdown_skipped_no_fulltext. Use strategy.asset_profile='none', "
-        "'body', or 'all' to control local asset downloads. "
+        "'body', or 'all' to control local asset downloads; 'none' does not remove "
+        "remote image links already present in rendered Markdown. "
         "With body/all profiles, key local figures may be returned as ImageContent "
         "alongside the JSON result; strategy.inline_image_budget can override the default "
         "caps of 3 figures, 2 MiB each, and 8 MiB total, and any resulting zero disables "
@@ -149,6 +154,8 @@ def fetch_tool_description() -> str:
         "fallback while publishing `arxiv_html` or `arxiv_pdf`. `copernicus` uses direct HTTP landing discovery, public NLM/JATS XML, "
         "and text-only PDF fallback before metadata fallback while publishing `copernicus_xml` or `copernicus_pdf`; it does not need FlareSolverr or credentials. Elsevier PDF "
         "fallback keeps body/all requests text-only. On successful HTML/XML routes, "
+        "`asset_profile='none'` disables local asset downloads but keeps rendered "
+        "remote Markdown image links when the provider can resolve them. "
         "`asset_profile='body'` means provider-cleaned body figure/table/formula assets only, "
         "while `asset_profile='all'` additionally downloads supplementary files; "
         "supplementary files are saved as assets but are not emitted as ImageContent. "

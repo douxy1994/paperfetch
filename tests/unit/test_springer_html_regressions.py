@@ -187,6 +187,7 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         *,
         doi: str,
         fake_downloaded_assets: bool = False,
+        extracted_asset_profile: str = "body",
     ):
         html_text = html_path.read_text(encoding="utf-8", errors="ignore")
         base_metadata = {
@@ -205,10 +206,14 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
             source_url,
             title=str(merged_metadata.get("title") or ""),
         )
-        extracted_assets = springer_html.extract_html_assets(
-            html_text,
-            source_url,
-            asset_profile="body",
+        extracted_assets = (
+            []
+            if extracted_asset_profile == "none"
+            else springer_html.extract_html_assets(
+                html_text,
+                source_url,
+                asset_profile=extracted_asset_profile,
+            )
         )
         abstract_sections = list(extraction_payload["abstract_sections"])
         diagnostics = assess_html_fulltext_availability(
@@ -745,6 +750,32 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         self.assertIn("## Reporting summary", markdown_text)
         self.assertLess(markdown_text.index("Planting and removal"), markdown_text.index("## Reporting summary"))
         self.assertEqual(markdown_text.count("## Data availability"), 1)
+    def test_nature_asset_profile_none_keeps_remote_figure_links_without_downloads(self) -> None:
+        sample = golden_criteria_sample_for_doi("10.1038/s41586-020-1941-5")
+        doi = str(sample["doi"])
+        source_url = str(sample["source_url"])
+        article, extraction_payload, _diagnostics, extracted_assets = self._build_article_from_html(
+            golden_criteria_asset(doi, "original.html"),
+            source_url,
+            doi=doi,
+            extracted_asset_profile="none",
+        )
+
+        markdown = article.to_ai_markdown(asset_profile="none", max_tokens="full_text")
+
+        self.assertEqual(extracted_assets, [])
+        self.assertEqual(article.assets, [])
+        self.assertIn(
+            "![Figure 1](https://media.springernature.com/full/springer-static/image/"
+            "art%3A10.1038%2Fs41586-020-1941-5/MediaObjects/41586_2020_1941_Fig1_HTML.png)",
+            extraction_payload["markdown_text"],
+        )
+        self.assertIn(
+            "![Figure 1](https://media.springernature.com/full/springer-static/image/"
+            "art%3A10.1038%2Fs41586-020-1941-5/MediaObjects/41586_2020_1941_Fig1_HTML.png)",
+            markdown,
+        )
+        self.assertNotIn("_assets/", markdown)
 
     def test_springer_main_content_scenario_keeps_direct_child_order(self) -> None:
         """rule: rule-springer-main-content-direct-children"""

@@ -8,6 +8,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from ..artifacts import ArtifactMode
 from ..models import RenderOptions, normalize_text
 from ..service import FetchStrategy
 from ..workflow.types import ALLOWED_PREFERRED_PROVIDERS
@@ -15,9 +16,11 @@ from ..utils import dedupe_authors
 
 ALLOWED_INCLUDE_REFS = {"none", "top10", "all"}
 ALLOWED_ASSET_PROFILES = {"none", "body", "all"}
+ALLOWED_ARTIFACT_MODES = {"markdown-assets", "all", "none"}
 ALLOWED_OUTPUT_MODES = {"article", "markdown", "metadata"}
 ALLOWED_BATCH_CHECK_MODES = {"article", "metadata"}
 DEFAULT_MCP_MODES = ["article", "markdown"]
+DEFAULT_MCP_ARTIFACT_MODE: ArtifactMode = "markdown-assets"
 DEFAULT_INLINE_IMAGE_MAX_IMAGES = 3
 DEFAULT_INLINE_IMAGE_MAX_BYTES_PER_IMAGE = 2 * 1024 * 1024
 DEFAULT_INLINE_IMAGE_MAX_TOTAL_BYTES = 8 * 1024 * 1024
@@ -232,6 +235,7 @@ class FetchPaperRequest(BaseModel):
     max_tokens: int | str = "full_text"
     prefer_cache: bool = False
     no_download: bool = False
+    artifact_mode: str = DEFAULT_MCP_ARTIFACT_MODE
     save_markdown: bool = False
     markdown_output_dir: str | None = None
     markdown_filename: str | None = None
@@ -273,6 +277,16 @@ class FetchPaperRequest(BaseModel):
     @classmethod
     def default_strategy_when_null(cls, value: Any) -> Any:
         return {} if value is None else value
+
+    @field_validator("artifact_mode")
+    @classmethod
+    def normalize_artifact_mode(cls, value: str) -> str:
+        normalized = normalize_text(value).lower()
+        if normalized not in ALLOWED_ARTIFACT_MODES:
+            raise ValueError(
+                f"unsupported artifact_mode value: {value!r}. Expected one of: {', '.join(sorted(ALLOWED_ARTIFACT_MODES))}."
+            )
+        return normalized
 
     @field_validator("markdown_output_dir", "markdown_filename", mode="before")
     @classmethod

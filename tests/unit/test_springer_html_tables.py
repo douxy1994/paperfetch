@@ -45,6 +45,15 @@ GENERIC_EXTENDED_TABLE_DOI = "10.1038/s41586-020-1941-5"
 GENERIC_EXTENDED_TABLE_TITLE = "Forest age and water yield"
 GENERIC_EXTENDED_TABLE_LANDING_URL = "https://www.nature.com/articles/s41586-020-1941-5"
 GENERIC_EXTENDED_TABLE_URL = f"{GENERIC_EXTENDED_TABLE_LANDING_URL}/tables/1"
+GENERIC_EXTENDED_TABLE_ESM_IMAGE_URL = (
+    "https://media.springernature.com/lw850/springer-static/esm/"
+    "art%3A10.1038%2Fs41586-020-1941-5/MediaObjects/"
+    "41586_2020_1941_Tab1_ESM.jpg"
+)
+NATURE_HEADER_SVG_URL = (
+    "https://media.springernature.com/full/nature-cms/uploads/product/nature/"
+    "header-86f1267ea01eccd46b530284be10585e.svg"
+)
 
 
 class FakeTransport:
@@ -392,6 +401,114 @@ class SpringerHtmlTableTests(unittest.TestCase):
         self.assertEqual(
             attempt.inline_table_assets[0].get("caption"),
             "Observed water yield at long-term lysimeter stations",
+        )
+
+    def test_generic_extended_data_table_html_image_fallback_uses_body_esm_table_image(
+        self,
+    ) -> None:
+        """rule: rule-springer-inline-table"""
+        responses = {
+            GENERIC_EXTENDED_TABLE_LANDING_URL: {
+                "headers": {"content-type": "text/html; charset=utf-8"},
+                "body": self._article_with_inline_table(
+                    label="Extended Data Table 1",
+                    caption="Observed water yield at long-term lysimeter stations",
+                    table_href="/articles/s41586-020-1941-5/tables/1",
+                ),
+                "url": GENERIC_EXTENDED_TABLE_LANDING_URL,
+                "status_code": 200,
+            },
+            GENERIC_EXTENDED_TABLE_URL: {
+                "headers": {"content-type": "text/html; charset=utf-8"},
+                "body": f"""
+                <html><body>
+                  <header>
+                    <img src="{NATURE_HEADER_SVG_URL}" alt="Nature" />
+                  </header>
+                  <main id="content">
+                    <div data-track-component="table">
+                      <h1>Extended Data Table 1 Observed water yield</h1>
+                      <div class="c-article-table-container">
+                        <figure data-container-section="table">
+                          <picture>
+                            <source srcset="{GENERIC_EXTENDED_TABLE_ESM_IMAGE_URL}?as=webp" />
+                            <img src="{GENERIC_EXTENDED_TABLE_ESM_IMAGE_URL}"
+                                 alt="Extended Data Table 1" />
+                          </picture>
+                        </figure>
+                      </div>
+                    </div>
+                  </main>
+                </body></html>
+                """.encode(),
+                "url": GENERIC_EXTENDED_TABLE_URL,
+                "status_code": 200,
+            },
+        }
+
+        attempt = self._prepare_generic_extended_table_attempt(responses)
+
+        self.assertIn(
+            f"![Extended Data Table 1]({GENERIC_EXTENDED_TABLE_ESM_IMAGE_URL})",
+            attempt.markdown_text,
+        )
+        self.assertNotIn(
+            "header-86f1267ea01eccd46b530284be10585e.svg",
+            attempt.markdown_text,
+        )
+        self.assertEqual(len(attempt.inline_table_assets), 1)
+        self.assertEqual(
+            attempt.inline_table_assets[0].get("url"),
+            GENERIC_EXTENDED_TABLE_ESM_IMAGE_URL,
+        )
+
+    def test_generic_extended_data_table_html_image_fallback_rejects_header_only_svg(
+        self,
+    ) -> None:
+        """rule: rule-springer-inline-table"""
+        responses = {
+            GENERIC_EXTENDED_TABLE_LANDING_URL: {
+                "headers": {"content-type": "text/html; charset=utf-8"},
+                "body": self._article_with_inline_table(
+                    label="Extended Data Table 1",
+                    caption="Observed water yield at long-term lysimeter stations",
+                    table_href="/articles/s41586-020-1941-5/tables/1",
+                ),
+                "url": GENERIC_EXTENDED_TABLE_LANDING_URL,
+                "status_code": 200,
+            },
+            GENERIC_EXTENDED_TABLE_URL: {
+                "headers": {"content-type": "text/html; charset=utf-8"},
+                "body": f"""
+                <html><body>
+                  <header>
+                    <img src="{NATURE_HEADER_SVG_URL}" alt="Nature" />
+                  </header>
+                  <main id="content">
+                    <div data-track-component="table">
+                      <h1>Extended Data Table 1 Observed water yield</h1>
+                      <p>Image unavailable.</p>
+                    </div>
+                  </main>
+                </body></html>
+                """.encode(),
+                "url": GENERIC_EXTENDED_TABLE_URL,
+                "status_code": 200,
+            },
+        }
+
+        attempt = self._prepare_generic_extended_table_attempt(responses)
+
+        self.assertIn(
+            "**Extended Data Table 1.** [Table body unavailable:",
+            attempt.markdown_text,
+        )
+        self.assertNotIn(
+            "header-86f1267ea01eccd46b530284be10585e.svg",
+            attempt.markdown_text,
+        )
+        self.assertFalse(
+            any(asset.get("kind") == "table" for asset in attempt.inline_table_assets)
         )
 
     def test_regular_table_does_not_use_image_asset_fallback(self) -> None:

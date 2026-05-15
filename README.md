@@ -240,13 +240,17 @@ paper-fetch-mcp
 
 `paper-fetch` 的输出与本地 artifact 参数分工如下：
 
-- `--format markdown|json|both` 指定 stdout 或 `--output` 的序列化格式，默认是 `markdown`。
-- `--output <path>` 把这份格式化结果写到指定文件；默认 `--output -` 表示打印到终端。
-- `--output-dir <dir>` 是 Markdown、PDF fallback 来源文件和本地资产的保存目录，默认使用 `PAPER_FETCH_DOWNLOAD_DIR` 或用户数据目录下的 `downloads/`。
+- `--format markdown|json|both` 指定 stdout、`--output` 或 `--output-dir` 默认主输出文件的序列化格式，默认是 `markdown`。
+- `--query-file <path>` 启用批量抓取，每行一个 DOI、URL 或标题；空行和以 `#` 开头的注释行会被忽略。批量模式不向 stdout 输出正文，而是把每篇主输出写到输出目录，并生成 JSONL 汇总。
+- `--output <path>` 把这份格式化结果写到指定文件；显式 `--output -` 表示打印到终端。
+- `--output-dir <dir>` 是默认主输出、Markdown、PDF fallback 来源文件和本地资产的保存目录；未显式传 `--output` 时，主输出会写到 `<doi>.md`、`<doi>.json` 或 `<doi>.both.json`，不再把正文打印到终端。
+- `--batch-concurrency <1..8>` 控制批量并发，默认 `1`；`--batch-results <path>` 可覆盖默认的 `<output-dir>/batch-results.jsonl`。
 - `--artifact-mode markdown-assets|all|none` 控制中间产物保留，CLI 默认是 `markdown-assets`：保存 Markdown、按 `--asset-profile` 保存资产，不保留 provider 原始 HTML/XML、fetch-envelope/cache JSON 或 HTTP textual cache；如果正文来自 PDF fallback，仍会保存 PDF 源文件便于溯源。
-- `--artifact-mode all` 保留旧行为：provider HTML/PDF、辅助 artifact、HTTP textual cache 和显式格式副本都可落盘。当用户显式传入 `--format`、保留 `--output -` 且指定 `--output-dir` 时，CLI 会在 `--output-dir` 下额外写一份同格式文档：`markdown` 写 `<doi>.md`，`json` 写 `<doi>.json`，`both` 写 `<doi>.both.json`。
-- `--artifact-mode none` 不保存 provider artifact 或资产；显式 `--output <path>` / `--save-markdown` 仍可写 Markdown。`--no-download` 保留兼容，但已弃用，等价于 `--artifact-mode none`。
-- `--asset-profile none|body|all` 只控制内容资产范围，CLI 默认是 `body`：`none` 只要文本，`body` 保存正文图片/图表/公式图片，`all` 额外保存补充材料。
+- `--artifact-mode all` 保留旧行为：provider HTML/PDF、辅助 artifact、HTTP textual cache 等调试 artifact 都可落盘。
+- `--artifact-mode none` 不保存 provider artifact 或资产；显式 `--output <path>`、`--save-markdown`，以及未显式 `--output` 时由 `--output-dir` 承接的主输出仍可写文件。`--no-download` 保留兼容，但已弃用，等价于 `--artifact-mode none`。
+- `--asset-profile none|body|all` 控制本地内容资产下载范围，CLI 默认是 `body`：`none` 不下载本地资产但保留 Markdown 中可解析的远程图片链接，`body` 保存正文图片/图表/公式图片，`all` 额外保存补充材料。
+
+完整命令组合、主输出与 artifact 的区别、错误输出和 exit code 见 [`docs/cli.md`](docs/cli.md)。
 
 例如：
 
@@ -255,7 +259,25 @@ paper-fetch --query "https://www.nature.com/articles/s41559-026-03039-9" \
   --output-dir ./papers
 ```
 
-这会继续把 Markdown 打印到终端，同时在 `./papers` 保存一份 Markdown，并按默认 `--asset-profile body` 保存正文图片等资产；默认不会保存 provider 原始 HTML/XML 或 JSON/cache sidecar。需要完整调试 artifact 时显式使用 `--artifact-mode all`。
+这会把 Markdown 写到 `./papers/<doi>.md`，不打印正文到终端，并按默认 `--asset-profile body` 保存正文图片等资产；默认不会保存 provider 原始 HTML/XML 或 JSON/cache sidecar。需要完整调试 artifact 时显式使用 `--artifact-mode all`。如果需要强制打印到终端，显式传 `--output -`。
+
+批量抓取时先准备 query 文件：
+
+```text
+# 每行一个 DOI、URL 或标题
+10.1186/1471-2105-11-421
+https://www.nature.com/articles/s41559-026-03039-9
+```
+
+然后运行：
+
+```bash
+paper-fetch --query-file ./queries.txt \
+  --output-dir ./papers \
+  --batch-concurrency 4
+```
+
+这会把每篇 Markdown 和正文资产写到 `./papers`，并生成 `./papers/batch-results.jsonl`。单篇失败会记录到 JSONL 并继续处理后续条目。
 
 如果只想控制格式化结果的文件路径，显式使用 `--output`：
 
@@ -383,7 +405,7 @@ WSL 下给 Codex 挂 MCP 时，推荐使用仓库包装脚本：
 
 ### 常用抓取参数
 
-MCP 默认模式、`prefer_cache`、`no_download` 和 `save_markdown` 的完整语义见 [`docs/providers.md`](docs/providers.md#mcp-download-and-markdown-save)。`strategy.asset_profile` 支持 `none`、`body`、`all`；CLI 默认是 `body`，MCP/Python API 未显式设置时默认由 provider 决定。
+MCP 默认模式、`artifact_mode`、`prefer_cache`、`no_download` 和 `save_markdown` 的完整语义见 [`docs/providers.md`](docs/providers.md#mcp-download-and-markdown-save)。MCP `artifact_mode` 默认是 `markdown-assets`；`strategy.asset_profile` 支持 `none`、`body`、`all`，MCP/Python API 未显式设置时默认由 provider 决定。
 
 ### 更新
 

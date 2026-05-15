@@ -18,6 +18,7 @@ from mcp.server.lowlevel.server import NotificationOptions
 from mcp.shared.message import SessionMessage
 from mcp.types import CallToolResult, ToolAnnotations
 
+from ..artifacts import ArtifactMode
 from ._instructions import fetch_tool_description, server_instructions
 from ._deps import MCPDeps, default_mcp_deps
 from .batch import batch_check_tool_async, batch_resolve_tool_async
@@ -391,6 +392,7 @@ def build_server() -> FastMCP:
         max_tokens: int | str = "full_text",
         prefer_cache: bool = False,
         no_download: bool = False,
+        artifact_mode: ArtifactMode = "markdown-assets",
         save_markdown: bool = False,
         markdown_output_dir: str | None = None,
         markdown_filename: str | None = None,
@@ -410,6 +412,7 @@ def build_server() -> FastMCP:
             max_tokens=max_tokens,
             prefer_cache=prefer_cache,
             no_download=no_download,
+            artifact_mode=artifact_mode,
             save_markdown=save_markdown,
             markdown_output_dir=(
                 str(parsed_markdown_output_dir) if parsed_markdown_output_dir is not None else None

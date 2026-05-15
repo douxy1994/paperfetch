@@ -81,7 +81,93 @@ class CliTests(unittest.TestCase):
         finally:
             paper_fetch_cli.fetch_paper = original_fetch
 
-    def test_main_saves_formatted_markdown_copy_when_format_and_output_dir_are_explicit(self) -> None:
+    def test_main_explicit_output_path_takes_precedence_over_output_dir_default(self) -> None:
+        article = sample_article()
+
+        def fake_fetch(*args, **kwargs):
+            return paper_fetch.build_fetch_envelope(article, modes=kwargs["modes"], render=kwargs["render"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "explicit.md"
+            output_dir = Path(tmpdir) / "papers"
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            original_argv = sys.argv
+            sys.argv = [
+                "paper_fetch.py",
+                "--query",
+                "10.1016/test",
+                "--output",
+                str(output_path),
+                "--output-dir",
+                str(output_dir),
+            ]
+            try:
+                with (
+                    mock.patch.object(paper_fetch_cli, "build_runtime_env", return_value={}),
+                    mock.patch.object(paper_fetch_cli, "fetch_paper", side_effect=fake_fetch),
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    exit_code = paper_fetch_cli.main()
+            finally:
+                sys.argv = original_argv
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertTrue(output_path.exists())
+            self.assertIn("# Example Article", output_path.read_text(encoding="utf-8"))
+            self.assertFalse((output_dir / "10.1016_test.md").exists())
+
+    def test_main_asset_profile_none_preserves_remote_markdown_images_in_output_file(self) -> None:
+        article = sample_article()
+        article.sections[0].text = "\n\n".join(
+            [
+                article.sections[0].text,
+                "![Figure 1](https://example.test/figure-1.png)",
+                "**Figure 1.** Remote figure caption.",
+            ]
+        )
+
+        def fake_fetch(*args, **kwargs):
+            return paper_fetch.build_fetch_envelope(article, modes=kwargs["modes"], render=kwargs["render"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_path = Path(tmpdir) / "article.md"
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            original_argv = sys.argv
+            sys.argv = [
+                "paper_fetch.py",
+                "--query",
+                "10.1016/test",
+                "--asset-profile",
+                "none",
+                "--artifact-mode",
+                "none",
+                "--output",
+                str(output_path),
+            ]
+            try:
+                with (
+                    mock.patch.object(paper_fetch_cli, "build_runtime_env", return_value={}),
+                    mock.patch.object(paper_fetch_cli, "fetch_paper", side_effect=fake_fetch),
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    exit_code = paper_fetch_cli.main()
+            finally:
+                sys.argv = original_argv
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "")
+            rendered = output_path.read_text(encoding="utf-8")
+            self.assertIn("![Figure 1](https://example.test/figure-1.png)", rendered)
+            self.assertFalse(any(Path(tmpdir).glob("*_assets")))
+
+    def test_main_writes_markdown_to_output_dir_default_file_when_output_is_implicit(self) -> None:
         article = sample_article()
         captured: dict[str, object] = {}
 
@@ -126,7 +212,7 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr.getvalue(), "")
-            self.assertIn("# Example Article", stdout.getvalue())
+            self.assertEqual(stdout.getvalue(), "")
             self.assertEqual(captured["modes"], {"article", "markdown"})
             saved_path = output_dir / "10.1016_test.md"
             self.assertTrue(saved_path.exists())
@@ -134,7 +220,7 @@ class CliTests(unittest.TestCase):
             self.assertIn("![Figure 1](10.1016_test_assets/figure-1.png)", rendered)
             self.assertNotIn(str(figure_path), rendered)
 
-    def test_main_default_markdown_assets_auto_saves_markdown_when_format_is_implicit(self) -> None:
+    def test_main_implicit_format_writes_markdown_to_output_dir_default_file(self) -> None:
         article = sample_article()
         captured: dict[str, object] = {}
 
@@ -161,11 +247,11 @@ class CliTests(unittest.TestCase):
 
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr.getvalue(), "")
-            self.assertIn("# Example Article", stdout.getvalue())
+            self.assertEqual(stdout.getvalue(), "")
             self.assertEqual(captured["modes"], {"article", "markdown"})
             self.assertTrue((output_dir / "10.1016_test.md").exists())
 
-    def test_main_saves_json_and_both_copies_when_format_and_output_dir_are_explicit(self) -> None:
+    def test_main_writes_json_and_both_to_output_dir_default_files_when_output_is_implicit(self) -> None:
         article = sample_article()
 
         for output_format, expected_name in (("json", "10.1016_test.json"), ("both", "10.1016_test.both.json")):
@@ -202,8 +288,50 @@ class CliTests(unittest.TestCase):
 
                 self.assertEqual(exit_code, 0)
                 self.assertEqual(stderr.getvalue(), "")
+                self.assertEqual(stdout.getvalue(), "")
                 self.assertTrue((output_dir / expected_name).exists())
-                self.assertEqual(json.loads(stdout.getvalue()), json.loads((output_dir / expected_name).read_text(encoding="utf-8")))
+                payload = json.loads((output_dir / expected_name).read_text(encoding="utf-8"))
+                if output_format == "json":
+                    self.assertEqual(payload["doi"], "10.1016/test")
+                else:
+                    self.assertIn("article", payload)
+                    self.assertIn("markdown", payload)
+
+    def test_main_explicit_stdout_keeps_printing_with_output_dir(self) -> None:
+        article = sample_article()
+
+        def fake_fetch(*args, **kwargs):
+            return paper_fetch.build_fetch_envelope(article, modes=kwargs["modes"], render=kwargs["render"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "papers"
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            original_argv = sys.argv
+            sys.argv = [
+                "paper_fetch.py",
+                "--query",
+                "10.1016/test",
+                "--output",
+                "-",
+                "--output-dir",
+                str(output_dir),
+            ]
+            try:
+                with (
+                    mock.patch.object(paper_fetch_cli, "build_runtime_env", return_value={}),
+                    mock.patch.object(paper_fetch_cli, "fetch_paper", side_effect=fake_fetch),
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    exit_code = paper_fetch_cli.main()
+            finally:
+                sys.argv = original_argv
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertIn("# Example Article", stdout.getvalue())
+            self.assertTrue((output_dir / "10.1016_test.md").exists())
 
     def test_main_uses_resolved_default_download_dir_for_save_markdown(self) -> None:
         article = sample_article()
@@ -714,10 +842,10 @@ class CliTests(unittest.TestCase):
             self.assertIsNone(captured["context"].transport.disk_cache_dir)
             self.assertTrue((output_dir / "10.1016_test.md").exists())
 
-    def test_main_markdown_assets_suppresses_json_output_dir_copy_but_saves_markdown(self) -> None:
+    def test_main_markdown_assets_writes_json_or_both_primary_output_and_markdown_artifact(self) -> None:
         article = sample_article()
 
-        for output_format, unexpected_name in (("json", "10.1016_test.json"), ("both", "10.1016_test.both.json")):
+        for output_format, expected_name in (("json", "10.1016_test.json"), ("both", "10.1016_test.both.json")):
             with self.subTest(output_format=output_format), tempfile.TemporaryDirectory() as tmpdir:
                 output_dir = Path(tmpdir) / "papers"
 
@@ -749,7 +877,8 @@ class CliTests(unittest.TestCase):
 
                 self.assertEqual(exit_code, 0)
                 self.assertEqual(stderr.getvalue(), "")
-                self.assertFalse((output_dir / unexpected_name).exists())
+                self.assertEqual(stdout.getvalue(), "")
+                self.assertTrue((output_dir / expected_name).exists())
                 self.assertTrue((output_dir / "10.1016_test.md").exists())
 
     def test_main_no_download_is_deprecated_alias_for_artifact_mode_none(self) -> None:
@@ -785,10 +914,51 @@ class CliTests(unittest.TestCase):
                 sys.argv = original_argv
 
             self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout.getvalue(), "")
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(captured["context"].artifact_mode, "none")
             self.assertIsNone(captured["context"].download_dir)
-            self.assertFalse((output_dir / "10.1016_test.md").exists())
+            self.assertTrue((output_dir / "10.1016_test.md").exists())
+
+    def test_main_artifact_mode_none_still_writes_primary_output_dir_file(self) -> None:
+        article = sample_article()
+        captured: dict[str, object] = {}
+
+        def fake_fetch(*args, **kwargs):
+            captured.update(kwargs)
+            return build_envelope(article)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "downloads"
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            original_argv = sys.argv
+            sys.argv = [
+                "paper_fetch.py",
+                "--query",
+                "10.1016/test",
+                "--artifact-mode",
+                "none",
+                "--output-dir",
+                str(output_dir),
+            ]
+            try:
+                with (
+                    mock.patch.object(paper_fetch_cli, "build_runtime_env", return_value={}),
+                    mock.patch.object(paper_fetch_cli, "fetch_paper", side_effect=fake_fetch),
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    exit_code = paper_fetch_cli.main()
+            finally:
+                sys.argv = original_argv
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertEqual(captured["context"].artifact_mode, "none")
+            self.assertEqual(captured["context"].download_dir, output_dir)
+            self.assertTrue((output_dir / "10.1016_test.md").exists())
 
     def test_main_artifact_mode_none_still_allows_explicit_save_markdown(self) -> None:
         article = sample_article()
@@ -825,6 +995,7 @@ class CliTests(unittest.TestCase):
                 sys.argv = original_argv
 
             self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout.getvalue(), "")
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(captured["context"].artifact_mode, "none")
             self.assertEqual(captured["context"].download_dir, output_dir)
@@ -870,6 +1041,182 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(captured["strategy"].asset_profile, asset_profile)
                 self.assertEqual(captured["context"].artifact_mode, "markdown-assets")
 
+    def test_read_query_file_ignores_blank_lines_and_comments(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_file = Path(tmpdir) / "queries.txt"
+            query_file.write_text(
+                "\n".join(
+                    [
+                        "",
+                        "  # comment",
+                        "  10.1000/a  ",
+                        "Example paper title",
+                        "",
+                        "# another comment",
+                        "https://example.test/paper",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+
+            self.assertEqual(
+                paper_fetch_cli.read_query_file(query_file),
+                ["10.1000/a", "Example paper title", "https://example.test/paper"],
+            )
+
+    def test_main_rejects_query_and_query_file_together(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_file = Path(tmpdir) / "queries.txt"
+            query_file.write_text("10.1000/a\n", encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                paper_fetch_cli.main(["--query", "10.1000/a", "--query-file", str(query_file)])
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("not allowed with argument", stderr.getvalue())
+
+    def test_main_rejects_empty_query_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            query_file = Path(tmpdir) / "queries.txt"
+            query_file.write_text("\n# comment\n  \n", encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                mock.patch.object(paper_fetch_cli, "build_runtime_env", return_value={}),
+                mock.patch.object(paper_fetch_cli, "resolve_cli_download_dir", return_value=Path(tmpdir) / "downloads"),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                paper_fetch_cli.main(["--query-file", str(query_file)])
+
+            self.assertEqual(raised.exception.code, 2)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertIn("query file did not contain any queries", stderr.getvalue())
+
+    def test_main_rejects_batch_concurrency_out_of_range(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+
+        with (
+            contextlib.redirect_stdout(stdout),
+            contextlib.redirect_stderr(stderr),
+            self.assertRaises(SystemExit) as raised,
+        ):
+            paper_fetch_cli.main(["--query", "10.1000/a", "--batch-concurrency", "9"])
+
+        self.assertEqual(raised.exception.code, 2)
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertIn("batch-concurrency", stderr.getvalue())
+
+    def test_main_batch_writes_markdown_files_and_results_jsonl(self) -> None:
+        captured: list[dict[str, object]] = []
+
+        def fake_fetch(query, *args, **kwargs):
+            del args
+            captured.append(kwargs)
+            article = sample_article()
+            article.doi = query
+            article.metadata.title = f"Article {query}"
+            return paper_fetch.build_fetch_envelope(article, modes=kwargs["modes"], render=kwargs["render"])
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "downloads"
+            query_file = Path(tmpdir) / "queries.txt"
+            query_file.write_text("\n# ignored\n10.1000/a\n\n10.1000/b\n", encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                mock.patch.object(paper_fetch_cli, "build_runtime_env", return_value={}),
+                mock.patch.object(paper_fetch_cli, "resolve_cli_download_dir", return_value=output_dir),
+                mock.patch.object(paper_fetch_cli, "fetch_paper", side_effect=fake_fetch),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = paper_fetch_cli.main(["--query-file", str(query_file)])
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertEqual(len(captured), 2)
+            self.assertTrue((output_dir / "10.1000_a.md").exists())
+            self.assertTrue((output_dir / "10.1000_b.md").exists())
+            self.assertNotIn("# Example Article", stdout.getvalue())
+            self.assertTrue(all(item["modes"] == {"article", "markdown"} for item in captured))
+            self.assertTrue(all(item["render"].asset_profile == "body" for item in captured))
+            self.assertTrue(all(item["context"].artifact_mode == "markdown-assets" for item in captured))
+            self.assertTrue(all(item["context"].download_dir == output_dir for item in captured))
+
+            result_lines = [
+                json.loads(line)
+                for line in (output_dir / "batch-results.jsonl").read_text(encoding="utf-8").splitlines()
+            ]
+            self.assertEqual([item["status"] for item in result_lines], ["ok", "ok"])
+            self.assertEqual([item["index"] for item in result_lines], [1, 2])
+            self.assertTrue(all(item["output_path"] for item in result_lines))
+            self.assertTrue(all(item["saved_markdown_path"] is None for item in result_lines))
+
+    def test_main_batch_continues_after_failure_and_returns_status_exit_code(self) -> None:
+        calls: list[str] = []
+
+        def fake_fetch(query, *args, **kwargs):
+            del args, kwargs
+            calls.append(query)
+            if query == "10.1000/b":
+                raise ProviderFailure("no_access", "Forbidden", warnings=["license required"])
+            article = sample_article()
+            article.doi = query
+            article.metadata.title = f"Article {query}"
+            return build_envelope(article)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "papers"
+            query_file = Path(tmpdir) / "queries.txt"
+            results_path = Path(tmpdir) / "summary" / "results.jsonl"
+            query_file.write_text("10.1000/a\n10.1000/b\n10.1000/c\n", encoding="utf-8")
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+
+            with (
+                mock.patch.object(paper_fetch_cli, "build_runtime_env", return_value={}),
+                mock.patch.object(paper_fetch_cli, "fetch_paper", side_effect=fake_fetch),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = paper_fetch_cli.main(
+                    [
+                        "--query-file",
+                        str(query_file),
+                        "--output-dir",
+                        str(output_dir),
+                        "--batch-results",
+                        str(results_path),
+                    ]
+                )
+
+            self.assertEqual(exit_code, 3)
+            self.assertEqual(calls, ["10.1000/a", "10.1000/b", "10.1000/c"])
+            self.assertEqual(stdout.getvalue(), "")
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertTrue((output_dir / "10.1000_a.md").exists())
+            self.assertFalse((output_dir / "10.1000_b.md").exists())
+            self.assertTrue((output_dir / "10.1000_c.md").exists())
+
+            result_lines = [json.loads(line) for line in results_path.read_text(encoding="utf-8").splitlines()]
+            self.assertEqual([item["status"] for item in result_lines], ["ok", "no_access", "ok"])
+            self.assertEqual(result_lines[1]["warnings"], ["license required"])
+            self.assertEqual(result_lines[1]["error"]["reason"], "Forbidden")
+            self.assertEqual(result_lines[2]["index"], 3)
+
     def test_parse_max_tokens_accepts_full_text_and_integers(self) -> None:
         self.assertEqual(paper_fetch_cli.parse_max_tokens("full_text"), "full_text")
         self.assertEqual(paper_fetch_cli.parse_max_tokens("16000"), 16000)
@@ -884,6 +1231,18 @@ class CliTests(unittest.TestCase):
         self.assertEqual(
             paper_fetch_cli._compute_modes(
                 SimpleNamespace(format="markdown", output="/tmp/out.md", save_markdown=False, no_download=False)
+            ),
+            {"article", "markdown"},
+        )
+        self.assertEqual(
+            paper_fetch_cli._compute_modes(
+                SimpleNamespace(
+                    format="markdown",
+                    output="-",
+                    save_markdown=False,
+                    no_download=False,
+                    primary_output_to_output_dir=True,
+                )
             ),
             {"article", "markdown"},
         )

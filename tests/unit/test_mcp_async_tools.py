@@ -37,13 +37,15 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
         )
     async def test_fetch_paper_tool_async_reports_progress_and_bridges_logs(self) -> None:
         ctx = FakeContext()
+        captured: dict[str, object] = {}
 
         def fake_fetch_paper(query, **kwargs):
+            captured.update(kwargs)
             logging.getLogger("paper_fetch.service").debug("fetch_stage query=%s attempt=%s", query, 1)
             return sample_envelope(modes=kwargs["modes"], doi=query)
 
         with (
-            mock.patch.object(mcp_tools, "build_runtime_env", return_value={}),
+            mock.patch.object(mcp_tools, "build_runtime_env", return_value={"PAPER_FETCH_HTTP_DISK_CACHE": "1"}),
             mock.patch.object(mcp_tools, "resolve_mcp_download_dir", return_value=Path("/tmp/downloads")),
             mock.patch.object(mcp_tools, "service_fetch_paper", side_effect=fake_fetch_paper),
             mock.patch.object(mcp_tools, "refresh_cache_index_for_doi"),
@@ -66,6 +68,8 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(ctx.session.messages[0]["data"]["event"], "fetch_stage")
         self.assertEqual(ctx.session.messages[0]["data"]["query"], "10.1000/example")
+        self.assertEqual(captured["context"].artifact_mode, "markdown-assets")
+        self.assertIsNone(captured["context"].transport.disk_cache_dir)
     async def test_fetch_paper_tool_async_sets_cancellation_flag_for_worker_transport(self) -> None:
         started = threading.Event()
         cancelled_seen = threading.Event()

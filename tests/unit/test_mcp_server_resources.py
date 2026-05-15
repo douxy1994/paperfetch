@@ -26,6 +26,32 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.session.resource_list_changed_calls, 1)
         resource_uris = set(server._resource_manager._resources)
         self.assertTrue(any(uri.startswith("resource://paper-fetch/cached/") for uri in resource_uris))
+    async def test_fetch_paper_server_passes_artifact_mode_to_payload_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            default_dir = Path(tmpdir) / "default"
+            ctx = FakeContext()
+            captured: dict[str, object] = {}
+
+            def fake_fetch_paper(query, **kwargs):
+                captured.update(kwargs)
+                return sample_envelope(modes=kwargs["modes"], doi=query)
+
+            with (
+                mock.patch.object(mcp_tools, "build_runtime_env", return_value={}),
+                mock.patch.object(mcp_tools, "resolve_mcp_download_dir", return_value=default_dir),
+                mock.patch.object(mcp_tools, "service_fetch_paper", side_effect=fake_fetch_paper),
+            ):
+                server = build_server()
+                result = await server._tool_manager.call_tool(
+                    "fetch_paper",
+                    {"query": "10.1000/example", "artifact_mode": "none"},
+                    context=ctx,
+                )
+
+        self.assertFalse(result.isError)
+        self.assertEqual(captured["context"].download_dir, default_dir)
+        self.assertEqual(captured["context"].artifact_mode, "none")
+
     async def test_fetch_paper_server_skips_resource_sync_when_no_download_without_markdown_save(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             default_dir = Path(tmpdir) / "default"

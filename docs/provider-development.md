@@ -261,7 +261,7 @@ Provider-specific 代码只负责：
 
 `asset_profile` 的语义必须稳定：
 
-- `none`：不下载资产；Markdown 保留正文 caption 或 captions-only 退化结果。
+- `none`：不下载本地资产；Markdown 必须保留正文已有或 provider 可解析出的远程图片链接，只有无法解析远程图片时才退回 caption / captions-only。
 - `body`：只下载 provider-cleaned 正文 scope 中的 figure、正文表格原图和可识别公式图片 fallback。
 - `all`：在 `body` 基础上额外下载明确 supplementary / supporting / multimedia scope 中的附件。
 

@@ -563,15 +563,15 @@ def elsevier_figure_registry(
     root: ET.Element,
     assets: list[dict[str, Any]],
     markdown_path: Path,
-) -> tuple[dict[str, dict[str, str]], list[dict[str, str]]]:
+) -> tuple[dict[str, dict[str, Any]], list[dict[str, Any]]]:
     image_assets = build_elsevier_asset_lookup(
         assets,
         asset_types=set(ELSEVIER_IMAGE_ASSET_TYPES) - {"graphical_abstract"},
     )
 
-    lookup: dict[str, dict[str, str]] = {}
-    entries: list[dict[str, str]] = []
-    used_asset_paths: set[str] = set()
+    lookup: dict[str, dict[str, Any]] = {}
+    entries: list[dict[str, Any]] = []
+    used_asset_links: set[str] = set()
     appendix_figure_ids: set[str] = set()
     appendix_figure_locators: set[str] = set()
     for container in root.iter():
@@ -603,17 +603,23 @@ def elsevier_figure_registry(
                 if locator:
                     break
         asset = image_assets.get(locator) or image_assets.get(normalize_text(locator))
-        asset_path = str(asset.get("path") or "") if asset else ""
-        if not asset or not asset_path or asset_path in used_asset_paths:
+        link = resolve_elsevier_asset_link(markdown_path, asset)
+        if not asset or not link or link in used_asset_links:
             continue
-        used_asset_paths.add(asset_path)
+        used_asset_links.add(link)
+        asset_path = str(asset.get("path") or "")
         asset_type = str(asset.get("asset_type") or "")
+        entry_key = (
+            asset_path
+            or normalize_text(str(asset.get("source_ref") or ""))
+            or normalize_text(locator)
+            or link
+        )
         entry = {
-            "key": asset_path,
+            "key": entry_key,
             "heading": label,
             "caption": caption,
-            "link": path_relative_to(markdown_path.parent, asset_path),
-            "path": asset_path,
+            "link": link,
             "section": (
                 "appendix"
                 if asset_type == "appendix_image"
@@ -622,6 +628,12 @@ def elsevier_figure_registry(
                 else "body"
             ),
         }
+        if asset_path:
+            entry["path"] = asset_path
+        source_url = normalize_text(str(asset.get("source_url") or ""))
+        if source_url:
+            entry["source_url"] = source_url
+            entry["original_url"] = source_url
         entries.append(entry)
         for key in {figure_id, normalize_text(locator)}:
             if key:
@@ -631,9 +643,12 @@ def elsevier_figure_registry(
         if (
             asset.get("asset_type") not in {"image", "appendix_image"}
             or not asset.get("path")
-            or asset["path"] in used_asset_paths
         ):
             continue
+        relative_path = path_relative_to(markdown_path.parent, str(asset["path"]))
+        if relative_path in used_asset_links:
+            continue
+        used_asset_links.add(relative_path)
         entries.append(
             {
                 "key": str(asset["path"]),

@@ -12,6 +12,7 @@ from typing import Any, Mapping
 from mcp.server.fastmcp import Context
 from mcp.types import CallToolResult, ImageContent, TextContent
 
+from ..artifacts import ArtifactMode
 from ..http import HttpTransport
 from ..models import ArticleModel, Asset, FetchEnvelope
 from ..provider_catalog import is_official_provider, provider_status_order
@@ -202,6 +203,7 @@ def _fetch_paper_envelope(
             transport=transport,
             context=context,
             download_dir=cache_download_dir,
+            artifact_mode=request.artifact_mode,
             no_download=request.no_download,
             fetch_cache=FetchCache(service_download_dir),
             cache_hooks=FetchPipelineCacheHooks(load=load_cached, write=write_cached),
@@ -268,6 +270,7 @@ def fetch_paper_payload(
     max_tokens: int | str = "full_text",
     prefer_cache: bool = False,
     no_download: bool = False,
+    artifact_mode: ArtifactMode = "markdown-assets",
     save_markdown: bool = False,
     markdown_output_dir: str | None = None,
     markdown_filename: str | None = None,
@@ -285,6 +288,7 @@ def fetch_paper_payload(
         max_tokens=max_tokens,
         prefer_cache=prefer_cache,
         no_download=no_download,
+        artifact_mode=artifact_mode,
         save_markdown=save_markdown,
         markdown_output_dir=markdown_output_dir,
         markdown_filename=markdown_filename,
@@ -534,6 +538,7 @@ def fetch_paper_tool(
     max_tokens: int | str = "full_text",
     prefer_cache: bool = False,
     no_download: bool = False,
+    artifact_mode: ArtifactMode = "markdown-assets",
     save_markdown: bool = False,
     markdown_output_dir: str | None = None,
     markdown_filename: str | None = None,
@@ -550,6 +555,7 @@ def fetch_paper_tool(
             max_tokens=max_tokens,
             prefer_cache=prefer_cache,
             no_download=no_download,
+            artifact_mode=artifact_mode,
             save_markdown=save_markdown,
             markdown_output_dir=markdown_output_dir,
             markdown_filename=markdown_filename,
@@ -594,6 +600,7 @@ async def fetch_paper_tool_async(
     max_tokens: int | str = "full_text",
     prefer_cache: bool = False,
     no_download: bool = False,
+    artifact_mode: ArtifactMode = "markdown-assets",
     save_markdown: bool = False,
     markdown_output_dir: str | None = None,
     markdown_filename: str | None = None,
@@ -612,6 +619,7 @@ async def fetch_paper_tool_async(
             max_tokens=max_tokens,
             prefer_cache=prefer_cache,
             no_download=no_download,
+            artifact_mode=artifact_mode,
             save_markdown=save_markdown,
             markdown_output_dir=markdown_output_dir,
             markdown_filename=markdown_filename,
@@ -622,7 +630,11 @@ async def fetch_paper_tool_async(
 
     await report_progress(ctx, 1, _FETCH_PROGRESS_TOTAL, "Fetching paper content")
     cancelled = threading.Event()
-    runtime_context = RuntimeContext(env=deps.build_runtime_env(env), cancel_check=cancelled.is_set)
+    runtime_context = RuntimeContext(
+        env=deps.build_runtime_env(env),
+        artifact_mode="none" if request.no_download else request.artifact_mode,
+        cancel_check=cancelled.is_set,
+    )
     transport = runtime_context.transport
     try:
         loop = asyncio.get_running_loop()

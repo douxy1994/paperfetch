@@ -8,6 +8,21 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 _No unreleased changes._
 
+## 1.4.1 - 2026-05-15
+
+### Added
+
+- Added native CLI batch fetching with `--query-file`, per-item output files, JSONL batch summaries, bounded `--batch-concurrency`, and per-item failure reporting without aborting the whole batch.
+- Added dedicated CLI documentation for output routing, artifact modes, asset profiles, `--save-markdown`, and batch-mode behavior.
+
+### Changed
+
+- Release 1.4.1: native batch CLI and provider/MCP refinements.
+- Refined CLI output/artifact semantics so batch and single-query runs consistently separate primary output files from saved Markdown and provider artifacts.
+- Updated MCP fetch/cache payload behavior for inline image budgets, cache resource visibility, and schema coverage.
+- Hardened Elsevier Markdown and Springer HTML extraction around tables, figures, asset rewriting, and provider-specific cleanup.
+- Refreshed README, provider, deployment, bundled skill, and tool-contract documentation to match the new CLI and MCP/provider behavior.
+
 ## 1.4 - 2026-05-12
 
 ### Added

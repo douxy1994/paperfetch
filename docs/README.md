@@ -21,15 +21,17 @@
 如果你只想知道“这个项目做什么，怎么马上试一下”，按这个顺序看：
 
 1. [`../README.md`](../README.md)
-2. [`deployment.md`](deployment.md)
+2. [`cli.md`](cli.md)
+3. [`deployment.md`](deployment.md)
 
 ### 2. 配置 / 运维者
 
 如果你要准备 API key、下载目录、FlareSolverr 或排障，按这个顺序看：
 
-1. [`providers.md`](providers.md)
-2. [`flaresolverr.md`](flaresolverr.md)
-3. [`deployment.md`](deployment.md)
+1. [`cli.md`](cli.md)
+2. [`providers.md`](providers.md)
+3. [`flaresolverr.md`](flaresolverr.md)
+4. [`deployment.md`](deployment.md)
 
 ### 3. Agent / MCP 集成者
 
@@ -58,6 +60,8 @@
   - 公共变更历史。记录对用户可见的新能力、限制和迁移提示。
 - [`../AGENTS.md`](../AGENTS.md)
   - 贡献者与 agent 协作约定。描述本仓库默认语言、测试和开发边界。
+- [`cli.md`](cli.md)
+  - 讲 `paper-fetch` CLI 的主输出、artifact、资产下载、常见参数组合和错误输出。
 - [`providers.md`](providers.md)
   - 讲 provider 能力矩阵、路由规则、默认输出、环境变量、缓存和限速。
 - [`provider-development.md`](provider-development.md)
@@ -116,7 +120,7 @@
 ### `asset_profile`
 
 - 资产下载层级。
-- `none`：不下载资产。
+- `none`：不下载本地资产；不主动清除 Markdown 中已有或 provider 可解析出的远程图片链接。
 - `body`：正文 figure、正文表格原图和可识别的公式图片。
 - `all`：当前 provider 可识别的全部相关资产。
 - CLI 默认是 `body`；Python API / MCP 未显式指定时仍按 provider 默认策略解析。
@@ -158,7 +162,7 @@
 
 - 抓取时的落盘目录。
 - 可覆盖默认下载目录，也会影响 MCP scoped cache resources。
-- `RuntimeContext` / `ArtifactStore` 通过 `artifact_mode` 控制 provider payload、原始 HTML、Markdown 保存、资产诊断、HTTP textual cache 与 structured sidecar 的落盘范围；CLI 默认 `markdown-assets`，API/MCP 默认保持旧式 `all`。
+- `RuntimeContext` / `ArtifactStore` 通过 `artifact_mode` 控制 provider payload、原始 HTML、Markdown 保存、资产诊断、HTTP textual cache 与 provider structured sidecar 的落盘范围；CLI/MCP fetch 默认 `markdown-assets`，Python API/runtime 未显式设置时保持旧式 `all`。
 - CLI/MCP fetch 入口通过 `FetchPipeline` 创建运行时并调用 service，MCP 的 fetch-envelope sidecar 和 cache index 仍由 `FetchCache` 管理语义，但原子 JSON 写入复用 `ArtifactStore`。
 - Python service API 不再接收 `download_dir` / `env` / `transport` / `clients` keyword；外层调用方需要先构造 `RuntimeContext(...)`，再传 `context=`。
 - 未显式设置时，CLI / MCP 优先使用用户数据目录下的 `paper-fetch/downloads`；CLI 创建失败才退回 `live-downloads`。
@@ -166,7 +170,7 @@
 
 ### MCP 下载和 Markdown 保存
 
-`prefer_cache`、`no_download`、`save_markdown`、`markdown_output_dir` 和 `markdown_filename` 的完整语义见 [`providers.md`](providers.md#mcp-download-and-markdown-save)。
+`artifact_mode`、`prefer_cache`、`no_download`、`save_markdown`、`markdown_output_dir` 和 `markdown_filename` 的完整语义见 [`providers.md`](providers.md#mcp-download-and-markdown-save)。
 
 ### Live review timings
 
@@ -177,6 +181,7 @@
 ## 一句话阅读建议
 
 - 想快速上手：先看首页。
+- 想用 CLI：看 [`cli.md`](cli.md)。
 - 想改配置：看 provider 文档。
 - 想部署到 agent：看 deployment。
 - 想改实现：看 architecture。

@@ -629,7 +629,12 @@ class SpringerClient(ProviderClient):
             return markdown, None, None
 
         if allow_image_asset:
-            image_url = _springer_html.extract_full_size_figure_image_url(table_html, response_url)
+            image_url = _springer_html.extract_springer_table_image_url(
+                table_html,
+                response_url,
+                label=fallback_label,
+                table_url=table_url,
+            )
             if image_url:
                 asset = _springer_table_image_asset(
                     label=fallback_label,
