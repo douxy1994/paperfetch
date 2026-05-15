@@ -124,12 +124,22 @@ def bootstrap_browser_workflow(
                 metadata=metadata,
                 context=context,
             )
+            fetcher_attr = getattr(
+                deps.fetch_html_with_fast_browser,
+                "paper_fetch_html_fetcher_name",
+                None,
+            )
+            fetcher_name = (
+                normalize_text(fetcher_attr)
+                if isinstance(fetcher_attr, str)
+                else "cloakbrowser_fast"
+            )
             result.html_payload = _browser_workflow_html_payload(
                 client,
                 html_result,
                 markdown_text=markdown_text,
                 extraction=extraction,
-                fetcher="playwright_direct",
+                fetcher=fetcher_name,
                 warnings=result.warnings,
             )
             return result

@@ -15,8 +15,8 @@ class AtyponBrowserWorkflowProviderHtmlTests(AtyponBrowserWorkflowProviderTestCa
                 client,
                 load_runtime_config=mock.Mock(return_value=runtime),
                 ensure_runtime_ready=mock.Mock(),
-                fetch_html_with_direct_playwright=mocked_direct,
-                fetch_html_with_flaresolverr=mock.Mock(
+                fetch_html_with_fast_browser=mocked_direct,
+                fetch_html_with_browser=mock.Mock(
                     return_value=_flaresolverr.FetchedPublisherHtml(
                         source_url=SCIENCE_SAMPLE.landing_url,
                         final_url=SCIENCE_SAMPLE.landing_url,

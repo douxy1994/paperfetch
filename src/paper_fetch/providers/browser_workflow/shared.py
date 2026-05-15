@@ -42,11 +42,13 @@ _BROWSER_WORKFLOW_DEP_FIELDS = (
     "_browser_workflow_image_download_candidates",
 )
 
+_LEGACY_FAST_BROWSER_FETCHER_ALIAS = "fetch_html_with_direct" "_playwright"
+
 _LEGACY_DEP_ALIASES = {
     "fetch_html_with_flaresolverr": "fetch_html_with_browser",  # legacy alias
     "warm_browser_context_with_flaresolverr": "warm_browser_context",  # legacy alias
     "fetch_pdf_with_playwright": "fetch_pdf_with_browser",
-    "fetch_html_with_direct_playwright": "fetch_html_with_fast_browser",
+    _LEGACY_FAST_BROWSER_FETCHER_ALIAS: "fetch_html_with_fast_browser",
     "_build_shared_playwright_file_fetcher": "_build_shared_browser_file_fetcher",
     "_build_shared_playwright_image_fetcher": "_build_shared_browser_image_fetcher",
 }
@@ -121,16 +123,17 @@ class BrowserWorkflowDeps:
         return self.fetch_pdf_with_browser
 
     @property
-    def fetch_html_with_direct_playwright(self) -> Callable[..., Any]:
-        return self.fetch_html_with_fast_browser
-
-    @property
     def _build_shared_playwright_file_fetcher(self) -> Callable[..., Any]:
         return self._build_shared_browser_file_fetcher
 
     @property
     def _build_shared_playwright_image_fetcher(self) -> Callable[..., Any]:
         return self._build_shared_browser_image_fetcher
+
+    def __getattr__(self, name: str) -> Callable[..., Any]:
+        if name == _LEGACY_FAST_BROWSER_FETCHER_ALIAS:
+            return self.fetch_html_with_fast_browser
+        raise AttributeError(f"{self.__class__.__name__!s} has no attribute {name!r}")
 
 
 def default_browser_workflow_deps() -> BrowserWorkflowDeps:
@@ -160,7 +163,7 @@ def default_browser_workflow_deps() -> BrowserWorkflowDeps:
     )
     from .html_extraction import (
         _cached_browser_workflow_markdown,
-        fetch_html_with_direct_playwright,
+        fetch_html_with_fast_browser,
     )
     from .pdf_fallback import fetch_seeded_browser_pdf_payload
 
@@ -180,7 +183,7 @@ def default_browser_workflow_deps() -> BrowserWorkflowDeps:
         extract_atypon_browser_workflow_markdown=extract_atypon_browser_workflow_markdown,
         pdf_browser_context_seed=warm_browser_context,
         refresh_browser_context_seed=warm_browser_context,
-        fetch_html_with_fast_browser=fetch_html_with_direct_playwright,
+        fetch_html_with_fast_browser=fetch_html_with_fast_browser,
         _cached_browser_workflow_markdown=_cached_browser_workflow_markdown,
         _cached_browser_workflow_assets=_cached_browser_workflow_assets,
         _assets_matching_download_failures=_assets_matching_download_failures,
