@@ -1,15 +1,56 @@
-"""Browser-neutral runtime type aliases."""
+"""Browser-neutral runtime data types."""
 
 from __future__ import annotations
 
-from typing import TypedDict
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any, Mapping, TypedDict
 
-from .._cloakbrowser import CloakBrowserFailure, CloakBrowserRuntimeConfig
-from .._flaresolverr import FetchedPublisherHtml
 
-BrowserRuntimeConfig = CloakBrowserRuntimeConfig
-BrowserRuntimeFailure = CloakBrowserFailure
-BrowserFetchedHtml = FetchedPublisherHtml
+@dataclass(frozen=True)
+class BrowserRuntimeConfig:
+    provider: str
+    doi: str
+    artifact_dir: Path
+    headless: bool
+    user_agent: str
+    timeout_ms: int = 120000
+
+
+@dataclass(frozen=True)
+class BrowserFetchedHtml:
+    source_url: str
+    final_url: str
+    html: str
+    response_status: int | None
+    response_headers: Mapping[str, str]
+    title: str | None
+    summary: str
+    browser_context_seed: Mapping[str, Any]
+    screenshot_b64: str | None = None
+    image_payload: Mapping[str, Any] | None = None
+
+
+FetchedPublisherHtml = BrowserFetchedHtml
+
+
+class BrowserRuntimeFailure(Exception):
+    def __init__(
+        self,
+        kind: str,
+        message: str,
+        *,
+        browser_context_seed: Mapping[str, Any] | None = None,
+        details: Mapping[str, Any] | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.kind = kind
+        self.message = message
+        self.browser_context_seed = dict(browser_context_seed or {})
+        self.details = dict(details or {})
+
+
+FlareSolverrFailure = BrowserRuntimeFailure
 
 
 class BrowserImagePayload(TypedDict):

@@ -59,7 +59,7 @@ def _mark_legacy_html_fetcher(fetcher: Any) -> None:
     if isinstance(marker, str):
         return
     try:
-        setattr(fetcher, "paper_fetch_html_fetcher_name", "flaresolverr")
+        setattr(fetcher, "paper_fetch_html_fetcher_name", "flaresolverr")  # legacy
     except Exception:
         pass
 

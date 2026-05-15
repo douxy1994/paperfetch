@@ -117,7 +117,7 @@ function Copy-SourceSnapshot {
         "tests",
         "live-downloads",
         "__pycache__",
-        (Join-Path $RepoDir "vendor/flaresolverr")
+        (Join-Path $RepoDir "legacy/flaresolverr")
     )
     & robocopy $RepoDir $Staging /E /XD @excludeDirs /NFL /NDL /NJH /NJS /NC /NS | Out-Null
     if ($LASTEXITCODE -ge 8) {

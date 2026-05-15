@@ -426,7 +426,7 @@ metadata
   - Owner（provider）：
     - [`../tests/unit/test_atypon_browser_workflow_provider_asset_downloads.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_downloads.py) 中的 `test_science_provider_records_preview_dimensions_and_acceptance`
     - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_science_provider_replay_for_adz3492_saves_svg_body_asset`
-    - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_science_provider_records_asset_failure_when_shared_playwright_preview_fails`
+    - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_science_provider_records_asset_failure_when_shared_browser_preview_fails`
   - Service / live review 覆盖：
     - [`../tests/unit/test_service_probe_and_assets.py`](../tests/unit/test_service_probe_and_assets.py) 中的 `test_fetch_paper_accepts_preview_images_with_sufficient_dimensions`
     - [`../tests/devtools/test_golden_criteria_live.py`](../tests/devtools/test_golden_criteria_live.py) 中的 `test_science_preview_accepted_is_not_an_asset_issue`
@@ -454,7 +454,7 @@ metadata
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_browser_workflow_download_related_assets_retries_after_partial_failures`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_browser_workflow_retries_only_failed_supplementary_assets`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_browser_workflow_retries_only_failed_body_assets`
-    - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_science_provider_records_asset_failure_when_shared_playwright_preview_fails`
+    - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_science_provider_records_asset_failure_when_shared_browser_preview_fails`
 - 边界说明：
   - 本规则只要求诊断字段不丢失，不要求所有 provider 使用同一种远端下载实现。
   - 诊断字段不能替代用户可见内容；caption、占位和 warnings 仍由渲染规则决定。
@@ -470,8 +470,8 @@ metadata
   - [`../tests/fixtures/golden_criteria/10.1073_pnas.2309123120/original.html`](../tests/fixtures/golden_criteria/10.1073_pnas.2309123120/original.html)
 - 对应测试：
   - Owner（provider）：
-    - [`../tests/unit/test_atypon_browser_workflow_provider_asset_downloads.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_downloads.py) 中的 `test_pnas_provider_download_related_assets_uses_shared_playwright_primary_path_before_preview`
-    - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_pnas_provider_downloads_preview_through_shared_playwright_when_no_full_size_candidate`
+    - [`../tests/unit/test_atypon_browser_workflow_provider_asset_downloads.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_downloads.py) 中的 `test_pnas_provider_download_related_assets_uses_shared_browser_primary_path_before_preview`
+    - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_pnas_provider_downloads_preview_through_shared_browser_when_no_full_size_candidate`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_wiley_provider_download_related_assets_uses_shared_playwright_primary_path`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_wiley_provider_download_related_assets_reuses_shared_playwright_fetcher_across_assets`
 - 边界说明：

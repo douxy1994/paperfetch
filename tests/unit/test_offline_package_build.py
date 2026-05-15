@@ -14,11 +14,11 @@ class OfflinePackageBuildTests(unittest.TestCase):
     def test_linux_package_build_excludes_flaresolverr_and_requires_cloakbrowser_wheel(self) -> None:
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
-        self.assertIn("--exclude='./vendor/flaresolverr'", script)
+        self.assertIn("--exclude='./legacy/flaresolverr'", script)
         self.assertIn("cloakbrowser-*.whl", script)
         self.assertIn("Dependency wheelhouse is missing cloakbrowser-*.whl", script)
         self.assertNotIn("setup_flaresolverr_source.sh", script)
-        self.assertNotIn("vendor/flaresolverr/wheelhouse", script)
+        self.assertNotIn("legacy/flaresolverr/vendor/wheelhouse", script)
         self.assertNotIn("-m playwright install chromium", script)
 
     def test_linux_manifest_and_readme_document_cloakbrowser_binary_policy(self) -> None:
@@ -45,7 +45,7 @@ class OfflinePackageBuildTests(unittest.TestCase):
     def test_windows_package_build_excludes_flaresolverr_and_playwright_bundles(self) -> None:
         script = BUILD_OFFLINE_PACKAGE_WINDOWS.read_text(encoding="utf-8")
 
-        self.assertIn('Join-Path $RepoDir "vendor/flaresolverr"', script)
+        self.assertIn('Join-Path $RepoDir "legacy/flaresolverr"', script)
         self.assertIn('Get-ChildItem -Path $wheelhouse -Filter "cloakbrowser-*.whl"', script)
         self.assertIn('browser_binary = "not_bundled"', script)
         self.assertIn("Write-OfflineReadme", script)

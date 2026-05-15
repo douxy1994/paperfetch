@@ -12,7 +12,7 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-FLARESOLVERR_VENDOR_DIR = REPO_ROOT / "vendor" / "flaresolverr"
+FLARESOLVERR_VENDOR_DIR = REPO_ROOT / "legacy" / "flaresolverr" / "vendor"
 pytestmark = pytest.mark.legacy
 
 

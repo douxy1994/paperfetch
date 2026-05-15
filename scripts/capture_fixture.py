@@ -75,14 +75,12 @@ class ManifestContext:
         provider: str | None,
         routing: dict[str, Any],
         sample: dict[str, Any] | None,
-        requires_flaresolverr: bool,
     ) -> None:
         self.path = path
         self.data = data
         self.provider = provider
         self.routing = routing
         self.sample = sample
-        self.requires_flaresolverr = requires_flaresolverr
 
 
 class CaptureFixtureError(Exception):
@@ -214,7 +212,6 @@ def _manifest_context(path_value: str | None, purpose: str | None) -> ManifestCo
             retryable=False,
         )
     routing = data.get("routing") if isinstance(data.get("routing"), dict) else {}
-    probe = data.get("probe") if isinstance(data.get("probe"), dict) else {}
     provider = data.get("name")
     return ManifestContext(
         path=path,
@@ -222,7 +219,6 @@ def _manifest_context(path_value: str | None, purpose: str | None) -> ManifestCo
         provider=str(provider) if provider else None,
         routing=dict(routing),
         sample=sample if isinstance(sample, dict) else None,
-        requires_flaresolverr=bool(probe.get("requires_flaresolverr")),
     )
 
 
@@ -499,8 +495,6 @@ def _capture_route(doi: str, *, route: str) -> dict[str, Any]:
 def _should_retry_via(error: CaptureFixtureError, *, retry_via: str | None, manifest: ManifestContext | None) -> bool:
     if retry_via != "flaresolverr":
         return False
-    if manifest and manifest.requires_flaresolverr:
-        return True
     return error.code in RETRY_VIA_ERROR_CODES
 
 

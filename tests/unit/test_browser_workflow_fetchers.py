@@ -162,7 +162,7 @@ def test_threaded_image_fetcher_records_playwright_context_exception_diagnostic(
     try:
         with mock.patch.object(
             fetcher_context,
-            "_new_playwright_context",
+            "_new_browser_context",
             side_effect=RuntimeError("sync Playwright context already active"),
         ):
             result = fetcher(image_url, {"kind": "figure"})
@@ -172,7 +172,8 @@ def test_threaded_image_fetcher_records_playwright_context_exception_diagnostic(
     failure = fetcher.failure_for(image_url)
     assert result is None
     assert failure is not None
-    assert failure["reason"] == "playwright_context_error"
+    assert failure["reason"] == "browser_context_error"
+    assert failure["playwright_context_error"] == "playwright_context_error"
     assert failure["error_type"] == "RuntimeError"
     assert failure["error_message"] == "sync Playwright context already active"
 

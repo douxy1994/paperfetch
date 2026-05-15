@@ -49,7 +49,6 @@ probe:
     - CROSSREF_MAILTO
   requires_playwright: true
   requires_browser_runtime: true
-  requires_flaresolverr: false
   ping_url: https://onlinelibrary.wiley.com/
 fixtures:
   doi_samples:

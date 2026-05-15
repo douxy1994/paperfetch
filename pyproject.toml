@@ -30,6 +30,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+legacy_flaresolverr = [
+  "urllib3",
+]
 dev = [
   "build>=1.2,<2",
   "jsonschema>=4,<5",
@@ -61,9 +64,12 @@ target-version = "py311"
 src = ["src", "tests"]
 
 [tool.pytest.ini_options]
-addopts = "-n auto"
+addopts = "-n auto -m 'not legacy'"
 testpaths = [
   "tests/unit",
   "tests/integration",
   "tests/devtools",
+]
+markers = [
+  "legacy: archived FlareSolverr compatibility tests",
 ]

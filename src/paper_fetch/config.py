@@ -17,10 +17,6 @@ DEFAULT_XDG_DATA_HOME = DEFAULT_USER_DATA_DIR.parent
 DEFAULT_MCP_DOWNLOAD_DIR = DEFAULT_USER_DATA_DIR / "downloads"
 DEFAULT_CLI_DOWNLOAD_DIR = Path("live-downloads")
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
-DEFAULT_VENDOR_FLARESOLVERR_DIR = DEFAULT_REPO_ROOT / "vendor" / "flaresolverr"
-"""legacy; only consumed by paper_fetch.providers._flaresolverr."""
-DEFAULT_FLARESOLVERR_URL = "http://127.0.0.1:8191/v1"
-"""legacy; only consumed by paper_fetch.providers._flaresolverr."""
 
 DEFAULT_USER_AGENT = "paper-fetch-skill/1.4.1"
 USER_AGENT_ENV_VAR = "PAPER_FETCH_SKILL_USER_AGENT"
@@ -38,14 +34,14 @@ HTTP_DISK_CACHE_MAX_BYTES_ENV_VAR = "PAPER_FETCH_HTTP_DISK_CACHE_MAX_BYTES"
 HTTP_DISK_CACHE_MAX_AGE_DAYS_ENV_VAR = "PAPER_FETCH_HTTP_DISK_CACHE_MAX_AGE_DAYS"
 ASSET_DOWNLOAD_CONCURRENCY_ENV_VAR = "PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY"
 DEFAULT_ASSET_DOWNLOAD_CONCURRENCY = 4
-FLARESOLVERR_URL_ENV_VAR = "FLARESOLVERR_URL"
-"""legacy; only consumed by paper_fetch.providers._flaresolverr."""
-FLARESOLVERR_ENV_FILE_ENV_VAR = "FLARESOLVERR_ENV_FILE"
-"""legacy; only consumed by paper_fetch.providers._flaresolverr."""
-FLARESOLVERR_SOURCE_DIR_ENV_VAR = "FLARESOLVERR_SOURCE_DIR"
-"""legacy; only consumed by paper_fetch.providers._flaresolverr."""
-FLARESOLVERR_KEEP_SESSION_ENV_VAR = "PAPER_FETCH_FLARESOLVERR_KEEP_SESSION"
-"""legacy; only consumed by paper_fetch.providers._flaresolverr."""
+FLARESOLVERR_URL_ENV_VAR = "FLARESOLVERR_URL"  # legacy
+"""consumed only by legacy/flaresolverr."""  # legacy
+FLARESOLVERR_ENV_FILE_ENV_VAR = "FLARESOLVERR_ENV_FILE"  # legacy
+"""consumed only by legacy/flaresolverr."""  # legacy
+FLARESOLVERR_SOURCE_DIR_ENV_VAR = "FLARESOLVERR_SOURCE_DIR"  # legacy
+"""consumed only by legacy/flaresolverr."""  # legacy
+FLARESOLVERR_KEEP_SESSION_ENV_VAR = "PAPER_FETCH_FLARESOLVERR_KEEP_SESSION"  # legacy
+"""consumed only by legacy/flaresolverr."""  # legacy
 CLOAKBROWSER_HEADLESS_ENV_VAR = "CLOAKBROWSER_HEADLESS"
 CLOAKBROWSER_TIMEOUT_MS_ENV_VAR = "CLOAKBROWSER_TIMEOUT_MS"
 CLOAKBROWSER_BINARY_PATH_ENV_VAR = "CLOAKBROWSER_BINARY_PATH"
@@ -145,27 +141,6 @@ def resolve_mcp_download_dir(env: Mapping[str, str] | None = None) -> Path:
 
 def resolve_repo_root() -> Path:
     return DEFAULT_REPO_ROOT
-
-
-def resolve_flaresolverr_source_dir(env: Mapping[str, str] | None = None) -> Path:
-    active_env = _active_env(env)
-    configured = str(active_env.get(FLARESOLVERR_SOURCE_DIR_ENV_VAR, "")).strip()
-    if configured:
-        return Path(configured).expanduser()
-    return DEFAULT_VENDOR_FLARESOLVERR_DIR
-
-
-def resolve_flaresolverr_env_file(env: Mapping[str, str] | None = None) -> Path | None:
-    active_env = _active_env(env)
-    configured = str(active_env.get(FLARESOLVERR_ENV_FILE_ENV_VAR, "")).strip()
-    if not configured:
-        return None
-    return Path(configured).expanduser()
-
-
-def resolve_flaresolverr_url(env: Mapping[str, str] | None = None) -> str:
-    active_env = _active_env(env)
-    return str(active_env.get(FLARESOLVERR_URL_ENV_VAR, "")).strip() or DEFAULT_FLARESOLVERR_URL
 
 
 def parse_positive_int_env(

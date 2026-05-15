@@ -3,8 +3,6 @@ from __future__ import annotations
 import importlib.machinery
 from typing import Any
 
-import pytest
-
 from paper_fetch.provider_catalog import ProviderSpec
 from paper_fetch.providers import _cloakbrowser
 from paper_fetch.providers._registry import ProviderBundle
@@ -18,7 +16,6 @@ def _catalog(
     env_requirements: tuple[str, ...] = (),
     requires_playwright: bool = False,
     requires_browser_runtime: bool = False,
-    requires_flaresolverr: bool = False,
 ) -> ProviderSpec:
     return ProviderSpec(
         name=name,
@@ -35,7 +32,6 @@ def _catalog(
         env_requirements=env_requirements,
         requires_playwright=requires_playwright,
         requires_browser_runtime=requires_browser_runtime,
-        requires_flaresolverr=requires_flaresolverr,
     )
 
 
@@ -141,26 +137,3 @@ def test_default_probe_status_checks_browser_runtime_without_launch(monkeypatch:
         "runtime_env",
         "cloakbrowser_dependency",
     ]
-
-
-def test_legacy_requires_flaresolverr_still_routes_to_browser_runtime(
-    monkeypatch: Any,
-) -> None:
-    with pytest.warns(DeprecationWarning, match="requires_flaresolverr"):
-        catalog = _catalog(
-            "s10_legacy_flaresolverr",
-            requires_flaresolverr=True,
-        )
-    assert catalog.requires_browser_runtime is True
-    assert catalog.to_dict()["requires_browser_runtime"] is True
-    assert catalog.to_dict()["requires_flaresolverr"] is True
-    _install_catalog(monkeypatch, catalog)
-    monkeypatch.setattr(_cloakbrowser, "_dependency_available", lambda: True)
-
-    result = _client(catalog, env={"CLOAKBROWSER_HEADLESS": "true"}).probe_status()
-
-    checks = {check.name: check for check in result.checks}
-    assert result.status == READY
-    assert checks["browser_runtime"].status == OK
-    assert checks["flaresolverr_config"].status == OK
-    assert checks["flaresolverr_config"].details["legacy_docs"] == "docs/flaresolverr.md"

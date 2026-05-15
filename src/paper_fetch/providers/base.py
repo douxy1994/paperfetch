@@ -751,7 +751,7 @@ class ProviderClient:
                 )
             )
 
-        if catalog.requires_browser_runtime or catalog.requires_flaresolverr:
+        if catalog.requires_browser_runtime:
             from . import _cloakbrowser
 
             runtime_status = _cloakbrowser.probe_runtime_status(env, provider=self.name)
@@ -776,19 +776,6 @@ class ProviderClient:
                         "checks": [check.to_dict() for check in runtime_status.checks],
                     },
                 ),
-            )
-
-        if catalog.requires_flaresolverr:
-            checks.append(
-                build_provider_status_check(
-                    "flaresolverr_config",
-                    OK,
-                    "Legacy FlareSolverr config is no longer required for status readiness.",
-                    details={
-                        "legacy": True,
-                        "legacy_docs": "docs/flaresolverr.md",
-                    },
-                )
             )
 
         if not checks:

@@ -4,8 +4,6 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PYTHON_BIN="${PAPER_FETCH_MCP_PYTHON_BIN:-python3}"
-WSLG_PRESET="$REPO_DIR/vendor/flaresolverr/.env.flaresolverr-source-wslg"
-HEADLESS_PRESET="$REPO_DIR/vendor/flaresolverr/.env.flaresolverr-source-headless"
 OFFLINE_ENV_FILE="$REPO_DIR/offline.env"
 
 unset_legacy_rate_limit_env() {
@@ -45,30 +43,6 @@ ensure_wslg_env() {
     fi
 }
 
-choose_flaresolverr_preset() {
-    if [ -n "${PAPER_FETCH_MCP_FLARESOLVERR_ENV_FILE:-}" ]; then
-        printf '%s\n' "$PAPER_FETCH_MCP_FLARESOLVERR_ENV_FILE"
-        return
-    fi
-
-    if ! is_wsl; then
-        printf '%s\n' "${FLARESOLVERR_ENV_FILE:-}"
-        return
-    fi
-
-    if [ -f "$WSLG_PRESET" ] && { [ -n "${WAYLAND_DISPLAY:-}" ] || [ -n "${DISPLAY:-}" ]; }; then
-        printf '%s\n' "$WSLG_PRESET"
-        return
-    fi
-
-    if [ -f "$HEADLESS_PRESET" ]; then
-        printf '%s\n' "$HEADLESS_PRESET"
-        return
-    fi
-
-    printf '%s\n' "${FLARESOLVERR_ENV_FILE:-}"
-}
-
 load_offline_env_if_present() {
     if [ -f "$OFFLINE_ENV_FILE" ] && [ -z "${PAPER_FETCH_ENV_FILE:-}" ]; then
         export PAPER_FETCH_ENV_FILE="$OFFLINE_ENV_FILE"
@@ -84,15 +58,10 @@ load_offline_env_if_present() {
 }
 
 main() {
-    local preset
     load_offline_env_if_present
     unset_legacy_rate_limit_env
     if is_wsl; then
         ensure_wslg_env
-    fi
-    preset="$(choose_flaresolverr_preset)"
-    if [ -n "$preset" ]; then
-        export FLARESOLVERR_ENV_FILE="$preset"
     fi
 
     exec "$PYTHON_BIN" -m paper_fetch.mcp.server "$@"

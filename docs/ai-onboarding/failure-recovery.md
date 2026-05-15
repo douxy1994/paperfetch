@@ -59,7 +59,7 @@ retryable: true
 ## Signal: HTTP_FORBIDDEN
 
 diagnosis: capture 请求返回 HTTP 403。
-action: 若 manifest `probe.requires_flaresolverr=true`，用 `--retry-via=flaresolverr` 重跑；否则重派 `discover-manifest` 替换该 purpose DOI。
+action: 若 manifest `probe.requires_browser_runtime=true`，用浏览器运行时重跑；否则重派 `discover-manifest` 替换该 purpose DOI。
 retryable: true
 
 ## Signal: HTTP_RATE_LIMITED

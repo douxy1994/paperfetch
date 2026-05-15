@@ -20,7 +20,7 @@ from ....logging_utils import emit_structured_log
 from ....quality.reason_codes import CLOUDFLARE_CHALLENGE
 from ....runtime import RuntimeContext
 from ....utils import normalize_text
-from ..._flaresolverr import FetchedPublisherHtml
+from ...browser_runtime.types import BrowserFetchedHtml
 from .context import _BaseBrowserDocumentFetcher, _normalized_response_headers
 from .diagnostics import (
     _compact_failure_diagnostic,
@@ -101,7 +101,7 @@ def _copy_image_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
 
 
 def _browser_image_document_payload(
-    result: FetchedPublisherHtml,
+    result: BrowserFetchedHtml,
 ) -> dict[str, Any] | None:
     direct_payload = _payload_from_browser_image_payload(
         result.image_payload,
@@ -815,8 +815,8 @@ def fetch_image_document_with_playwright(
         fetcher.close()
 
 
-_flaresolverr_image_document_payload = _browser_image_document_payload
-_payload_from_flaresolverr_image_payload = _payload_from_browser_image_payload
+_flaresolverr_image_document_payload = _browser_image_document_payload  # legacy alias
+_payload_from_flaresolverr_image_payload = _payload_from_browser_image_payload  # legacy alias
 _SharedPlaywrightImageDocumentFetcher = _SharedBrowserImageDocumentFetcher
 _ThreadLocalSharedPlaywrightImageDocumentFetcher = (
     _ThreadLocalSharedBrowserImageDocumentFetcher
