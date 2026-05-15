@@ -195,3 +195,33 @@
 - `.github/workflows/release.yml` 在仓库中不存在；`.github/workflows/ci.yml` 未列入 Phase 8 输入文件清单，因此未修改 CI workflow，只将 `tests/unit/test_ci_release_workflow.py` 改为验证该输入缺失状态。
 - `installer/manifest.json` 未列入 Phase 8 输入文件清单，仍含旧 MCP env key；安装器在运行时过滤 `PLAYWRIGHT_BROWSERS_PATH` 与 `FLARESOLVERR_*`，并补入 `CLOAKBROWSER_HEADLESS`，避免改动输入范围外 manifest。
 - 未找到可用 built offline archive；`dist/paper_fetch_skill-1.0.0.tar.gz` 是源码包而非离线包。按 Phase 8 验收替代要求实际运行：`if bash scripts/verify-offline-package.sh >/tmp/paper-fetch-verify-usage.out 2>/tmp/paper-fetch-verify-usage.err; then echo 'unexpected success' >&2; exit 1; fi; grep -F 'Usage: scripts/verify-offline-package.sh <offline-package.tar.gz>' /tmp/paper-fetch-verify-usage.err`。
+
+## Phase 9
+
+### 命名决定
+- `BrowserRuntimeConfig`
+- `BrowserFetchedHtml`
+- `BrowserRuntimeFailure`
+- `FetchedPublisherHtml`
+- `FlareSolverrFailure`
+- `normalize_browser_cookie_for_playwright`
+- `normalize_browser_cookies_for_playwright`
+- `merge_browser_context_seeds`
+- `parse_optional_int`
+- `CLOUDFLARE_COOKIE_NAMES`
+- `_CLOUDFLARE_COOKIE_PREFIXES`
+
+### 签名决定
+- `normalize_browser_cookie_for_playwright(cookie: dict[str, Any], fallback_url: str | None = None) -> dict[str, Any] | None`
+- `normalize_browser_cookies_for_playwright(cookies: list[dict[str, Any]] | None, fallback_url: str | None = None) -> list[dict[str, Any]]`
+- `merge_browser_context_seeds(*seeds: Mapping[str, Any] | None) -> dict[str, Any]`
+- `parse_optional_int(value: Any) -> int | None`
+- `resolve_flaresolverr_source_dir(env: Mapping[str, str] | None = None) -> Path`
+- `resolve_flaresolverr_env_file(env: Mapping[str, str] | None = None) -> Path | None`
+- `resolve_flaresolverr_url(env: Mapping[str, str] | None = None) -> str`
+
+### 判断性偏差
+- Phase 9 live 命令引用的 Science/PNAS/AMS 测试节点在当前仓库不存在，因此补齐到 `tests/live/test_live_publishers.py`；AMS 当前样本通过 CloakBrowser-seeded PDF fallback 成功，预期 source 记录为 `ams_pdf`。
+- 为落实“legacy 测试默认 CI 不跑”，在 `pyproject.toml` 中新增 `legacy` marker 并默认排除；`tests/unit/test_flaresolverr_setup_scripts_legacy.py` 保留为 legacy 标记。
+- repair #1: 忽略并清理归档后 legacy FlareSolverr vendor 下的 runtime 下载、工作目录和运行日志，避免脚本产物污染工作树。
+- fixup #1: Wiley live 样本只接受 HTML trail 导致已成功的 browser PDF/ePDF fallback 被误判失败，现补充文档化的 `wiley_pdf_browser_ok` + `wiley_pdf_fallback_ok` 成功组合。

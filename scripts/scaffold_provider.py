@@ -65,7 +65,7 @@ class ScaffoldInput:
     asset_profile_all: tuple[str, ...] = ()
     env_requirements: tuple[str, ...] = ()
     requires_playwright: bool = False
-    requires_flaresolverr: bool = False
+    requires_browser_runtime: bool = False
     provider_managed_abstract_only: bool = False
     waterfall_steps: tuple[str, ...] = ("landing", "html", "xml", "pdf")
     fixture_samples: tuple[FixtureSample, ...] = ()
@@ -346,7 +346,7 @@ def _scaffold_input_from_manifest(manifest_path: Path) -> ScaffoldInput:
         asset_profile_all=tuple(str(value) for value in asset_profile["all"]),
         env_requirements=tuple(str(value) for value in probe["env_requirements"]),
         requires_playwright=bool(probe["requires_playwright"]),
-        requires_flaresolverr=bool(probe["requires_flaresolverr"]),
+        requires_browser_runtime=bool(probe["requires_browser_runtime"]),
         provider_managed_abstract_only=(
             manifest["abstract_only_strategy"] == "provider_managed"
         ),
@@ -411,9 +411,9 @@ def _html_module_content(
         )
     if spec.requires_playwright or spec.manifest_path is not None:
         catalog_lines.append(f"            requires_playwright={spec.requires_playwright},")
-    if spec.requires_flaresolverr or spec.manifest_path is not None:
+    if spec.requires_browser_runtime or spec.manifest_path is not None:
         catalog_lines.append(
-            f"            requires_flaresolverr={spec.requires_flaresolverr},"
+            f"            requires_browser_runtime={spec.requires_browser_runtime},"
         )
     if not spec.html_capable:
         catalog_lines.append("            html_capable=False,")

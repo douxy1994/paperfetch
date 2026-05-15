@@ -2,9 +2,12 @@ import re
 import unittest
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-RETURN_IMAGE_PAYLOAD_PATCH = REPO_ROOT / "vendor/flaresolverr/patches/return-image-payload.patch"
+RETURN_IMAGE_PAYLOAD_PATCH = REPO_ROOT / "legacy/flaresolverr/vendor/patches/return-image-payload.patch"
+pytestmark = pytest.mark.legacy
 HUNK_HEADER_RE = re.compile(
     r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? "
     r"\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"

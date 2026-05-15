@@ -14,8 +14,8 @@ from ...extraction.html.assets import (
 )
 from ...models import AssetProfile
 from ...utils import empty_asset_results, normalize_text
-from .._flaresolverr import (
-    FlareSolverrFailure,
+from ..browser_runtime import (
+    BrowserRuntimeFailure,
     merge_browser_context_seeds,
 )
 from .assets import (
@@ -227,7 +227,7 @@ def _run_browser_asset_download_attempt(
                 publisher=recovery.provider,
                 config=recovery.runtime,
             )
-        except FlareSolverrFailure:
+        except BrowserRuntimeFailure:
             return None
         with attempt_seed_lock:
             attempt_seed.update(
@@ -410,7 +410,7 @@ def _asset_challenge_recovery_for(
                     config=recovery.runtime,
                     return_image_payload=True,
                 )
-            except FlareSolverrFailure as exc:
+            except BrowserRuntimeFailure as exc:
                 if exc.browser_context_seed:
                     with attempt_seed_lock:
                         attempt_seed.update(
@@ -484,7 +484,7 @@ def _supplementary_challenge_recovery_for(
                     publisher=recovery.provider,
                     config=recovery.runtime,
                 )
-            except FlareSolverrFailure as exc:
+            except BrowserRuntimeFailure as exc:
                 if exc.browser_context_seed:
                     with attempt_seed_lock:
                         attempt_seed.update(

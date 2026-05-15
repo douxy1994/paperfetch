@@ -13,7 +13,7 @@ from typing import Any
 _EXPORTS: dict[str, tuple[str, str]] = {
     "BrowserWorkflowBootstrapResult": (".profile", "BrowserWorkflowBootstrapResult"),
     "BrowserWorkflowClient": (".client", "BrowserWorkflowClient"),
-    "FlareSolverrFailure": ("paper_fetch.providers._flaresolverr", "FlareSolverrFailure"),
+    "FlareSolverrFailure": ("paper_fetch.providers.browser_runtime", "BrowserRuntimeFailure"),  # legacy
     "PdfFallbackFailure": ("paper_fetch.providers._pdf_fallback", "PdfFallbackFailure"),
     "ProviderBrowserProfile": (".profile", "ProviderBrowserProfile"),
     "make_atypon_browser_profile": (".profile", "make_atypon_browser_profile"),
@@ -42,13 +42,13 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "_compact_failure_diagnostic": (".fetchers", "_compact_failure_diagnostic"),
     "_fetch_browser_html_payload": (".bootstrap", "_fetch_browser_html_payload"),
     "_fetch_browser_html_payload_with_fast_path": (".bootstrap", "_fetch_browser_html_payload_with_fast_path"),
-    "_fetch_flaresolverr_html_payload": (".bootstrap", "_fetch_flaresolverr_html_payload"),
-    "_fetch_flaresolverr_html_payload_with_fast_path": (
+    "_fetch_flaresolverr_html_payload": (".bootstrap", "_fetch_flaresolverr_html_payload"),  # legacy
+    "_fetch_flaresolverr_html_payload_with_fast_path": (  # legacy
         ".bootstrap",
-        "_fetch_flaresolverr_html_payload_with_fast_path",
+        "_fetch_flaresolverr_html_payload_with_fast_path",  # legacy
     ),
-    "_flaresolverr_image_document_payload": (".fetchers", "_flaresolverr_image_document_payload"),
-    "_flaresolverr_image_payload_failure_reason": (".fetchers", "_flaresolverr_image_payload_failure_reason"),
+    "_flaresolverr_image_document_payload": (".fetchers", "_flaresolverr_image_document_payload"),  # legacy
+    "_flaresolverr_image_payload_failure_reason": (".fetchers", "_flaresolverr_image_payload_failure_reason"),  # legacy
     "_merge_download_attempt_results": (".assets", "_merge_download_attempt_results"),
     "_normalized_response_headers": (".fetchers", "_normalized_response_headers"),
     "bootstrap_browser_workflow": (".bootstrap", "bootstrap_browser_workflow"),
@@ -62,18 +62,18 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "fetch_html_with_direct_playwright": (".html_extraction", "fetch_html_with_direct_playwright"),
     "fetch_html_with_fast_browser": (".html_extraction", "fetch_html_with_fast_browser"),
     "fetch_html_with_browser": ("paper_fetch.providers.browser_runtime", "fetch_html_with_browser"),
-    "fetch_html_with_flaresolverr": ("paper_fetch.providers._cloakbrowser", "fetch_html_with_cloakbrowser"),
+    "fetch_html_with_flaresolverr": ("paper_fetch.providers._cloakbrowser", "fetch_html_with_cloakbrowser"),  # legacy
     "fetch_image_document_with_playwright": (".fetchers", "fetch_image_document_with_playwright"),
     "fetch_pdf_with_browser": ("paper_fetch.providers._pdf_fallback", "fetch_pdf_with_playwright"),
     "fetch_pdf_with_playwright": ("paper_fetch.providers._pdf_fallback", "fetch_pdf_with_playwright"),
     "fetch_seeded_browser_pdf_payload": (".pdf_fallback", "fetch_seeded_browser_pdf_payload"),
     "load_runtime_config": ("paper_fetch.providers._cloakbrowser", "load_runtime_config"),
-    "merge_browser_context_seeds": ("paper_fetch.providers._flaresolverr", "merge_browser_context_seeds"),
+    "merge_browser_context_seeds": ("paper_fetch.providers.browser_runtime", "merge_browser_context_seeds"),
     "merge_provider_owned_authors": (".article", "merge_provider_owned_authors"),
     "probe_runtime_status": ("paper_fetch.providers._cloakbrowser", "probe_runtime_status"),
     "rewrite_inline_figure_links": (".html_extraction", "rewrite_inline_figure_links"),
     "warm_browser_context": ("paper_fetch.providers.browser_runtime", "warm_browser_context"),
-    "warm_browser_context_with_flaresolverr": (
+    "warm_browser_context_with_flaresolverr": (  # legacy
         "paper_fetch.providers._cloakbrowser",
         "warm_browser_context_with_cloakbrowser",
     ),

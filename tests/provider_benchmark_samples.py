@@ -15,7 +15,6 @@ class ProviderBenchmarkSample:
     expected_source: str
     accepted_live_source_trail_groups: tuple[tuple[str, ...], ...]
     required_env: tuple[str, ...] = ()
-    requires_flaresolverr: bool = False
     fallback_dois: tuple[str, ...] = ()
     fixture_name: str | None = None
     fixture_kind: str | None = None
@@ -72,7 +71,10 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         title="Contrasting temperature effects on the velocity of early- versus late-stage vegetation green-up in the Northern Hemisphere",
         landing_url="https://onlinelibrary.wiley.com/doi/full/10.1111/gcb.16414",
         expected_source="wiley_browser",
-        accepted_live_source_trail_groups=(("fulltext:wiley_html_ok",),),
+        accepted_live_source_trail_groups=(
+            ("fulltext:wiley_html_ok",),
+            ("fulltext:wiley_pdf_browser_ok", "fulltext:wiley_pdf_fallback_ok"),
+        ),
         required_env=("CROSSREF_MAILTO",),
         fixture_name=golden_criteria_fixture("10.1111/gcb.16414", "original.html"),
         fixture_kind="html",
@@ -87,6 +89,18 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         accepted_live_source_trail_groups=(("fulltext:pnas_html_ok",),),
         required_env=("CROSSREF_MAILTO",),
         fixture_name=golden_criteria_fixture("10.1073/pnas.2406303121", "original.html"),
+        fixture_kind="html",
+    ),
+    "ams": ProviderBenchmarkSample(
+        provider="ams",
+        doi="10.1175/jcli-d-23-0738.1",
+        year=2024,
+        title="Human Influence Has Increased the Likelihood of Extreme Autumn Fire Weather in California",
+        landing_url="https://journals.ametsoc.org/view/journals/clim/37/24/JCLI-D-23-0738.1.xml",
+        expected_source="ams_pdf",
+        accepted_live_source_trail_groups=(("fulltext:ams_pdf_fallback_ok",),),
+        required_env=("CROSSREF_MAILTO",),
+        fixture_name=golden_criteria_fixture("10.1175/jcli-d-23-0738.1", "original.html"),
         fixture_kind="html",
     ),
     "copernicus": ProviderBenchmarkSample(

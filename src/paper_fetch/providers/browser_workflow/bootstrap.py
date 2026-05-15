@@ -20,9 +20,7 @@ from .shared import (
     preferred_html_candidate_from_landing_page as _preferred_html_candidate_from_landing_page,
 )
 from .._pdf_candidates import extract_pdf_candidate_urls_from_html
-from .._flaresolverr import (
-    FlareSolverrFailure,
-)
+from ..browser_runtime import BrowserRuntimeFailure
 from ..base import ProviderFailure
 from ...reason_codes import NOT_SUPPORTED
 from .profile import BrowserWorkflowBootstrapResult
@@ -187,7 +185,7 @@ def bootstrap_browser_workflow(
         result.browser_context_seed = html_result.browser_context_seed
         result.html_payload = html_payload
         return result
-    except FlareSolverrFailure as exc:
+    except BrowserRuntimeFailure as exc:
         result.browser_context_seed = (
             exc.browser_context_seed or result.browser_context_seed
         )

@@ -23,9 +23,7 @@ from .shared import (
     default_browser_workflow_deps,
     extract_pdf_url_from_crossref,
 )
-from .._flaresolverr import (
-    merge_browser_context_seeds,
-)
+from ..browser_runtime import merge_browser_context_seeds
 from .._pdf_fallback import PdfFallbackFailure
 from .._waterfall import ProviderWaterfallStep, run_provider_waterfall
 from ...reason_codes import ABSTRACT_ONLY, NO_RESULT, NOT_SUPPORTED, PDF_FALLBACK

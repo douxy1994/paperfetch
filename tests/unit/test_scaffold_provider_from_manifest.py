@@ -194,7 +194,7 @@ def test_from_manifest_routing_and_probe_fields_enter_provider_spec(
     assert 'asset_default="body"' in html_text
     assert "env_requirements=()" in html_text
     assert "requires_playwright=False" in html_text
-    assert "requires_flaresolverr=False" in html_text
+    assert "requires_browser_runtime=False" in html_text
     assert "status_order=999" in html_text
 
 
@@ -207,7 +207,7 @@ def test_from_manifest_probe_requirements_enter_provider_spec(tmp_path: Path) ->
 
     assert 'env_requirements=("CROSSREF_MAILTO",)' in html_text
     assert "requires_playwright=True" in html_text
-    assert "requires_flaresolverr=False" in html_text
+    assert "requires_browser_runtime=True" in html_text
     assert '# body=("figures", "body_tables", "formula_images")' in html_text
     assert '# all=("figures", "body_tables", "formula_images", "supplementary")' in (
         html_text

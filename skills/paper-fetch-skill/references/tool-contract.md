@@ -47,8 +47,8 @@
 
 - `elsevier` 保留官方 XML 路径，并可能回退到官方 Elsevier API PDF 路径；XML 成功发布 `elsevier_xml`，PDF 回退成功发布 `elsevier_pdf`。
 - `springer` 使用 provider-managed direct HTML 和 direct HTTP PDF fallback，公开 source 保持 `springer_html`。
-- `wiley` 使用 repo-local FlareSolverr HTML 路径，并可在配置 `WILEY_TDM_CLIENT_TOKEN` 时启用官方 TDM API PDF 通道；公开 source 为 `wiley_browser`。
-- `science` 与 `pnas` 使用 provider-managed FlareSolverr HTML 加 seeded-browser publisher PDF/ePDF repo-local workflow，并保持现有公开 source 名称。
+- `wiley` 使用 CloakBrowser HTML 路径，并可在配置 `WILEY_TDM_CLIENT_TOKEN` 时启用官方 TDM API PDF 通道；公开 source 为 `wiley_browser`。
+- `science` 与 `pnas` 使用 provider-managed CloakBrowser HTML 加 CloakBrowser-seeded publisher PDF/ePDF workflow，并保持现有公开 source 名称。
 - `ieee` 使用 landing metadata / article number、Xplore dynamic HTML endpoint、direct HTTP PDF fallback 和 seeded-browser PDF fallback；HTML 成功公开 `ieee_html`，PDF fallback 成功公开 `ieee_pdf`，非 PDF wrapper/access/challenge 页面必须 fail closed 到 abstract-only / metadata-only。
 - Wiley / Science / PNAS 在 HTML 成功路径下支持 `asset_profile="body"` / `"all"` 资源下载；PDF/ePDF 回退路径仍然只返回文本。
 - Elsevier PDF fallback、Springer PDF fallback 和 IEEE PDF fallback 在当前版本也保持 text-only。

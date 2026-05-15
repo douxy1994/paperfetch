@@ -15,6 +15,9 @@ RUN_LIVE = os.environ.get("PAPER_FETCH_RUN_LIVE") == "1"
 ELSEVIER_SAMPLE = provider_benchmark_sample("elsevier")
 SPRINGER_SAMPLE = provider_benchmark_sample("springer")
 WILEY_SAMPLE = provider_benchmark_sample("wiley")
+SCIENCE_SAMPLE = provider_benchmark_sample("science")
+PNAS_SAMPLE = provider_benchmark_sample("pnas")
+AMS_SAMPLE = provider_benchmark_sample("ams")
 COPERNICUS_SAMPLE = provider_benchmark_sample("copernicus")
 
 
@@ -94,6 +97,39 @@ class LivePublisherTests(unittest.TestCase):
         )
 
         self._assert_matches_sample(article, WILEY_SAMPLE)
+
+    def test_science_doi_live_fulltext(self) -> None:
+        self._require_env(*SCIENCE_SAMPLE.required_env)
+        require_cloakbrowser_or_skip(self)
+        article = fetch_article(
+            SCIENCE_SAMPLE.doi,
+            transport=HttpTransport(),
+            env=self.env,
+        )
+
+        self._assert_matches_sample(article, SCIENCE_SAMPLE)
+
+    def test_pnas_doi_live_fulltext(self) -> None:
+        self._require_env(*PNAS_SAMPLE.required_env)
+        require_cloakbrowser_or_skip(self)
+        article = fetch_article(
+            PNAS_SAMPLE.doi,
+            transport=HttpTransport(),
+            env=self.env,
+        )
+
+        self._assert_matches_sample(article, PNAS_SAMPLE)
+
+    def test_ams_doi_live_fulltext(self) -> None:
+        self._require_env(*AMS_SAMPLE.required_env)
+        require_cloakbrowser_or_skip(self)
+        article = fetch_article(
+            AMS_SAMPLE.doi,
+            transport=HttpTransport(),
+            env=self.env,
+        )
+
+        self._assert_matches_sample(article, AMS_SAMPLE)
 
     def test_copernicus_doi_live_fulltext(self) -> None:
         self._require_env(*COPERNICUS_SAMPLE.required_env)

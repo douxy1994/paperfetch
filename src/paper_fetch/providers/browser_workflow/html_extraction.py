@@ -26,11 +26,12 @@ from ...tracing import fulltext_marker, trace_from_markers
 from ...utils import normalize_text
 from .fetchers import _normalized_response_headers
 from .shared import BROWSER_HTML_BLOCKED_RESOURCE_TYPES, looks_like_abstract_redirect
-from ..browser_runtime import BrowserFetchedHtml, fetch_html_with_browser
-from .._flaresolverr import (
-    DEFAULT_FLARESOLVERR_WAIT_SECONDS,
-    DEFAULT_FLARESOLVERR_WARM_WAIT_SECONDS,
-    FlareSolverrFailure,
+from ..browser_runtime import (
+    BrowserFetchedHtml,
+    BrowserRuntimeFailure,
+    DEFAULT_BROWSER_RUNTIME_WAIT_SECONDS,
+    DEFAULT_BROWSER_RUNTIME_WARM_WAIT_SECONDS,
+    fetch_html_with_browser,
 )
 from ..atypon_browser_workflow import (
     extract_browser_workflow_asset_html_scopes,
@@ -70,15 +71,15 @@ __all__ = [
     "_FAST_BROWSER_HTML_WAIT_SECONDS",
     "_FAST_BROWSER_HTML_WARM_WAIT_SECONDS",
     "_FAST_BROWSER_HTML_RETRY_KINDS",
-    "_FAST_FLARESOLVERR_HTML_WAIT_SECONDS",
-    "_FAST_FLARESOLVERR_HTML_WARM_WAIT_SECONDS",
+    "_FAST_FLARESOLVERR_HTML_WAIT_SECONDS",  # legacy
+    "_FAST_FLARESOLVERR_HTML_WARM_WAIT_SECONDS",  # legacy
     "_browser_workflow_html_payload",
     "_cached_browser_workflow_assets",
     "_cached_browser_workflow_markdown",
     "_fetch_browser_html_payload",
     "_fetch_browser_html_payload_with_fast_path",
-    "_fetch_flaresolverr_html_payload",
-    "_fetch_flaresolverr_html_payload_with_fast_path",
+    "_fetch_flaresolverr_html_payload",  # legacy
+    "_fetch_flaresolverr_html_payload_with_fast_path",  # legacy
     "extract_browser_workflow_asset_html_scopes",
     "extract_atypon_browser_workflow_markdown",
     "fetch_html_with_fast_browser",
@@ -352,8 +353,8 @@ def _fetch_browser_html_payload(
     warnings: list[str] | None = None,
     html_fetcher: Callable[..., BrowserFetchedHtml] = fetch_html_with_browser,
     disable_media: bool = False,
-    wait_seconds: int = DEFAULT_FLARESOLVERR_WAIT_SECONDS,
-    warm_wait_seconds: int = DEFAULT_FLARESOLVERR_WARM_WAIT_SECONDS,
+    wait_seconds: int = DEFAULT_BROWSER_RUNTIME_WAIT_SECONDS,
+    warm_wait_seconds: int = DEFAULT_BROWSER_RUNTIME_WARM_WAIT_SECONDS,
 ) -> tuple[BrowserFetchedHtml, RawFulltextPayload]:
     html_result = html_fetcher(
         html_candidates,
@@ -394,7 +395,7 @@ _fetch_flaresolverr_html_payload = _fetch_browser_html_payload  # legacy alias
 
 
 def _should_retry_fast_browser_failure(exc: Exception) -> bool:
-    if isinstance(exc, FlareSolverrFailure):
+    if isinstance(exc, BrowserRuntimeFailure):
         return exc.kind in _FAST_BROWSER_HTML_RETRY_KINDS
     if isinstance(exc, HtmlExtractionFailure):
         return True
@@ -424,7 +425,7 @@ def _fetch_browser_html_payload_with_fast_path(
             wait_seconds=_FAST_BROWSER_HTML_WAIT_SECONDS,
             warm_wait_seconds=_FAST_BROWSER_HTML_WARM_WAIT_SECONDS,
         )
-    except (FlareSolverrFailure, HtmlExtractionFailure) as exc:
+    except (BrowserRuntimeFailure, HtmlExtractionFailure) as exc:
         if not _should_retry_fast_browser_failure(exc):
             raise
         logger.debug(
@@ -443,8 +444,8 @@ def _fetch_browser_html_payload_with_fast_path(
         warnings=warnings,
         html_fetcher=html_fetcher,
         disable_media=False,
-        wait_seconds=DEFAULT_FLARESOLVERR_WAIT_SECONDS,
-        warm_wait_seconds=DEFAULT_FLARESOLVERR_WARM_WAIT_SECONDS,
+        wait_seconds=DEFAULT_BROWSER_RUNTIME_WAIT_SECONDS,
+        warm_wait_seconds=DEFAULT_BROWSER_RUNTIME_WARM_WAIT_SECONDS,
     )
 
 

@@ -2,8 +2,6 @@ from __future__ import annotations
 
 from unittest import mock
 
-import pytest
-
 from paper_fetch.providers import _cloakbrowser, _flaresolverr, browser_runtime
 from paper_fetch.providers.browser_workflow.html_extraction import _fetch_browser_html_payload
 from paper_fetch.runtime import RuntimeContext
@@ -57,6 +55,18 @@ class _FakePage:
 
     def wait_for_timeout(self, _timeout_ms: int) -> None:
         return None
+
+    def expect_response(self, *_args, **_kwargs):
+        class _ResponseInfo:
+            value = _FakeResponse()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_exc_info) -> None:
+                return None
+
+        return _ResponseInfo()
 
     def content(self) -> str:
         return (
@@ -175,16 +185,30 @@ def test_fetch_html_with_browser_marks_diagnostic(tmp_path) -> None:
     assert payload.content.diagnostics["html_fetcher"] == "cloakbrowser"
 
 
-def test_fetch_html_with_cloakbrowser_reports_unsupported_image_payload(tmp_path) -> None:
-    with pytest.raises(_cloakbrowser.CloakBrowserFailure) as exc_info:
-        _cloakbrowser.fetch_html_with_cloakbrowser(
+def test_fetch_html_with_cloakbrowser_returns_image_payload(tmp_path) -> None:
+    fake_module = _FakeCloakBrowserModule()
+    image_payload = {
+        "bodyB64": "aW1hZ2U=",
+        "contentType": "image/png",
+        "url": "https://www.science.org/image.png",
+        "status": 200,
+        "width": 10,
+        "height": 20,
+    }
+
+    with (
+        mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module),
+        mock.patch.object(_cloakbrowser, "_capture_image_payload", return_value=image_payload),
+    ):
+        result = _cloakbrowser.fetch_html_with_cloakbrowser(
             ["https://www.science.org/image.png"],
             publisher="science",
             config=_runtime_config(tmp_path),
             return_image_payload=True,
+            wait_seconds=0,
         )
 
-    assert exc_info.value.kind == "cloakbrowser_image_payload_unsupported"
+    assert result.image_payload == image_payload
 
 
 def test_probe_runtime_status_reports_missing_cloakbrowser_dependency() -> None:

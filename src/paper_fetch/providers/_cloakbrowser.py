@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import base64
-from dataclasses import dataclass
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
 import logging
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
 from bs4 import BeautifulSoup
@@ -29,12 +27,15 @@ from ..quality.html_signals import looks_like_abstract_redirect
 from ..quality.reason_codes import REDIRECTED_TO_ABSTRACT
 from ..reason_codes import ERROR, NOT_CONFIGURED, OK, READY
 from ..utils import normalize_text, provider_display_name, sanitize_filename
-from ._flaresolverr import (
-    FetchedPublisherHtml,
-    FlareSolverrFailure,
+from .browser_runtime.seed import (
     merge_browser_context_seeds,
     normalize_browser_cookies_for_playwright,
     parse_optional_int,
+)
+from .browser_runtime.types import (
+    BrowserFetchedHtml,
+    BrowserRuntimeConfig,
+    BrowserRuntimeFailure,
 )
 from .base import (
     ProviderFailure,
@@ -63,19 +64,9 @@ _IMAGE_PAYLOAD_RESPONSE_ATTR = "_paper_fetch_top_level_response"
 _IMAGE_PAYLOAD_TIMEOUT_ATTR = "_paper_fetch_image_payload_timeout_ms"
 _IMAGE_PAYLOAD_FAILURE_ATTR = "_paper_fetch_image_payload_failure"
 
-
-@dataclass(frozen=True)
-class CloakBrowserRuntimeConfig:
-    provider: str
-    doi: str
-    artifact_dir: Path
-    headless: bool
-    user_agent: str
-    timeout_ms: int = DEFAULT_CLOAKBROWSER_TIMEOUT_MS
-
-
-class CloakBrowserFailure(FlareSolverrFailure):
-    """Browser workflow failure raised by the CloakBrowser backend."""
+CloakBrowserRuntimeConfig = BrowserRuntimeConfig
+CloakBrowserFailure = BrowserRuntimeFailure
+FetchedPublisherHtml = BrowserFetchedHtml
 
 
 def _browser_workflow_label(provider: str) -> str:

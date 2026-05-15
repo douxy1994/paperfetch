@@ -1,5 +1,7 @@
 # Wiley / Science / PNAS / AMS 旧 FlareSolverr 对照链路
 
+> ⚠️ Deprecated. FlareSolverr is no longer part of the default pipeline. See docs/providers.md and docs/architecture/target-architecture.md.
+
 这份文档解决：
 
 - `wiley` / `science` / `pnas` / `ams` 的旧 repo-local FlareSolverr 运行边界
@@ -54,14 +56,14 @@ export CLOAKBROWSER_TIMEOUT_MS="120000"
 只有显式运行旧 FlareSolverr 对照链路时，才需要这组配置：
 
 ```bash
-export FLARESOLVERR_ENV_FILE="$PWD/vendor/flaresolverr/.env.flaresolverr-source-headless"
+export FLARESOLVERR_ENV_FILE="$PWD/legacy/flaresolverr/vendor/.env.flaresolverr-source-headless"
 ```
 
 可选变量：
 
 ```bash
 export FLARESOLVERR_URL="http://127.0.0.1:8191/v1"
-export FLARESOLVERR_SOURCE_DIR="$PWD/vendor/flaresolverr"
+export FLARESOLVERR_SOURCE_DIR="$PWD/legacy/flaresolverr/vendor"
 # 仅在需要跨请求复用 FlareSolverr browser session 时设置
 export PAPER_FETCH_FLARESOLVERR_KEEP_SESSION=1
 ```
@@ -79,8 +81,8 @@ export PAPER_FETCH_FLARESOLVERR_KEEP_SESSION=1
 
 仓库里当前带了两份 preset：
 
-- `vendor/flaresolverr/.env.flaresolverr-source-headless`
-- `vendor/flaresolverr/.env.flaresolverr-source-wslg`
+- `legacy/flaresolverr/vendor/.env.flaresolverr-source-headless`
+- `legacy/flaresolverr/vendor/.env.flaresolverr-source-wslg`
 
 建议：
 
@@ -97,17 +99,17 @@ export PAPER_FETCH_FLARESOLVERR_KEEP_SESSION=1
 
 它会顺手准备：
 
-- `vendor/flaresolverr/` 源码工作流
+- `legacy/flaresolverr/vendor/` 源码工作流
 - `wiley` / `science` / `pnas` / `ams` 所需的 Playwright Chromium
 - `headless` preset 所需的 `Xvfb` 检查
 
 如果你只想手动准备 Wiley / Science / PNAS / AMS 依赖：
 
 ```bash
-bash ./vendor/flaresolverr/setup_flaresolverr_source.sh
+bash ./legacy/flaresolverr/vendor/setup_flaresolverr_source.sh
 ```
 
-在线源码工作流会在本地 checkout 上应用 `vendor/flaresolverr/patches/return-image-payload.patch`。这个 patch 文件必须保持有效的 unified diff hunk 计数，unit suite 会先校验 patch 结构，避免离线包构建阶段才暴露格式错误。setup 如果发现现有 checkout 已经带有 `returnImagePayload` / `imagePayload` 扩展，会直接复用当前源码并保留本地 tracked 改动，不再强制切回 upstream tag；如果扩展缺失且 checkout 已有 tracked 改动，则会拒绝重置并要求先 commit / stash。离线包不会在目标机执行这一步；CI 会先生成已 patch 的 `vendor/flaresolverr/.work/FlareSolverr/` 源码快照和 `vendor/flaresolverr/wheelhouse/`，目标机只创建 venv 并从 wheelhouse 安装依赖。
+在线源码工作流会在本地 checkout 上应用 `legacy/flaresolverr/vendor/patches/return-image-payload.patch`。这个 patch 文件必须保持有效的 unified diff hunk 计数，unit suite 会先校验 patch 结构，避免离线包构建阶段才暴露格式错误。setup 如果发现现有 checkout 已经带有 `returnImagePayload` / `imagePayload` 扩展，会直接复用当前源码并保留本地 tracked 改动，不再强制切回 upstream tag；如果扩展缺失且 checkout 已有 tracked 改动，则会拒绝重置并要求先 commit / stash。离线包不会在目标机执行这一步；CI 会先生成已 patch 的 `legacy/flaresolverr/vendor/.work/FlareSolverr/` 源码快照和 `legacy/flaresolverr/vendor/wheelhouse/`，目标机只创建 venv 并从 wheelhouse 安装依赖。
 
 如果你还要启用 `wiley` / `science` / `pnas` / `ams` 的 seeded-browser PDF/ePDF fallback，再补：
 
@@ -127,19 +129,19 @@ sudo apt-get install -y xvfb
 启动：
 
 ```bash
-./scripts/flaresolverr-up "$FLARESOLVERR_ENV_FILE"
+./legacy/flaresolverr/scripts/flaresolverr-up "$FLARESOLVERR_ENV_FILE"
 ```
 
 状态检查：
 
 ```bash
-./scripts/flaresolverr-status "$FLARESOLVERR_ENV_FILE"
+./legacy/flaresolverr/scripts/flaresolverr-status "$FLARESOLVERR_ENV_FILE"
 ```
 
 停止：
 
 ```bash
-./scripts/flaresolverr-down "$FLARESOLVERR_ENV_FILE"
+./legacy/flaresolverr/scripts/flaresolverr-down "$FLARESOLVERR_ENV_FILE"
 ```
 
 这三个 wrapper 都要求显式传 preset，或者先设置 `FLARESOLVERR_ENV_FILE`。
@@ -177,7 +179,7 @@ PYTHONPATH=src python3 -m paper_fetch.cli --query "10.1073/pnas.81.23.7500"
 
 ```bash
 PAPER_FETCH_RUN_LIVE=1 \
-FLARESOLVERR_ENV_FILE="$PWD/vendor/flaresolverr/.env.flaresolverr-source-headless" \
+FLARESOLVERR_ENV_FILE="$PWD/legacy/flaresolverr/vendor/.env.flaresolverr-source-headless" \
 PYTHONPATH=src pytest -n 0 \
   tests/live/test_live_publishers.py::LivePublisherTests::test_wiley_doi_live_fulltext \
   tests/live/test_live_atypon_browser_workflow.py
@@ -193,7 +195,7 @@ PYTHONPATH=src pytest -n 0 \
 
 - `FLARESOLVERR_ENV_FILE` 没设
 - preset 文件不存在
-- `vendor/flaresolverr/` 缺失
+- `legacy/flaresolverr/vendor/` 缺失
 - 本地 FlareSolverr 服务没启动
 
 ### HTML 失败但 provider 最终成功
@@ -217,4 +219,4 @@ PYTHONPATH=src pytest -n 0 \
 - [`providers.md`](providers.md)
 - [`deployment.md`](deployment.md)
 - [`architecture/target-architecture.md`](architecture/target-architecture.md)
-- [`../vendor/flaresolverr/`](../vendor/flaresolverr/)
+- [`../legacy/flaresolverr/vendor/`](../legacy/flaresolverr/vendor/)

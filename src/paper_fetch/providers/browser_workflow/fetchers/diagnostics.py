@@ -9,7 +9,7 @@ from ....extraction.html.signals import (
 )
 from ....quality.reason_codes import CLOUDFLARE_CHALLENGE
 from ....utils import normalize_text
-from ..._flaresolverr import FetchedPublisherHtml
+from ...browser_runtime.types import BrowserFetchedHtml
 
 BROWSER_CONTEXT_ERROR = "browser_context_error"
 PLAYWRIGHT_CONTEXT_ERROR = "playwright_context_error"
@@ -109,7 +109,7 @@ def _image_fetch_failure_reason(
     return "image_fetch_error"
 
 
-def _browser_image_payload_failure_reason(result: FetchedPublisherHtml) -> str:
+def _browser_image_payload_failure_reason(result: BrowserFetchedHtml) -> str:
     if not isinstance(result.image_payload, Mapping):
         return "browser_image_payload_missing"
     payload_reason = normalize_text(str(result.image_payload.get("reason") or ""))
@@ -118,4 +118,4 @@ def _browser_image_payload_failure_reason(result: FetchedPublisherHtml) -> str:
     return "browser_image_payload_invalid"
 
 
-_flaresolverr_image_payload_failure_reason = _browser_image_payload_failure_reason
+_flaresolverr_image_payload_failure_reason = _browser_image_payload_failure_reason  # legacy alias

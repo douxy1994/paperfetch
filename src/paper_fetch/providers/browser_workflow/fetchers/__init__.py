@@ -15,7 +15,7 @@ from .diagnostics import (
     PLAYWRIGHT_CONTEXT_ERROR,
     _browser_image_payload_failure_reason,
     _compact_failure_diagnostic,
-    _flaresolverr_image_payload_failure_reason,
+    _flaresolverr_image_payload_failure_reason,  # legacy
 )
 from .file import (
     _SharedBrowserFileDocumentFetcher,
@@ -34,7 +34,7 @@ from .image import (
     _browser_image_document_payload,
     _build_shared_browser_image_fetcher,
     _build_shared_playwright_image_fetcher,
-    _flaresolverr_image_document_payload,
+    _flaresolverr_image_document_payload,  # legacy
     fetch_image_document_with_playwright,
 )
 from .memo import _MemoizedFigurePageFetcher, _MemoizedImageDocumentFetcher
@@ -67,8 +67,8 @@ __all__ = [
     "_browser_image_payload_failure_reason",
     "_choose_playwright_seed_url",
     "_compact_failure_diagnostic",
-    "_flaresolverr_image_document_payload",
-    "_flaresolverr_image_payload_failure_reason",
+    "_flaresolverr_image_document_payload",  # legacy
+    "_flaresolverr_image_payload_failure_reason",  # legacy
     "_normalized_response_headers",
     "BROWSER_CONTEXT_ERROR",
     "PLAYWRIGHT_CONTEXT_ERROR",

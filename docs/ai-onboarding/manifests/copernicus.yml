@@ -45,7 +45,6 @@ probe:
   env_requirements: []
   requires_playwright: false
   requires_browser_runtime: false
-  requires_flaresolverr: false
   ping_url: https://www.copernicus.org/
 fixtures:
   doi_samples:

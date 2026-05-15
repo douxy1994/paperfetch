@@ -14,7 +14,7 @@ from typing import Any, Mapping
 from ..common_patterns import WORD_TOKEN_PATTERN
 from ..http import is_pdf_content_type
 from ..utils import normalize_text
-from ._flaresolverr import CLOUDFLARE_COOKIE_NAMES, _CLOUDFLARE_COOKIE_PREFIXES
+from .browser_runtime.seed import CLOUDFLARE_COOKIE_NAMES, _CLOUDFLARE_COOKIE_PREFIXES
 
 
 @dataclass(frozen=True)

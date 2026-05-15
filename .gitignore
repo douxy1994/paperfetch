@@ -41,6 +41,10 @@ vendor/flaresolverr/.work/
 vendor/flaresolverr/.venv-flaresolverr/
 vendor/flaresolverr/.flaresolverr/
 vendor/flaresolverr/run_logs/
+legacy/flaresolverr/vendor/.work/
+legacy/flaresolverr/vendor/.venv-flaresolverr/
+legacy/flaresolverr/vendor/.flaresolverr/
+legacy/flaresolverr/vendor/run_logs/
 todo.md
 publisher-provider-todo.md
 

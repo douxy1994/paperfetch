@@ -34,7 +34,6 @@ def _write_provider_manifest(
     *,
     provider: str = "mdpi",
     doi: str | None = "10.3390/membranes15030093",
-    requires_flaresolverr: bool = False,
 ) -> None:
     rendered_doi = "null" if doi is None else f'"{doi}"'
     path.write_text(
@@ -45,7 +44,7 @@ routing:
   doi_prefixes:
     - "10.3390/"
 probe:
-  requires_flaresolverr: {str(requires_flaresolverr).lower()}
+  requires_browser_runtime: false
 fixtures:
   doi_samples:
     structure:
