@@ -135,6 +135,9 @@ SPRINGER_TABLE_IMAGE_ROOT_SELECTORS = (
     ".c-article-body",
     ".main-content",
 )
+# SITE_UI_COPY_REGRESSION_MARKER: site-owned Springer/Nature table-page chrome;
+# rerun Springer table image fixture tests when these tokens change.
+# STRUCTURAL_UI_COPY_HOOK: used only to constrain table-image discovery context.
 SPRINGER_TABLE_IMAGE_CHROME_NODE_NAMES = frozenset({"header", "nav", "footer", "aside"})
 SPRINGER_TABLE_IMAGE_CHROME_CONTEXT_TOKENS = (
     "account",
