@@ -55,3 +55,22 @@
 
 ### 判断性偏差
 - 保留 `runtime_playwright.PlaywrightUnavailableError` 与 `runtime_playwright.launch_playwright_chromium` 的兼容 re-export，因为 Phase 3-5 尚未迁移的模块在包初始化时仍导入这些旧名；实现已改为 CloakBrowser launch，不保留 stock Playwright fallback。
+
+## Phase 3
+
+### 命名决定
+- `fetch_html_with_fast_browser`
+- `_FAST_BROWSER_HTML_TIMEOUT_MS`
+- `_FAST_BROWSER_HTML_WAIT_SECONDS`
+- `_FAST_BROWSER_HTML_WARM_WAIT_SECONDS`
+- `_FAST_BROWSER_HTML_RETRY_KINDS`
+- `_FAST_BROWSER_HTML_BLOCKED_RESOURCE_TYPES`
+- `_fast_browser_context_seed`
+- `_should_retry_fast_browser_failure`
+- `_LEGACY_FAST_BROWSER_FETCHER_ALIAS`
+
+### 签名决定
+- `fetch_html_with_fast_browser(candidate_urls: list[str], *, publisher: str, user_agent: str, headless: bool = True, timeout_ms: int = _FAST_BROWSER_HTML_TIMEOUT_MS, context: RuntimeContext | None = None) -> BrowserFetchedHtml`
+
+### 判断性偏差
+- Phase 3 输入文件清单遗漏了 `src/paper_fetch/providers/browser_workflow/shared.py`，但验收要求 `fetch_html_with_direct_playwright` 在 `src/paper_fetch/` 中仅出现在 alias 行和 `__init__` 重导出；因此将 `shared.py` 的默认依赖改为新名，并通过动态别名保留旧依赖字段兼容。

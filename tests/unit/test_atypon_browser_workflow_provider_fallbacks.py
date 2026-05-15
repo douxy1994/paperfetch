@@ -1,6 +1,9 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+import sys
+import types
+
 from ._atypon_browser_workflow_provider_support import *
 
 
@@ -37,7 +40,7 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
                 client,
                 load_runtime_config=mock.Mock(return_value=runtime),
                 ensure_runtime_ready=mock.Mock(),
-                fetch_html_with_flaresolverr=mock.Mock(
+                fetch_html_with_browser=mock.Mock(
                     side_effect=_flaresolverr.FlareSolverrFailure(
                         "redirected_to_abstract",
                         "Abstract redirect",
@@ -81,14 +84,14 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
             mocked_pdf = mock.Mock()
             install_browser_workflow_deps(
                 client,
-                fetch_html_with_direct_playwright=mock.Mock(
+                fetch_html_with_fast_browser=mock.Mock(
                     side_effect=browser_workflow.HtmlExtractionFailure(
-                        "playwright_direct_failed", "Direct preflight failed."
+                        "fast_browser_failed", "Fast preflight failed."
                     )
                 ),
                 load_runtime_config=mock.Mock(return_value=runtime),
                 ensure_runtime_ready=mock.Mock(),
-                fetch_html_with_flaresolverr=mock.Mock(
+                fetch_html_with_browser=mock.Mock(
                     return_value=_flaresolverr.FetchedPublisherHtml(
                         source_url=PNAS_SAMPLE.landing_url,
                         final_url=PNAS_SAMPLE.landing_url,
@@ -123,14 +126,117 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         self.assertEqual(article.source, "pnas")
         self.assertIn("fulltext:pnas_html_ok", article.quality.source_trail)
 
-    def test_pnas_direct_playwright_html_preflight_skips_flaresolverr(self) -> None:
+    def test_pnas_fast_preflight_uses_cloakbrowser(self) -> None:
+        class FakeResponse:
+            status = 200
+
+            def all_headers(self):
+                return {"content-type": "text/html"}
+
+        class FakePage:
+            def __init__(self) -> None:
+                self.url = ""
+                self.routes: list[tuple[str, object]] = []
+                self.goto_calls: list[dict[str, object]] = []
+                self.close_count = 0
+
+            def route(self, pattern, handler) -> None:
+                self.routes.append((pattern, handler))
+
+            def goto(self, url, *, wait_until, timeout):
+                self.url = url
+                self.goto_calls.append(
+                    {"url": url, "wait_until": wait_until, "timeout": timeout}
+                )
+                return FakeResponse()
+
+            def content(self) -> str:
+                return (
+                    "<html><head><title>PNAS sample</title></head>"
+                    "<body><main>PNAS fast browser full text</main></body></html>"
+                )
+
+            def title(self) -> str:
+                return "PNAS sample"
+
+            def close(self) -> None:
+                self.close_count += 1
+
+        class FakeBrowserContext:
+            def __init__(self) -> None:
+                self.page = FakePage()
+                self.close_count = 0
+
+            def new_page(self) -> FakePage:
+                return self.page
+
+            def cookies(self):
+                return [
+                    {
+                        "name": "sessionid",
+                        "value": "fast",
+                        "domain": ".pnas.org",
+                        "path": "/",
+                    }
+                ]
+
+            def close(self) -> None:
+                self.close_count += 1
+
+        class FakeBrowser:
+            def __init__(self) -> None:
+                self.context = FakeBrowserContext()
+                self.new_context_calls: list[dict[str, object]] = []
+                self.close_count = 0
+
+            def new_context(self, **kwargs):
+                self.new_context_calls.append(dict(kwargs))
+                return self.context
+
+            def close(self) -> None:
+                self.close_count += 1
+
+        fake_browser = FakeBrowser()
+        launch = mock.Mock(return_value=fake_browser)
+        cloakbrowser_module = types.ModuleType("cloakbrowser")
+        cloakbrowser_module.launch = launch
+        sync_playwright = mock.Mock(side_effect=AssertionError("stock Playwright should not be used"))
+        sync_api_module = types.ModuleType("playwright.sync_api")
+        sync_api_module.sync_playwright = sync_playwright
+        playwright_module = types.ModuleType("playwright")
+        playwright_module.sync_api = sync_api_module
+
+        with mock.patch.dict(
+            sys.modules,
+            {
+                "cloakbrowser": cloakbrowser_module,
+                "playwright": playwright_module,
+                "playwright.sync_api": sync_api_module,
+            },
+        ):
+            result = browser_workflow.fetch_html_with_fast_browser(
+                [PNAS_SAMPLE.landing_url],
+                publisher="pnas",
+                user_agent="Mozilla/5.0",
+            )
+
+        launch.assert_called_once_with(headless=True, locale="en-US")
+        sync_playwright.assert_not_called()
+        self.assertEqual(fake_browser.new_context_calls[0]["user_agent"], "Mozilla/5.0")
+        self.assertEqual(fake_browser.context.page.goto_calls[0]["wait_until"], "domcontentloaded")
+        self.assertEqual(result.final_url, PNAS_SAMPLE.landing_url)
+        self.assertEqual(result.browser_context_seed["browser_user_agent"], "Mozilla/5.0")
+        self.assertEqual(fake_browser.context.close_count, 1)
+        self.assertEqual(fake_browser.close_count, 1)
+
+    def test_pnas_fast_preflight_skips_full_browser_path(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
         seed = {
             "browser_cookies": [{"name": "sessionid", "value": "direct", "domain": ".pnas.org", "path": "/"}],
             "browser_user_agent": "Mozilla/5.0",
             "browser_final_url": PNAS_SAMPLE.landing_url,
         }
-        mocked_direct = mock.Mock(
+        mocked_fast = mock.Mock(
             return_value=_flaresolverr.FetchedPublisherHtml(
                 source_url=PNAS_SAMPLE.landing_url,
                 final_url=PNAS_SAMPLE.landing_url,
@@ -143,12 +249,12 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
             )
         )
         mocked_runtime = mock.Mock()
-        mocked_flaresolverr = mock.Mock()
+        mocked_browser = mock.Mock()
         install_browser_workflow_deps(
             client,
-            fetch_html_with_direct_playwright=mocked_direct,
+            fetch_html_with_fast_browser=mocked_fast,
             load_runtime_config=mocked_runtime,
-            fetch_html_with_flaresolverr=mocked_flaresolverr,
+            fetch_html_with_browser=mocked_browser,
             extract_atypon_browser_workflow_markdown=mock.Mock(
                 return_value=(
                     f"# {PNAS_SAMPLE.title}\n\n## Results\n\n"
@@ -162,44 +268,51 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
             {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
         )
 
-        mocked_direct.assert_called_once()
+        mocked_fast.assert_called_once()
         mocked_runtime.assert_not_called()
-        mocked_flaresolverr.assert_not_called()
+        mocked_browser.assert_not_called()
         self.assertIsNotNone(raw_payload.content)
         assert raw_payload.content is not None
         self.assertEqual(raw_payload.content.route_kind, "html")
-        self.assertEqual(raw_payload.content.fetcher, "playwright_direct")
+        self.assertEqual(raw_payload.content.fetcher, "cloakbrowser_fast")
+        self.assertEqual(raw_payload.content.diagnostics["html_fetcher"], "cloakbrowser_fast")
         self.assertEqual(raw_payload.content.browser_context_seed, seed)
         self.assertIn("fulltext:pnas_html_ok", _payload_source_trail(raw_payload))
 
-    def test_pnas_direct_playwright_html_preflight_falls_back_to_flaresolverr(self) -> None:
+    def test_pnas_fast_failure_triggers_full_path(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "pnas", PNAS_SAMPLE.doi)
-            mocked_direct = mock.Mock(
+            mocked_fast = mock.Mock(
                 side_effect=browser_workflow.HtmlExtractionFailure(
-                    "insufficient_body", "Direct body was not sufficient."
+                    "insufficient_body", "Fast body was not sufficient."
                 )
             )
             mocked_runtime = mock.Mock(return_value=runtime)
-            mocked_flaresolverr = mock.Mock(
-                return_value=_flaresolverr.FetchedPublisherHtml(
-                    source_url=PNAS_SAMPLE.landing_url,
-                    final_url=PNAS_SAMPLE.landing_url,
-                    html="<html></html>",
-                    response_status=200,
-                    response_headers={"content-type": "text/html"},
-                    title=PNAS_SAMPLE.title,
-                    summary="Example summary",
-                    browser_context_seed={},
-                )
+            mocked_browser = mock.Mock(
+                side_effect=[
+                    _flaresolverr.FlareSolverrFailure(
+                        "redirected_to_abstract",
+                        "Fast browser path redirected to abstract.",
+                    ),
+                    _flaresolverr.FetchedPublisherHtml(
+                        source_url=PNAS_SAMPLE.landing_url,
+                        final_url=PNAS_SAMPLE.landing_url,
+                        html="<html></html>",
+                        response_status=200,
+                        response_headers={"content-type": "text/html"},
+                        title=PNAS_SAMPLE.title,
+                        summary="Example summary",
+                        browser_context_seed={},
+                    ),
+                ]
             )
             install_browser_workflow_deps(
                 client,
-                fetch_html_with_direct_playwright=mocked_direct,
+                fetch_html_with_fast_browser=mocked_fast,
                 load_runtime_config=mocked_runtime,
                 ensure_runtime_ready=mock.Mock(),
-                fetch_html_with_flaresolverr=mocked_flaresolverr,
+                fetch_html_with_browser=mocked_browser,
                 extract_atypon_browser_workflow_markdown=mock.Mock(
                     return_value=(
                         f"# {PNAS_SAMPLE.title}\n\n## Results\n\n"
@@ -213,12 +326,15 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
                 {"doi": PNAS_SAMPLE.doi, "title": PNAS_SAMPLE.title},
             )
 
-        mocked_direct.assert_called_once()
+        mocked_fast.assert_called_once()
         mocked_runtime.assert_called_once()
-        mocked_flaresolverr.assert_called_once()
+        self.assertEqual(mocked_browser.call_count, 2)
+        self.assertTrue(mocked_browser.call_args_list[0].kwargs["disable_media"])
+        self.assertFalse(mocked_browser.call_args_list[1].kwargs["disable_media"])
         self.assertIsNotNone(raw_payload.content)
         assert raw_payload.content is not None
-        self.assertEqual(raw_payload.content.fetcher, "flaresolverr")
+        self.assertEqual(raw_payload.content.fetcher, "cloakbrowser")
+
     def test_pnas_provider_fetch_result_recovers_pdf_when_html_article_is_abstract_only(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
         doi = "10.1073/pnas.2509692123"
@@ -525,14 +641,14 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
             )
             install_browser_workflow_deps(
                 client,
-                fetch_html_with_direct_playwright=mock.Mock(
+                fetch_html_with_fast_browser=mock.Mock(
                     side_effect=browser_workflow.HtmlExtractionFailure(
-                        "playwright_direct_failed", "Direct preflight failed."
+                        "fast_browser_failed", "Fast preflight failed."
                     )
                 ),
                 load_runtime_config=mock.Mock(return_value=runtime),
                 ensure_runtime_ready=mock.Mock(),
-                fetch_html_with_flaresolverr=mock.Mock(
+                fetch_html_with_browser=mock.Mock(
                     side_effect=_flaresolverr.FlareSolverrFailure(
                         "redirected_to_abstract",
                         "Abstract redirect",

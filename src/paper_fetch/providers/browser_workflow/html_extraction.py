@@ -21,16 +21,15 @@ from ...quality.reason_codes import (
     STRUCTURED_MISSING_BODY_SECTIONS,
 )
 from ...runtime import RuntimeContext
-from ...runtime_playwright import PlaywrightUnavailableError, launch_playwright_chromium
+from ...runtime_browser import BrowserContextManager
 from ...tracing import fulltext_marker, trace_from_markers
 from ...utils import normalize_text
 from .fetchers import _normalized_response_headers
-from .shared import BROWSER_HTML_BLOCKED_RESOURCE_TYPES
-from ..browser_runtime import fetch_html_with_browser
+from .shared import BROWSER_HTML_BLOCKED_RESOURCE_TYPES, looks_like_abstract_redirect
+from ..browser_runtime import BrowserFetchedHtml, fetch_html_with_browser
 from .._flaresolverr import (
     DEFAULT_FLARESOLVERR_WAIT_SECONDS,
     DEFAULT_FLARESOLVERR_WARM_WAIT_SECONDS,
-    FetchedPublisherHtml,
     FlareSolverrFailure,
 )
 from ..atypon_browser_workflow import (
@@ -45,11 +44,11 @@ logger = logging.getLogger("paper_fetch.providers.browser_workflow")
 if TYPE_CHECKING:
     from .client import BrowserWorkflowClient
 
-_DIRECT_PLAYWRIGHT_HTML_TIMEOUT_MS = 15000
-_FAST_FLARESOLVERR_HTML_WAIT_SECONDS = 0
-_FAST_FLARESOLVERR_HTML_WARM_WAIT_SECONDS = 0
-_DIRECT_PLAYWRIGHT_HTML_BLOCKED_RESOURCE_TYPES = BROWSER_HTML_BLOCKED_RESOURCE_TYPES
-_FAST_FLARESOLVERR_RETRY_KINDS = {
+_FAST_BROWSER_HTML_TIMEOUT_MS = 15000
+_FAST_BROWSER_HTML_WAIT_SECONDS = 0
+_FAST_BROWSER_HTML_WARM_WAIT_SECONDS = 0
+_FAST_BROWSER_HTML_BLOCKED_RESOURCE_TYPES = BROWSER_HTML_BLOCKED_RESOURCE_TYPES
+_FAST_BROWSER_HTML_RETRY_KINDS = {
     CLOUDFLARE_CHALLENGE,
     PUBLISHER_ACCESS_DENIED,
     PUBLISHER_PAYWALL,
@@ -59,9 +58,18 @@ _FAST_FLARESOLVERR_RETRY_KINDS = {
     STRUCTURED_ARTICLE_NOT_FULLTEXT,
     STRUCTURED_MISSING_BODY_SECTIONS,
 }
+_DIRECT_PLAYWRIGHT_HTML_TIMEOUT_MS = _FAST_BROWSER_HTML_TIMEOUT_MS  # legacy alias
+_DIRECT_PLAYWRIGHT_HTML_BLOCKED_RESOURCE_TYPES = _FAST_BROWSER_HTML_BLOCKED_RESOURCE_TYPES  # legacy alias
+_FAST_FLARESOLVERR_HTML_WAIT_SECONDS = _FAST_BROWSER_HTML_WAIT_SECONDS  # legacy alias
+_FAST_FLARESOLVERR_HTML_WARM_WAIT_SECONDS = _FAST_BROWSER_HTML_WARM_WAIT_SECONDS  # legacy alias
+_FAST_FLARESOLVERR_RETRY_KINDS = _FAST_BROWSER_HTML_RETRY_KINDS  # legacy alias
 
 __all__ = [
     "_DIRECT_PLAYWRIGHT_HTML_TIMEOUT_MS",
+    "_FAST_BROWSER_HTML_TIMEOUT_MS",
+    "_FAST_BROWSER_HTML_WAIT_SECONDS",
+    "_FAST_BROWSER_HTML_WARM_WAIT_SECONDS",
+    "_FAST_BROWSER_HTML_RETRY_KINDS",
     "_FAST_FLARESOLVERR_HTML_WAIT_SECONDS",
     "_FAST_FLARESOLVERR_HTML_WARM_WAIT_SECONDS",
     "_browser_workflow_html_payload",
@@ -73,7 +81,7 @@ __all__ = [
     "_fetch_flaresolverr_html_payload_with_fast_path",
     "extract_browser_workflow_asset_html_scopes",
     "extract_atypon_browser_workflow_markdown",
-    "fetch_html_with_direct_playwright",
+    "fetch_html_with_fast_browser",
     "rewrite_inline_figure_links",
 ]
 
@@ -161,7 +169,7 @@ def _response_status(response: Any) -> int | None:
         return None
 
 
-def _direct_playwright_browser_context_seed(context: Any, *, final_url: str, user_agent: str) -> dict[str, Any]:
+def _fast_browser_context_seed(context: Any, *, final_url: str, user_agent: str) -> dict[str, Any]:
     try:
         cookies = context.cookies()
     except Exception:
@@ -173,21 +181,20 @@ def _direct_playwright_browser_context_seed(context: Any, *, final_url: str, use
     }
 
 
-def fetch_html_with_direct_playwright(
+def fetch_html_with_fast_browser(
     candidate_urls: list[str],
     *,
     publisher: str,
     user_agent: str,
     headless: bool = True,
-    timeout_ms: int = _DIRECT_PLAYWRIGHT_HTML_TIMEOUT_MS,
+    timeout_ms: int = _FAST_BROWSER_HTML_TIMEOUT_MS,
     context: RuntimeContext | None = None,
-) -> FetchedPublisherHtml:
+) -> BrowserFetchedHtml:
     if not candidate_urls:
         raise HtmlExtractionFailure("empty_html_attempts", "No publisher HTML candidates were attempted.")
 
     last_failure: HtmlExtractionFailure | None = None
     manager = None
-    browser = None
     browser_context = None
     page = None
     try:
@@ -196,23 +203,23 @@ def fetch_html_with_direct_playwright(
             "locale": "en-US",
             "viewport": {"width": 1440, "height": 1600},
         }
-        if context is not None:
-            browser_context = context.new_playwright_context(headless=headless, **context_kwargs)
-        else:
-            try:
-                manager, browser = launch_playwright_chromium(headless=headless)
-            except PlaywrightUnavailableError as exc:
-                raise HtmlExtractionFailure(
-                    "playwright_unavailable",
-                    f"Playwright is not available for direct {publisher} HTML preflight: {exc}",
-                ) from exc
-            browser_context = browser.new_context(**context_kwargs)
+        try:
+            if context is not None:
+                browser_context = context.new_browser_context(headless=headless, **context_kwargs)
+            else:
+                manager = BrowserContextManager()
+                browser_context = manager.new_context(headless=headless, **context_kwargs)
+        except Exception as exc:
+            raise HtmlExtractionFailure(
+                "browser_runtime_unavailable",
+                f"CloakBrowser runtime is not available for fast {publisher} HTML preflight: {exc}",
+            ) from exc
         page = browser_context.new_page()
 
         def route_handler(route: Any) -> None:
             try:
                 resource_type = normalize_text(str(route.request.resource_type or "")).lower()
-                if resource_type in _DIRECT_PLAYWRIGHT_HTML_BLOCKED_RESOURCE_TYPES:
+                if resource_type in _FAST_BROWSER_HTML_BLOCKED_RESOURCE_TYPES:
                     route.abort()
                     return
                 route.continue_()
@@ -238,11 +245,17 @@ def fetch_html_with_direct_playwright(
                 title = normalize_text(str(page.title() or "")) or None
             except Exception as exc:
                 last_failure = HtmlExtractionFailure(
-                    "playwright_direct_failed",
-                    normalize_text(str(exc)) or f"Direct {publisher} Playwright HTML preflight failed.",
+                    "fast_browser_failed",
+                    normalize_text(str(exc)) or f"Fast {publisher} browser HTML preflight failed.",
                 )
                 continue
 
+            if looks_like_abstract_redirect(normalized_url, final_url):
+                last_failure = HtmlExtractionFailure(
+                    REDIRECTED_TO_ABSTRACT,
+                    f"Fast {publisher} browser HTML preflight redirected to an abstract page.",
+                )
+                continue
             status = _response_status(response)
             headers = _response_headers(response)
             summary = summarize_html(html_text)
@@ -253,10 +266,10 @@ def fetch_html_with_direct_playwright(
             if not normalize_text(html_text):
                 last_failure = HtmlExtractionFailure(
                     "empty_html_response",
-                    f"Direct {publisher} Playwright HTML preflight returned empty HTML.",
+                    f"Fast {publisher} browser HTML preflight returned empty HTML.",
                 )
                 continue
-            return FetchedPublisherHtml(
+            return BrowserFetchedHtml(
                 source_url=normalized_url,
                 final_url=final_url,
                 html=html_text,
@@ -264,14 +277,14 @@ def fetch_html_with_direct_playwright(
                 response_headers=headers,
                 title=title,
                 summary=summary,
-                browser_context_seed=_direct_playwright_browser_context_seed(
+                browser_context_seed=_fast_browser_context_seed(
                     browser_context,
                     final_url=final_url,
                     user_agent=normalize_text(user_agent) or build_user_agent({}),
                 ),
             )
     finally:
-        for value in (page, browser_context, browser):
+        for value in (page, browser_context):
             if value is None:
                 continue
             try:
@@ -280,7 +293,7 @@ def fetch_html_with_direct_playwright(
                 pass
         if manager is not None:
             try:
-                manager.stop()
+                manager.close()
             except Exception:
                 pass
 
@@ -289,9 +302,14 @@ def fetch_html_with_direct_playwright(
     raise HtmlExtractionFailure("empty_html_attempts", "No publisher HTML candidates were attempted.")
 
 
+fetch_html_with_fast_browser.paper_fetch_html_fetcher_name = "cloakbrowser_fast"  # type: ignore[attr-defined]
+fetch_html_with_direct_playwright = fetch_html_with_fast_browser  # legacy alias
+_direct_playwright_browser_context_seed = _fast_browser_context_seed  # legacy alias
+
+
 def _browser_workflow_html_payload(
     client: "BrowserWorkflowClient",
-    html_result: FetchedPublisherHtml,
+    html_result: BrowserFetchedHtml,
     *,
     markdown_text: str,
     extraction: Mapping[str, Any],
@@ -332,11 +350,11 @@ def _fetch_browser_html_payload(
     metadata: ProviderMetadata,
     context: RuntimeContext,
     warnings: list[str] | None = None,
-    html_fetcher: Callable[..., FetchedPublisherHtml] = fetch_html_with_browser,
+    html_fetcher: Callable[..., BrowserFetchedHtml] = fetch_html_with_browser,
     disable_media: bool = False,
     wait_seconds: int = DEFAULT_FLARESOLVERR_WAIT_SECONDS,
     warm_wait_seconds: int = DEFAULT_FLARESOLVERR_WARM_WAIT_SECONDS,
-) -> tuple[FetchedPublisherHtml, RawFulltextPayload]:
+) -> tuple[BrowserFetchedHtml, RawFulltextPayload]:
     html_result = html_fetcher(
         html_candidates,
         publisher=client.name,
@@ -375,9 +393,9 @@ def _fetch_browser_html_payload(
 _fetch_flaresolverr_html_payload = _fetch_browser_html_payload  # legacy alias
 
 
-def _should_retry_fast_flaresolverr_failure(exc: Exception) -> bool:
+def _should_retry_fast_browser_failure(exc: Exception) -> bool:
     if isinstance(exc, FlareSolverrFailure):
-        return exc.kind in _FAST_FLARESOLVERR_RETRY_KINDS
+        return exc.kind in _FAST_BROWSER_HTML_RETRY_KINDS
     if isinstance(exc, HtmlExtractionFailure):
         return True
     return False
@@ -391,8 +409,8 @@ def _fetch_browser_html_payload_with_fast_path(
     metadata: ProviderMetadata,
     context: RuntimeContext,
     warnings: list[str] | None = None,
-    html_fetcher: Callable[..., FetchedPublisherHtml] = fetch_html_with_browser,
-) -> tuple[FetchedPublisherHtml, RawFulltextPayload]:
+    html_fetcher: Callable[..., BrowserFetchedHtml] = fetch_html_with_browser,
+) -> tuple[BrowserFetchedHtml, RawFulltextPayload]:
     try:
         return _fetch_browser_html_payload(
             client,
@@ -403,14 +421,14 @@ def _fetch_browser_html_payload_with_fast_path(
             warnings=warnings,
             html_fetcher=html_fetcher,
             disable_media=True,
-            wait_seconds=_FAST_FLARESOLVERR_HTML_WAIT_SECONDS,
-            warm_wait_seconds=_FAST_FLARESOLVERR_HTML_WARM_WAIT_SECONDS,
+            wait_seconds=_FAST_BROWSER_HTML_WAIT_SECONDS,
+            warm_wait_seconds=_FAST_BROWSER_HTML_WARM_WAIT_SECONDS,
         )
     except (FlareSolverrFailure, HtmlExtractionFailure) as exc:
-        if not _should_retry_fast_flaresolverr_failure(exc):
+        if not _should_retry_fast_browser_failure(exc):
             raise
         logger.debug(
-            "browser_workflow_flaresolverr_fast_path provider=%s action=fallback reason=%s message=%s",
+            "browser_workflow_fast_browser_path provider=%s action=fallback reason=%s message=%s",
             client.name,
             getattr(exc, "kind", None) or getattr(exc, "reason", None) or exc.__class__.__name__,
             getattr(exc, "message", None) or normalize_text(str(exc)),

@@ -61,7 +61,7 @@ _EXPORTS: dict[str, tuple[str, str]] = {
     "extract_pdf_url_from_crossref": (".shared", "extract_pdf_url_from_crossref"),
     "extract_atypon_browser_workflow_markdown": (".html_extraction", "extract_atypon_browser_workflow_markdown"),
     "fetch_html_with_direct_playwright": (".html_extraction", "fetch_html_with_direct_playwright"),
-    "fetch_html_with_fast_browser": (".html_extraction", "fetch_html_with_direct_playwright"),
+    "fetch_html_with_fast_browser": (".html_extraction", "fetch_html_with_fast_browser"),
     "fetch_html_with_browser": ("paper_fetch.providers.browser_runtime", "fetch_html_with_browser"),
     "fetch_html_with_flaresolverr": ("paper_fetch.providers._cloakbrowser", "fetch_html_with_cloakbrowser"),
     "fetch_image_document_with_playwright": (".fetchers", "fetch_image_document_with_playwright"),
