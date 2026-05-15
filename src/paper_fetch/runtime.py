@@ -38,7 +38,7 @@ from .http import (
     DEFAULT_DISK_CACHE_MAX_ENTRIES,
     HttpTransport,
 )
-from .runtime_playwright import PlaywrightContextManager
+from .runtime_browser import BrowserContextManager
 
 RUNTIME_UNSET = object()
 _PARSE_CACHE_MISSING = object()
@@ -126,8 +126,8 @@ class RuntimeContext:
     stage_timings: dict[str, float] = field(default_factory=dict)
     _session_cache_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _stage_timing_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
-    _playwright_context_manager_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
-    _playwright_context_manager: PlaywrightContextManager | None = field(default=None, init=False, repr=False)
+    _browser_context_manager_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
+    _browser_context_manager: BrowserContextManager | None = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.env = build_runtime_env() if self.env is None else dict(self.env)
@@ -160,28 +160,33 @@ class RuntimeContext:
         return self.clients
 
     def playwright_browser(self, *, headless: bool = True) -> Any:
-        """Return a lazily started shared Playwright Chromium browser."""
+        """Return a lazily started shared CloakBrowser browser."""
 
-        return self._playwright_lifecycle().browser(headless=headless)
+        return self._browser_lifecycle().browser(headless=headless)
+
+    def new_browser_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any:
+        """Create an isolated browser context from the shared CloakBrowser browser."""
+
+        return self._browser_lifecycle().new_context(headless=headless, **context_kwargs)
 
     def new_playwright_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any:
-        """Create an isolated browser context from the shared Playwright browser."""
+        """Create an isolated browser context from the shared CloakBrowser browser."""
 
-        return self._playwright_lifecycle().new_context(headless=headless, **context_kwargs)
+        return self.new_browser_context(headless=headless, **context_kwargs)
 
     def close_playwright(self) -> None:
-        """Close any Playwright browser/manager owned by this runtime context."""
+        """Close any browser owned by this runtime context."""
 
-        with self._playwright_context_manager_lock:
-            manager = self._playwright_context_manager
+        with self._browser_context_manager_lock:
+            manager = self._browser_context_manager
         if manager is not None:
             manager.close()
 
-    def _playwright_lifecycle(self) -> PlaywrightContextManager:
-        with self._playwright_context_manager_lock:
-            if self._playwright_context_manager is None:
-                self._playwright_context_manager = PlaywrightContextManager()
-            return self._playwright_context_manager
+    def _browser_lifecycle(self) -> BrowserContextManager:
+        with self._browser_context_manager_lock:
+            if self._browser_context_manager is None:
+                self._browser_context_manager = BrowserContextManager()
+            return self._browser_context_manager
 
     def close(self) -> None:
         self.close_playwright()
