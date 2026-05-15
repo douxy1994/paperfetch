@@ -358,6 +358,42 @@ class AtyponBrowserWorkflowPostprocessTests(unittest.TestCase):
         self.assertEqual(rewritten, injected)
         self.assertIn("![Figure 3](downloads/figure3.png)", rewritten)
 
+    def test_inject_inline_figure_links_preserves_table_image_blocks(self) -> None:
+        markdown = "\n\n".join(
+            [
+                "# Figure Link Example",
+                "## Results",
+                "![Table 1.](table-t1.jpg)",
+                "![Extended Data Table 1](extended-table-1.jpg)",
+                "![Supplementary Table 2](supplementary-table-2.jpg)",
+                "**Figure 2.** Caption body.",
+            ]
+        )
+
+        injected = inject_inline_figure_links(
+            markdown,
+            figure_assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 2",
+                    "caption": "Caption body.",
+                    "path": "downloads/figure2.png",
+                    "section": "body",
+                }
+            ],
+            clean_markdown_fn=lambda value: value,
+        )
+
+        self.assertIn("![Table 1.](table-t1.jpg)", injected)
+        self.assertIn("![Extended Data Table 1](extended-table-1.jpg)", injected)
+        self.assertIn("![Supplementary Table 2](supplementary-table-2.jpg)", injected)
+        self.assertIn("![Figure 2](downloads/figure2.png)", injected)
+        self.assertNotIn("![Table 1.](downloads/figure2.png)", injected)
+        self.assertLess(
+            injected.index("![Figure 2](downloads/figure2.png)"),
+            injected.index("**Figure 2.** Caption body."),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

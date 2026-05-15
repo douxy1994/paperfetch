@@ -110,6 +110,15 @@ def _provider_status_payload(**kwargs):
                 "notes": [],
                 "checks": [],
             },
+            {
+                "provider": "copernicus",
+                "status": "ready",
+                "available": True,
+                "official_provider": True,
+                "missing_env": [],
+                "notes": [],
+                "checks": [],
+            },
         ]
     }
 
@@ -203,9 +212,21 @@ def _metadata_only_envelope(doi: str) -> FetchEnvelope:
 
 
 class GoldenCriteriaLiveTests(unittest.TestCase):
-    def test_supported_providers_include_arxiv_and_ams(self) -> None:
-        self.assertIn("arxiv", SUPPORTED_PROVIDERS)
-        self.assertIn("ams", SUPPORTED_PROVIDERS)
+    def test_supported_providers_cover_html_xml_live_paths(self) -> None:
+        self.assertEqual(
+            SUPPORTED_PROVIDERS,
+            (
+                "elsevier",
+                "springer",
+                "wiley",
+                "science",
+                "pnas",
+                "ieee",
+                "arxiv",
+                "ams",
+                "copernicus",
+            ),
+        )
 
     def test_manifest_loader_selects_golden_samples_and_classifies_provider_support(self) -> None:
         manifest = load_manifest()

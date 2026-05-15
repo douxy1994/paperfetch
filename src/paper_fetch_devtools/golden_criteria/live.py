@@ -37,7 +37,17 @@ from paper_fetch.workflow.rendering import rewrite_markdown_asset_links
 
 logger = logging.getLogger("paper_fetch_devtools.golden_criteria.live")
 
-SUPPORTED_PROVIDERS = ("elsevier", "springer", "wiley", "science", "pnas", "ieee", "arxiv", "ams")
+SUPPORTED_PROVIDERS = (
+    "elsevier",
+    "springer",
+    "wiley",
+    "science",
+    "pnas",
+    "ieee",
+    "arxiv",
+    "ams",
+    "copernicus",
+)
 UNSUPPORTED_PROVIDER_STATUS = "skipped_unsupported_provider"
 DEFAULT_REVIEW_ROOT_NAME = "golden-criteria-review"
 RUN_LIVE_ENV_VAR = "PAPER_FETCH_RUN_LIVE"

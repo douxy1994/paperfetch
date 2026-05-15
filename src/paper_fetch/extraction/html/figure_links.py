@@ -16,6 +16,10 @@ FIGURE_BASENAME_PATTERN = re.compile(r"(?:^|[^a-z])fig(?:ure)?[_-]?0*([A-Za-z]?\
 SHORT_FIGURE_BASENAME_PATTERN = re.compile(r"(?:^|[^a-z])f[_-]?0*([A-Za-z]?\d+[A-Za-z]?)(?=$|[^a-z0-9])", flags=re.IGNORECASE)
 MARKDOWN_FIGURE_BLOCK_PATTERN = re.compile(r"^\*\*(Figure\s+\d+[A-Za-z]?\.?)\*\*(?:[\s\S]*)$", flags=re.IGNORECASE)
 MARKDOWN_IMAGE_BLOCK_PATTERN = re.compile(r"^!\[([^\]]*)\]\(([^)]+)\)$")
+NON_FIGURE_IMAGE_ALT_PATTERN = re.compile(
+    r"^(?:extended\s+data\s+table|supplementary\s+table|table)\b",
+    flags=re.IGNORECASE,
+)
 FIGURE_ASSET_URL_FIELDS = (
     "full_size_url",
     *(field for field in DEFAULT_ASSET_URL_FIELDS if field != "full_size_url"),
@@ -31,6 +35,13 @@ def canonical_figure_label(text: str) -> str | None:
     if not match:
         return None
     return f"figure {match.group(1).lower()}"
+
+
+def is_non_figure_image_alt(text: str | None) -> bool:
+    normalized = normalize_text(text or "")
+    if not normalized:
+        return False
+    return bool(NON_FIGURE_IMAGE_ALT_PATTERN.match(normalized))
 
 
 def canonical_figure_label_from_asset(asset: Mapping[str, Any]) -> str | None:
@@ -163,6 +174,9 @@ def inject_inline_figure_links(
         if image_match:
             alt_text = normalize_text(image_match.group(1))
             current_url = normalize_text(image_match.group(2))
+            if is_non_figure_image_alt(alt_text):
+                injected.append(block)
+                continue
             entry = take_entry_for_image(alt_text, current_url)
             if entry is not None:
                 heading = alt_text or normalize_text(entry.get("heading") or "Figure") or "Figure"

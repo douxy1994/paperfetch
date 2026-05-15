@@ -478,6 +478,28 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
                     markdown.index(f"![Table 1.]({full_size_path})"),
                 )
 
+    def test_ams_aies_table_image_is_not_rewritten_to_next_figure(self) -> None:
+        """rule: rule-ams-html-body-assets-formulas"""
+        markdown, _ = _extract_fixture_markdown("10.1175/aies-d-23-0093.1")
+        table_image = "![Table 1.](/view/journals/aies/3/4/full-AIES-D-23-0093.1-t1.jpg)"
+        figure2_image = (
+            "![Figure 2](https://journals.ametsoc.org/view/journals/aies/3/4/"
+            "full-AIES-D-23-0093.1-f2.jpg)"
+        )
+
+        table_image_blocks = [
+            block for block in markdown.split("\n\n") if block.startswith("![Table 1.](")
+        ]
+        figure2_image_blocks = [
+            block for block in markdown.split("\n\n") if "full-AIES-D-23-0093.1-f2.jpg" in block
+        ]
+
+        self.assertEqual(table_image_blocks, [table_image])
+        self.assertEqual(figure2_image_blocks, [figure2_image])
+        self.assertLess(markdown.index("**Table 1.**"), markdown.index(table_image))
+        self.assertLess(markdown.index(table_image), markdown.index(figure2_image))
+        self.assertLess(markdown.index(figure2_image), markdown.index("**Figure 2.**"))
+
     def test_ams_figures_are_inline_with_complete_caption_without_chrome(self) -> None:
         """rule: rule-ams-html-body-assets-formulas"""
         markdown, _ = _extract_fixture_markdown("10.1175/jamc-d-24-0048.1")
