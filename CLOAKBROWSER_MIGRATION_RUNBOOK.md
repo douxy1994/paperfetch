@@ -1,6 +1,6 @@
 # CloakBrowser 迁移执行 Runbook
 
-> 你（运行 `/goal` 的 orchestrator）正在阅读这份 runbook。**严格按编号顺序执行**，不要跳步、不要并行、不要自创流程；遇到失败时先按本文对应恢复策略处理，恢复耗尽或被标记为不可恢复时才停止。
+> 你（运行 `/goal` 的 orchestrator）正在阅读这份 runbook。**严格按编号顺序执行**，不要跳步、不要并行、不要自创流程；遇到失败时先按本文对应恢复策略处理，只有恢复预算耗尽或无法执行恢复流程时才停止。
 >
 > 配套文件:
 > - `./CLOAKBROWSER_FULL_MIGRATION_PLAN.md` — 9 个 Phase 的细化操作步骤（你**只**读其中的 §3 和当前 Phase 的 §5）。
@@ -119,7 +119,7 @@ git log -1 --oneline -- CLOAKBROWSER_FULL_MIGRATION_PLAN.md
 
 记录该 commit hash，整条 mega-goal 期间不得有其他人修改计划文件。
 
-后续每个 Phase 进入 §3.1 前都必须重新运行同一命令，并与本步骤记录的 hash 比对；hash 改变属于不可恢复失败，立即走 §3.7。
+后续每个 Phase 进入 §3.1 前都必须重新运行同一命令，并与本步骤记录的 hash 比对；hash 改变视为该 Phase 的验收失败，收集诊断并进入 §3.4b。orchestrator 不亲自修改计划文件，恢复预算耗尽后才走 §3.7。
 
 ---
 
@@ -143,7 +143,7 @@ git log -1 --oneline -- CLOAKBROWSER_FULL_MIGRATION_PLAN.md
 | Phase 4 | ≤ 1 |
 | Phase 5 起 | 0 |
 
-grep 类不变量以**输出内容**为准：命令 exit code 为 1 但输出为空时视为通过。任一不变量失败 → 视为该 Phase 验收失败，进入 §3.4b 分类；若该失败在 §3.4b 标记为不可恢复，则走 §3.7。
+grep 类不变量以**输出内容**为准：命令 exit code 为 1 但输出为空时视为通过。任一不变量失败 → 视为该 Phase 验收失败，进入 §3.4b 分类；恢复预算耗尽后才走 §3.7。
 
 ---
 
@@ -153,7 +153,7 @@ grep 类不变量以**输出内容**为准：命令 exit code 为 1 但输出为
 
 ### 3.1 Phase 间硬约束
 
-- 重新运行 `git log -1 --oneline -- CLOAKBROWSER_FULL_MIGRATION_PLAN.md`，必须与 §1.4 锁定的 hash 完全一致；否则立即走 §3.7，失败原因写 "计划文件被外部修改"。
+- 重新运行 `git log -1 --oneline -- CLOAKBROWSER_FULL_MIGRATION_PLAN.md`，必须与 §1.4 锁定的 hash 完全一致；否则记录失败原因 "计划文件被外部修改"。若此时尚未创建 Phase 分支，先执行 §3.2 创建该 Phase 分支以保存诊断上下文，再收集诊断并进入 §3.4b。
 - 若 N == 9 且 `MIGRATION_DECISIONS.md` 中未出现 `## Phase 6` 节，**停止 mega-goal** 并报错 "Phase 6 未完成，禁止进入 Phase 9"。
 
 ### 3.2 创建 Phase 分支
@@ -204,22 +204,16 @@ git switch -c cloakbrowser-migration-phase-${N}
 
 按以下顺序分类：
 
-1. **不可恢复，直接 §3.7**：
-   - §1.4 计划文件 hash 改变。
-   - `git diff --name-only main..HEAD -- CLOAKBROWSER_FULL_MIGRATION_PLAN.md` 非空。
-   - skip/xfail 不变量输出非空。
-   - stock Chromium 命中数超过当前 Phase 允许值。
-   - `git log --oneline cloakbrowser-migration..HEAD` 超过 1 个 commit。
-   - 自动恢复预算已耗尽。
-2. **repair 路径**：若 Phase commit 数为 0、commit message 不以 `Phase ${N}:` 开头、`MIGRATION_DECISIONS.md` 缺少 `## Phase ${N}`、或 `git status --short` 显示有未提交改动，且 repair 尚未使用：
+1. **预算耗尽 → §3.7**：若 repair 已使用且 fixup 次数已达 2，走 §3.7。
+2. **repair 路径**：若 Phase commit 数不是 1、commit message 不以 `Phase ${N}:` 开头、`MIGRATION_DECISIONS.md` 缺少 `## Phase ${N}`、`git status --short` 显示有未提交改动、计划文件 hash 改变、计划文件 diff 非空，且 repair 尚未使用：
    - 用 §4.3 `REPAIR_AGENT_PROMPT` 派发 repair agent，把失败诊断作为 `{FAILURE_REPORT}` 输入。
    - repair agent 返回后，重新跑 §3.4 完整验收。
    - 若仍失败，重新进入 §3.4b 分类；repair 不得第二次派发。
-3. **fixup 路径**：若 Phase commit 数恰好为 1，commit message 合规，且失败来自验收命令或可修复的不变量，且 fixup 次数 < 2：
+3. **fixup 路径**：若 Phase commit 数恰好为 1，commit message 合规，且失败来自验收命令或任一不变量（包括 skip/xfail 输出非空、stock Chromium 命中数超额），且 fixup 次数 < 2：
    - 用 §4.2 `FIXUP_AGENT_PROMPT` 派发 fixup agent，把失败诊断作为 `{FAILURE_REPORT}` 输入。
    - fixup agent 返回后，重新跑 §3.4 完整验收。
    - 若仍失败，重新进入 §3.4b 分类；最多派发 2 次 fixup。
-4. **无法分类**：走 §3.7，并在失败报告中写明 "自动恢复分类失败"。
+4. **无法分类但仍有预算**：优先派发 repair（若尚未使用），否则派发 fixup（若 fixup 次数 < 2），并在 prompt 的失败诊断中写明 "自动恢复分类失败"。恢复预算耗尽后才走 §3.7。
 
 每次 repair/fixup agent 都必须把尝试记录追加到 `MIGRATION_DECISIONS.md` 对应 Phase 节，并纳入同一个 Phase commit。orchestrator 不亲自修改 Phase 代码或 Phase 决策日志。
 
@@ -271,7 +265,7 @@ stderr 末尾 30 行: <粘贴>
 mega-goal 已停止。
 ```
 
-**结束 mega-goal**。只有在前文恢复预算已经耗尽或该失败明确标记为不可恢复时才进入本节；进入本节后不要再尝试自动修复。
+**结束 mega-goal**。只有在前文恢复预算已经耗尽或无法执行恢复流程时才进入本节；进入本节后不要再尝试自动修复。
 
 ---
 
@@ -381,7 +375,7 @@ mega-goal 已停止。
 
 当前状态:
 - 已存在分支 cloakbrowser-migration-phase-{N}。
-- 上一次 code agent 没有形成可验收的 Phase 结构，可能表现为: 没有 Phase commit、commit message 不合规、MIGRATION_DECISIONS.md 缺少 Phase 节、或工作树有未提交改动。
+- 上一次 code agent 没有形成可验收的 Phase 结构，可能表现为: 没有 Phase commit、commit message 不合规、commit 数不是 1、MIGRATION_DECISIONS.md 缺少 Phase 节、工作树有未提交改动、计划文件被误改、或计划文件 hash 出现漂移。
 - 你的目标不是重做整个 Phase，而是把当前分支修复到 orchestrator 可继续验收的结构。
 
 你看到的失败诊断（orchestrator 注入，不要无视）:
@@ -406,9 +400,10 @@ mega-goal 已停止。
   3. 确保 `git log --oneline cloakbrowser-migration..HEAD` 恰好只有 1 个 commit，且 message 以 `Phase {N}:` 开头：
      - 若没有 commit：`git add` 本 Phase 允许的文件与 `MIGRATION_DECISIONS.md` 后创建 `git commit -m "Phase {N}: <一句概述本 Phase 的核心改动>"`。
      - 若已有 1 个 commit 但 message 不合规：修正文件后用 `git commit --amend -m "Phase {N}: <一句概述本 Phase 的核心改动>"`。
-     - 若已有超过 1 个 commit：立即返回 yes/no=no，不要 reset、rebase、squash 或删除 commit。
-  4. 若工作树有未提交改动，确认它们只属于本 Phase 输入文件或 `MIGRATION_DECISIONS.md`，再纳入上述 commit 或 amend。
-  5. 跑完该 Phase "验收命令"全部条目，全部通过；若失败且根因不是结构问题，返回 yes/no=no，把失败摘要交回 orchestrator 进入 fixup。
+     - 若已有超过 1 个 commit：先确认 diff 只包含本 Phase 允许的文件、`MIGRATION_DECISIONS.md`，或需要恢复到基线的计划/runbook 文件；然后用 `git reset --soft cloakbrowser-migration` 把这些改动重新整理成单个 `Phase {N}: ...` commit。
+  4. 若工作树有未提交改动，确认它们只属于本 Phase 输入文件、`MIGRATION_DECISIONS.md`，或需要恢复到基线的计划/runbook 文件，再纳入上述 commit 或 amend。
+  5. 若 `CLOAKBROWSER_FULL_MIGRATION_PLAN.md` / `CLOAKBROWSER_MIGRATION_RUNBOOK.md` 被 Phase 改动误触碰，只允许恢复到 `cloakbrowser-migration` 版本；不要编辑其内容。
+  6. 跑完该 Phase "验收命令"全部条目，全部通过；若失败且根因不是结构问题，返回 yes/no=no，把失败摘要交回 orchestrator 进入 fixup。
 
 返回给 orchestrator（≤200 字）:
   - 修复的结构问题
@@ -418,10 +413,10 @@ mega-goal 已停止。
 绝对禁止:
   - 创建超过 1 个 Phase commit
   - 触碰其他 Phase 范围内的文件
-  - 修改 CLOAKBROWSER_FULL_MIGRATION_PLAN.md / CLOAKBROWSER_MIGRATION_RUNBOOK.md
+  - 修改 CLOAKBROWSER_FULL_MIGRATION_PLAN.md / CLOAKBROWSER_MIGRATION_RUNBOOK.md（把误改恢复到 `cloakbrowser-migration` 版本除外）
   - 用 pytest.skip / pytest.mark.xfail / pytest -k 排除来"绕过"失败
   - 通过弱化断言、删除测试、放宽 grep 命令来通过验收
-  - git push / branch 切换 / reset / stash / rebase
+  - git push / branch 切换 / stash / rebase；除任务第 3 条指定的 `git reset --soft cloakbrowser-migration` 外，不要使用 reset
 ```
 
 ### 4.4 SMOKE_AGENT_PROMPT（仅 Phase 4/5/6/9 派发）
@@ -522,17 +517,17 @@ Phase 4/5/6/9 自动 live smoke 全部通过（见 MIGRATION_DECISIONS.md 中各
 | §1.1.1 工作树不干净 | 停止；禁止 auto-stash（隐藏状态风险） |
 | §1.2 baseline 单测失败 | 停止；不要尝试自动修复（说明起点已坏） |
 | code sub-agent 报告 "no" | 进入 §3.4b 自动恢复分类；可能 repair 1 次或 fixup 最多 2 次 |
-| Phase commit 数为 0 / message 不合规 / 缺 `## Phase N` / 有未提交改动 | 进入 §4.3 repair，最多 1 次 |
+| Phase commit 数不是 1 / message 不合规 / 缺 `## Phase N` / 有未提交改动 | 进入 §4.3 repair，最多 1 次 |
 | §3.4 验收命令失败且已有合法单 commit | 进入 §4.2 fixup，最多 2 次 |
 | §3.4b 恢复预算耗尽 | 走 §3.7 |
-| §2 不变量 "sync_playwright/chromium.launch 命中数" 超额 | 直接 §3.7，不可恢复（真实回归） |
-| §3.4 git log commit 数 > 1 | 直接 §3.7，不可恢复（保留现场，避免自动 reset/rebase） |
-| skip/xfail 不变量输出非空 | 直接 §3.7，不可恢复 |
+| §2 不变量 "sync_playwright/chromium.launch 命中数" 超额 | 进入 §4.2 fixup，最多 2 次；预算耗尽后 §3.7 |
+| §3.4 git log commit 数 > 1 | 进入 §4.3 repair，最多 1 次；repair agent 可用 `git reset --soft cloakbrowser-migration` 整理为单 commit |
+| skip/xfail 不变量输出非空 | 进入 §4.2 fixup 或 §4.3 repair，移除绕过逻辑后重新验收 |
 | smoke sub-agent 返回 `fail` | 走 §3.7。代码已合并，不自动回滚——把失败诊断完整交还人工 |
 | smoke sub-agent 返回 `pass_with_retry` | 视为通过，继续 Phase N+1，把 smoke notes commit 到集成分支 |
 | smoke sub-agent 返回 transient 嫌疑但被分类为 fail | 仍走 §3.7；交人工决定是否重新派发 smoke agent |
 | sub-agent（任意类型）卡住超时 | 报告给用户决定是否重试；不要自动重试 |
-| 计划文件被外部修改（hash 变了） | 立即停止；不可恢复 |
+| 计划文件被外部修改（hash 变了） | 收集诊断并进入 §3.4b；恢复预算耗尽后 §3.7 |
 
 ---
 
