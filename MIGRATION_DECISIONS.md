@@ -141,3 +141,12 @@
 
 ### 判断性偏差
 - 无
+
+### Smoke notes
+- status: pass_with_retry
+- tests_run: 4
+- tests_failed_first_pass: 1
+- tests_failed_after_retry: 0
+- first_pass_failed_test_ids: tests/live/test_live_publishers.py::LivePublisherTests::test_wiley_doi_live_fulltext
+- first_pass_failure: Wiley fulltext live assertion failed after `wiley_html_fail` but PDF/browser fallback and article path succeeded; retry passed.
+- retry_evidence: `1 passed in 26.66s`
