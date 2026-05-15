@@ -1,23 +1,15 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 
 import pytest
 
+from tests.script_modules import load_script_module
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _load_script(name: str):
-    path = REPO_ROOT / "scripts" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
@@ -69,7 +61,7 @@ fixtures:
 
 
 def test_capture_fixture_writes_fixture_manifest_and_summary(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     class FakeTransport:
         def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
@@ -100,7 +92,7 @@ def test_capture_fixture_writes_fixture_manifest_and_summary(tmp_path: Path, mon
 
 
 def test_capture_fixture_dry_run_does_not_fetch_or_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     class FailingTransport:
         def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
@@ -117,7 +109,7 @@ def test_capture_fixture_dry_run_does_not_fetch_or_write(tmp_path: Path, monkeyp
 
 
 def test_capture_fixture_refuses_to_overwrite_without_force(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     fixture_dir = tmp_path / "tests" / "fixtures" / "golden_criteria" / "10.1234_example"
     fixture_dir.mkdir(parents=True)
@@ -135,7 +127,7 @@ def test_capture_fixture_refuses_to_overwrite_without_force(tmp_path: Path, monk
 
 
 def test_capture_fixture_routes_block_purpose_to_block_fixture_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     class FakeTransport:
         def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
@@ -155,7 +147,7 @@ def test_capture_fixture_reads_doi_and_evidence_from_manifest(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
     manifest_path = tmp_path / "mdpi.yml"
     _write_provider_manifest(manifest_path)
 
@@ -184,7 +176,7 @@ def test_capture_fixture_reads_doi_and_evidence_from_manifest(
 
 
 def test_capture_fixture_skips_manifest_null_doi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
     manifest_path = tmp_path / "mdpi.yml"
     _write_provider_manifest(manifest_path, doi=None)
 
@@ -208,7 +200,7 @@ def test_capture_fixture_retries_403_with_flaresolverr_placeholder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     class ForbiddenTransport:
         def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
@@ -226,7 +218,7 @@ def test_capture_fixture_retries_403_with_flaresolverr_placeholder(
 
 
 def test_capture_fixture_maps_challenge_html(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     class ChallengeTransport:
         def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
@@ -248,7 +240,7 @@ def test_capture_fixture_maps_non_pdf_fallback_content(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     class HtmlTransport:
         def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
@@ -270,7 +262,7 @@ def test_capture_fixture_maps_timeout_to_network_transient(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     class TimeoutTransport:
         def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
@@ -291,7 +283,7 @@ def test_capture_fixture_fail_fast_writes_json_stderr_without_stdout(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    module = _load_script("capture_fixture")
+    module = load_script_module("capture_fixture")
 
     class RateLimitedTransport:
         def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:

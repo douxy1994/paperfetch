@@ -1,21 +1,13 @@
 from __future__ import annotations
 
 import argparse
-import importlib.util
 import json
 from pathlib import Path
 
+from tests.script_modules import load_script_module
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _load_script(name: str):
-    path = REPO_ROOT / "scripts" / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    assert spec and spec.loader
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
 
 
 def _write_manifest(root: Path, sample: dict[str, object]) -> None:
@@ -35,7 +27,7 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
 
 
 def test_snapshot_expected_writes_existing_golden_schema_and_updates_manifest(tmp_path: Path) -> None:
-    module = _load_script("snapshot_expected")
+    module = load_script_module("snapshot_expected")
     fixture_dir = tmp_path / "tests" / "fixtures" / "golden_criteria" / "10.1234_example"
     fixture_dir.mkdir(parents=True)
     (fixture_dir / "original.html").write_text(
@@ -95,7 +87,7 @@ def test_snapshot_expected_writes_existing_golden_schema_and_updates_manifest(tm
 
 
 def test_snapshot_expected_review_print_shape_without_writing(tmp_path: Path) -> None:
-    module = _load_script("snapshot_expected")
+    module = load_script_module("snapshot_expected")
     fixture_dir = tmp_path / "tests" / "fixtures" / "golden_criteria" / "10.1234_example"
     fixture_dir.mkdir(parents=True)
     (fixture_dir / "original.html").write_text(
@@ -129,7 +121,7 @@ def test_snapshot_expected_review_print_shape_without_writing(tmp_path: Path) ->
 
 
 def test_snapshot_expected_missing_fixture_review_returns_placeholder(tmp_path: Path) -> None:
-    module = _load_script("snapshot_expected")
+    module = load_script_module("snapshot_expected")
 
     payload, wrote = module.snapshot_expected(_args(tmp_path, doi="10.0000/probe", review=True))
 

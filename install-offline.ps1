@@ -401,7 +401,7 @@ function Run-SmokeChecks {
 
     $env:PAPER_FETCH_ENV_FILE = Join-Path $BundleRoot "offline.env"
     $env:PLAYWRIGHT_BROWSERS_PATH = Join-Path $BundleRoot "ms-playwright"
-    & (Join-Path $BundleRoot ".venv/Scripts/python.exe") -c "from paper_fetch.mcp.tools import provider_status_payload; payload = provider_status_payload(); assert 'providers' in payload"
+    & (Join-Path $BundleRoot ".venv/Scripts/python.exe") -c "from paper_fetch.mcp.fetch_tool import provider_status_payload; payload = provider_status_payload(); assert 'providers' in payload"
     if ($LASTEXITCODE -ne 0) {
         Fail "provider_status_payload smoke check failed."
     }

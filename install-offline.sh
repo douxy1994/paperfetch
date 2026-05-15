@@ -808,7 +808,7 @@ run_smoke_checks() {
   for key in "${MCP_ENV_KEYS[@]}"; do
     env_args+=("$key=$(mcp_env_value "$key")")
   done
-  env "${env_args[@]}" "$BUNDLE_ROOT/.venv/bin/python" -c 'from paper_fetch.mcp.tools import provider_status_payload; payload = provider_status_payload(); assert "providers" in payload'
+  env "${env_args[@]}" "$BUNDLE_ROOT/.venv/bin/python" -c 'from paper_fetch.mcp.fetch_tool import provider_status_payload; payload = provider_status_payload(); assert "providers" in payload'
 }
 
 main() {

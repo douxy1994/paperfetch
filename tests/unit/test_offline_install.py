@@ -12,6 +12,7 @@ import unittest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
+LINUX_INSTALLER = REPO_ROOT / "install-offline.sh"
 WINDOWS_INSTALLER = REPO_ROOT / "install-offline.ps1"
 WINDOWS_INSTALLER_HELPER = REPO_ROOT / "scripts" / "windows-installer-helper.ps1"
 
@@ -772,6 +773,12 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("manager.chromium.executable_path", script)
         self.assertIn("assert root in executable.parents", script)
         self.assertIn("paper_fetch.mcp.fetch_tool", script)
+
+    def test_offline_installers_use_current_provider_status_import(self) -> None:
+        for path in (LINUX_INSTALLER, WINDOWS_INSTALLER):
+            script = path.read_text(encoding="utf-8")
+            self.assertIn("from paper_fetch.mcp.fetch_tool import provider_status_payload", script)
+            self.assertNotIn("from paper_fetch.mcp.tools import provider_status_payload", script)
 
     def test_windows_uninstaller_removes_managed_skills_path_and_mcp(self) -> None:
         script = WINDOWS_INSTALLER_HELPER.read_text(encoding="utf-8")

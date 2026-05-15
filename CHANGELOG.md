@@ -21,6 +21,7 @@ _No unreleased changes._
 - Refined CLI output/artifact semantics so batch and single-query runs consistently separate primary output files from saved Markdown and provider artifacts.
 - Updated MCP fetch/cache payload behavior for inline image budgets, cache resource visibility, and schema coverage.
 - Hardened Elsevier Markdown and Springer HTML extraction around tables, figures, asset rewriting, and provider-specific cleanup.
+- Fixed offline installer smoke checks to use the current MCP provider-status entrypoint during Linux and PowerShell installs.
 - Refreshed README, provider, deployment, bundled skill, and tool-contract documentation to match the new CLI and MCP/provider behavior.
 
 ## 1.4 - 2026-05-12

@@ -1,23 +1,10 @@
 from __future__ import annotations
 
-import importlib.util
-from pathlib import Path
-
-
-SCRIPT_PATH = Path(__file__).resolve().parents[2] / "scripts" / "onboard_from_manifests.py"
-
-
-def load_onboard_module():
-    spec = importlib.util.spec_from_file_location("onboard_from_manifests", SCRIPT_PATH)
-    assert spec is not None
-    module = importlib.util.module_from_spec(spec)
-    assert spec.loader is not None
-    spec.loader.exec_module(module)
-    return module
+from tests.script_modules import load_script_module
 
 
 def test_discover_brief_contains_required_search_contract() -> None:
-    module = load_onboard_module()
+    module = load_script_module("onboard_from_manifests")
 
     brief = module.build_discover_brief(
         provider="mdpi",
@@ -65,7 +52,7 @@ def test_discover_brief_contains_required_search_contract() -> None:
 
 
 def test_discover_brief_yaml_has_no_sensitive_collection_or_sdk_prompts() -> None:
-    module = load_onboard_module()
+    module = load_script_module("onboard_from_manifests")
     brief = module.build_discover_brief(
         provider="mdpi",
         domain="mdpi.com",
