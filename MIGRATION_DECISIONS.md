@@ -38,3 +38,20 @@
 - 为遵守 Phase 1 输入文件限制，`BrowserWorkflowDeps` 用构造参数/属性映射兼容旧字段，避免修改未列入输入清单的 `browser_workflow/client.py` 和测试辅助模块；未新增 backend fallback。
 - `fetch_html_with_cloakbrowser_fast` 使用薄 wrapper，而不是同一函数对象，以避免覆盖 `fetch_html_with_cloakbrowser.paper_fetch_html_fetcher_name == "cloakbrowser"`。
 - fixup #1: 直接 Playwright 启动点分散导致 grep 按两行重复计数，已收敛到 `runtime_playwright.launch_playwright_chromium()` helper 并由 provider 侧复用。
+
+## Phase 2
+
+### 命名决定
+- `runtime_browser`
+- `BrowserContextManager`
+- `PlaywrightContextManager = BrowserContextManager`
+- `RuntimeContext.new_browser_context`
+
+### 签名决定
+- `BrowserContextManager.browser(self, *, headless: bool = True) -> Any`
+- `BrowserContextManager.new_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any`
+- `BrowserContextManager.close(self) -> None`
+- `RuntimeContext.new_browser_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any`
+
+### 判断性偏差
+- 保留 `runtime_playwright.PlaywrightUnavailableError` 与 `runtime_playwright.launch_playwright_chromium` 的兼容 re-export，因为 Phase 3-5 尚未迁移的模块在包初始化时仍导入这些旧名；实现已改为 CloakBrowser launch，不保留 stock Playwright fallback。
