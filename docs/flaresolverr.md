@@ -1,8 +1,8 @@
-# Wiley / Science / PNAS / AMS FlareSolverr 工作流
+# Wiley / Science / PNAS / AMS 旧 FlareSolverr 对照链路
 
 这份文档解决：
 
-- `wiley` / `science` / `pnas` / `ams` 的 repo-local 运行边界
+- `wiley` / `science` / `pnas` / `ams` 的旧 repo-local FlareSolverr 运行边界
 - 必填变量与 preset 选择
 - 一次性准备、启动、检查、停止
 - smoke 命令与常见失败排障
@@ -13,21 +13,21 @@
 - MCP 安装与注册
 - 架构分层和 probe 语义
 
-通用运行时说明见 [`providers.md`](providers.md)，安装与注册见 [`deployment.md`](deployment.md)。
+默认 browser workflow HTML bootstrap 已切到 CloakBrowser backend；这份文档保留为 FlareSolverr 回归基线、旧链路排障和迁移对照。通用运行时说明见 [`providers.md`](providers.md)，安装与注册见 [`deployment.md`](deployment.md)。
 
 ## 范围与边界
 
-`wiley` / `science` / `pnas` / `ams` 当前遵循这些边界：
+旧 FlareSolverr 对照链路遵循这些边界：
 
 - 它们是公开 provider 名字，可能出现在 `provider_hint`、`preferred_providers` 中
 - metadata 仍由 `crossref` 提供
-- 正文链路顺序以 [`providers.md` 的 Wiley / Science / PNAS / AMS 小节](providers.md#wiley-science-pnas-browser-workflow) 为准
-- `pnas` 会先做 direct Playwright HTML preflight；成功时跳过 FlareSolverr，失败时继续走 provider-owned browser workflow
+- 默认正文链路顺序以 [`providers.md` 的 Wiley / Science / PNAS / AMS 小节](providers.md#wiley-science-pnas-browser-workflow) 为准；该默认链路使用 CloakBrowser HTML bootstrap
+- `pnas` 会先做 direct Playwright HTML preflight；成功时跳过 browser workflow，失败时默认继续走 CloakBrowser HTML
 - `wiley` 的 `WILEY_TDM_CLIENT_TOKEN` 只启用官方 TDM API PDF lane；这条 lane 会在 browser PDF/ePDF fallback 失败或本地 browser runtime 不可用时继续尝试，但不会下载 HTML 资产
 - `wiley` 的 HTML / browser PDF/ePDF 路径与 `science` / `pnas` / `ams` 共用同一套 provider-owned 浏览器 bootstrap 与 browser-PDF executor，不再保留单独的 Science path harness
 - `ams` 的 AMS XML/JATS 路径被显式禁用：即使页面声明 `citation_xml_url`，也不会请求 `/doc/...xml`
 - `source` 公开可能是 `wiley_browser`、`science`、`pnas`、`ams_html` 或 `ams_pdf`
-- `FlareSolverr HTML` 成功路径支持 `asset_profile=body|all` 的正文资产下载；PDF/ePDF fallback 仍是 text-only
+- 旧 `FlareSolverr HTML` 成功路径支持 `asset_profile=body|all` 的正文资产下载；PDF/ePDF fallback 仍是 text-only
 - 正文 `FlareSolverr HTML` 首次请求使用快速路径：`waitInSeconds=0` 并传 `disableMedia=true`，如果遇到 challenge、访问拦截、摘要重定向、HTML 抽取失败或正文不足，会立刻用原保守参数重试一次
 - FlareSolverr HTML 请求默认不要求 screenshot，减少 response payload；failure artifact 仍会保留 HTML 与 response JSON，图片恢复仍只接受 `solution.imagePayload`
 - `wiley` / `science` / `pnas` / `ams` 的正文 figure / table / formula 图片资产下载以 shared Playwright browser context 为主链路；同一个 `RuntimeContext` 会 lazy 复用 Chromium browser，每次 download attempt 仍创建隔离 context/page，多图复用同一个 seeded browser context
@@ -36,13 +36,22 @@
 - 正文图片下载在单次 attempt 内会对 figure page 和图片候选 URL 做缓存，并按 `PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY` 控制的 worker 上限拉取 payload，默认 `4`；只要使用 Playwright image document fetcher，单个正文图片也会通过 worker 线程执行 resolver；文件写入仍按资产原顺序完成
 - 图片恢复、正文图片/附件下载、figure page HTML 发现路径不启用 `disableMedia=true`，避免阻断目标图片资源和 full-size URL 发现
 - 当图片 URL 在 Playwright `fetch()` 下返回 Cloudflare challenge HTML，但 FlareSolverr/Selenium 已能显示图片文档时，仓库本地 FlareSolverr patch 会返回 `solution.imagePayload`。下载器只接受可识别的图片 payload：位图走浏览器 canvas 导出的 PNG，顶层 SVG 文档保存原始 `image/svg+xml`；`imagePayload` 缺失、无效或实际是 challenge HTML 时会记录明确失败原因，不再退回截图裁剪
-- FlareSolverr 是 Cloudflare challenge 相关场景的本地浏览器运行时边界，不是新增 publisher 动态 HTML 路线时的默认依赖；新增 provider 只有在确实需要处理 Cloudflare 类阻断时才应接入这条链路。
+- FlareSolverr 现在是 legacy/对照运行时，不是默认依赖；新增 provider 不应接入这条链路。
 - 这条链路只保证在当前仓库 checkout 中运行
 - 站点 ToS、robots、授权与合规风险由操作者自行承担
 
-## 必填环境变量
+## 默认 CloakBrowser 变量
 
-FlareSolverr / seeded-browser 路径的最小必填配置：
+默认 browser workflow HTML bootstrap 不再要求 `FLARESOLVERR_ENV_FILE`。可选变量：
+
+```bash
+export CLOAKBROWSER_HEADLESS="true"
+export CLOAKBROWSER_TIMEOUT_MS="120000"
+```
+
+## 旧 FlareSolverr 必填环境变量
+
+只有显式运行旧 FlareSolverr 对照链路时，才需要这组配置：
 
 ```bash
 export FLARESOLVERR_ENV_FILE="$PWD/vendor/flaresolverr/.env.flaresolverr-source-headless"
@@ -59,8 +68,8 @@ export PAPER_FETCH_FLARESOLVERR_KEEP_SESSION=1
 
 说明：
 
-- `science` / `pnas` / `ams` 必须走这组 browser 配置
-- `wiley` 的 HTML 与 seeded-browser PDF/ePDF 路径也必须走这组配置；只配置 `WILEY_TDM_CLIENT_TOKEN` 时只能尝试官方 TDM API PDF lane
+- 默认 `wiley` / `science` / `pnas` / `ams` 不再走这组 browser 配置
+- 旧 FlareSolverr 对照链路仍要求 `FLARESOLVERR_ENV_FILE`
 - `FLARESOLVERR_ENV_FILE` 不会自动猜 preset
 - 默认每次 `FlareSolverr HTML` 抓取结束后都会调用 `sessions.destroy` 销毁本次 browser session；这只关闭 FlareSolverr 管理的浏览器 session，不会停止本地 FlareSolverr 服务进程
 - 设置 `PAPER_FETCH_FLARESOLVERR_KEEP_SESSION=1` 会恢复跨请求复用 session、cookies 和 warm wait 的行为；这可能让浏览器进程保留到 Python 进程退出的 `atexit` 清理或手动清理

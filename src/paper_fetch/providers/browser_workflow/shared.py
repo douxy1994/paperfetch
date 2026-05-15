@@ -49,12 +49,12 @@ def default_browser_workflow_deps() -> BrowserWorkflowDeps:
         download_assets,
         split_body_and_supplementary_assets,
     )
-    from .._flaresolverr import (
+    from .._cloakbrowser import (
         ensure_runtime_ready,
-        fetch_html_with_flaresolverr,
+        fetch_html_with_cloakbrowser,
         load_runtime_config,
         probe_runtime_status,
-        warm_browser_context_with_flaresolverr,
+        warm_browser_context_with_cloakbrowser,
     )
     from .._pdf_fallback import fetch_pdf_with_playwright
     from ..atypon_browser_workflow import extract_atypon_browser_workflow_markdown
@@ -78,8 +78,8 @@ def default_browser_workflow_deps() -> BrowserWorkflowDeps:
         load_runtime_config=load_runtime_config,
         ensure_runtime_ready=ensure_runtime_ready,
         probe_runtime_status=probe_runtime_status,
-        fetch_html_with_flaresolverr=fetch_html_with_flaresolverr,
-        warm_browser_context_with_flaresolverr=warm_browser_context_with_flaresolverr,
+        fetch_html_with_flaresolverr=fetch_html_with_cloakbrowser,
+        warm_browser_context_with_flaresolverr=warm_browser_context_with_cloakbrowser,
         fetch_seeded_browser_pdf_payload=fetch_seeded_browser_pdf_payload,
         fetch_pdf_with_playwright=fetch_pdf_with_playwright,
         download_assets=download_assets,
@@ -88,8 +88,8 @@ def default_browser_workflow_deps() -> BrowserWorkflowDeps:
         _build_shared_playwright_file_fetcher=_build_shared_playwright_file_fetcher,
         _build_shared_playwright_image_fetcher=_build_shared_playwright_image_fetcher,
         extract_atypon_browser_workflow_markdown=extract_atypon_browser_workflow_markdown,
-        pdf_browser_context_seed=warm_browser_context_with_flaresolverr,
-        refresh_browser_context_seed=warm_browser_context_with_flaresolverr,
+        pdf_browser_context_seed=warm_browser_context_with_cloakbrowser,
+        refresh_browser_context_seed=warm_browser_context_with_cloakbrowser,
         fetch_html_with_direct_playwright=fetch_html_with_direct_playwright,
         _cached_browser_workflow_markdown=_cached_browser_workflow_markdown,
         _cached_browser_workflow_assets=_cached_browser_workflow_assets,

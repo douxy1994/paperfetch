@@ -205,9 +205,9 @@ def test_from_manifest_probe_requirements_enter_provider_spec(tmp_path: Path) ->
         encoding="utf-8"
     )
 
-    assert 'env_requirements=("CROSSREF_MAILTO", "FLARESOLVERR_ENV_FILE")' in html_text
+    assert 'env_requirements=("CROSSREF_MAILTO",)' in html_text
     assert "requires_playwright=True" in html_text
-    assert "requires_flaresolverr=True" in html_text
+    assert "requires_flaresolverr=False" in html_text
     assert '# body=("figures", "body_tables", "formula_images")' in html_text
     assert '# all=("figures", "body_tables", "formula_images", "supplementary")' in (
         html_text

@@ -47,9 +47,8 @@ abstract_only_strategy: provider_managed
 probe:
   env_requirements:
     - CROSSREF_MAILTO
-    - FLARESOLVERR_ENV_FILE
   requires_playwright: true
-  requires_flaresolverr: true
+  requires_flaresolverr: false
   ping_url: https://onlinelibrary.wiley.com/
 fixtures:
   doi_samples:
@@ -139,6 +138,6 @@ extraction_hints:
   metadata_merge: []
 owner_reuse_exceptions: []
 docs:
-  providers_md_capability_row: "Wiley | Crossref merge | FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF | HTML body/all assets | wiley_browser"
+  providers_md_capability_row: "Wiley | Crossref merge | CloakBrowser HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF | HTML body/all assets | wiley_browser"
   changelog_summary: "Add Wiley browser HTML provider with PDF and TDM fallback."
   extraction_rules_summary: null

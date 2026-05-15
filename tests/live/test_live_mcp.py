@@ -9,10 +9,7 @@ from pathlib import Path
 from mcp.client.session import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
 
-from paper_fetch.config import resolve_flaresolverr_source_dir, resolve_flaresolverr_url
-from paper_fetch.providers._flaresolverr import health_check
-from paper_fetch.providers.base import ProviderFailure
-from tests.live._runtime_env import build_isolated_live_env
+from tests.live._runtime_env import build_isolated_live_env, require_cloakbrowser_or_skip
 from tests.provider_benchmark_samples import provider_benchmark_sample, source_trail_matches
 from tests.paths import REPO_ROOT, SRC_DIR
 
@@ -45,18 +42,6 @@ class LiveMcpServerTests(unittest.IsolatedAsyncioTestCase):
         missing = [key for key in keys if not self.env.get(key, "").strip()]
         if missing:
             self.skipTest(f"Missing required environment variables for live test: {', '.join(missing)}")
-
-    def _require_flaresolverr(self) -> None:
-        env_file = Path(self.env["FLARESOLVERR_ENV_FILE"]).expanduser()
-        if not env_file.exists():
-            self.skipTest(f"Configured FLARESOLVERR_ENV_FILE does not exist: {env_file}")
-        source_dir = resolve_flaresolverr_source_dir(self.env)
-        if not source_dir.exists():
-            self.skipTest(f"Repo-local vendor/flaresolverr was not found: {source_dir}")
-        try:
-            health_check(resolve_flaresolverr_url(self.env))
-        except ProviderFailure as exc:
-            self.skipTest(f"Local FlareSolverr health check failed: {exc.message}")
 
     async def _call_fetch(
         self,
@@ -105,12 +90,12 @@ class LiveMcpServerTests(unittest.IsolatedAsyncioTestCase):
         sample,
         expected_log_prefix: str,
         args: dict[str, object] | None = None,
-        needs_flaresolverr: bool = False,
+        needs_browser_runtime: bool = False,
         env_override: dict[str, str] | None = None,
     ) -> None:
         self._require_env(*sample.required_env)
-        if needs_flaresolverr:
-            self._require_flaresolverr()
+        if needs_browser_runtime:
+            require_cloakbrowser_or_skip(self)
 
         result, progress_updates, log_messages = await self._call_fetch(
             query=sample.doi,
@@ -156,7 +141,7 @@ class LiveMcpServerTests(unittest.IsolatedAsyncioTestCase):
             sample=WILEY_SAMPLE,
             expected_log_prefix="official_provider_",
             args={"modes": ["metadata"], "strategy": {}},
-            needs_flaresolverr=True,
+            needs_browser_runtime=True,
         )
 
     async def test_science_doi_live_via_mcp_reports_progress_and_logs(self) -> None:
@@ -164,7 +149,7 @@ class LiveMcpServerTests(unittest.IsolatedAsyncioTestCase):
             sample=SCIENCE_SAMPLE,
             expected_log_prefix="official_provider_",
             args={"modes": ["metadata"], "strategy": {}},
-            needs_flaresolverr=True,
+            needs_browser_runtime=True,
         )
 
     async def test_pnas_doi_live_via_mcp_reports_progress_and_logs(self) -> None:
@@ -172,7 +157,7 @@ class LiveMcpServerTests(unittest.IsolatedAsyncioTestCase):
             sample=PNAS_SAMPLE,
             expected_log_prefix="official_provider_",
             args={"modes": ["metadata"], "strategy": {}},
-            needs_flaresolverr=True,
+            needs_browser_runtime=True,
         )
 
     async def test_copernicus_doi_live_via_mcp_reports_progress_and_logs(self) -> None:

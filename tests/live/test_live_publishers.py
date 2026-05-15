@@ -3,15 +3,11 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from pathlib import Path
 
-from paper_fetch.config import resolve_flaresolverr_source_dir, resolve_flaresolverr_url
 from paper_fetch.http import HttpTransport
-from paper_fetch.providers._flaresolverr import health_check
-from paper_fetch.providers.base import ProviderFailure
 from paper_fetch.runtime import RuntimeContext
 from paper_fetch.service import FetchStrategy, fetch_paper
-from tests.live._runtime_env import build_isolated_live_env
+from tests.live._runtime_env import build_isolated_live_env, require_cloakbrowser_or_skip
 from tests.provider_benchmark_samples import provider_benchmark_sample, source_trail_matches
 
 
@@ -59,18 +55,6 @@ class LivePublisherTests(unittest.TestCase):
         if missing:
             self.skipTest(f"Missing required environment variables for live test: {', '.join(missing)}")
 
-    def _require_flaresolverr(self) -> None:
-        env_file = Path(self.env["FLARESOLVERR_ENV_FILE"]).expanduser()
-        if not env_file.exists():
-            self.skipTest(f"Configured FLARESOLVERR_ENV_FILE does not exist: {env_file}")
-        source_dir = resolve_flaresolverr_source_dir(self.env)
-        if not source_dir.exists():
-            self.skipTest(f"Repo-local vendor/flaresolverr was not found: {source_dir}")
-        try:
-            health_check(resolve_flaresolverr_url(self.env))
-        except ProviderFailure as exc:
-            self.skipTest(f"Local FlareSolverr health check failed: {exc.message}")
-
     def _assert_matches_sample(self, article, sample) -> None:
         self.assertEqual(article.source, sample.expected_source)
         self.assertTrue(article.quality.has_fulltext)
@@ -102,7 +86,7 @@ class LivePublisherTests(unittest.TestCase):
 
     def test_wiley_doi_live_fulltext(self) -> None:
         self._require_env(*WILEY_SAMPLE.required_env)
-        self._require_flaresolverr()
+        require_cloakbrowser_or_skip(self)
         article = fetch_article(
             WILEY_SAMPLE.doi,
             transport=HttpTransport(),

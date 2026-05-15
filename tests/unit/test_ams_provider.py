@@ -8,11 +8,12 @@ import unittest
 from unittest import mock
 
 from paper_fetch.models import article_from_markdown
-from paper_fetch.providers import _ams_html, _flaresolverr, browser_workflow
+from paper_fetch.providers import _ams_html, _cloakbrowser, _flaresolverr, browser_workflow
 from paper_fetch.providers.ams import AmsClient
 from paper_fetch.providers.atypon_browser_workflow.markdown import (
     extract_atypon_browser_workflow_markdown,
 )
+from paper_fetch.providers.base import ProviderFailure
 from tests.golden_criteria import golden_criteria_asset, golden_criteria_sample_for_doi
 from tests.unit._browser_workflow_deps import install_browser_workflow_deps
 from tests.unit._paper_fetch_support import fulltext_pdf_bytes
@@ -113,16 +114,24 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
             ],
         }
 
-    def test_ams_without_flaresolverr_is_not_configured(self) -> None:
+    def test_ams_without_browser_runtime_is_not_configured(self) -> None:
         client = AmsClient(transport=None, env={})
 
-        with self.assertRaisesRegex(
-            Exception, "AMS browser workflow requires FLARESOLVERR_ENV_FILE"
-        ) as caught:
+        with (
+            mock.patch.object(
+                _cloakbrowser,
+                "_import_cloakbrowser",
+                side_effect=ProviderFailure("not_configured", "CloakBrowser missing."),
+            ),
+            self.assertRaisesRegex(
+                Exception,
+                "AMS browser workflow requires the cloakbrowser Python package",
+            ) as caught,
+        ):
             client.fetch_raw_fulltext(AMS_DOI, self._metadata())
 
         self.assertEqual(caught.exception.code, "not_configured")
-        self.assertEqual(caught.exception.missing_env, ["FLARESOLVERR_ENV_FILE"])
+        self.assertEqual(caught.exception.missing_env, [])
 
     def test_ams_html_route_uses_flaresolverr_and_ignores_citation_xml_url(self) -> None:
         client = AmsClient(transport=None, env={})

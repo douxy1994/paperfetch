@@ -10,10 +10,10 @@
 这份文档不解决：
 
 - agent runtime 的安装与 MCP 注册
-- Wiley / Science / PNAS / AMS 的具体启动脚本与运维排障
+- Wiley / Science / PNAS / AMS 的旧 FlareSolverr 对照链路运维排障
 - 架构分层和数据契约的完整背景
 
-部署入口见 [`deployment.md`](deployment.md)，Wiley / Science / PNAS / AMS 运维细节见 [`flaresolverr.md`](flaresolverr.md)，架构说明见 [`architecture/target-architecture.md`](architecture/target-architecture.md)。
+部署入口见 [`deployment.md`](deployment.md)，Wiley / Science / PNAS / AMS 的旧 FlareSolverr 对照链路见 [`flaresolverr.md`](flaresolverr.md)，架构说明见 [`architecture/target-architecture.md`](architecture/target-architecture.md)。
 
 <a id="provider-canonical-sources"></a>
 `references/api_notes.md` 和 `references/routing_rules.md` 只保留 API 约束或历史草图；provider/routing/waterfall 的 canonical 事实来源是本文档和 `paper_fetch.provider_catalog.PROVIDER_CATALOG`。
@@ -26,10 +26,10 @@
 | `crossref` | 支持 | 不负责 publisher fulltext | 不支持 | 不适用 | 负责 resolve、routing signal、metadata merge 与 metadata-only fallback |
 | `elsevier` | 官方 API | `官方 XML/API -> 官方 API PDF fallback` | XML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | XML 成功时公开为 `elsevier_xml`；PDF fallback 成功时公开为 `elsevier_pdf` |
 | `springer` | 依赖 Crossref merge | `direct HTML -> direct HTTP PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | `nature.com` 继续挂在 `springer` provider 下；HTML 成功公开 `springer_html`，PDF fallback 成功公开 `springer_pdf`；必要时可返回 provider `abstract_only` |
-| `wiley` | 依赖 Crossref merge | `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | HTML 与 browser PDF/ePDF 依赖 repo-local FlareSolverr；`WILEY_TDM_CLIENT_TOKEN` 可在 browser PDF/ePDF fallback 失败或 browser runtime 不可用时继续尝试官方 TDM PDF lane；必要时可返回 provider `abstract_only` |
-| `science` | 依赖 Crossref | `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | 与 `wiley` 的 HTML / browser PDF/ePDF 路径共用浏览器工作流基座；AAAS access gate / entitlement 不满足时会停在 provider 内部并降级 `abstract_only` / `metadata_only` |
-| `pnas` | 依赖 Crossref | `direct Playwright HTML preflight -> FlareSolverr HTML -> seeded-browser publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | direct Playwright preflight 成功时跳过 FlareSolverr；失败、challenge、正文不足或抽取失败时保持原 FlareSolverr/PDF 瀑布；较老文献常见 HTML 仅摘要，再继续走 provider 内部 PDF/ePDF fallback，必要时可返回 `abstract_only` |
-| `ams` | 依赖 Crossref | `DOI landing -> FlareSolverr HTML -> seeded-browser publisher PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | AMS 只使用 `journals.ametsoc.org/view/...xml` landing HTML 和 PDF fallback；显式忽略 `citation_xml_url`，不请求 `/doc/...xml`，不暴露 XML/JATS source；HTML 成功公开 `ams_html`，PDF fallback 公开 `ams_pdf` |
+| `wiley` | 依赖 Crossref merge | `CloakBrowser HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | HTML 默认通过 CloakBrowser backend；`WILEY_TDM_CLIENT_TOKEN` 可在 browser PDF/ePDF fallback 失败或 browser runtime 不可用时继续尝试官方 TDM PDF lane；必要时可返回 provider `abstract_only` |
+| `science` | 依赖 Crossref | `CloakBrowser HTML -> seeded-browser publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | 与 `wiley` 的 HTML / browser PDF/ePDF 路径共用浏览器工作流基座；AAAS access gate / entitlement 不满足时会停在 provider 内部并降级 `abstract_only` / `metadata_only` |
+| `pnas` | 依赖 Crossref | `direct Playwright HTML preflight -> CloakBrowser HTML -> seeded-browser publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | direct Playwright preflight 成功时跳过 browser workflow；失败、challenge、正文不足或抽取失败时继续走 CloakBrowser/PDF 瀑布；较老文献常见 HTML 仅摘要，再继续走 provider 内部 PDF/ePDF fallback，必要时可返回 `abstract_only` |
+| `ams` | 依赖 Crossref | `DOI landing -> CloakBrowser HTML -> seeded-browser publisher PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | AMS 只使用 `journals.ametsoc.org/view/...xml` landing HTML 和 PDF fallback；显式忽略 `citation_xml_url`，不请求 `/doc/...xml`，不暴露 XML/JATS source；HTML 成功公开 `ams_html`，PDF fallback 公开 `ams_pdf` |
 | `ieee` | 依赖 Crossref merge + landing metadata | `landing/article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF -> seeded-browser PDF -> abstract/metadata fallback` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | 现代 IEEE Xplore 文章优先公开为 `ieee_html`；REST 直连不可用时会用干净 Playwright context 捕获同一全文 HTML；无动态 HTML 的老文献可经真实 PDF payload 返回 `ieee_pdf`；不处理 CAPTCHA、登录自动化或权限绕过 |
 | `arxiv` | arXiv ID + optional API enrichment | `ID 解析 -> arXiv official HTML -> direct HTTP PDF -> metadata fallback` | HTML 路线支持正文 figure 资产下载；PDF fallback 当前 text-only | 中 | HTML front matter 在主路径内合并；arXiv API enrichment 在 HTML/PDF 主链结束后才运行，失败只追加 warning、不影响已得到的 fulltext payload；HTML 成功公开为 `arxiv_html`，PDF fallback 公开为 `arxiv_pdf`；可识别的 ID 形态（含 `vN` 版本、`10.48550/arXiv.*` 等）见后文 arXiv 小节 |
 | `copernicus` | 依赖 Crossref merge + landing metadata | `landing HTML / DOI-derived URL -> NLM/JATS XML -> direct HTTP PDF -> metadata fallback` | XML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | 开放获取 direct HTTP 路线，不需要登录态、FlareSolverr 或 Playwright；XML 成功公开为 `copernicus_xml`，PDF fallback 公开为 `copernicus_pdf` |
@@ -246,29 +246,29 @@ resolve
   - HTML 成功时公开 `source="springer_html"`；PDF fallback 成功时公开 `source="springer_pdf"`。
 - `wiley`
   - 使用 provider 自管 HTML + 官方 API PDF + publisher PDF/ePDF waterfall。
-  - 固定顺序是 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF -> abstract-only / metadata-only`。
+  - 固定顺序是 `CloakBrowser HTML -> seeded-browser publisher PDF/ePDF -> Wiley TDM API PDF -> abstract-only / metadata-only`。
   - 不做 direct Playwright HTML preflight，避免低成功率路径增加固定开销。
-  - FlareSolverr HTML 正文首轮使用 `waitInSeconds=0` + `disableMedia=true` 的快速路径；challenge、访问拦截、摘要页或正文抽取不足时回退到原保守等待参数。
+  - CloakBrowser HTML 正文首轮使用快速路径并阻断 media 资源；challenge、访问拦截、摘要页或正文抽取不足时回退到保守等待参数。
   - `WILEY_TDM_CLIENT_TOKEN` 是官方 TDM API PDF lane；缺失时仍可继续尝试 browser PDF/ePDF，配置后会在 browser PDF/ePDF fallback 失败或 browser runtime 不可用时继续尝试 TDM PDF。TDM URL template 声明在 `ProviderSpec.api_url_templates`，provider 只负责填充 DOI。
   - Atypon 默认 PDF/ePDF 路径模板只在 `provider_catalog.ATYPON_DEFAULT_PDF_PATH_TEMPLATES` 维护；Wiley 在此基础上追加 `pdfdirect` / `wol1` 专属模板。
   - 成功时公开 `source="wiley_browser"`。
 - `science`
-  - 固定顺序是 `FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> abstract-only / metadata-only`。
+  - 固定顺序是 `CloakBrowser HTML -> seeded-browser publisher PDF/ePDF -> abstract-only / metadata-only`。
   - 与 `wiley` 的 HTML / browser PDF/ePDF 路径共享同一套浏览器工作流基座。
   - 不做 direct Playwright HTML preflight，避免低成功率路径增加固定开销。
-  - FlareSolverr HTML 正文首轮使用同一快速路径，并在 challenge、访问拦截、摘要页或正文抽取不足时保守重试。
+  - CloakBrowser HTML 正文首轮使用同一快速路径，并在 challenge、访问拦截、摘要页或正文抽取不足时保守重试。
   - 如果落到 AAAS 的 `Check access` / paywall 页面，应优先解读为 `institution not entitled / no access`，而不是 generic HTML fallback 缺失。
   - Atypon 默认 PDF/ePDF 路径模板只在 `provider_catalog.ATYPON_DEFAULT_PDF_PATH_TEMPLATES` 维护；Science 仅追加自己的 download query 模板。
   - 成功时公开 `source="science"`。
 - `pnas`
-  - 固定顺序是 `direct Playwright HTML preflight -> FlareSolverr HTML -> seeded-browser publisher PDF/ePDF -> abstract-only / metadata-only`。
+  - 固定顺序是 `direct Playwright HTML preflight -> CloakBrowser HTML -> seeded-browser publisher PDF/ePDF -> abstract-only / metadata-only`。
   - direct Playwright preflight 使用 `domcontentloaded` 并阻断 image/font/stylesheet/media；成功 payload 会标记 `html_fetcher="playwright_direct"`。
-  - preflight 失败、遇到 challenge、正文不足或抽取失败时不改变旧语义，继续走 FlareSolverr HTML；FlareSolverr HTML 自身先尝试快速路径，再在失败或抽取不足时保守重试；成功 payload 标记 `html_fetcher="flaresolverr"`。
+  - preflight 失败、遇到 challenge、正文不足或抽取失败时继续走 CloakBrowser HTML；CloakBrowser HTML 自身先尝试快速路径，再在失败或抽取不足时保守重试；成功 payload 标记 `html_fetcher="cloakbrowser"`。
   - 较老文献常见 HTML 只到摘要页，此时 provider 会继续尝试 publisher PDF/ePDF fallback。
   - Atypon 默认 PDF/ePDF 路径模板只在 `provider_catalog.ATYPON_DEFAULT_PDF_PATH_TEMPLATES` 维护；PNAS 仅追加自己的 download query 模板。
   - 成功时公开 `source="pnas"`。
 - `ams`
-  - 固定顺序是 `Crossref/DOI landing -> FlareSolverr HTML -> seeded-browser publisher PDF fallback -> abstract-only / metadata-only`。
+  - 固定顺序是 `Crossref/DOI landing -> CloakBrowser HTML -> seeded-browser publisher PDF fallback -> abstract-only / metadata-only`。
   - HTML 候选只来自 Crossref / DOI landing 的 `journals.ametsoc.org/view/journals/.../*.xml` 页面；AMS 不按 DOI 拼接 direct HTTP 或 direct Playwright 正文路径。
   - 页面声明的 `citation_xml_url` 被显式忽略：不解析、不请求 `/doc/journals/.../*.xml`，也不注册 XML 诊断或 `ams_xml` source。
   - HTML 正文通过 AMS HTML extractor 与质量门槛；正文不足时才进入 seeded-browser PDF fallback。PDF.js viewer 页会继续解析 `defaultUrl` 指向的真实 PDF 请求。
@@ -365,19 +365,19 @@ resolve
   - `Extended Data Table` 页缺少 HTML `<table>` 时，只从表格页正文/表格容器和可信表格 meta 图片提取图片 fallback；header、logo、nav、footer、advert 等站点资源不会生成 `kind="table"` 资产
   - 成功轨迹是 `fulltext:springer_html_*`，PDF fallback 成功时会带 `fulltext:springer_pdf_fallback_ok`
 - `wiley`
-  - provider 自管 FlareSolverr HTML + Wiley TDM API PDF + seeded-browser publisher PDF/ePDF waterfall
+  - provider 自管 CloakBrowser HTML + Wiley TDM API PDF + seeded-browser publisher PDF/ePDF waterfall
   - 成功轨迹是 `fulltext:wiley_html_*` / `fulltext:wiley_pdf_api_ok` / `fulltext:wiley_pdf_browser_ok` / `fulltext:wiley_pdf_fallback_ok`
   - 失败时若 API lane 未产出 PDF，会保留 `fulltext:wiley_pdf_api_fail`；若 browser PDF/ePDF lane 已实际尝试但失败，会再带 `fulltext:wiley_pdf_browser_fail`
 - `science`
-  - provider 自管 `FlareSolverr HTML + seeded-browser publisher PDF/ePDF`
+  - provider 自管 `CloakBrowser HTML + seeded-browser publisher PDF/ePDF`
   - `fulltext:science_html_fail` / `fulltext:science_pdf_fallback_ok` 只描述 provider 主链的阶段切换；如果页面本身就是 access gate，更准确的业务解释应是 `institution not entitled / no access`
   - 继续保持现有 `science` 风格的公开来源与轨迹命名
 - `pnas`
-  - provider 自管 `direct Playwright HTML preflight + FlareSolverr HTML + seeded-browser publisher PDF/ePDF`
+  - provider 自管 `direct Playwright HTML preflight + CloakBrowser HTML + seeded-browser publisher PDF/ePDF`
   - 较老文献可能先表现为 `fulltext:pnas_html_fail`，再进入 `fulltext:pnas_pdf_fallback_ok`
   - 继续保持现有 `pnas` 风格的公开来源与轨迹命名
 - `ams`
-  - provider 自管 `Crossref/DOI landing -> FlareSolverr HTML -> seeded-browser publisher PDF`
+  - provider 自管 `Crossref/DOI landing -> CloakBrowser HTML -> seeded-browser publisher PDF`
   - `citation_xml_url` 不是 AMS 正文路径：不请求 `/doc/...xml`，不走 JATS renderer，不产生 `ams_xml` source 或 XML warning
   - HTML 成功轨迹是 `fulltext:ams_html_ok`，PDF fallback 成功轨迹是 `fulltext:ams_pdf_fallback_ok`
   - PDF fallback 公开为 `ams_pdf`，HTML 公开为 `ams_html`
@@ -409,7 +409,7 @@ resolve
 - 对 `springer` 来说，系统始终按内部 `direct HTML -> direct HTTP PDF` waterfall 执行
 - 对 `wiley` / `science` / `pnas` / `ams` 来说，系统始终按上文声明的 provider-owned browser workflow 执行。
 - `pnas` preflight 只做快速成功路径，不改变 FlareSolverr/PDF 回退语义。
-- 对 `ams` 来说，系统始终按内部 `Crossref/DOI landing -> FlareSolverr HTML -> seeded-browser publisher PDF fallback -> metadata fallback` waterfall 执行，且不会走 `citation_xml_url` / `/doc/...xml`。
+- 对 `ams` 来说，系统始终按内部 `Crossref/DOI landing -> CloakBrowser HTML -> seeded-browser publisher PDF fallback -> metadata fallback` waterfall 执行，且不会走 `citation_xml_url` / `/doc/...xml`。
 - 对 `ieee` 来说，系统始终按内部 `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback -> abstract/metadata fallback` waterfall 执行
 - 对 `arxiv` 来说，系统始终按内部 `arXiv ID 解析 -> arXiv official HTML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行；metadata enrichment 只在主链外补充字段
 - 对 `copernicus` 来说，系统始终按内部 `landing HTML -> NLM/JATS XML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行
@@ -458,7 +458,7 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 
 #### Provider HTML 资产语义（wiley / science / pnas / ams / arxiv / ieee / copernicus / springer / elsevier）
 
-- `wiley` / `science` / `pnas` / `ams` 的 FlareSolverr HTML 成功路径支持正文图、表和公式图片资产。
+- `wiley` / `science` / `pnas` / `ams` 的 CloakBrowser HTML 成功路径支持正文图、表和公式图片资产。
 - 这些 provider 以 shared Playwright browser context 为主链路，不再先走普通 HTTP 直连。
 - 图片候选优先 full-size/original；全部失败后才尝试 preview。
 - preview 也通过同一个 seeded browser context 下载。
@@ -787,21 +787,33 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - 仅用于 `wiley` 的官方 TDM API PDF lane。
 - 未配置时，`wiley` 仍可在 FlareSolverr / Playwright runtime 就绪时尝试 HTML 与 seeded-browser PDF/ePDF；已配置时，即使 browser runtime 不就绪，也可单独尝试 TDM PDF fallback。
 
+#### `CLOAKBROWSER_HEADLESS`
+
+- 可选，默认 `true`。
+- 设为 `false` 时，CloakBrowser HTML bootstrap 会以 headed browser 运行，便于调试强防护站点。
+
+#### `CLOAKBROWSER_TIMEOUT_MS`
+
+- 可选，默认 `120000`。
+- 控制 CloakBrowser HTML bootstrap 的页面导航超时。
+
 #### `FLARESOLVERR_URL`
 
 - 本地 FlareSolverr 服务地址。
 - 默认 `http://127.0.0.1:8191/v1`。
+- 仅用于旧 FlareSolverr 对照链路；默认 browser workflow HTML bootstrap 不再读取。
 
 #### `FLARESOLVERR_ENV_FILE`
 
-- 对 `science` / `pnas` / `ams` 必填。
-- 对 `wiley` 的 FlareSolverr HTML 与 seeded-browser PDF/ePDF 路径必填；只使用 `WILEY_TDM_CLIENT_TOKEN` 的官方 TDM API PDF lane 时不需要。
+- 仅用于旧 FlareSolverr 对照链路。
+- 默认 CloakBrowser HTML bootstrap 不再要求 `FLARESOLVERR_ENV_FILE`。
 - 必须显式指向当前仓库 `vendor/flaresolverr/` 下的 preset。
 
 #### `FLARESOLVERR_SOURCE_DIR`
 
 - 可选。
 - 覆盖 repo-local FlareSolverr workflow 根目录。
+- 仅用于旧 FlareSolverr 对照链路；默认 browser workflow HTML bootstrap 不再读取。
 
 #### `PAPER_FETCH_FLARESOLVERR_KEEP_SESSION`
 

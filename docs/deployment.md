@@ -28,12 +28,12 @@ provider 与环境变量说明见 [`providers.md`](providers.md)，Wiley / Scien
 - 创建仓库内 `.venv`
 - 安装当前 Python 包
 - 如果存在 `.env.example` 且用户配置文件还不存在，创建 `~/.config/paper-fetch/.env`
-- 安装 Playwright Chromium、repo-local FlareSolverr 和外部公式后端
+- 安装 Python 依赖、Playwright Chromium、repo-local FlareSolverr legacy 对照链路和外部公式后端；默认 provider-owned HTML bootstrap 使用 CloakBrowser
 - 安装结束时提示 Elsevier 官方 API key 的申请入口和配置位置；抓取 Elsevier 全文前需要从 <https://dev.elsevier.com/> 申请并设置 `ELSEVIER_API_KEY`
 
 补充说明：
 
-- 这是在线一键安装入口：用户不需要手动下载浏览器和 FlareSolverr 依赖，但脚本仍会从官方来源拉取这些大型组件
+- 这是在线一键安装入口：用户不需要手动下载浏览器、legacy FlareSolverr 对照依赖和公式后端，但脚本仍会从官方来源拉取这些大型组件
 - 如果只想安装 Python 包和配置骨架，不准备浏览器链路，使用 `./install.sh --lite`
 - 如果要装进当前 `python3` 环境而不是 `.venv`，使用 `./install.sh --system`
 - arXiv 不需要本地转换器；official HTML 不可用或质量检测失败时直接进入 text-only PDF fallback
@@ -274,30 +274,32 @@ scripts/clean-local-artifacts.sh --days 7
 
 `ieee` 不需要 FlareSolverr 或 IEEE API key；它走 `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback`，但全文是否可用仍取决于当前环境对 IEEE Xplore 的合法访问上下文。clean-browser HTML 使用新的 Playwright context，不读取本机浏览器 profile、不复用用户登录态、不自动登录、不处理验证码，也不绕过访问权限。direct HTTP PDF 返回 `stamp.jsp` HTML wrapper 或 access/challenge 页面时，seeded-browser PDF fallback 只复用当前页面运行期间获得的合法 IEEE cookies/session。
 
-`wiley`、`science`、`pnas`、`ams` 仍然不是“装完 wheel 就自动可用”的浏览器路径。
+`wiley`、`science`、`pnas`、`ams` 默认通过 CloakBrowser HTML bootstrap 进入 provider-owned browser workflow。是否能拿到全文仍取决于 publisher 访问权限、paywall/challenge 与远端站点行为。
 
-如果你要启用后面三家的浏览器链路，至少还需要：
+默认 browser workflow 的最小可选配置：
 
-- 准备 repo-local `vendor/flaresolverr/`
-- 设置 `FLARESOLVERR_ENV_FILE`
+```bash
+export CLOAKBROWSER_HEADLESS="true"
+export CLOAKBROWSER_TIMEOUT_MS="120000"
+```
 
 补充：
 
-- `wiley` / `science` / `pnas` / `ams` 还需要 Playwright Chromium，因为 PNAS direct HTML preflight、HTML 正文图片资产下载和 seeded-browser PDF/ePDF fallback 都会使用 browser context
+- `wiley` / `science` / `pnas` / `ams` 还需要 browser runtime，因为 PNAS direct HTML preflight、HTML 正文图片资产下载和 seeded-browser PDF/ePDF fallback 都会使用 browser context
 - `elsevier` 只需要 `ELSEVIER_API_KEY`
 - `ieee` 不需要额外 env；普通 fetch 在无授权或 REST/browser/PDF route 返回非全文时会降级到 provider abstract-only / metadata-only；golden criteria live review 面向具备合法 IEEE Xplore 授权上下文的机器，IEEE 样本预期为 fulltext，降级会作为 blocked live fetch 暴露；配置了 `download_dir` 且 artifact mode 为 `all` 时 PDF fallback 的最后一个非 PDF HTML 会保存在 `ieee_pdf_fallback/pdf.failure.html`
 - `arxiv` 不需要额外 env；路径细节见 [`providers.md` 的 arXiv 小节](providers.md#arxiv)。
 - 如果只想启用 `wiley` 的官方 TDM API PDF lane，可以只配置 `WILEY_TDM_CLIENT_TOKEN`；这不会启用 HTML 资产下载或 seeded-browser PDF/ePDF fallback
 - `wiley` / `science` / `pnas` / `ams` 的 browser workflow 顺序见 [`providers.md`](providers.md#wiley-science-pnas-browser-workflow)。
-- 本地 FlareSolverr 限速变量与账本移除说明见 [`providers.md`](providers.md#flaresolverr-rate-limit-removal)。
+- 旧 FlareSolverr 对照链路仍可按 [`flaresolverr.md`](flaresolverr.md) 启动、检查和排障；默认 CloakBrowser HTML bootstrap 不再要求 `FLARESOLVERR_ENV_FILE`。
 
-最常见入口是：
+如果你还要准备 legacy FlareSolverr 对照链路，入口是：
 
 ```bash
 ./install-formula-tools.sh
 ```
 
-然后配置：
+然后配置旧链路 preset：
 
 ```bash
 export FLARESOLVERR_ENV_FILE="$PWD/vendor/flaresolverr/.env.flaresolverr-source-headless"

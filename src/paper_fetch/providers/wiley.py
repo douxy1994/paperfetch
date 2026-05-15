@@ -79,9 +79,8 @@ register_provider_bundle(
                 ("tdm_pdf", "https://api.wiley.com/onlinelibrary/tdm/v1/articles/{doi}"),
             ),
             sensitive_headers=("wiley-tdm-client-token",),
-            env_requirements=("CROSSREF_MAILTO", "FLARESOLVERR_ENV_FILE"),
+            env_requirements=("CROSSREF_MAILTO",),
             requires_playwright=True,
-            requires_flaresolverr=True,
         ),
         html_rules=ProviderHtmlRules(
             name="wiley",

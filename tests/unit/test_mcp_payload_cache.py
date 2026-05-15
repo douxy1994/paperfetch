@@ -55,8 +55,13 @@ class McpPayloadCacheTests(unittest.TestCase):
         )
         self.assertEqual(providers[0]["provider"], "crossref")
         self.assertEqual(providers[0]["status"], "ready")
-        self.assertTrue(any(entry["provider"] == "elsevier" and entry["status"] == "not_configured" for entry in providers))
-        self.assertTrue(any(entry["provider"] == "science" and entry["status"] == "not_configured" for entry in providers))
+        self.assertTrue(
+            any(
+                entry["provider"] == "elsevier" and entry["status"] == "not_configured"
+                for entry in providers
+            )
+        )
+        self.assertTrue(any(entry["provider"] == "science" and entry["status"] == "ready" for entry in providers))
         self.assertTrue(all(entry["checks"] for entry in providers))
     def test_fetch_paper_payload_uses_default_arguments_and_mcp_download_dir(self) -> None:
         captured: dict[str, object] = {}

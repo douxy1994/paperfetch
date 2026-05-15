@@ -3,15 +3,11 @@ from __future__ import annotations
 import os
 import tempfile
 import unittest
-from pathlib import Path
 
-from paper_fetch.config import resolve_flaresolverr_source_dir, resolve_flaresolverr_url
 from paper_fetch.http import HttpTransport
-from paper_fetch.providers.base import ProviderFailure
-from paper_fetch.providers._flaresolverr import health_check
 from paper_fetch.runtime import RuntimeContext
 from paper_fetch.service import FetchStrategy, fetch_paper
-from tests.live._runtime_env import build_isolated_live_env
+from tests.live._runtime_env import build_isolated_live_env, require_cloakbrowser_or_skip
 from tests.provider_benchmark_samples import provider_benchmark_sample, source_trail_matches
 
 
@@ -38,7 +34,6 @@ def fetch_article(query: str, *, transport: HttpTransport, env: dict[str, str]):
 
 
 class LiveAtyponBrowserWorkflowTests(unittest.TestCase):
-    needs_flaresolverr = True
     runtime_env_tempdir: tempfile.TemporaryDirectory | None = None
 
     @classmethod
@@ -58,18 +53,6 @@ class LiveAtyponBrowserWorkflowTests(unittest.TestCase):
         if missing:
             self.skipTest(f"Missing required environment variables for live test: {', '.join(missing)}")
 
-    def _require_flaresolverr(self) -> None:
-        env_file = Path(self.env["FLARESOLVERR_ENV_FILE"]).expanduser()
-        if not env_file.exists():
-            self.skipTest(f"Configured FLARESOLVERR_ENV_FILE does not exist: {env_file}")
-        source_dir = resolve_flaresolverr_source_dir(self.env)
-        if not source_dir.exists():
-            self.skipTest(f"Repo-local vendor/flaresolverr was not found: {source_dir}")
-        try:
-            health_check(resolve_flaresolverr_url(self.env))
-        except ProviderFailure as exc:
-            self.skipTest(f"Local FlareSolverr health check failed: {exc.message}")
-
     def _assert_matches_sample(self, article, sample) -> None:
         self.assertEqual(article.source, sample.expected_source)
         self.assertTrue(article.quality.has_fulltext)
@@ -81,7 +64,7 @@ class LiveAtyponBrowserWorkflowTests(unittest.TestCase):
 
     def test_science_doi_live_fulltext_via_html(self) -> None:
         self._require_env(*SCIENCE_SAMPLE.required_env)
-        self._require_flaresolverr()
+        require_cloakbrowser_or_skip(self)
 
         article = fetch_article(
             SCIENCE_SAMPLE.doi,
@@ -93,7 +76,7 @@ class LiveAtyponBrowserWorkflowTests(unittest.TestCase):
 
     def test_pnas_doi_live_fulltext_uses_a_stable_provider_path(self) -> None:
         self._require_env(*PNAS_SAMPLE.required_env)
-        self._require_flaresolverr()
+        require_cloakbrowser_or_skip(self)
 
         article = fetch_article(
             PNAS_SAMPLE.doi,

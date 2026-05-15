@@ -355,12 +355,18 @@ def _fetch_flaresolverr_html_payload(
     except HtmlExtractionFailure as exc:
         setattr(exc, "html_result", html_result)
         raise
+    fetcher_attr = getattr(html_fetcher, "paper_fetch_html_fetcher_name", None)
+    fetcher_name = (
+        normalize_text(fetcher_attr)
+        if isinstance(fetcher_attr, str)
+        else "flaresolverr"
+    )
     return html_result, _browser_workflow_html_payload(
         client,
         html_result,
         markdown_text=markdown_text,
         extraction=extraction,
-        fetcher="flaresolverr",
+        fetcher=fetcher_name,
         warnings=warnings,
     )
 

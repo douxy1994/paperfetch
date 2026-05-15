@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import importlib.util
 import tempfile
 from pathlib import Path
 from typing import Mapping
@@ -13,3 +14,8 @@ def build_isolated_live_env(base_env: Mapping[str, str] | None = None) -> tuple[
     env["XDG_DATA_HOME"] = tempdir.name
     Path(tempdir.name).mkdir(parents=True, exist_ok=True)
     return env, tempdir
+
+
+def require_cloakbrowser_or_skip(testcase) -> None:
+    if importlib.util.find_spec("cloakbrowser") is None:
+        testcase.skipTest("CloakBrowser Python package is not installed.")
