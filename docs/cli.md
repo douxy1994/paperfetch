@@ -45,7 +45,7 @@ paper-fetch --query-file ./queries.txt \
   --batch-concurrency 4
 ```
 
-上面的命令最多同时抓取 `4` 篇。每篇抓取会独立创建运行时上下文，避免跨任务共享 provider/runtime 状态；JSONL 汇总仍由主线程写入，避免并发写文件。并行模式下 `batch-results.jsonl` 按任务完成顺序追加，不保证与输入文件顺序一致；需要还原输入顺序时使用每条记录里的 `index` 字段。
+上面的命令最多同时抓取 `4` 篇。每篇抓取会独立创建运行时上下文，避免跨任务共享 provider/runtime 状态；同一个 batch 会共享 HTTP transport，因此连接池、同 host 限流和请求缓存可以跨条目复用。JSONL 汇总仍由主线程写入，避免并发写文件。并行模式下 `batch-results.jsonl` 按任务完成顺序追加，不保证与输入文件顺序一致；需要还原输入顺序时使用每条记录里的 `index` 字段。
 
 ## 主输出
 

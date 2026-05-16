@@ -144,6 +144,20 @@ def resolve_query(
 
     if is_url(normalized_query):
         direct_doi = extract_doi(normalized_query)
+        if direct_doi:
+            direct_provider_hint = infer_provider_from_signals(
+                landing_urls=[normalized_query],
+                doi=direct_doi,
+            )
+            if direct_provider_hint is not None:
+                return ResolvedQuery(
+                    query=normalized_query,
+                    query_kind="url",
+                    doi=direct_doi,
+                    landing_url=normalized_query,
+                    provider_hint=direct_provider_hint,
+                    confidence=1.0,
+                )
         request_headers = {
             "Accept": "text/html,application/xhtml+xml",
             "User-Agent": build_user_agent(active_env),

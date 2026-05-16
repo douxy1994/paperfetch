@@ -14,6 +14,7 @@ from ...utils import normalize_text
 from .._asset_retry import (
     AssetRetryPolicy,
     assets_for_network_retry,
+    is_retryable_asset_failure,
     merge_asset_failures,
     merge_asset_retry_results,
 )
@@ -95,8 +96,38 @@ def _download_failure_match_tokens(failure: Mapping[str, Any]) -> set[str]:
     return {token for token in tokens if token}
 
 
-def _browser_workflow_retryable_asset_failure(_failure: Mapping[str, Any]) -> bool:
-    return True
+_BROWSER_WORKFLOW_RETRYABLE_ASSET_REASON_TOKENS = (
+    "browser_context_error",
+    "cloudflare_challenge",
+    "file_fetch_error",
+    "image_fetch_error",
+    "image_fetch_timeout",
+)
+_BROWSER_WORKFLOW_RETRYABLE_ASSET_STATUSES = frozenset({403, 408, 425, 429})
+
+
+def _browser_workflow_retryable_asset_status(status: Any) -> bool:
+    try:
+        parsed = int(status)
+    except (TypeError, ValueError):
+        return False
+    return parsed in _BROWSER_WORKFLOW_RETRYABLE_ASSET_STATUSES or 500 <= parsed < 600
+
+
+def _browser_workflow_retryable_asset_failure(failure: Mapping[str, Any]) -> bool:
+    if is_retryable_asset_failure(failure):
+        return True
+    status = failure.get("status")
+    if status is not None and not _browser_workflow_retryable_asset_status(status):
+        return False
+    reason = normalize_text(str(failure.get("reason") or "")).lower()
+    return bool(
+        reason
+        and any(
+            token in reason
+            for token in _BROWSER_WORKFLOW_RETRYABLE_ASSET_REASON_TOKENS
+        )
+    )
 
 
 def _browser_workflow_asset_matches_failure(

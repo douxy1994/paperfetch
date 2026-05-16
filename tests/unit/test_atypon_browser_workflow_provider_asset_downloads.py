@@ -154,6 +154,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         mocked_request.assert_called_once()
         mocked_image_builder.assert_called_once()
         mocked_file_builder.assert_called_once()
+        self.assertTrue(mocked_image_builder.call_args.kwargs["use_runtime_shared_browser"])
+        self.assertTrue(mocked_file_builder.call_args.kwargs["use_runtime_shared_browser"])
         self.assertEqual(transport.calls, [])
         shared_image_fetcher.assert_called_once()
         shared_file_fetcher.assert_called_once()

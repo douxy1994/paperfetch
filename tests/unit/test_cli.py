@@ -1245,6 +1245,7 @@ class CliTests(unittest.TestCase):
             self.assertTrue(all(item["render"].asset_profile == "body" for item in captured))
             self.assertTrue(all(item["context"].artifact_mode == "markdown-assets" for item in captured))
             self.assertTrue(all(item["context"].download_dir == output_dir for item in captured))
+            self.assertIs(captured[0]["context"].transport, captured[1]["context"].transport)
 
             result_lines = [
                 json.loads(line)

@@ -43,7 +43,7 @@
 - `wiley` / `science` / `pnas` / `ams` 只保留一套 provider-owned 浏览器栈，canonical runtime 是 `paper_fetch.providers.browser_workflow` 包入口。
 - browser workflow 的 bootstrap、PDF/ePDF fallback、article assembly、asset retry helper、client 基类和 browser fetchers 已收敛到 `browser_workflow/` 子包；profile 只面向 provider catalog 中的 `science` / `pnas` / `wiley` / `ams`。
 - publisher 差异通过各 provider 模块 callback 下沉；旧 compatibility aliases、`_browser_workflow_*` 与 `browser_workflow_fetchers/` 兼容入口已移除，browser-PDF executor 继续共享 `_pdf_fallback`。
-- browser-workflow 的 asset download fetcher 在并发 worker 中使用线程私有 CloakBrowser-backed browser/context，不复用 `RuntimeContext` 持有的共享 browser；`RuntimeContext` 共享 browser 仍只保留给非 threaded 的主流程 browser 场景。
+- browser-workflow 的 HTML bootstrap 和 asset download fetcher 统一通过 `RuntimeContext` 复用 CloakBrowser-backed shared browser；各阶段或并发 worker 仍创建隔离的 context/page，避免跨线程共享页面状态。
 - 2020+ live / regression 基准样本集中维护在 [`../tests/provider_benchmark_samples.py`](../tests/provider_benchmark_samples.py)。
 - 自然地理学 live-only 候选集中维护在 [`../tests/live/geography_samples.py`](../tests/live/geography_samples.py)，默认每家尝试前 `10` 条，并通过 [`../scripts/run_geography_live_report.py`](../scripts/run_geography_live_report.py) 产出 JSON/Markdown 报告。
 - `geography` live runner 默认按 provider 轮转执行，保持单家样本顺序不变。

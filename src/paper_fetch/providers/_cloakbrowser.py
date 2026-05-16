@@ -50,6 +50,7 @@ from .browser_workflow.fetchers.scripts import _LOADED_IMAGE_CANVAS_EXPORT_SCRIP
 from .browser_workflow.shared import BROWSER_HTML_BLOCKED_RESOURCE_TYPES
 
 if TYPE_CHECKING:
+    from ..runtime import RuntimeContext
     from .browser_runtime import BrowserImagePayload
 
 logger = logging.getLogger("paper_fetch.providers.cloakbrowser")
@@ -514,6 +515,7 @@ def fetch_html_with_cloakbrowser(
     return_image_payload: bool = False,
     return_screenshot: bool = False,
     disable_media: bool = False,
+    runtime_context: RuntimeContext | None = None,
 ) -> BrowserFetchedHtml:
     del warm_wait_seconds
     if not candidate_urls:
@@ -537,12 +539,19 @@ def fetch_html_with_cloakbrowser(
     page = None
     try:
         try:
-            browser = cloakbrowser.launch(headless=config.headless, locale="en-US")
-            browser_context = browser.new_context(
+            context_kwargs = dict(
                 user_agent=user_agent,
                 locale="en-US",
                 viewport={"width": 1440, "height": 1600},
             )
+            if runtime_context is not None:
+                browser_context = runtime_context.new_browser_context(
+                    headless=config.headless,
+                    **context_kwargs,
+                )
+            else:
+                browser = cloakbrowser.launch(headless=config.headless, locale="en-US")
+                browser_context = browser.new_context(**context_kwargs)
             page = browser_context.new_page()
         except Exception as exc:
             raise CloakBrowserFailure(
@@ -743,13 +752,19 @@ def warm_browser_context_with_cloakbrowser(
     publisher: str,
     config: CloakBrowserRuntimeConfig,
     browser_context_seed: Mapping[str, Any] | None = None,
+    runtime_context: RuntimeContext | None = None,
 ) -> dict[str, Any]:
     merged_seed = merge_browser_context_seeds(browser_context_seed)
     if not candidate_urls:
         return merged_seed
 
     try:
-        result = fetch_html_with_cloakbrowser(candidate_urls, publisher=publisher, config=config)
+        result = fetch_html_with_cloakbrowser(
+            candidate_urls,
+            publisher=publisher,
+            config=config,
+            runtime_context=runtime_context,
+        )
     except CloakBrowserFailure as exc:
         return merge_browser_context_seeds(merged_seed, exc.browser_context_seed)
     return merge_browser_context_seeds(merged_seed, result.browser_context_seed)

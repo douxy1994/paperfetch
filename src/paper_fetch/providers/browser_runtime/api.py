@@ -54,10 +54,12 @@ def warm_browser_context(
     publisher: str,
     config: BrowserRuntimeConfig,
     browser_context_seed: Mapping[str, Any] | None = None,
+    runtime_context: Any | None = None,
 ) -> dict[str, Any]:
     return _cloakbrowser.warm_browser_context_with_cloakbrowser(
         candidate_urls,
         publisher=publisher,
         config=config,
         browser_context_seed=browser_context_seed,
+        runtime_context=runtime_context,
     )

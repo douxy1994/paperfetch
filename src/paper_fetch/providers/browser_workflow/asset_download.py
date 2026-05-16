@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
 import threading
@@ -39,6 +40,7 @@ class BrowserAssetRecoveryContext:
     browser_context_seed: Mapping[str, Any]
     browser_cookies: list[dict[str, Any]]
     active_seed_urls: list[str]
+    runtime_context: Any | None = None
 
 
 @dataclass
@@ -127,6 +129,7 @@ def retry_failed_browser_assets(
         publisher=recovery.provider,
         config=recovery.runtime,
         browser_context_seed=recovery.browser_context_seed,
+        runtime_context=recovery.runtime_context,
     )
     retry_result = _run_browser_asset_download_attempt(
         plan,
@@ -213,12 +216,17 @@ def _run_browser_asset_download_attempt(
     attempt_seed_lock = threading.Lock()
     attempt_settings = _attempt_settings(opener_requester)
 
+    def attempt_seed_snapshot() -> dict[str, Any]:
+        with attempt_seed_lock:
+            return merge_browser_context_seeds(attempt_seed)
+
     def raw_figure_page_fetcher(figure_page_url: str) -> tuple[str, str] | None:
         try:
             html_result = deps.fetch_html_with_browser(
                 [figure_page_url],
                 publisher=recovery.provider,
                 config=recovery.runtime,
+                runtime_context=recovery.runtime_context,
             )
         except BrowserRuntimeFailure:
             return None
@@ -237,7 +245,7 @@ def _run_browser_asset_download_attempt(
         else raw_figure_page_fetcher
     )
     def seed_urls_getter() -> list[str]:
-        return _seed_urls_for(recovery, attempt_seed)
+        return _seed_urls_for(recovery, attempt_seed_snapshot())
 
     image_document_fetcher = _build_attempt_image_fetcher(
         recovery,
@@ -258,8 +266,10 @@ def _run_browser_asset_download_attempt(
         deps=deps,
     )
     try:
-        body_result = (
-            deps.download_assets(
+        def download_body_assets() -> Mapping[str, Any]:
+            if not attempt_body_assets:
+                return empty_asset_results()
+            return deps.download_assets(
                 FIGURE_KIND,
                 attempt_settings.get("transport"),
                 article_id=plan.article_id,
@@ -274,20 +284,21 @@ def _run_browser_asset_download_attempt(
                     "asset_download_concurrency"
                 ),
             )
-            if attempt_body_assets
-            else empty_asset_results()
-        )
-        supplementary_kwargs: dict[str, Any] = {}
-        if callable(attempt_settings.get("cookie_opener_builder")):
-            supplementary_kwargs["cookie_opener_builder"] = attempt_settings[
-                "cookie_opener_builder"
-            ]
-        if callable(attempt_settings.get("opener_requester")):
-            supplementary_kwargs["opener_requester"] = attempt_settings[
-                "opener_requester"
-            ]
-        supplementary_result = (
-            deps.download_assets(
+
+        def download_supplementary_assets() -> Mapping[str, Any]:
+            if not attempt_supplementary_assets:
+                return empty_asset_results()
+            supplementary_kwargs: dict[str, Any] = {}
+            if callable(attempt_settings.get("cookie_opener_builder")):
+                supplementary_kwargs["cookie_opener_builder"] = attempt_settings[
+                    "cookie_opener_builder"
+                ]
+            if callable(attempt_settings.get("opener_requester")):
+                supplementary_kwargs["opener_requester"] = attempt_settings[
+                    "opener_requester"
+                ]
+            seed_snapshot = attempt_seed_snapshot()
+            return deps.download_assets(
                 SUPPLEMENTARY_KIND,
                 attempt_settings.get("transport"),
                 article_id=plan.article_id,
@@ -295,17 +306,24 @@ def _run_browser_asset_download_attempt(
                 output_dir=plan.output_dir,
                 user_agent=recovery.user_agent,
                 asset_profile=plan.asset_profile,
-                browser_context_seed=attempt_seed,
-                seed_urls=_seed_urls_for(recovery, attempt_seed),
+                browser_context_seed=seed_snapshot,
+                seed_urls=_seed_urls_for(recovery, seed_snapshot),
                 file_document_fetcher=file_document_fetcher,
                 asset_download_concurrency=attempt_settings.get(
                     "asset_download_concurrency"
                 ),
                 **supplementary_kwargs,
             )
-            if attempt_supplementary_assets
-            else empty_asset_results()
-        )
+
+        if attempt_body_assets and attempt_supplementary_assets:
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                body_future = executor.submit(download_body_assets)
+                supplementary_future = executor.submit(download_supplementary_assets)
+                body_result = body_future.result()
+                supplementary_result = supplementary_future.result()
+        else:
+            body_result = download_body_assets()
+            supplementary_result = download_supplementary_assets()
         return BrowserAssetDownloadResult(
             body_results=[dict(asset) for asset in list(body_result.get("assets") or [])],
             supplementary_results=[

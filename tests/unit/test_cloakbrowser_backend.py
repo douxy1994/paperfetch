@@ -167,20 +167,51 @@ def test_fetch_html_with_cloakbrowser_returns_existing_html_contract(tmp_path) -
     assert fake_module.browser.closed is True
 
 
+def test_fetch_html_with_cloakbrowser_uses_runtime_context_shared_browser(tmp_path) -> None:
+    fake_module = _FakeCloakBrowserModule()
+    runtime_context = mock.Mock()
+    runtime_context.new_browser_context.return_value = fake_module.browser.context
+
+    with mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module):
+        result = _cloakbrowser.fetch_html_with_cloakbrowser(
+            ["https://www.science.org/doi/full/10.1126/science.example"],
+            publisher="science",
+            config=_runtime_config(tmp_path),
+            runtime_context=runtime_context,
+            wait_seconds=0,
+        )
+
+    runtime_context.new_browser_context.assert_called_once()
+    assert result.final_url == "https://www.science.org/doi/full/10.1126/science.example"
+    assert fake_module.launch_kwargs == {}
+    assert fake_module.browser.context.closed is True
+    assert fake_module.browser.closed is False
+
+
 def test_fetch_html_with_browser_marks_diagnostic(tmp_path) -> None:
     fake_module = _FakeCloakBrowserModule()
     config = _runtime_config(tmp_path)
+    context = RuntimeContext(env={})
 
-    with mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module):
+    with (
+        mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module),
+        mock.patch.object(
+            context,
+            "new_browser_context",
+            return_value=fake_module.browser.context,
+        ) as new_browser_context,
+    ):
         _html_result, payload = _fetch_browser_html_payload(
             _FakeWorkflowClient(),
             ["https://www.science.org/doi/full/10.1126/science.example"],
             runtime=config,
             metadata={"doi": "10.1126/science.example", "title": "Example Article"},
-            context=RuntimeContext(env={}),
+            context=context,
             wait_seconds=0,
         )
 
+    new_browser_context.assert_called_once()
+    assert fake_module.launch_kwargs == {}
     assert payload.content is not None
     assert payload.content.diagnostics["html_fetcher"] == "cloakbrowser"
 

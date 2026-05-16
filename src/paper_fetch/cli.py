@@ -16,6 +16,7 @@ from .config import build_runtime_env, resolve_cli_download_dir
 from .models import FetchEnvelope, RenderOptions
 from .providers.base import ProviderFailure
 from .reason_codes import ERROR, NO_ACCESS, RATE_LIMITED
+from .runtime import build_http_transport_for_context
 from .service import FetchStrategy, PaperFetchFailure, fetch_paper
 from .utils import sanitize_filename
 from .workflow.pipeline import FetchPipeline, MarkdownSaveSpec
@@ -285,6 +286,7 @@ def run_single_fetch(
     output_dir: Path,
     runtime_env: Mapping[str, str],
     artifact_mode: ArtifactMode,
+    transport=None,
 ) -> SingleFetchResult:
     modes = _compute_modes(args)
     render_options = _render_options_from_args(args)
@@ -301,6 +303,7 @@ def run_single_fetch(
             download_dir=output_dir,
             no_download=args.no_download,
             artifact_mode=artifact_mode,
+            transport=transport,
             markdown_save=_markdown_save_spec(
                 args,
                 output_dir=output_dir,
@@ -395,6 +398,7 @@ def _run_batch_item(
     output_dir: Path,
     runtime_env: Mapping[str, str],
     artifact_mode: ArtifactMode,
+    transport,
 ) -> dict[str, Any]:
     try:
         result = run_single_fetch(
@@ -403,6 +407,7 @@ def _run_batch_item(
             output_dir=output_dir,
             runtime_env=runtime_env,
             artifact_mode=artifact_mode,
+            transport=transport,
         )
     except Exception as exc:  # noqa: BLE001 - batch mode records per-item failures and continues.
         return _batch_error_payload(index=index, query=query, error=exc)
@@ -438,6 +443,12 @@ def run_batch_fetch(
     results_path = Path(args.batch_results) if args.batch_results else output_dir / "batch-results.jsonl"
     results_path.parent.mkdir(parents=True, exist_ok=True)
     results: list[dict[str, Any]] = []
+    shared_transport = build_http_transport_for_context(
+        runtime_env,
+        download_dir=output_dir,
+        cancel_check=None,
+        artifact_mode=artifact_mode,
+    )
     with results_path.open("w", encoding="utf-8") as results_file:
         with ThreadPoolExecutor(max_workers=args.batch_concurrency) as executor:
             futures = [
@@ -449,6 +460,7 @@ def run_batch_fetch(
                     output_dir=output_dir,
                     runtime_env=runtime_env,
                     artifact_mode=artifact_mode,
+                    transport=shared_transport,
                 )
                 for index, query in enumerate(queries, start=1)
             ]

@@ -446,6 +446,7 @@ class BrowserWorkflowClient(ProviderClient):
                 )
                 if normalized
             ],
+            runtime_context=context,
         )
 
         requester = {
@@ -492,7 +493,7 @@ class BrowserWorkflowClient(ProviderClient):
             browser_user_agent=request["browser_user_agent"],
             headless=request["headless"],
             runtime_context=context,
-            use_runtime_shared_browser=False,
+            use_runtime_shared_browser=True,
         )
         return _MemoizedImageDocumentFetcher(fetcher)
 
@@ -510,7 +511,7 @@ class BrowserWorkflowClient(ProviderClient):
             browser_user_agent=request["browser_user_agent"],
             headless=request["headless"],
             runtime_context=context,
-            use_runtime_shared_browser=False,
+            use_runtime_shared_browser=True,
             thread_local=True,
         )
 

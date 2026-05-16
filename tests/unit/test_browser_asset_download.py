@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
 from pathlib import Path
+import threading
 from types import SimpleNamespace
 from unittest import TestCase, mock
 
 from paper_fetch.extraction.html.assets import FIGURE_KIND, SUPPLEMENTARY_KIND
+from paper_fetch.providers.browser_workflow import assets as browser_workflow_assets
 from paper_fetch.providers.browser_workflow.asset_download import (
     BrowserAssetDownloadPlan,
     BrowserAssetDownloadResult,
@@ -142,8 +144,9 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
             plan.supplementary_assets,
         )
         self.assertEqual(mocked_download_assets.call_count, 2)
-        figure_call = mocked_download_assets.call_args_list[0]
-        supplementary_call = mocked_download_assets.call_args_list[1]
+        calls_by_kind = {call.args[0]: call for call in mocked_download_assets.call_args_list}
+        figure_call = calls_by_kind[FIGURE_KIND]
+        supplementary_call = calls_by_kind[SUPPLEMENTARY_KIND]
         self.assertIs(figure_call.args[0], FIGURE_KIND)
         self.assertIs(figure_call.kwargs["image_document_fetcher"], image_fetcher)
         self.assertEqual(figure_call.kwargs["asset_download_concurrency"], 3)
@@ -162,6 +165,181 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
         )
         image_fetcher.close.assert_called_once()
         file_fetcher.close.assert_called_once()
+
+    def test_run_browser_asset_download_attempt_parallelizes_body_and_supplementary(
+        self,
+    ) -> None:
+        plan = BrowserAssetDownloadPlan(
+            article_id="10.5555/example",
+            output_dir=Path("/tmp/browser-assets"),
+            asset_profile="all",
+            body_assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 1",
+                    "url": "https://example.test/figure.png",
+                    "section": "body",
+                }
+            ],
+            supplementary_assets=[
+                {
+                    "kind": "supplementary",
+                    "heading": "Supplement",
+                    "source_url": "https://example.test/supplement.pdf",
+                    "section": "supplementary",
+                }
+            ],
+        )
+        recovery = BrowserAssetRecoveryContext(
+            runtime=SimpleNamespace(headless=True),
+            provider="science",
+            user_agent="test-agent",
+            browser_context_seed={"browser_final_url": "https://example.test/final"},
+            browser_cookies=[],
+            active_seed_urls=["https://example.test/article"],
+        )
+        body_started = threading.Event()
+        supplementary_started = threading.Event()
+
+        def download_assets(kind, *_args, **_kwargs):
+            if kind is FIGURE_KIND:
+                body_started.set()
+                self.assertTrue(supplementary_started.wait(1))
+                return {
+                    "assets": [{"kind": "figure", "download_url": "figure.png"}],
+                    "asset_failures": [],
+                }
+            supplementary_started.set()
+            self.assertTrue(body_started.wait(1))
+            return {
+                "assets": [
+                    {"kind": "supplementary", "download_url": "supplement.pdf"}
+                ],
+                "asset_failures": [],
+            }
+
+        result = run_browser_asset_download_attempt(
+            plan,
+            recovery,
+            image_fetcher_factory=mock.Mock(return_value=None),
+            file_fetcher_factory=mock.Mock(return_value=None),
+            opener_requester={},
+            deps=browser_workflow_deps(download_assets=download_assets),
+        )
+
+        self.assertEqual(
+            result.body_results,
+            [{"kind": "figure", "download_url": "figure.png"}],
+        )
+        self.assertEqual(
+            result.supplementary_results,
+            [{"kind": "supplementary", "download_url": "supplement.pdf"}],
+        )
+
+    def test_browser_workflow_asset_retry_policy_skips_deterministic_failures(
+        self,
+    ) -> None:
+        asset = {
+            "kind": "figure",
+            "heading": "Figure 1",
+            "url": "https://example.test/figure.png",
+            "section": "body",
+        }
+
+        self.assertEqual(
+            browser_workflow_assets._assets_matching_download_failures(
+                [asset],
+                [
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "source_url": "https://example.test/figure.png",
+                        "section": "body",
+                        "status": 404,
+                        "reason": "not_found",
+                    }
+                ],
+                retry_scope="body",
+            ),
+            [],
+        )
+        self.assertEqual(
+            browser_workflow_assets._assets_matching_download_failures(
+                [asset],
+                [
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "source_url": "https://example.test/figure.png",
+                        "section": "body",
+                        "status": 404,
+                        "reason": "image_fetch_error",
+                    }
+                ],
+                retry_scope="body",
+            ),
+            [],
+        )
+        self.assertEqual(
+            browser_workflow_assets._assets_matching_download_failures(
+                [asset],
+                [
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "source_url": "https://example.test/figure.png",
+                        "section": "body",
+                        "reason": "non_image_response",
+                    }
+                ],
+                retry_scope="body",
+            ),
+            [],
+        )
+
+    def test_browser_workflow_asset_retry_policy_keeps_transient_failures(
+        self,
+    ) -> None:
+        asset = {
+            "kind": "figure",
+            "heading": "Figure 1",
+            "url": "https://example.test/figure.png",
+            "section": "body",
+        }
+
+        self.assertEqual(
+            browser_workflow_assets._assets_matching_download_failures(
+                [asset],
+                [
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "source_url": "https://example.test/figure.png",
+                        "section": "body",
+                        "reason": "image_fetch_timeout",
+                    }
+                ],
+                retry_scope="body",
+            ),
+            [asset],
+        )
+        self.assertEqual(
+            browser_workflow_assets._assets_matching_download_failures(
+                [asset],
+                [
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "source_url": "https://example.test/figure.png",
+                        "section": "body",
+                        "status": 403,
+                        "reason": "cloudflare_challenge",
+                    }
+                ],
+                retry_scope="body",
+            ),
+            [asset],
+        )
 
     def test_retry_failed_browser_assets_retries_matching_failures_and_merges(
         self,

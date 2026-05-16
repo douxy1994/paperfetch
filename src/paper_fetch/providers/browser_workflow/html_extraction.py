@@ -336,6 +336,7 @@ def _fetch_browser_html_payload(
         wait_seconds=wait_seconds,
         warm_wait_seconds=warm_wait_seconds,
         disable_media=disable_media,
+        runtime_context=context,
     )
     try:
         markdown_text, extraction = _cached_browser_workflow_markdown(

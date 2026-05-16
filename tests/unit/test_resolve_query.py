@@ -42,6 +42,21 @@ class ResolveQueryTests(unittest.TestCase):
         self.assertEqual(result.provider_hint, "elsevier")
         self.assertTrue(transport.calls[0]["retry_on_transient"])
 
+    def test_url_with_embedded_doi_and_provider_hint_skips_landing_fetch(self) -> None:
+        transport = RecordingTransport({})
+
+        result = resolve_query.resolve_query(
+            "https://www.science.org/doi/full/10.1126/science.adp0212",
+            transport=transport,
+            env={},
+        )
+
+        self.assertEqual(result.query_kind, "url")
+        self.assertEqual(result.doi, "10.1126/science.adp0212")
+        self.assertEqual(result.provider_hint, "science")
+        self.assertEqual(result.landing_url, "https://www.science.org/doi/full/10.1126/science.adp0212")
+        self.assertEqual(transport.calls, [])
+
     def test_direct_doi_query_uses_crossref_publisher_before_doi_fallback(self) -> None:
         transport = RecordingTransport(
             {
