@@ -6,9 +6,24 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.5 - 2026-05-16
+
+### Added
+
+- Added the CloakBrowser-backed browser runtime abstraction and provider status diagnostics, replacing the FlareSolverr runtime path.
+- Added browser image payload and runtime smoke coverage for the migrated browser workflow.
+
 ### Changed
 
+- Migrated Science, PNAS, Wiley, AMS, IEEE browser/PDF flows, MCP diagnostics, live runners, installers, offline packages, and CI from FlareSolverr-specific paths to the shared CloakBrowser/browser runtime path.
+- Removed bundled FlareSolverr source, setup scripts, vendor patches, docs, and release-package runtime assets; offline packages now ship the `cloakbrowser` Python package and document that the browser binary is not redistributed.
 - arXiv HTML asset handling now recovers figure assets from the arXiv e-print source package when official HTML exposes only missing-image placeholders; source PDF figures are rendered to PNG assets and inserted back near their figure captions while full-text extraction remains official-HTML first.
+- Browser workflow concurrent asset downloads now use thread-private browser/context/page instances instead of sharing the `RuntimeContext` browser across worker threads.
+- Optimized browser workflow fetching, CLI output-directory handling, provider request options, MCP cache payload handling, and fixture/scaffold docs around the new runtime contract.
+
+### Fixed
+
+- Fixed the Windows offline package builder so the MCP command wrapper PowerShell here-string closes correctly before writing `README.offline.md`.
 
 ## 1.4.1 - 2026-05-15
 

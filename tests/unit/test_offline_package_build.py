@@ -58,6 +58,17 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertIn("cloakbrowser = [ordered]@{", manifest_block)
         self.assertNotIn("playwright_browsers", manifest_block)
 
+    def test_windows_powershell_here_string_terminators_are_flush_left(self) -> None:
+        script = BUILD_OFFLINE_PACKAGE_WINDOWS.read_text(encoding="utf-8")
+
+        for line_number, line in enumerate(script.splitlines(), start=1):
+            if line.strip() in {"'@", '"@'}:
+                self.assertEqual(
+                    line,
+                    line.strip(),
+                    f"PowerShell here-string terminator must be flush-left at line {line_number}",
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

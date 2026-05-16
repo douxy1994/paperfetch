@@ -293,7 +293,7 @@ set "PYTHONUTF8=1"
 set "PYTHONIOENCODING=utf-8"
 "%PAPER_FETCH_ROOT%\runtime\python.exe" -X utf8 -m paper_fetch.mcp.server %*
 exit /b %ERRORLEVEL%
-    '@
+'@
     Set-Content -LiteralPath (Join-Path $bin "paper-fetch-mcp.cmd") -Value $mcp -Encoding ASCII
 }
 

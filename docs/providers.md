@@ -43,7 +43,7 @@
 - `wiley` / `science` / `pnas` / `ams` 只保留一套 provider-owned 浏览器栈，canonical runtime 是 `paper_fetch.providers.browser_workflow` 包入口。
 - browser workflow 的 bootstrap、PDF/ePDF fallback、article assembly、asset retry helper、client 基类和 browser fetchers 已收敛到 `browser_workflow/` 子包；profile 只面向 provider catalog 中的 `science` / `pnas` / `wiley` / `ams`。
 - publisher 差异通过各 provider 模块 callback 下沉；旧 compatibility aliases、`_browser_workflow_*` 与 `browser_workflow_fetchers/` 兼容入口已移除，browser-PDF executor 继续共享 `_pdf_fallback`。
-- browser-workflow 的 HTML bootstrap 和 asset download fetcher 统一通过 `RuntimeContext` 复用 CloakBrowser-backed shared browser；各阶段或并发 worker 仍创建隔离的 context/page，避免跨线程共享页面状态。
+- browser-workflow 的 HTML bootstrap 可通过 `RuntimeContext` 复用 CloakBrowser-backed shared browser；并发 asset download fetcher 使用线程私有 browser/context/page，不共享同步 Playwright browser 对象。
 - 2020+ live / regression 基准样本集中维护在 [`../tests/provider_benchmark_samples.py`](../tests/provider_benchmark_samples.py)。
 - 自然地理学 live-only 候选集中维护在 [`../tests/live/geography_samples.py`](../tests/live/geography_samples.py)，默认每家尝试前 `10` 条，并通过 [`../scripts/run_geography_live_report.py`](../scripts/run_geography_live_report.py) 产出 JSON/Markdown 报告。
 - `geography` live runner 默认按 provider 轮转执行，保持单家样本顺序不变。
@@ -507,6 +507,7 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 - 通用 HTML figure 与 supplementary 下载使用 `paper_fetch.extraction.html.assets.state` 状态机。
 - cookie-aware opener/request 统一在 `paper_fetch.extraction.html.assets.requester` 中处理。
 - 网络、opener 或浏览器 document fallback resolve 阶段可并发执行。
+- Browser workflow 的并发资产下载使用线程私有 browser/context/page，不复用 `RuntimeContext` 的同步 Playwright browser 对象。
 - 文件写入、文件名去重、`source_data/` 分流和失败诊断收集仍串行执行。
 - 输出顺序、fallback 候选顺序、`article.assets[*]` 与 `quality.asset_failures` shape 保持稳定。
 - Elsevier XML object references 也使用“网络并发、写入串行”约束。

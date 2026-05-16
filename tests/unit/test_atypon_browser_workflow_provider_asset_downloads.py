@@ -2,6 +2,29 @@
 from __future__ import annotations
 
 from ._atypon_browser_workflow_provider_support import *
+from paper_fetch.runtime import RuntimeContext
+
+
+class _ProviderFakePage:
+    def close(self) -> None:
+        return None
+
+    def goto(self, *_args, **_kwargs) -> None:
+        return None
+
+
+class _ProviderFakeBrowserContext:
+    def __init__(self) -> None:
+        self.closed = False
+
+    def add_cookies(self, _cookies) -> None:
+        return None
+
+    def new_page(self) -> _ProviderFakePage:
+        return _ProviderFakePage()
+
+    def close(self) -> None:
+        self.closed = True
 
 
 class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProviderTestCase):
@@ -154,8 +177,9 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         mocked_request.assert_called_once()
         mocked_image_builder.assert_called_once()
         mocked_file_builder.assert_called_once()
-        self.assertTrue(mocked_image_builder.call_args.kwargs["use_runtime_shared_browser"])
-        self.assertTrue(mocked_file_builder.call_args.kwargs["use_runtime_shared_browser"])
+        self.assertFalse(mocked_image_builder.call_args.kwargs["use_runtime_shared_browser"])
+        self.assertFalse(mocked_file_builder.call_args.kwargs["use_runtime_shared_browser"])
+        self.assertTrue(mocked_file_builder.call_args.kwargs["thread_local"])
         self.assertEqual(transport.calls, [])
         shared_image_fetcher.assert_called_once()
         shared_file_fetcher.assert_called_once()
@@ -166,6 +190,112 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         )
         self.assertEqual(result["assets"][1]["download_tier"], "supplementary_file")
         self.assertEqual(result["asset_failures"], [])
+    def test_browser_asset_fetchers_do_not_use_runtime_shared_browser(self) -> None:
+        figure_url = "https://www.science.org/images/large/figure1.png"
+        supplementary_url = "https://www.science.org/doi/suppl/10.1126/science.sample/suppl_file/appendix.pdf"
+        html = f"""
+<article>
+  <figure>
+    <img src="{figure_url}" alt="Figure 1 alt" />
+    <figcaption>Figure 1 caption</figcaption>
+  </figure>
+  <section id="supplementary-materials" class="core-supplementary-materials">
+    <h2>Supplementary Materials</h2>
+    <a href="{supplementary_url}">Download</a>
+  </section>
+</article>
+"""
+        transport = AssetTransport({})
+        client = science_provider.ScienceClient(
+            transport=transport,
+            env={"PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY": "2"},
+        )
+        challenge_html = {
+            "status_code": 403,
+            "headers": {"content-type": "text/html; charset=utf-8"},
+            "body": (
+                b"<html><head><title>Just a moment...</title></head>"
+                b"<body>Checking your browser before accessing</body></html>"
+            ),
+            "url": supplementary_url,
+        }
+        private_contexts: list[_ProviderFakeBrowserContext] = []
+
+        def new_private_context(_manager, **_kwargs):
+            private_context = _ProviderFakeBrowserContext()
+            private_contexts.append(private_context)
+            return private_context
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = self._runtime_config(tmpdir, "science", SCIENCE_SAMPLE.doi)
+            runtime_context = RuntimeContext(
+                env={"PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY": "2"},
+                download_dir=Path(tmpdir),
+            )
+            runtime_context.new_browser_context = mock.Mock(
+                side_effect=AssertionError("shared runtime browser should not be used")
+            )
+            raw_payload = _typed_raw_payload(
+                provider="science",
+                source_url=SCIENCE_SAMPLE.landing_url,
+                content_type="text/html",
+                body=html.encode("utf-8"),
+                route="html",
+                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                browser_context_seed={},
+            )
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+            )
+            with (
+                mock.patch(
+                    "paper_fetch.runtime_browser.BrowserContextManager.new_context",
+                    new=new_private_context,
+                ),
+                mock.patch.object(
+                    browser_workflow._SharedBrowserImageDocumentFetcher,
+                    "_fetch_with_page",
+                    return_value={
+                        "status_code": 200,
+                        "headers": {"content-type": "image/png"},
+                        "body": png_header(640, 480),
+                        "url": figure_url,
+                        "dimensions": {"width": 640, "height": 480},
+                    },
+                ),
+                mock.patch.object(
+                    browser_workflow._SharedBrowserFileDocumentFetcher,
+                    "_fetch_with_context_request",
+                    return_value={
+                        "status_code": 200,
+                        "headers": {"content-type": "application/pdf"},
+                        "body": b"%PDF-1.7 supplementary",
+                        "url": supplementary_url,
+                    },
+                ),
+                mock.patch.object(html_assets, "_build_cookie_seeded_opener", return_value=object()),
+                mock.patch.object(html_assets, "_request_with_opener", return_value=challenge_html),
+            ):
+                result = client.download_related_assets(
+                    SCIENCE_SAMPLE.doi,
+                    {"doi": SCIENCE_SAMPLE.doi, "title": SCIENCE_SAMPLE.title},
+                    raw_payload,
+                    Path(tmpdir),
+                    asset_profile="all",
+                    context=runtime_context,
+                )
+
+        runtime_context.new_browser_context.assert_not_called()
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(
+            [asset["kind"] for asset in result["assets"]],
+            ["figure", "supplementary"],
+        )
+        self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(len(private_contexts), 2)
+        self.assertTrue(all(context.closed for context in private_contexts))
     def test_pnas_provider_download_related_assets_uses_figure_page_and_falls_back_to_preview(self) -> None:
         figure_page_url = "https://www.pnas.org/figures/figure-1"
         preview_url = "https://www.pnas.org/images/preview/figure1.png"
