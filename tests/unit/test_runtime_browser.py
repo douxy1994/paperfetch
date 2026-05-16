@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import inspect
+import sys
 from types import SimpleNamespace
 from typing import Any
 
+from paper_fetch import _cloakbrowser_runtime
 from paper_fetch import runtime_browser
 from paper_fetch.runtime import RuntimeContext
 from paper_fetch.runtime_browser import BrowserContextManager
@@ -66,6 +68,34 @@ def test_headless_change_restarts_browser(monkeypatch) -> None:
     assert first_browser.close_count == 1
     assert second_browser.close_count == 0
     assert second_browser.headless is False
+
+
+def test_cloakbrowser_welcome_banner_is_suppressed(monkeypatch, capsys) -> None:
+    import cloakbrowser.download
+
+    monkeypatch.setattr(_cloakbrowser_runtime, "_WELCOME_SUPPRESSED", False)
+
+    def noisy_welcome() -> None:
+        sys.stderr.write("CloakBrowser donation banner\n")
+
+    monkeypatch.setattr(cloakbrowser.download, "_show_welcome", noisy_welcome)
+
+    launches: list[_FakeBrowser] = []
+
+    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
+        cloakbrowser.download._show_welcome()
+        browser = _FakeBrowser(headless=headless, locale=locale)
+        launches.append(browser)
+        return browser
+
+    monkeypatch.setattr("cloakbrowser.launch", launch)
+    lifecycle = BrowserContextManager()
+
+    lifecycle.browser(headless=True)
+
+    captured = capsys.readouterr()
+    assert launches
+    assert "CloakBrowser donation banner" not in captured.err
 
 
 def test_runtime_context_recommended_browser_context_entrypoint() -> None:

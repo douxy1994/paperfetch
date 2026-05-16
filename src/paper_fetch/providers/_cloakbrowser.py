@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any, Mapping
 
 from bs4 import BeautifulSoup
 
+from .._cloakbrowser_runtime import import_cloakbrowser
 from ..config import (
     CLOAKBROWSER_HEADLESS_ENV_VAR,
     CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
@@ -97,7 +98,7 @@ def _dependency_details() -> dict[str, Any]:
 
 def _import_cloakbrowser() -> Any:
     try:
-        import cloakbrowser
+        cloakbrowser = import_cloakbrowser()
     except Exception as exc:
         raise ProviderFailure(
             NOT_CONFIGURED,

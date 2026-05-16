@@ -6,6 +6,8 @@ import threading
 from dataclasses import dataclass, field
 from typing import Any
 
+from ._cloakbrowser_runtime import import_cloakbrowser
+
 
 @dataclass
 class BrowserContextManager:
@@ -23,8 +25,7 @@ class BrowserContextManager:
             if self._browser is not None:
                 self.close()
 
-            import cloakbrowser
-
+            cloakbrowser = import_cloakbrowser()
             browser = cloakbrowser.launch(headless=active_headless, locale="en-US")
             self._browser = browser
             self._headless = active_headless

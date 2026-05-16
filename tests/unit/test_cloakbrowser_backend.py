@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from unittest import mock
 
+from paper_fetch import _cloakbrowser_runtime
 from paper_fetch.providers import _cloakbrowser, browser_runtime
 from paper_fetch.providers.browser_workflow.html_extraction import _fetch_browser_html_payload
 from paper_fetch.runtime import RuntimeContext
@@ -253,6 +254,19 @@ def test_probe_runtime_status_reports_missing_cloakbrowser_dependency() -> None:
     assert result.status == "not_configured"
     assert checks["runtime_env"].status == "not_configured"
     assert checks["cloakbrowser_dependency"].status == "not_configured"
+
+
+def test_import_cloakbrowser_suppresses_welcome_banner(monkeypatch) -> None:
+    import cloakbrowser.download
+
+    calls: list[str] = []
+    monkeypatch.setattr(_cloakbrowser_runtime, "_WELCOME_SUPPRESSED", False)
+    monkeypatch.setattr(cloakbrowser.download, "_show_welcome", lambda: calls.append("welcome"))
+
+    _cloakbrowser._import_cloakbrowser()
+    cloakbrowser.download._show_welcome()
+
+    assert calls == []
 
 
 def test_browser_runtime_module_imports() -> None:

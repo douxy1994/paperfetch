@@ -24,6 +24,7 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 ### Fixed
 
 - Fixed the Windows offline package builder so the MCP command wrapper PowerShell here-string closes correctly before writing `README.offline.md`.
+- Suppressed CloakBrowser's first-launch promotional stderr banner during browser-backed fetches.
 
 ## 1.4.1 - 2026-05-15
 
