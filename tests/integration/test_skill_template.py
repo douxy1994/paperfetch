@@ -304,7 +304,7 @@ class InstallerSmokeTests(unittest.TestCase):
         log_text = log_path.read_text(encoding="utf-8")
         self.assertIn("claude mcp remove -s project paper-fetch", log_text)
         self.assertIn(
-            "claude mcp add -s project -e PAPER_FETCH_ENV_FILE=/tmp/paper-fetch.env paper-fetch --",
+            "claude mcp add -s project -e PAPER_FETCH_ENV_FILE=/tmp/paper-fetch.env -- paper-fetch",
             log_text,
         )
         self.assertIn("-m paper_fetch.mcp.server", log_text)
@@ -350,7 +350,7 @@ class InstallerSmokeTests(unittest.TestCase):
         )
 
         log_text = log_path.read_text(encoding="utf-8")
-        self.assertIn("claude mcp add -s project paper-fetch --", log_text)
+        self.assertIn("claude mcp add -s project -- paper-fetch", log_text)
         self.assertNotIn("PAPER_FETCH_ENV_FILE=", log_text)
 
     def test_codex_installer_does_not_auto_bind_repo_env_for_mcp_registration(self) -> None:
