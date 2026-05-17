@@ -2,6 +2,7 @@ param(
     [ValidateSet("Install", "Uninstall", "Smoke")]
     [string]$Action = "Install",
     [string]$InstallRoot,
+    [string]$LogPath,
     [switch]$SkipSmoke,
     [switch]$ProbeLaunch
 )
@@ -25,6 +26,7 @@ $McpEnvKeys = @(
     "MATHML_TO_LATEX_NODE_BIN",
     "CLOAKBROWSER_HEADLESS"
 )
+$InstallerWarnings = New-Object System.Collections.Generic.List[string]
 
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
     $InstallRoot = [System.IO.Path]::GetFullPath((Join-Path $PSScriptRoot ".."))
@@ -81,11 +83,53 @@ Import-InstallerManifest
 function Write-Log {
     param([string]$Message)
     Write-Host "==> $Message"
+    Write-InstallerLogLine -Level "INFO" -Message $Message
 }
 
 function Write-Warn {
     param([string]$Message)
     Write-Warning $Message
+    Write-InstallerLogLine -Level "WARN" -Message $Message
+}
+
+function Write-InstallerLogLine {
+    param(
+        [string]$Level,
+        [string]$Message
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LogPath)) {
+        return
+    }
+    try {
+        $logDir = Split-Path -Parent $LogPath
+        if (-not [string]::IsNullOrWhiteSpace($logDir)) {
+            New-Item -ItemType Directory -Force -Path $logDir | Out-Null
+        }
+        $timestamp = Get-Date -Format "yyyy-MM-dd HH:mm:ss"
+        Add-Content -LiteralPath $LogPath -Encoding UTF8 -Value "$timestamp [$Level] $Message"
+    } catch {
+        Write-Warning "Could not write installer helper log: $($_.Exception.Message)"
+    }
+}
+
+function Invoke-InstallerStep {
+    param(
+        [string]$Name,
+        [scriptblock]$ScriptBlock,
+        [switch]$Required
+    )
+
+    try {
+        & $ScriptBlock
+    } catch {
+        $message = "$Name failed: $($_.Exception.Message)"
+        if ($Required) {
+            throw $message
+        }
+        $script:InstallerWarnings.Add($message)
+        Write-Warn $message
+    }
 }
 
 function Invoke-Checked {
@@ -509,14 +553,18 @@ if len(sys.argv) > 1 and sys.argv[1] == "probe-launch":
 
 switch ($Action) {
     "Install" {
-        Write-ManagedEnvFile
-        Install-Skills
-        Add-UserPathEntry (Join-Path $InstallRoot "bin")
-        Register-CodexMcp
-        Register-ClaudeMcp
-        Register-GeminiMcp
+        Invoke-InstallerStep -Name "offline.env update" -Required -ScriptBlock { Write-ManagedEnvFile }
+        Invoke-InstallerStep -Name "skill installation" -ScriptBlock { Install-Skills }
+        Invoke-InstallerStep -Name "PATH update" -ScriptBlock { Add-UserPathEntry (Join-Path $InstallRoot "bin") }
+        Invoke-InstallerStep -Name "Codex MCP registration" -ScriptBlock { Register-CodexMcp }
+        Invoke-InstallerStep -Name "Claude MCP registration" -ScriptBlock { Register-ClaudeMcp }
+        Invoke-InstallerStep -Name "Gemini MCP registration" -ScriptBlock { Register-GeminiMcp }
         if (-not $SkipSmoke) {
-            Invoke-SmokeChecks
+            Invoke-InstallerStep -Name "smoke checks" -ScriptBlock { Invoke-SmokeChecks }
+        }
+        if ($InstallerWarnings.Count -gt 0) {
+            Write-Warn "Install helper completed with $($InstallerWarnings.Count) non-critical warning(s)."
+            exit 2
         }
     }
     "Uninstall" {
@@ -530,3 +578,5 @@ switch ($Action) {
         Invoke-SmokeChecks
     }
 }
+
+exit 0

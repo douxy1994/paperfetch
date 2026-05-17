@@ -49,6 +49,8 @@ Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Fil
 [Code]
 var
   OfflineEnvBackupPath: String;
+  PostInstallHelperLogPath: String;
+  PostInstallHelperWarning: Boolean;
   UpgradePrepared: Boolean;
 
 function SplitCommandLine(CommandLine: String; var FileName: String; var Params: String): Boolean;
@@ -132,14 +134,23 @@ end;
 procedure RunPostInstallHelper;
 var
   HelperPath: String;
+  Params: String;
   ResultCode: Integer;
 begin
   HelperPath := ExpandConstant('{app}\scripts\windows-installer-helper.ps1');
+  PostInstallHelperLogPath := ExpandConstant('{app}\install-helper.log');
+  Params := '-NoProfile -ExecutionPolicy Bypass -File "' + HelperPath + '" -Action Install -LogPath "' + PostInstallHelperLogPath + '"';
   Log('Running Paper Fetch Skill post-install helper.');
-  if not Exec('powershell.exe', '-NoProfile -ExecutionPolicy Bypass -File "' + HelperPath + '" -Action Install', '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
-    RaiseException('Could not execute Paper Fetch Skill post-install helper.')
+  if not Exec('powershell.exe', Params, '', SW_HIDE, ewWaitUntilTerminated, ResultCode) then
+  begin
+    PostInstallHelperWarning := True;
+    Log('Could not execute Paper Fetch Skill post-install helper. See ' + PostInstallHelperLogPath + ' if it exists.');
+  end
   else if ResultCode <> 0 then
-    RaiseException('Paper Fetch Skill post-install helper failed with exit code ' + IntToStr(ResultCode) + '.');
+  begin
+    PostInstallHelperWarning := True;
+    Log('Paper Fetch Skill post-install helper returned exit code ' + IntToStr(ResultCode) + '. Runtime files remain installed; see ' + PostInstallHelperLogPath + '.');
+  end;
 end;
 
 procedure RunOldUninstaller;
@@ -213,5 +224,10 @@ begin
       WizardForm.FinishedLabel.Caption + #13#10#13#10 +
       'Elsevier setup: request an API key at https://dev.elsevier.com/ before fetching Elsevier full text.' + #13#10 +
       'Then edit ' + OfflineEnvPath + ' and set ELSEVIER_API_KEY="...".';
+    if PostInstallHelperWarning then
+      WizardForm.FinishedLabel.Caption :=
+        WizardForm.FinishedLabel.Caption + #13#10#13#10 +
+        'Post-install configuration completed with a warning. Runtime files were installed; see ' +
+        PostInstallHelperLogPath + ' for details.';
   end;
 end;

@@ -14,6 +14,10 @@
 - Linux 和 Windows 离线升级会在安装新版 runtime-only payload 前清理旧 runtime payload，同时保留用户写入的 `offline.env` 内容，并刷新受管理的环境变量、PATH、skill 和 MCP 注册块。
 - Linux 离线卸载语义调整为 `--uninstall` 只移除用户级 shell / skill / MCP 集成，`--purge` 才显式删除固定安装目录。
 
+### 修复
+
+- 修复 Windows 离线安装器在 runtime 文件已安装后，仍会因用户级集成或 smoke check 在本机失败而中断的问题；相关警告现在写入 `install-helper.log`。
+
 ## 1.5.3 - 2026-05-17
 
 ### 变更

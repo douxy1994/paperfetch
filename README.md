@@ -96,7 +96,7 @@ paper-fetch-skill-windows-x86_64-setup.exe
 .\paper-fetch-skill-windows-x86_64-setup.exe
 ```
 
-安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管理员权限。会自动安装 paper-fetch CLI 工具、注册 MCP 并安装 Skill。
+安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管理员权限。会自动安装 paper-fetch CLI 工具、注册 MCP 并安装 Skill。若用户级 PATH / Skill / MCP 集成或 smoke check 在本机失败，runtime 仍会保留在安装目录，详细警告见 `%LOCALAPPDATA%\PaperFetchSkill\install-helper.log`。
 
 **3. 验证安装**
 

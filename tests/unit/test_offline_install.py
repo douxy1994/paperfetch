@@ -483,6 +483,12 @@ class OfflineInstallTests(unittest.TestCase):
         script = WINDOWS_INSTALLER_HELPER.read_text(encoding="utf-8")
 
         self.assertIn("[switch]$ProbeLaunch", script)
+        self.assertIn("[string]$LogPath", script)
+        self.assertIn("Invoke-InstallerStep", script)
+        self.assertIn('Invoke-InstallerStep -Name "smoke checks"', script)
+        self.assertIn("non-critical warning", script)
+        self.assertIn("exit 2", script)
+        self.assertIn("exit 0", script)
         self.assertIn("import cloakbrowser", script)
         self.assertIn('assert hasattr(cloakbrowser, "launch")', script)
         self.assertIn("CLOAKBROWSER_BINARY_PATH", script)
@@ -519,8 +525,12 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("CurStep = ssPostInstall", script)
         self.assertIn("RunPostInstallHelper", script)
         self.assertIn("HelperPath := ExpandConstant('{app}\\scripts\\windows-installer-helper.ps1')", script)
+        self.assertIn("PostInstallHelperWarning := True", script)
+        self.assertIn("install-helper.log", script)
+        self.assertIn('-LogPath "', script)
         self.assertIn('" -Action Install', script)
         self.assertIn("RestoreOfflineEnv;\n    RunPostInstallHelper;", script)
+        self.assertNotIn("Paper Fetch Skill post-install helper failed with exit code", script)
 
     def test_installer_manifest_declares_mathml_node_env_for_mcp_registration(self) -> None:
         manifest = (REPO_ROOT / "installer" / "manifest.json").read_text(encoding="utf-8")

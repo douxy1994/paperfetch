@@ -14,6 +14,10 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 - Changed Linux and Windows offline upgrades to clear the old runtime payload before installing the new runtime-only payload while preserving user-authored `offline.env` content and refreshing managed environment, PATH, skill, and MCP registration blocks.
 - Changed Linux offline uninstall semantics so `--uninstall` removes only user-level shell/skill/MCP integration and `--purge` explicitly deletes the fixed install directory.
 
+### Fixed
+
+- Prevented the Windows offline installer from aborting after runtime files are installed when optional post-install integration or smoke checks fail on a user machine; warnings are now logged to `install-helper.log`.
+
 ## 1.5.3 - 2026-05-17
 
 ### Changed
