@@ -33,7 +33,7 @@ pf_host_register_mcp() {
     if [ -n "$PF_MCP_ENV_FILE" ]; then
         args+=(-e "PAPER_FETCH_ENV_FILE=$PF_MCP_ENV_FILE")
     fi
-    args+=("$PF_MCP_NAME" -- "$python_bin" -m paper_fetch.mcp.server)
+    args+=(-- "$PF_MCP_NAME" "$python_bin" -m paper_fetch.mcp.server)
     claude "${args[@]}"
 }
 

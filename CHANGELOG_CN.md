@@ -17,6 +17,9 @@
 ### 修复
 
 - 修复 Windows 离线安装器在 runtime 文件已安装后，仍会因用户级集成或 smoke check 在本机失败而中断的问题；相关警告现在写入 `install-helper.log`。
+- 修复 Linux 离线安装器的 CloakBrowser 检查以及 Claude/Gemini MCP 注册参数，使其匹配当前 host CLI。
+- 修复 browser PDF fallback 在调用方已处于 asyncio loop 中时直接启动 Playwright Sync API 的问题，相关 CloakBrowser 同步工作现在转交到 worker 线程执行。
+- 调整 Wiley HTML 遇到 Cloudflare/challenge 时的行为：不再继续 PDF fallback，而是明确暴露 HTML-first 浏览器环境问题。
 
 ## 1.5.3 - 2026-05-17
 

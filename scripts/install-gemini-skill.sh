@@ -31,19 +31,19 @@ pf_host_register_mcp() {
     fi
 
     pf_skill_log "Registering Gemini MCP server '$PF_MCP_NAME'"
-    gemini mcp remove "$PF_MCP_NAME" >/dev/null 2>&1 || true
+    gemini mcp remove -s user "$PF_MCP_NAME" >/dev/null 2>&1 || true
 
-    local args=(mcp add)
+    local args=(mcp add -s user)
     if [ -n "$PF_MCP_ENV_FILE" ]; then
-        args+=(--env "PAPER_FETCH_ENV_FILE=$PF_MCP_ENV_FILE")
+        args+=(-e "PAPER_FETCH_ENV_FILE=$PF_MCP_ENV_FILE")
     fi
-    args+=("$PF_MCP_NAME" -- "$python_bin" -m paper_fetch.mcp.server)
+    args+=("$PF_MCP_NAME" "$python_bin" -m paper_fetch.mcp.server)
     gemini "${args[@]}"
 }
 
 pf_host_unregister_mcp() {
     if command -v gemini >/dev/null 2>&1; then
-        gemini mcp remove "$PF_MCP_NAME" >/dev/null 2>&1 || true
+        gemini mcp remove -s user "$PF_MCP_NAME" >/dev/null 2>&1 || true
         pf_skill_log "Removed Gemini MCP server '$PF_MCP_NAME'"
     fi
 }

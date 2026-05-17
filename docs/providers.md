@@ -816,7 +816,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 
 - 可选。
 - 仅用于 Wiley / Science / PNAS / AMS 的 CloakBrowser HTML、图片资产恢复和 seeded-browser PDF/ePDF fallback。
-- AGU/Wiley 站点触发 Cloudflare challenge 时，优先在 `.env` 中设置普通 Chrome UA；`CLOAKBROWSER_HEADLESS=true` 仍可继续使用，成功不应依赖 headed 模式。
+- AGU/Wiley 站点触发 Cloudflare challenge 时，优先在 `.env` 中设置普通 Chrome UA，并保持默认 `CLOAKBROWSER_HEADLESS=true`；如果 GUI/WSLg 环境下仍被 challenge，再设置 `CLOAKBROWSER_HEADLESS=false` 或用 Linux 离线安装器的 `--preset=wslg`。
 
 #### Atypon HTML readiness
 

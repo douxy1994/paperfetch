@@ -110,7 +110,7 @@ paper-fetch --help
 **4. 开启 Wiley / Science / PNAS / AMS 浏览器路径**
 
 安装器会注册 CloakBrowser 默认 headless 环境。受限环境可在 `offline.env` 中设置 `CLOAKBROWSER_BINARY_PATH` 指向预装浏览器。
-AGU/Wiley 页面遇到 Cloudflare challenge 时，可在 `offline.env` 中设置 `PAPER_FETCH_BROWSER_USER_AGENT` 为普通 Chrome UA；`CLOAKBROWSER_HEADLESS=true` 仍可使用。
+AGU/Wiley 页面遇到 Cloudflare challenge 时，可在 `offline.env` 中设置 `PAPER_FETCH_BROWSER_USER_AGENT` 为普通 Chrome UA，`CLOAKBROWSER_HEADLESS=true` 可以保持默认；如果 GUI/WSLg 环境下仍被 challenge，再把 `CLOAKBROWSER_HEADLESS=false`，或安装 Linux `.sh` 时使用 `--preset=wslg`。
 Windows 安装器还会设置 `MATHML_TO_LATEX_NODE_BIN` 指向包内 Playwright Node，避免 Codex Desktop 的 WindowsApps/MSIX 内部 `node.exe` 被公式转换 fallback 误用。
 
 **5. 开启 Elsevier 获取权限**
@@ -400,7 +400,7 @@ python3 -m paper_fetch.mcp.server
 Gemini CLI 可手动注册同一个 stdio server：
 
 ```bash
-gemini mcp add paper-fetch -- python3 -m paper_fetch.mcp.server
+gemini mcp add -s user paper-fetch python3 -m paper_fetch.mcp.server
 ```
 
 WSL 下给 Codex 挂 MCP 时，推荐使用仓库包装脚本：

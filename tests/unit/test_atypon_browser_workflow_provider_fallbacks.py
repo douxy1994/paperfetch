@@ -611,6 +611,41 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         self.assertIn("fulltext:wiley_abstract_only", result.article.quality.source_trail)
         self.assertNotIn("fulltext:wiley_pdf_fallback_ok", result.article.quality.source_trail)
         self.assertTrue(any("returning abstract-only content" in warning for warning in result.article.quality.warnings))
+
+    def test_wiley_cloudflare_html_failure_does_not_fall_back_to_pdf(self) -> None:
+        client = wiley_provider.WileyClient(transport=None, env={})
+        doi = "10.1111/gcb.70541"
+        title = "Wiley HTML First Example"
+        mocked_pdf = mock.Mock()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = self._runtime_config(tmpdir, "wiley", doi)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_browser=mock.Mock(
+                    side_effect=browser_runtime.BrowserRuntimeFailure(
+                        "cloudflare_challenge",
+                        "Encountered a challenge or CAPTCHA page while loading publisher HTML.",
+                    )
+                ),
+                fetch_seeded_browser_pdf_payload=mocked_pdf,
+            )
+            with self.assertRaises(wiley_provider.ProviderFailure) as caught:
+                client.fetch_raw_fulltext(
+                    doi,
+                    {
+                        "doi": doi,
+                        "title": title,
+                        "landing_page_url": f"https://onlinelibrary.wiley.com/doi/full/{doi}",
+                    },
+                )
+
+        mocked_pdf.assert_not_called()
+        self.assertIn("Wiley HTML route hit a Cloudflare challenge", caught.exception.message)
+        self.assertIn("CLOAKBROWSER_HEADLESS=false", caught.exception.message)
+
     def test_pnas_provider_falls_back_to_pdf_with_browser_seed(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
         with tempfile.TemporaryDirectory() as tmpdir:

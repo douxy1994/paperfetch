@@ -17,6 +17,9 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 ### Fixed
 
 - Prevented the Windows offline installer from aborting after runtime files are installed when optional post-install integration or smoke checks fail on a user machine; warnings are now logged to `install-helper.log`.
+- Fixed Linux offline installer CloakBrowser checks and Claude/Gemini MCP registration arguments for current host CLIs.
+- Fixed browser PDF fallback so CloakBrowser/Playwright sync work is handed to a worker thread when the caller is already inside an asyncio loop.
+- Changed Wiley Cloudflare/challenge HTML failures to stop before PDF fallback, making the required HTML-first browser environment issue explicit.
 
 ## 1.5.3 - 2026-05-17
 

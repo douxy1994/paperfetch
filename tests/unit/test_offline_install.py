@@ -347,6 +347,21 @@ class OfflineInstallTests(unittest.TestCase):
             )
             self.assertIn("CLOAKBROWSER_HEADLESS=true", codex_add)
             self.assertFalse(any("PLAYWRIGHT_BROWSERS_PATH" in arg for arg in codex_add))
+            claude_add = next(call for call in calls if call[:3] == ["claude", "mcp", "add"])
+            self.assertIn("-s", claude_add)
+            self.assertIn("user", claude_add)
+            self.assertIn("--", claude_add)
+            self.assertLess(claude_add.index("--"), claude_add.index("paper-fetch"))
+            self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", claude_add)
+            gemini_remove = next(call for call in calls if call[:3] == ["gemini", "mcp", "remove"])
+            self.assertIn("-s", gemini_remove)
+            self.assertIn("user", gemini_remove)
+            gemini_add = next(call for call in calls if call[:3] == ["gemini", "mcp", "add"])
+            self.assertIn("-s", gemini_add)
+            self.assertIn("user", gemini_add)
+            self.assertNotIn("--", gemini_add)
+            self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", gemini_add)
+            self.assertEqual(gemini_add[gemini_add.index("paper-fetch") + 1], str(bundle / "bin" / "python"))
 
     def test_missing_codex_cli_writes_config_toml_without_playwright_runtime_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -477,7 +492,8 @@ class OfflineInstallTests(unittest.TestCase):
         combined = linux_script + windows_script
         self.assertNotIn("python -m playwright install chromium", combined)
         self.assertNotIn("-m playwright install chromium", combined)
-        self.assertIn("cloakbrowser.ensure_runtime()", combined)
+        self.assertNotIn("cloakbrowser.ensure_runtime()", combined)
+        self.assertIn('assert hasattr(cloakbrowser, "launch")', combined)
 
     def test_windows_installer_helper_uses_cloakbrowser_smoke_and_optional_launch_probe(self) -> None:
         script = WINDOWS_INSTALLER_HELPER.read_text(encoding="utf-8")
@@ -496,6 +512,10 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("MATHML_TO_LATEX_NODE_BIN", script)
         self.assertIn("playwright/driver/node.exe", script)
         self.assertIn('@("--version")', script)
+        self.assertIn('$args += @("--", $McpName, $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")', script)
+        self.assertIn('$args = @("mcp", "add", "-s", "user")', script)
+        self.assertIn('$args += @($McpName, $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")', script)
+        self.assertIn('"remove", "-s", "user"', script)
         self.assertNotIn("sessions.list", script)
         self.assertNotIn("playwright.sync_api", script)
 

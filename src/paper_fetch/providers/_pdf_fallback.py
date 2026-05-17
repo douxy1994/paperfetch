@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import http.cookiejar
 import urllib.error
 import urllib.parse
@@ -225,6 +227,14 @@ def _download_to_pdf_result(
     )
 
 
+def _running_asyncio_loop_active() -> bool:
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return False
+    return True
+
+
 def fetch_pdf_with_browser(
     candidate_urls: list[str],
     *,
@@ -236,7 +246,26 @@ def fetch_pdf_with_browser(
     storage_state_path: Path | None = None,
     seed_urls: list[str] | None = None,
     context: RuntimeContext | None = None,
+    _allow_thread_handoff: bool = True,
+    _use_runtime_browser: bool = True,
 ) -> PdfFallbackResult:
+    if _allow_thread_handoff and _running_asyncio_loop_active():
+        with ThreadPoolExecutor(max_workers=1) as executor:
+            return executor.submit(
+                fetch_pdf_with_browser,
+                candidate_urls,
+                artifact_dir=artifact_dir,
+                browser_cookies=browser_cookies,
+                browser_user_agent=browser_user_agent,
+                headless=headless,
+                referer=referer,
+                storage_state_path=storage_state_path,
+                seed_urls=seed_urls,
+                context=context,
+                _allow_thread_handoff=False,
+                _use_runtime_browser=False,
+            ).result()
+
     if not candidate_urls:
         raise PdfFallbackFailure("empty_pdf_attempts", "No PDF fallback candidates were attempted.")
 
@@ -279,7 +308,7 @@ def fetch_pdf_with_browser(
     manager = None
     browser_context = None
     try:
-        if context is not None:
+        if context is not None and _use_runtime_browser:
             browser_context = context.new_browser_context(headless=headless, **context_kwargs)
         else:
             from ..runtime_browser import BrowserContextManager

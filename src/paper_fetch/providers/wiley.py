@@ -25,6 +25,7 @@ from ..provider_catalog import (
     provider_api_url_template,
 )
 from ..quality.html_signals import WILEY_SIGNAL_SET
+from ..quality.reason_codes import CLOUDFLARE_CHALLENGE
 from ..runtime import RuntimeContext
 from ..tracing import fulltext_marker
 from ..utils import normalize_text
@@ -251,6 +252,19 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
         )
         if bootstrap.html_payload is not None:
             return bootstrap.html_payload
+
+        if normalize_text(bootstrap.html_failure_reason) == CLOUDFLARE_CHALLENGE:
+            message = (
+                "Wiley HTML route hit a Cloudflare challenge before provider-managed full text could be extracted; "
+                "not attempting PDF fallback for Wiley HTML-first content. On GUI systems, retry with "
+                "CLOAKBROWSER_HEADLESS=false or install the offline package with --preset=wslg."
+            )
+            raise ProviderFailure(
+                NO_RESULT,
+                message,
+                warnings=[*bootstrap.warnings, message],
+                source_trail=[fulltext_marker(self.name, "fail", route="html")],
+            )
 
         initial_warnings = [*bootstrap.warnings]
         if bootstrap.runtime is not None:

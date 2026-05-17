@@ -115,15 +115,16 @@ class SkillInstallerTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((home / ".gemini" / "skills" / "paper-fetch-skill" / "SKILL.md").is_file())
             calls = [line.split("\t") for line in cli_log.read_text(encoding="utf-8").splitlines()]
-            self.assertIn(["gemini", "mcp", "remove", "paper-fetch"], calls)
+            self.assertIn(["gemini", "mcp", "remove", "-s", "user", "paper-fetch"], calls)
             gemini_add = next(call for call in calls if call[:3] == ["gemini", "mcp", "add"])
-            self.assertIn("--env", gemini_add)
+            self.assertIn("-s", gemini_add)
+            self.assertIn("user", gemini_add)
+            self.assertIn("-e", gemini_add)
             self.assertIn(f"PAPER_FETCH_ENV_FILE={env_file}", gemini_add)
             self.assertEqual(
-                gemini_add[-5:],
+                gemini_add[-4:],
                 [
                     "paper-fetch",
-                    "--",
                     str(fake_bin / "python3"),
                     "-m",
                     "paper_fetch.mcp.server",

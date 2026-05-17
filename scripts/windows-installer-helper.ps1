@@ -469,7 +469,7 @@ function Register-ClaudeMcp {
         foreach ($entry in (Get-McpEnv).GetEnumerator()) {
             $args += @("-e", "$($entry.Key)=$($entry.Value)")
         }
-        $args += @($McpName, "--", $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")
+        $args += @("--", $McpName, $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")
         Invoke-Checked -FilePath $claude.Source -Arguments $args
     } catch {
         Write-Warn "Claude MCP registration failed and was skipped. $($_.Exception.Message)"
@@ -493,12 +493,12 @@ function Register-GeminiMcp {
     try {
         $python = ConvertTo-FullPath (Get-RuntimePython)
         Write-Log "Registering Gemini MCP server '$McpName' with Gemini CLI"
-        Invoke-Checked -FilePath $gemini.Source -Arguments @("mcp", "remove", $McpName) -IgnoreFailure
-        $args = @("mcp", "add")
+        Invoke-Checked -FilePath $gemini.Source -Arguments @("mcp", "remove", "-s", "user", $McpName) -IgnoreFailure
+        $args = @("mcp", "add", "-s", "user")
         foreach ($entry in (Get-McpEnv).GetEnumerator()) {
-            $args += @("--env", "$($entry.Key)=$($entry.Value)")
+            $args += @("-e", "$($entry.Key)=$($entry.Value)")
         }
-        $args += @($McpName, "--", $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")
+        $args += @($McpName, $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")
         Invoke-Checked -FilePath $gemini.Source -Arguments $args
     } catch {
         Write-Warn "Gemini MCP registration failed and was skipped. $($_.Exception.Message)"
@@ -508,7 +508,7 @@ function Register-GeminiMcp {
 function Unregister-GeminiMcp {
     $gemini = Get-Command gemini -ErrorAction SilentlyContinue
     if ($null -ne $gemini) {
-        Invoke-Checked -FilePath $gemini.Source -Arguments @("mcp", "remove", $McpName) -IgnoreFailure
+        Invoke-Checked -FilePath $gemini.Source -Arguments @("mcp", "remove", "-s", "user", $McpName) -IgnoreFailure
     }
 }
 

@@ -103,7 +103,7 @@ Shell rc 写入策略：
 
 - 安装后新开 shell，或临时执行 `source ~/.local/share/paper-fetch-skill/activate-offline.sh`；自定义安装目录时使用该目录下的 `activate-offline.sh`。
 
-Linux MCP 注册行为与 Windows 对齐：检测到 `codex` CLI 时执行 `codex mcp remove/add paper-fetch`，没有 CLI 或注册失败时更新 `~/.codex/config.toml` 中的 `mcp_servers.paper-fetch`；检测到 `claude` CLI 时执行 `claude mcp remove/add -s user paper-fetch`，没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册；检测到 `gemini` CLI 时执行 `gemini mcp remove/add paper-fetch`，没有 Gemini CLI 时只安装 skill 并跳过 Gemini MCP 注册，不写 `~/.gemini/settings.json` fallback。Codex / Claude Code / Gemini CLI 需要重启后才会重新扫描 skill 和 MCP 配置。
+Linux MCP 注册行为与 Windows 对齐：检测到 `codex` CLI 时执行 `codex mcp remove/add paper-fetch`，没有 CLI 或注册失败时更新 `~/.codex/config.toml` 中的 `mcp_servers.paper-fetch`；检测到 `claude` CLI 时执行 `claude mcp remove/add -s user paper-fetch`，没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册；检测到 `gemini` CLI 时执行 `gemini mcp remove/add -s user paper-fetch`，没有 Gemini CLI 时只安装 skill 并跳过 Gemini MCP 注册，不写 `~/.gemini/settings.json` fallback。Codex / Claude Code / Gemini CLI 需要重启后才会重新扫描 skill 和 MCP 配置。
 
 Windows 目标机运行安装器即可：
 
@@ -111,7 +111,7 @@ Windows 目标机运行安装器即可：
 .\paper-fetch-skill-windows-x86_64-setup.exe
 ```
 
-Windows 安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管理员权限。安装器会复制运行组件，写入用户 PATH，复制 Codex / Claude Code / Gemini CLI skill，并执行 best-effort 基础 smoke check。检测到 `codex` CLI 时会用 `codex mcp remove/add` 注册 MCP；没有 Codex CLI 时会备份并更新 `%USERPROFILE%\.codex\config.toml` 中的 `mcp_servers.paper-fetch`。检测到 `claude` CLI 时会用 `claude mcp remove/add -s user` 注册；没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。检测到 `gemini` CLI 时会用 `gemini mcp remove/add` 注册；没有 Gemini CLI 时只安装 skill 并跳过 Gemini MCP 注册，不写 Gemini JSON fallback。用户级 skill / PATH / MCP 集成或 smoke check 失败时不会回滚已复制的 runtime，详细警告写入 `%LOCALAPPDATA%\PaperFetchSkill\install-helper.log`；可修正本机环境后手动重跑 `%LOCALAPPDATA%\PaperFetchSkill\scripts\windows-installer-helper.ps1 -Action Install`。
+Windows 安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管理员权限。安装器会复制运行组件，写入用户 PATH，复制 Codex / Claude Code / Gemini CLI skill，并执行 best-effort 基础 smoke check。检测到 `codex` CLI 时会用 `codex mcp remove/add` 注册 MCP；没有 Codex CLI 时会备份并更新 `%USERPROFILE%\.codex\config.toml` 中的 `mcp_servers.paper-fetch`。检测到 `claude` CLI 时会用 `claude mcp remove/add -s user` 注册；没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。检测到 `gemini` CLI 时会用 `gemini mcp remove/add -s user` 注册；没有 Gemini CLI 时只安装 skill 并跳过 Gemini MCP 注册，不写 Gemini JSON fallback。用户级 skill / PATH / MCP 集成或 smoke check 失败时不会回滚已复制的 runtime，详细警告写入 `%LOCALAPPDATA%\PaperFetchSkill\install-helper.log`；可修正本机环境后手动重跑 `%LOCALAPPDATA%\PaperFetchSkill\scripts\windows-installer-helper.ps1 -Action Install`。
 
 离线更新：
 
@@ -294,10 +294,12 @@ export CLOAKBROWSER_HEADLESS="true"
 export CLOAKBROWSER_TIMEOUT_MS="120000"
 ```
 
-AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，可只覆盖 browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求：
+AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，可先覆盖 browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求，`CLOAKBROWSER_HEADLESS=true` 可以保持默认；如果 GUI/WSLg 环境下仍被 challenge，再设置 `CLOAKBROWSER_HEADLESS=false` 或用 Linux 安装器的 `--preset=wslg`：
 
 ```bash
 export PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+# GUI/WSLg 环境需要时再启用：
+export CLOAKBROWSER_HEADLESS="false"
 ```
 
 补充：
@@ -361,7 +363,7 @@ python3 -m pip install .
 
 - 安装当前包
 - 复制静态 skill bundle 到 `~/.gemini/skills/paper-fetch-skill`
-- 在显式传入 `--register-mcp` 且检测到 `gemini` CLI 时，执行 `gemini mcp remove paper-fetch` 后再注册 `paper-fetch` MCP server
+- 在显式传入 `--register-mcp` 且检测到 `gemini` CLI 时，执行 `gemini mcp remove -s user paper-fetch` 后再注册 `paper-fetch` MCP server
 - 传入 `--env-file <path>` 时，把它映射为 Gemini MCP env 参数 `PAPER_FETCH_ENV_FILE=<path>`
 - 如果没有检测到 `gemini` CLI，只安装 skill 并跳过 MCP 注册，不写 `~/.gemini/settings.json`
 
@@ -388,7 +390,7 @@ python3 -m paper_fetch.mcp.server
 Gemini CLI 可手动注册同一个 stdio server：
 
 ```bash
-gemini mcp add paper-fetch -- python3 -m paper_fetch.mcp.server
+gemini mcp add -s user paper-fetch python3 -m paper_fetch.mcp.server
 ```
 
 如果你是在 WSL 下给 Codex 挂宿主 MCP，推荐直接用：

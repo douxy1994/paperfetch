@@ -531,7 +531,7 @@ register_claude_mcp() {
   for key in "${MCP_ENV_KEYS[@]}"; do
     args+=(-e "$key=$(mcp_env_value "$key")")
   done
-  args+=("$MCP_NAME" -- "$(mcp_python_bin)" -X utf8 -m paper_fetch.mcp.server)
+  args+=(-- "$MCP_NAME" "$(mcp_python_bin)" -X utf8 -m paper_fetch.mcp.server)
 
   if ! "$claude_bin" "${args[@]}"; then
     warn "Claude MCP registration failed and was skipped."
@@ -548,13 +548,13 @@ register_gemini_mcp() {
   fi
 
   log "Registering Gemini MCP server '$MCP_NAME' with Gemini CLI"
-  "$gemini_bin" mcp remove "$MCP_NAME" >/dev/null 2>&1 || true
+  "$gemini_bin" mcp remove -s user "$MCP_NAME" >/dev/null 2>&1 || true
 
-  local args=(mcp add)
+  local args=(mcp add -s user)
   for key in "${MCP_ENV_KEYS[@]}"; do
-    args+=(--env "$key=$(mcp_env_value "$key")")
+    args+=(-e "$key=$(mcp_env_value "$key")")
   done
-  args+=("$MCP_NAME" -- "$(mcp_python_bin)" -X utf8 -m paper_fetch.mcp.server)
+  args+=("$MCP_NAME" "$(mcp_python_bin)" -X utf8 -m paper_fetch.mcp.server)
 
   if ! "$gemini_bin" "${args[@]}"; then
     warn "Gemini MCP registration failed and was skipped."
@@ -662,7 +662,7 @@ unregister_gemini_mcp() {
   gemini_bin="$(command -v gemini || true)"
   if [ -n "$gemini_bin" ]; then
     log "Removing Gemini MCP server '$MCP_NAME' with Gemini CLI"
-    "$gemini_bin" mcp remove "$MCP_NAME" >/dev/null 2>&1 || true
+    "$gemini_bin" mcp remove -s user "$MCP_NAME" >/dev/null 2>&1 || true
   else
     log "Gemini CLI not found; skipped Gemini MCP removal"
   fi
@@ -792,9 +792,9 @@ warm_cloakbrowser_runtime() {
     [ -x "$CLOAKBROWSER_BINARY_PATH" ] || die "CLOAKBROWSER_BINARY_PATH is set but is not executable: $CLOAKBROWSER_BINARY_PATH"
     return 0
   fi
-  log "Checking CloakBrowser runtime availability"
-  "$runtime_python" -c 'import cloakbrowser; cloakbrowser.ensure_runtime()' \
-    || warn "CloakBrowser runtime warmup failed; first use may download it, or set CLOAKBROWSER_BINARY_PATH to a preinstalled binary."
+  log "Checking CloakBrowser package availability"
+  "$runtime_python" -c 'import cloakbrowser; assert hasattr(cloakbrowser, "launch")' \
+    || warn "CloakBrowser package check failed; set CLOAKBROWSER_BINARY_PATH to a preinstalled binary before browser-backed fetches if needed."
 }
 
 run_smoke_checks() {

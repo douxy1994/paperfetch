@@ -388,10 +388,10 @@ function Invoke-CloakBrowserRuntimeWarmup {
         Write-Log "Using preconfigured CLOAKBROWSER_BINARY_PATH; skipping CloakBrowser runtime download"
         return
     }
-    Write-Log "Checking CloakBrowser runtime availability"
-    & $venvPython -c "import cloakbrowser; cloakbrowser.ensure_runtime()"
+    Write-Log "Checking CloakBrowser package availability"
+    & $venvPython -c 'import cloakbrowser; assert hasattr(cloakbrowser, "launch")'
     if ($LASTEXITCODE -ne 0) {
-        Write-Warning "CloakBrowser runtime warmup failed; first use may download it, or set CLOAKBROWSER_BINARY_PATH to a preinstalled binary."
+        Write-Warning "CloakBrowser package check failed; set CLOAKBROWSER_BINARY_PATH to a preinstalled binary before browser-backed fetches if needed."
     }
 }
 
