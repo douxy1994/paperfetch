@@ -25,6 +25,7 @@ $McpEnvKeys = @(
     "PAPER_FETCH_MCP_PYTHON_BIN",
     "PAPER_FETCH_DOWNLOAD_DIR",
     "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "MATHML_TO_LATEX_NODE_BIN",
     "CLOAKBROWSER_HEADLESS"
 )
 
@@ -255,11 +256,13 @@ function Install-ProjectVenv {
 function New-ManagedEnvLines {
     $downloadDir = Join-Path $BundleRoot "downloads"
     $formulaToolsDir = Join-Path $BundleRoot "formula-tools"
+    $mathmlNode = Join-Path $BundleRoot ".venv/Lib/site-packages/playwright/driver/node.exe"
     return @(
         "",
         $ManagedBegin,
         "PAPER_FETCH_DOWNLOAD_DIR=$(Quote-DotenvValue $downloadDir)",
         "PAPER_FETCH_FORMULA_TOOLS_DIR=$(Quote-DotenvValue $formulaToolsDir)",
+        "MATHML_TO_LATEX_NODE_BIN=$(Quote-DotenvValue $mathmlNode)",
         "CLOAKBROWSER_HEADLESS='true'",
         "# PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'",
         "# CLOAKBROWSER_BINARY_PATH='C:/path/to/preinstalled/browser.exe'",
@@ -346,6 +349,9 @@ $env:PATH = "$venvScripts;$formulaBin;$env:PATH"
 if ([string]::IsNullOrWhiteSpace($env:PAPER_FETCH_FORMULA_TOOLS_DIR)) {
     $env:PAPER_FETCH_FORMULA_TOOLS_DIR = Join-Path $InstallRoot "formula-tools"
 }
+if ([string]::IsNullOrWhiteSpace($env:MATHML_TO_LATEX_NODE_BIN)) {
+    $env:MATHML_TO_LATEX_NODE_BIN = Join-Path $InstallRoot ".venv/Lib/site-packages/playwright/driver/node.exe"
+}
 if ([string]::IsNullOrWhiteSpace($env:CLOAKBROWSER_HEADLESS)) {
     $env:CLOAKBROWSER_HEADLESS = "true"
 }
@@ -403,9 +409,14 @@ function Run-SmokeChecks {
     if ($LASTEXITCODE -ne 0) {
         Fail "texmath.exe --help failed."
     }
+    & (Join-Path $BundleRoot ".venv/Lib/site-packages/playwright/driver/node.exe") --version | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        Fail "bundled node.exe --version failed."
+    }
     Test-CloakBrowserPackage
 
     $env:PAPER_FETCH_ENV_FILE = Join-Path $BundleRoot "offline.env"
+    $env:MATHML_TO_LATEX_NODE_BIN = Join-Path $BundleRoot ".venv/Lib/site-packages/playwright/driver/node.exe"
     $env:CLOAKBROWSER_HEADLESS = "true"
     & (Join-Path $BundleRoot ".venv/Scripts/python.exe") -c "from paper_fetch.mcp.fetch_tool import provider_status_payload; payload = provider_status_payload(); assert 'providers' in payload"
     if ($LASTEXITCODE -ne 0) {

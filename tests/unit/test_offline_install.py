@@ -16,6 +16,7 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 LINUX_INSTALLER = REPO_ROOT / "install-offline.sh"
 WINDOWS_INSTALLER = REPO_ROOT / "install-offline.ps1"
 WINDOWS_INSTALLER_HELPER = REPO_ROOT / "scripts" / "windows-installer-helper.ps1"
+WINDOWS_OFFLINE_BUILD = REPO_ROOT / "scripts" / "build-offline-package-windows.ps1"
 
 
 def _write_file(path: Path, content: str = "") -> None:
@@ -85,6 +86,7 @@ def _fake_python_script(version: str) -> str:
     PAPER_FETCH_MCP_PYTHON_BIN
     PAPER_FETCH_DOWNLOAD_DIR
     PAPER_FETCH_FORMULA_TOOLS_DIR
+    MATHML_TO_LATEX_NODE_BIN
     CLOAKBROWSER_HEADLESS
     OUT
         exit 0
@@ -267,6 +269,7 @@ class OfflineInstallTests(unittest.TestCase):
             codex_add = next(call for call in calls if call[:3] == ["codex", "mcp", "add"])
             self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", codex_add)
             self.assertIn(f"PAPER_FETCH_MCP_PYTHON_BIN={bundle / '.venv' / 'bin' / 'python'}", codex_add)
+            self.assertTrue(any(arg.startswith("MATHML_TO_LATEX_NODE_BIN=") for arg in codex_add))
             self.assertIn("CLOAKBROWSER_HEADLESS=true", codex_add)
             self.assertFalse(any("PLAYWRIGHT_BROWSERS_PATH" in arg for arg in codex_add))
 
@@ -281,6 +284,7 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertIn("# BEGIN paper-fetch installer managed", config)
             self.assertIn("[mcp_servers.paper-fetch]", config)
             self.assertIn(f'PAPER_FETCH_ENV_FILE = "{bundle / "offline.env"}"', config)
+            self.assertIn('MATHML_TO_LATEX_NODE_BIN = "', config)
             self.assertIn('CLOAKBROWSER_HEADLESS = "true"', config)
             self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH", config)
 
@@ -393,6 +397,9 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn('assert hasattr(cloakbrowser, "launch")', script)
         self.assertIn("CLOAKBROWSER_BINARY_PATH", script)
         self.assertIn("probe-launch", script)
+        self.assertIn("MATHML_TO_LATEX_NODE_BIN", script)
+        self.assertIn("playwright/driver/node.exe", script)
+        self.assertIn('@("--version")', script)
         self.assertNotIn("sessions.list", script)
         self.assertNotIn("playwright.sync_api", script)
 
@@ -401,8 +408,23 @@ class OfflineInstallTests(unittest.TestCase):
 
         self.assertIn("CLOAKBROWSER_HEADLESS", script)
         self.assertIn("CLOAKBROWSER_BINARY_PATH", script)
+        self.assertIn("MATHML_TO_LATEX_NODE_BIN", script)
+        self.assertIn("playwright/driver/node.exe", script)
+        self.assertIn("bundled node.exe --version failed", script)
         self.assertIn("Test-CloakBrowserPackage", script)
         self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH =", script)
+
+    def test_installer_manifest_declares_mathml_node_env_for_mcp_registration(self) -> None:
+        manifest = (REPO_ROOT / "installer" / "manifest.json").read_text(encoding="utf-8")
+
+        self.assertIn('"MATHML_TO_LATEX_NODE_BIN"', manifest)
+
+    def test_windows_offline_build_writes_default_mathml_node_env(self) -> None:
+        script = WINDOWS_OFFLINE_BUILD.read_text(encoding="utf-8")
+
+        self.assertIn("MATHML_TO_LATEX_NODE_BIN", script)
+        self.assertIn("runtime/Lib/site-packages/playwright/driver/node.exe", script)
+        self.assertIn("do not rely on a bare `node` from PATH", script)
 
 
 if __name__ == "__main__":

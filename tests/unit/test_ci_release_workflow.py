@@ -28,6 +28,13 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("playwright.sync_api", workflow)
         self.assertNotIn("ms-playwright", workflow)
 
+    def test_windows_offline_ci_verifies_bundled_mathml_node(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("MATHML_TO_LATEX_NODE_BIN", workflow)
+        self.assertIn("runtime/Lib/site-packages/playwright/driver/node.exe", workflow)
+        self.assertIn("$mathmlNode --version", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

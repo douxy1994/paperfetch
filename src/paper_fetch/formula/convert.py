@@ -509,11 +509,12 @@ def _resolve_mathml_to_latex_command(runtime_env: Mapping[str, str]) -> tuple[st
     if not script_path and script_candidates:
         script_path = str(script_candidates[0])
 
-    if shutil.which(node_bin) is None and not Path(node_bin).exists():
+    resolved_node = shutil.which(node_bin)
+    if resolved_node is None and not Path(node_bin).exists():
         return node_bin, script_path, None, f"node executable not found: {node_bin}"
     if not Path(script_path).exists():
         return node_bin, script_path, None, f"mathml-to-latex wrapper script not found: {script_path}"
-    return node_bin, script_path, Path(script_path).resolve().parent, None
+    return resolved_node or node_bin, script_path, Path(script_path).resolve().parent, None
 
 
 def _resolve_mathml_to_latex_worker_command(runtime_env: Mapping[str, str]) -> tuple[str, str, Path | None, str | None]:
@@ -524,11 +525,12 @@ def _resolve_mathml_to_latex_worker_command(runtime_env: Mapping[str, str]) -> t
     if not script_path and script_candidates:
         script_path = str(script_candidates[0])
 
-    if shutil.which(node_bin) is None and not Path(node_bin).exists():
+    resolved_node = shutil.which(node_bin)
+    if resolved_node is None and not Path(node_bin).exists():
         return node_bin, script_path, None, f"node executable not found: {node_bin}"
     if not Path(script_path).exists():
         return node_bin, script_path, None, f"mathml-to-latex worker script not found: {script_path}"
-    return node_bin, script_path, Path(script_path).resolve().parent, None
+    return resolved_node or node_bin, script_path, Path(script_path).resolve().parent, None
 
 
 class MathMLToLatexWorker:
@@ -662,6 +664,10 @@ def _run_command(
     )
 
 
+def _executable_failed_error(label: str, executable: str, exc: OSError) -> str:
+    return f"{label} executable failed: {executable}: {_compact_error_text(exc)}"
+
+
 def convert_with_texmath(
     raw_mathml: str,
     *,
@@ -699,6 +705,15 @@ def convert_with_texmath(
             started_at=started_at,
             status="failed",
             error="texmath timed out",
+        )
+    except OSError as exc:
+        return _completed_result(
+            backend=BACKEND_TEXMATH,
+            raw_mathml=raw_mathml,
+            display_mode=display_mode,
+            started_at=started_at,
+            status="failed",
+            error=_executable_failed_error("texmath", texmath_bin, exc),
         )
 
     if process.returncode != 0:
@@ -789,6 +804,18 @@ def convert_with_mathml_to_latex(
             started_at=started_at,
             status="failed",
             error="mathml-to-latex timed out",
+        )
+    except OSError as exc:
+        error = _executable_failed_error("mathml-to-latex node", node_bin, exc)
+        if worker_error:
+            error = f"worker failed: {worker_error}; CLI failed: {error}"
+        return _completed_result(
+            backend=BACKEND_MATHML_TO_LATEX,
+            raw_mathml=raw_mathml,
+            display_mode=display_mode,
+            started_at=started_at,
+            status="failed",
+            error=error,
         )
 
     if process.returncode != 0:
@@ -910,6 +937,15 @@ def convert_with_mml2tex(
                 started_at=started_at,
                 status="failed",
                 error="mml2tex timed out",
+            )
+        except OSError as exc:
+            return _completed_result(
+                backend=BACKEND_MML2TEX,
+                raw_mathml=raw_mathml,
+                display_mode=display_mode,
+                started_at=started_at,
+                status="failed",
+                error=_executable_failed_error("mml2tex java", java_bin, exc),
             )
 
     if process.returncode != 0:

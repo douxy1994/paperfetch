@@ -320,6 +320,7 @@ ELSEVIER_API_KEY=""
 $OfflineManagedBegin
 PAPER_FETCH_DOWNLOAD_DIR='$($Staging.Replace("\", "/"))/downloads'
 PAPER_FETCH_FORMULA_TOOLS_DIR='$($Staging.Replace("\", "/"))/formula-tools'
+MATHML_TO_LATEX_NODE_BIN='$($Staging.Replace("\", "/"))/runtime/Lib/site-packages/playwright/driver/node.exe'
 CLOAKBROWSER_HEADLESS='true'
 # PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
 # CLOAKBROWSER_BINARY_PATH='C:/path/to/preinstalled/browser.exe'
@@ -338,6 +339,7 @@ function Write-OfflineReadme {
 
 This installer includes the embedded Python runtime, installed Python packages, and formula tools.
 It includes the `cloakbrowser` Python package but does not redistribute the CloakBrowser browser binary.
+Formula conversion uses the bundled Playwright driver Node via `MATHML_TO_LATEX_NODE_BIN`; do not rely on a bare `node` from PATH in Codex Desktop sessions.
 
 The first browser-backed fetch may need network access so CloakBrowser can download its runtime. In restricted environments, preinstall a compatible browser runtime and set `CLOAKBROWSER_BINARY_PATH` before using browser-backed providers.
 

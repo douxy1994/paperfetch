@@ -334,7 +334,11 @@ class FormulaConversionTests(unittest.TestCase):
             formula_conversion._mathml_worker_for = lambda **_kwargs: FakeWorker()
             formula_conversion._run_command = lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("CLI fallback should not run"))
 
-            result = formula_conversion.convert_with_mathml_to_latex(raw_mathml, display_mode=False, env={})
+            result = formula_conversion.convert_with_mathml_to_latex(
+                raw_mathml,
+                display_mode=False,
+                env={},
+            )
         finally:
             formula_conversion._resolve_mathml_to_latex_command = original_command
             formula_conversion._resolve_mathml_to_latex_worker_command = original_worker_command
@@ -361,7 +365,11 @@ class FormulaConversionTests(unittest.TestCase):
             formula_conversion._mathml_worker_for = lambda **_kwargs: FailingWorker()
             formula_conversion._run_command = lambda *args, **kwargs: subprocess.CompletedProcess(args[0], 0, "x", "")
 
-            result = formula_conversion.convert_with_mathml_to_latex(raw_mathml, display_mode=False, env={})
+            result = formula_conversion.convert_with_mathml_to_latex(
+                raw_mathml,
+                display_mode=False,
+                env={},
+            )
         finally:
             formula_conversion._resolve_mathml_to_latex_command = original_command
             formula_conversion._resolve_mathml_to_latex_worker_command = original_worker_command
@@ -370,6 +378,77 @@ class FormulaConversionTests(unittest.TestCase):
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.latex, "x")
+
+    def test_mathml_to_latex_cli_permission_error_returns_failed_result(self) -> None:
+        raw_mathml = '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
+        original_command = formula_conversion._resolve_mathml_to_latex_command
+        original_run_command = formula_conversion._run_command
+        try:
+            formula_conversion._resolve_mathml_to_latex_command = lambda _env: (
+                "C:/Program Files/WindowsApps/OpenAI.Codex/app/resources/node.exe",
+                "C:/PaperFetchSkill/formula-tools/mathml_to_latex_cli.mjs",
+                None,
+                None,
+            )
+            formula_conversion._run_command = lambda *args, **kwargs: (_ for _ in ()).throw(
+                PermissionError(5, "Access is denied")
+            )
+
+            result = formula_conversion.convert_with_mathml_to_latex(
+                raw_mathml,
+                display_mode=False,
+                env={"MATHML_TO_LATEX_WORKER": "0"},
+            )
+        finally:
+            formula_conversion._resolve_mathml_to_latex_command = original_command
+            formula_conversion._run_command = original_run_command
+
+        self.assertEqual(result.backend, "mathml-to-latex")
+        self.assertEqual(result.status, "failed")
+        self.assertIn("mathml-to-latex node executable failed", result.error or "")
+        self.assertIn("WindowsApps", result.error or "")
+        self.assertIn("Access is denied", result.error or "")
+
+    def test_texmath_default_fallback_reports_mathml_node_permission_error(self) -> None:
+        raw_mathml = '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
+        original_texmath = formula_conversion.convert_with_texmath
+        original_command = formula_conversion._resolve_mathml_to_latex_command
+        original_run_command = formula_conversion._run_command
+        try:
+            formula_conversion.convert_with_texmath = lambda *args, **kwargs: formula_conversion.FormulaConversionResult(
+                backend="texmath",
+                status="failed",
+                latex="",
+                raw_mathml=raw_mathml,
+                error="texmath returned empty output",
+                duration_ms=1,
+                display_mode=False,
+            )
+            formula_conversion._resolve_mathml_to_latex_command = lambda _env: (
+                "C:/Program Files/WindowsApps/OpenAI.Codex/app/resources/node.exe",
+                "C:/PaperFetchSkill/formula-tools/mathml_to_latex_cli.mjs",
+                None,
+                None,
+            )
+            formula_conversion._run_command = lambda *args, **kwargs: (_ for _ in ()).throw(
+                PermissionError(5, "Access is denied")
+            )
+
+            result = formula_conversion.convert_mathml_string(
+                raw_mathml,
+                display_mode=False,
+                env={"MATHML_TO_LATEX_WORKER": "0"},
+            )
+        finally:
+            formula_conversion.convert_with_texmath = original_texmath
+            formula_conversion._resolve_mathml_to_latex_command = original_command
+            formula_conversion._run_command = original_run_command
+
+        self.assertEqual(result.backend, "texmath")
+        self.assertEqual(result.status, "failed")
+        self.assertIn("texmath failed: texmath returned empty output", result.error or "")
+        self.assertIn("mathml-to-latex node executable failed", result.error or "")
+        self.assertIn("WindowsApps", result.error or "")
 
     def test_mathml_to_latex_worker_is_disabled_on_windows(self) -> None:
         raw_mathml = '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'

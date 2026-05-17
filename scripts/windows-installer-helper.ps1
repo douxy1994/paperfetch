@@ -22,6 +22,7 @@ $McpEnvKeys = @(
     "PAPER_FETCH_MCP_PYTHON_BIN",
     "PAPER_FETCH_DOWNLOAD_DIR",
     "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "MATHML_TO_LATEX_NODE_BIN",
     "CLOAKBROWSER_HEADLESS"
 )
 
@@ -105,6 +106,10 @@ function Get-RuntimePython {
     return Join-Path (Join-Path $InstallRoot "runtime") "python.exe"
 }
 
+function Get-MathmlToLatexNode {
+    return Join-Path $InstallRoot "runtime/Lib/site-packages/playwright/driver/node.exe"
+}
+
 function ConvertTo-FullPath {
     param([string]$Path)
     return [System.IO.Path]::GetFullPath($Path)
@@ -134,6 +139,7 @@ function Get-McpEnv {
         PAPER_FETCH_MCP_PYTHON_BIN = (ConvertTo-FullPath (Get-RuntimePython))
         PAPER_FETCH_DOWNLOAD_DIR = (ConvertTo-FullPath $downloads)
         PAPER_FETCH_FORMULA_TOOLS_DIR = (ConvertTo-FullPath $formulaTools)
+        MATHML_TO_LATEX_NODE_BIN = (ConvertTo-FullPath (Get-MathmlToLatexNode))
         CLOAKBROWSER_HEADLESS = "true"
     }
     $ordered = [ordered]@{}
@@ -194,6 +200,7 @@ function Write-ManagedEnvFile {
     foreach ($name in @(
         "PAPER_FETCH_DOWNLOAD_DIR",
         "PAPER_FETCH_FORMULA_TOOLS_DIR",
+        "MATHML_TO_LATEX_NODE_BIN",
         "CLOAKBROWSER_HEADLESS",
         "PYTHONUTF8",
         "PYTHONIOENCODING"
@@ -464,6 +471,7 @@ function Unregister-GeminiMcp {
 function Invoke-SmokeChecks {
     $python = ConvertTo-FullPath (Get-RuntimePython)
     $texmath = ConvertTo-FullPath (Join-Path (Join-Path $InstallRoot "formula-tools") "bin/texmath.exe")
+    $node = ConvertTo-FullPath (Get-MathmlToLatexNode)
 
     Set-ProcessRuntimeEnv
     Write-Log "Running bundled Python smoke checks"
@@ -496,6 +504,7 @@ if len(sys.argv) > 1 and sys.argv[1] == "probe-launch":
     }
     Invoke-Checked -FilePath $python -Arguments $args
     Invoke-Checked -FilePath $texmath -Arguments @("--help")
+    Invoke-Checked -FilePath $node -Arguments @("--version")
 }
 
 switch ($Action) {

@@ -56,7 +56,9 @@
 - [`../README.md`](../README.md)
   - 首页。讲项目动机、核心能力、边界和部署入口。
 - [`../CHANGELOG.md`](../CHANGELOG.md)
-  - 公共变更历史。记录对用户可见的新能力、限制和迁移提示。
+  - 英文公共变更历史。记录对用户可见的新能力、限制和迁移提示。
+- [`../CHANGELOG_CN.md`](../CHANGELOG_CN.md)
+  - 中文公共变更历史对照版。
 - [`../AGENTS.md`](../AGENTS.md)
   - 贡献者与 agent 协作约定。描述本仓库默认语言、测试和开发边界。
 - [`cli.md`](cli.md)

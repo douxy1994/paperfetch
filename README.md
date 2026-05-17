@@ -111,6 +111,7 @@ paper-fetch --help
 
 安装器会注册 CloakBrowser 默认 headless 环境。受限环境可在 `offline.env` 中设置 `CLOAKBROWSER_BINARY_PATH` 指向预装浏览器。
 AGU/Wiley 页面遇到 Cloudflare challenge 时，可在 `offline.env` 中设置 `PAPER_FETCH_BROWSER_USER_AGENT` 为普通 Chrome UA；`CLOAKBROWSER_HEADLESS=true` 仍可使用。
+Windows 安装器还会设置 `MATHML_TO_LATEX_NODE_BIN` 指向包内 Playwright Node，避免 Codex Desktop 的 WindowsApps/MSIX 内部 `node.exe` 被公式转换 fallback 误用。
 
 **5. 开启 Elsevier 获取权限**
 
@@ -122,7 +123,7 @@ notepad "$env:LOCALAPPDATA\PaperFetchSkill\offline.env"
 
 **6. 刷新 agent skill**
 
-修改 Codex / Claude Code / Gemini CLI skill 或 MCP 配置后需要重启对应 host。
+修改 Codex / Claude Code / Gemini CLI skill、MCP 配置或 `offline.env` 后需要重启对应 host；已经启动的 MCP 服务不会自动继承新环境变量。
 
 **7. 常见问题**
 

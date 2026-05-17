@@ -75,6 +75,7 @@ grep -F -q "gemini mcp remove paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "gemini mcp add" "$FAKE_CLI_LOG"
 grep -F -q "PAPER_FETCH_ENV_FILE=$EXTRACTED_ROOT/offline.env" "$FAKE_CLI_LOG"
 grep -F -q "PAPER_FETCH_FORMULA_TOOLS_DIR=$EXTRACTED_ROOT/formula-tools" "$FAKE_CLI_LOG"
+grep -F -q "MATHML_TO_LATEX_NODE_BIN=" "$FAKE_CLI_LOG"
 grep -F -q "CLOAKBROWSER_HEADLESS=true" "$FAKE_CLI_LOG"
 
 # shellcheck disable=SC1091

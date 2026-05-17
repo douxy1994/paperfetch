@@ -329,6 +329,7 @@ mcp_env_value() {
     PAPER_FETCH_MCP_PYTHON_BIN) mcp_python_bin ;;
     PAPER_FETCH_DOWNLOAD_DIR) printf '%s\n' "$BUNDLE_ROOT/downloads" ;;
     PAPER_FETCH_FORMULA_TOOLS_DIR) printf '%s\n' "$BUNDLE_ROOT/formula-tools" ;;
+    MATHML_TO_LATEX_NODE_BIN) command -v node || printf 'node\n' ;;
     CLOAKBROWSER_HEADLESS) cloakbrowser_headless_value ;;
     *) die "Unknown MCP env key: $key" ;;
   esac

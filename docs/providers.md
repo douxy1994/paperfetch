@@ -710,6 +710,7 @@ export PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64)
 
 - 可选。
 - 指定 Node 可执行文件；默认是 `node`。
+- Windows 离线安装器会将它写为包内 `runtime/Lib/site-packages/playwright/driver/node.exe`，避免 Codex Desktop 的 WindowsApps/MSIX 内部 `node.exe` 被外部子进程调用时触发 `[WinError 5]`。
 
 #### `MATHML_TO_LATEX_SCRIPT`
 
