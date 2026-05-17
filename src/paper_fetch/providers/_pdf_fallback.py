@@ -23,6 +23,7 @@ from ..extraction.html.assets.requester import (
 from ..extraction.html.shared import html_text_snippet, html_title_snippet
 from ..extraction.html.signals import detect_html_block, summarize_html
 from ..runtime import RuntimeContext
+from ..runtime_browser import browser_context_options
 from ..utils import normalize_text
 from ._pdf_candidates import extract_pdf_candidate_urls_from_html
 from ._pdf_common import (
@@ -251,14 +252,15 @@ def fetch_pdf_with_browser(
     artifact_dir.mkdir(parents=True, exist_ok=True)
     last_failure: PdfFallbackFailure | None = None
     sanitized_storage_state_path: Path | None = None
-    active_user_agent = browser_user_agent or "paper-fetch-skill/pdf-fallback"
+    active_user_agent = normalize_text(browser_user_agent)
 
     if browser_cookies:
+        http_headers = {"User-Agent": active_user_agent} if active_user_agent else {}
         try:
             return fetch_pdf_over_http(
                 context.transport if context is not None and context.transport is not None else HttpTransport(),
                 candidate_urls,
-                headers={"User-Agent": active_user_agent},
+                headers=http_headers,
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 artifact_dir=artifact_dir,
                 browser_cookies=list(browser_cookies),
@@ -266,12 +268,10 @@ def fetch_pdf_with_browser(
         except PdfFallbackFailure as exc:
             last_failure = exc
 
-    context_kwargs: dict[str, Any] = {
-        "user_agent": active_user_agent,
-        "locale": "en-US",
-        "viewport": {"width": 1440, "height": 1600},
-        "accept_downloads": True,
-    }
+    context_kwargs: dict[str, Any] = browser_context_options(
+        user_agent=active_user_agent,
+        accept_downloads=True,
+    )
     if storage_state_path is not None:
         sanitized_storage_state_path = sanitize_storage_state(storage_state_path)
         context_kwargs["storage_state"] = str(sanitized_storage_state_path)
@@ -357,7 +357,7 @@ def fetch_pdf_with_browser(
                         context_cookies = browser_context.cookies()
                     except Exception:
                         context_cookies = list(browser_cookies or [])
-                    http_headers = {"User-Agent": active_user_agent}
+                    http_headers = {"User-Agent": active_user_agent} if active_user_agent else {}
                     http_referer = normalize_text(referer) or normalize_text(html_base_url)
                     if http_referer:
                         http_headers["Referer"] = http_referer

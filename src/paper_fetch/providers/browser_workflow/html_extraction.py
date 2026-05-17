@@ -5,7 +5,6 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Callable, Mapping
 
-from ...config import build_user_agent
 from ...extraction.html.assets import extract_scoped_html_assets
 from ...extraction.html.signals import HtmlExtractionFailure, detect_html_block, summarize_html
 from ...metadata.types import ProviderMetadata
@@ -21,7 +20,7 @@ from ...quality.reason_codes import (
     STRUCTURED_MISSING_BODY_SECTIONS,
 )
 from ...runtime import RuntimeContext
-from ...runtime_browser import BrowserContextManager
+from ...runtime_browser import BrowserContextManager, browser_context_options, browser_page_user_agent
 from ...tracing import fulltext_marker, trace_from_markers
 from ...utils import normalize_text
 from .fetchers.context import (
@@ -145,7 +144,7 @@ def _cached_browser_workflow_assets(
     return context.get_or_set_parse_cache(key, extract_assets, copy_value=True)
 
 
-def _fast_browser_context_seed(context: Any, *, final_url: str, user_agent: str) -> dict[str, Any]:
+def _fast_browser_context_seed(context: Any, *, final_url: str, user_agent: str | None) -> dict[str, Any]:
     try:
         cookies = context.cookies()
     except Exception:
@@ -161,7 +160,7 @@ def fetch_html_with_fast_browser(
     candidate_urls: list[str],
     *,
     publisher: str,
-    user_agent: str,
+    user_agent: str | None = None,
     headless: bool = True,
     timeout_ms: int = _FAST_BROWSER_HTML_TIMEOUT_MS,
     context: RuntimeContext | None = None,
@@ -173,12 +172,9 @@ def fetch_html_with_fast_browser(
     manager = None
     browser_context = None
     page = None
+    configured_user_agent = normalize_text(user_agent)
     try:
-        context_kwargs = {
-            "user_agent": normalize_text(user_agent) or build_user_agent({}),
-            "locale": "en-US",
-            "viewport": {"width": 1440, "height": 1600},
-        }
+        context_kwargs = browser_context_options(user_agent=configured_user_agent)
         try:
             if context is not None:
                 browser_context = context.new_browser_context(headless=headless, **context_kwargs)
@@ -256,7 +252,7 @@ def fetch_html_with_fast_browser(
                 browser_context_seed=_fast_browser_context_seed(
                     browser_context,
                     final_url=final_url,
-                    user_agent=normalize_text(user_agent) or build_user_agent({}),
+                    user_agent=configured_user_agent or browser_page_user_agent(page),
                 ),
             )
     finally:

@@ -55,7 +55,7 @@ def fetch_seeded_browser_pdf_payload(
         artifact_dir=runtime.artifact_dir / artifact_subdir,
         browser_cookies=list(pdf_context_seed.get("browser_cookies") or []),
         browser_user_agent=pdf_context_seed.get("browser_user_agent")
-        or user_agent,
+        or getattr(runtime, "user_agent", None),
         headless=runtime.headless,
         seed_urls=[seed_url] if seed_url else None,
         context=context,

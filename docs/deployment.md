@@ -280,6 +280,12 @@ export CLOAKBROWSER_HEADLESS="true"
 export CLOAKBROWSER_TIMEOUT_MS="120000"
 ```
 
+AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，可只覆盖 browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求：
+
+```bash
+export PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+```
+
 补充：
 
 - `wiley` / `science` / `pnas` / `ams` 还需要 browser runtime，因为 PNAS direct HTML preflight、HTML 正文图片资产下载和 seeded-browser PDF/ePDF fallback 都会使用 browser context

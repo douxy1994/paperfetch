@@ -14,7 +14,7 @@ from .._cloakbrowser_runtime import import_cloakbrowser
 from ..config import (
     CLOAKBROWSER_HEADLESS_ENV_VAR,
     CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
-    build_user_agent,
+    build_browser_user_agent,
     parse_positive_int_env,
     resolve_user_data_dir,
 )
@@ -27,6 +27,7 @@ from ..quality.html_availability import choose_parser, extract_page_title
 from ..quality.html_signals import looks_like_abstract_redirect
 from ..quality.reason_codes import REDIRECTED_TO_ABSTRACT
 from ..reason_codes import ERROR, NOT_CONFIGURED, OK, READY
+from ..runtime_browser import browser_context_options, browser_page_user_agent
 from ..utils import normalize_text, provider_display_name, sanitize_filename
 from .browser_runtime.seed import (
     merge_browser_context_seeds,
@@ -119,7 +120,7 @@ def load_runtime_config(env: Mapping[str, str], *, provider: str, doi: str) -> C
         doi=doi,
         artifact_dir=artifact_dir,
         headless=headless,
-        user_agent=build_user_agent(env),
+        user_agent=build_browser_user_agent(env),
         timeout_ms=parse_positive_int_env(
             env,
             CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
@@ -481,7 +482,7 @@ def _capture_image_payload(
     return None
 
 
-def _context_seed(context: Any, *, final_url: str, user_agent: str) -> dict[str, Any]:
+def _context_seed(context: Any, *, final_url: str, user_agent: str | None) -> dict[str, Any]:
     try:
         cookies = context.cookies()
     except Exception:
@@ -533,17 +534,15 @@ def fetch_html_with_cloakbrowser(
     latest_browser_context_seed: Mapping[str, Any] | None = None
     timeout_ms = max_timeout_ms or config.timeout_ms
     artifact_dir = config.artifact_dir / "cloakbrowser"
-    user_agent = normalize_text(config.user_agent)
+    configured_user_agent = normalize_text(config.user_agent)
 
     browser = None
     browser_context = None
     page = None
     try:
         try:
-            context_kwargs = dict(
-                user_agent=user_agent,
-                locale="en-US",
-                viewport={"width": 1440, "height": 1600},
+            context_kwargs = browser_context_options(
+                user_agent=configured_user_agent,
             )
             if runtime_context is not None:
                 browser_context = runtime_context.new_browser_context(
@@ -641,7 +640,11 @@ def fetch_html_with_cloakbrowser(
                 status = _browser_response_status(response, zero_as_none=False)
                 headers = _browser_response_headers(response)
                 summary = summarize_html(html)
-                browser_context_seed = _context_seed(browser_context, final_url=final_url, user_agent=user_agent)
+                browser_context_seed = _context_seed(
+                    browser_context,
+                    final_url=final_url,
+                    user_agent=configured_user_agent or browser_page_user_agent(page),
+                )
                 if browser_context_seed.get("browser_cookies") or browser_context_seed.get("browser_user_agent"):
                     latest_browser_context_seed = browser_context_seed
                 image_payload = None

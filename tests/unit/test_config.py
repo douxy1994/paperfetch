@@ -192,7 +192,7 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(config.resolve_cli_download_dir(env), expected)
         self.assertEqual(config.resolve_mcp_download_dir(env), expected)
 
-    def test_cloakbrowser_runtime_config_defaults_to_user_data_artifacts_and_user_agent(self) -> None:
+    def test_cloakbrowser_runtime_config_defaults_to_user_data_artifacts_without_browser_user_agent(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime_config = browser_runtime.load_runtime_config(
                 {config.XDG_DATA_HOME_ENV_VAR: tmpdir},
@@ -203,8 +203,35 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(runtime_config.provider, "science")
         self.assertEqual(runtime_config.doi, "10.1126/science.ady3136")
         self.assertTrue(runtime_config.headless)
-        self.assertEqual(runtime_config.user_agent, config.DEFAULT_USER_AGENT)
+        self.assertIsNone(runtime_config.user_agent)
         self.assertIn("publisher-browser-artifacts", runtime_config.artifact_dir.parts)
+
+    def test_cloakbrowser_runtime_config_uses_explicit_shared_user_agent_for_browser(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_config = browser_runtime.load_runtime_config(
+                {
+                    config.USER_AGENT_ENV_VAR: "paper-fetch-test/1",
+                    config.XDG_DATA_HOME_ENV_VAR: tmpdir,
+                },
+                provider="science",
+                doi="10.1126/science.ady3136",
+            )
+
+        self.assertEqual(runtime_config.user_agent, "paper-fetch-test/1")
+
+    def test_cloakbrowser_runtime_config_browser_user_agent_overrides_shared_user_agent(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_config = browser_runtime.load_runtime_config(
+                {
+                    config.USER_AGENT_ENV_VAR: "paper-fetch-test/1",
+                    config.BROWSER_USER_AGENT_ENV_VAR: "Mozilla/5.0",
+                    config.XDG_DATA_HOME_ENV_VAR: tmpdir,
+                },
+                provider="science",
+                doi="10.1126/science.ady3136",
+            )
+
+        self.assertEqual(runtime_config.user_agent, "Mozilla/5.0")
 
     def test_cloakbrowser_runtime_config_expands_env_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -212,7 +239,6 @@ class ConfigTests(unittest.TestCase):
                 {
                     config.CLOAKBROWSER_HEADLESS_ENV_VAR: "false",
                     config.CLOAKBROWSER_TIMEOUT_MS_ENV_VAR: "12345",
-                    config.USER_AGENT_ENV_VAR: "paper-fetch-test/1",
                     config.XDG_DATA_HOME_ENV_VAR: tmpdir,
                 },
                 provider="science",
@@ -221,7 +247,6 @@ class ConfigTests(unittest.TestCase):
 
         self.assertFalse(runtime_config.headless)
         self.assertEqual(runtime_config.timeout_ms, 12345)
-        self.assertEqual(runtime_config.user_agent, "paper-fetch-test/1")
         self.assertTrue(str(runtime_config.artifact_dir).startswith(str(Path(tmpdir).expanduser())))
 
 

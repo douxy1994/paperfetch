@@ -1,7 +1,8 @@
 # Environment
 
 - `PAPER_FETCH_ENV_FILE`: Optional path to an explicit environment file. The default user config file is resolved with `platformdirs` and is outside the repo; repo-local config files are not auto-loaded.
-- `PAPER_FETCH_SKILL_USER_AGENT`: Optional custom HTTP `User-Agent`; when unset, runtime uses `paper_fetch.config.DEFAULT_USER_AGENT`.
+- `PAPER_FETCH_SKILL_USER_AGENT`: Optional custom HTTP `User-Agent` for non-browser metadata/API requests; when unset, runtime uses `paper_fetch.config.DEFAULT_USER_AGENT`. If explicitly set and `PAPER_FETCH_BROWSER_USER_AGENT` is unset, browser contexts reuse this value for compatibility.
+- `PAPER_FETCH_BROWSER_USER_AGENT`: Optional browser-only `User-Agent` override for CloakBrowser/Playwright contexts. Leave unset to use CloakBrowser/Chromium's own UA. For AGU/Wiley Cloudflare challenge issues, set this to a normal Chrome UA.
 - `CROSSREF_MAILTO`: Recommended contact email for Crossref polite pool requests.
 - `ELSEVIER_API_KEY`: Required for official Elsevier full-text access.
 - `ELSEVIER_INSTTOKEN`: Optional institution token for Elsevier entitlement.

@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import lru_cache
+from pathlib import Path
 from typing import Any
 
+from paper_fetch import config
+from paper_fetch.providers import browser_runtime
+from paper_fetch.providers.browser_workflow.shared import default_browser_workflow_deps
 from paper_fetch.providers import wiley as wiley_provider
+from paper_fetch.runtime import RuntimeContext
 from tests.golden_criteria import golden_criteria_asset
 
 
@@ -68,3 +74,71 @@ def test_markdown_review_loop_formula_references_and_abstract_only_fixture() -> 
     assert "Drought thresholds" in references_markdown
     assert "Open in figure viewer" not in references_markdown
     assert "PowerPoint" not in references_markdown
+
+
+def test_wiley_browser_workflow_does_not_force_default_http_user_agent(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_fetch_html_with_browser(_candidate_urls, *, config, **_kwargs):
+        captured["browser_user_agent"] = config.user_agent
+        raise browser_runtime.BrowserRuntimeFailure("forced_stop", "stop")
+
+    deps = replace(
+        default_browser_workflow_deps(),
+        ensure_runtime_ready=lambda _runtime: None,
+        fetch_html_with_browser=fake_fetch_html_with_browser,
+    )
+    env = {config.XDG_DATA_HOME_ENV_VAR: str(tmp_path)}
+    client = wiley_provider.WileyClient(transport=None, env=env, deps=deps)
+
+    result = deps.bootstrap_browser_workflow(
+        client,
+        "10.1029/2023JD040418",
+        {
+            "doi": "10.1029/2023JD040418",
+            "landing_page_url": "https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2023JD040418",
+        },
+        allow_runtime_failure=True,
+        context=RuntimeContext(env=env),
+        deps=deps,
+    )
+
+    assert result.html_failure_reason == "forced_stop"
+    assert captured["browser_user_agent"] is None
+
+
+def test_wiley_browser_workflow_uses_explicit_browser_user_agent(tmp_path: Path) -> None:
+    captured: dict[str, object] = {}
+    chrome_user_agent = (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+    )
+
+    def fake_fetch_html_with_browser(_candidate_urls, *, config, **_kwargs):
+        captured["browser_user_agent"] = config.user_agent
+        raise browser_runtime.BrowserRuntimeFailure("forced_stop", "stop")
+
+    deps = replace(
+        default_browser_workflow_deps(),
+        ensure_runtime_ready=lambda _runtime: None,
+        fetch_html_with_browser=fake_fetch_html_with_browser,
+    )
+    env = {
+        config.XDG_DATA_HOME_ENV_VAR: str(tmp_path),
+        config.BROWSER_USER_AGENT_ENV_VAR: chrome_user_agent,
+    }
+    client = wiley_provider.WileyClient(transport=None, env=env, deps=deps)
+
+    deps.bootstrap_browser_workflow(
+        client,
+        "10.1029/2023JD040418",
+        {
+            "doi": "10.1029/2023JD040418",
+            "landing_page_url": "https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2023JD040418",
+        },
+        allow_runtime_failure=True,
+        context=RuntimeContext(env=env),
+        deps=deps,
+    )
+
+    assert captured["browser_user_agent"] == chrome_user_agent

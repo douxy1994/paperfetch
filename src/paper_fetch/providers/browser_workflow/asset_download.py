@@ -363,7 +363,7 @@ def _build_attempt_image_fetcher(
         browser_context_seed_getter=lambda: attempt_seed,
         seed_urls_getter=seed_urls_getter,
         browser_user_agent=attempt_seed.get("browser_user_agent")
-        or recovery.user_agent,
+        or getattr(recovery.runtime, "user_agent", None),
         headless=getattr(recovery.runtime, "headless", True),
     )
 
@@ -385,7 +385,7 @@ def _build_attempt_file_fetcher(
         browser_context_seed_getter=lambda: attempt_seed,
         seed_urls_getter=seed_urls_getter,
         browser_user_agent=attempt_seed.get("browser_user_agent")
-        or recovery.user_agent,
+        or getattr(recovery.runtime, "user_agent", None),
         headless=getattr(recovery.runtime, "headless", True),
     )
 

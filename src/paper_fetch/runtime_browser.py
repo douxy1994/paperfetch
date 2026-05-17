@@ -8,6 +8,36 @@ from typing import Any
 
 from ._cloakbrowser_runtime import import_cloakbrowser
 
+DEFAULT_BROWSER_LOCALE = "en-US"
+DEFAULT_BROWSER_VIEWPORT = {"width": 1440, "height": 1600}
+
+
+def browser_context_options(
+    *,
+    user_agent: str | None = None,
+    locale: str = DEFAULT_BROWSER_LOCALE,
+    viewport: dict[str, int] | None = None,
+    **extra: Any,
+) -> dict[str, Any]:
+    options: dict[str, Any] = {
+        "locale": locale,
+        "viewport": dict(DEFAULT_BROWSER_VIEWPORT if viewport is None else viewport),
+    }
+    active_user_agent = str(user_agent or "").strip()
+    if active_user_agent:
+        options["user_agent"] = active_user_agent
+    options.update(extra)
+    return options
+
+
+def browser_page_user_agent(page: Any) -> str | None:
+    try:
+        user_agent = page.evaluate("() => navigator.userAgent")
+    except Exception:
+        return None
+    normalized = str(user_agent or "").strip()
+    return normalized or None
+
 
 @dataclass
 class BrowserContextManager:
@@ -54,4 +84,6 @@ class BrowserContextManager:
 
 __all__ = [
     "BrowserContextManager",
+    "browser_context_options",
+    "browser_page_user_agent",
 ]

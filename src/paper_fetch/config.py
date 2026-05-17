@@ -18,8 +18,9 @@ DEFAULT_MCP_DOWNLOAD_DIR = DEFAULT_USER_DATA_DIR / "downloads"
 DEFAULT_CLI_DOWNLOAD_DIR = Path("live-downloads")
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
 
-DEFAULT_USER_AGENT = "paper-fetch-skill/1.5"
+DEFAULT_USER_AGENT = "paper-fetch-skill/1.5.1"
 USER_AGENT_ENV_VAR = "PAPER_FETCH_SKILL_USER_AGENT"
+BROWSER_USER_AGENT_ENV_VAR = "PAPER_FETCH_BROWSER_USER_AGENT"
 ENV_FILE_ENV_VAR = "PAPER_FETCH_ENV_FILE"
 DOWNLOAD_DIR_ENV_VAR = "PAPER_FETCH_DOWNLOAD_DIR"
 XDG_DATA_HOME_ENV_VAR = "XDG_DATA_HOME"
@@ -96,6 +97,14 @@ def build_user_agent(env: Mapping[str, str]) -> str:
     if mailto and "mailto:" not in base and "@" not in base:
         return f"{base} (mailto:{mailto})"
     return base
+
+
+def build_browser_user_agent(env: Mapping[str, str]) -> str | None:
+    browser_user_agent = env.get(BROWSER_USER_AGENT_ENV_VAR, "").strip()
+    if browser_user_agent:
+        return browser_user_agent
+    shared_user_agent = env.get(USER_AGENT_ENV_VAR, "").strip()
+    return shared_user_agent or None
 
 
 def _configured_download_dir(env: Mapping[str, str] | None = None) -> Path | None:

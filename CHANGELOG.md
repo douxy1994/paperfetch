@@ -6,6 +6,14 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.5.1 - 2026-05-17
+
+### Fixed
+
+- Updated browser workflow User-Agent handling so CloakBrowser/Playwright contexts no longer inherit the default `paper-fetch-skill/<version>` HTTP UA unless users explicitly configure a browser UA.
+- Added `PAPER_FETCH_BROWSER_USER_AGENT` for browser-only UA overrides while keeping explicit `PAPER_FETCH_SKILL_USER_AGENT` as a compatibility fallback for browser contexts.
+- Documented the AGU/Wiley Cloudflare challenge workaround using a normal Chrome browser UA with headless CloakBrowser.
+
 ## 1.5 - 2026-05-16
 
 ### Added
@@ -91,18 +99,18 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 - Copernicus XML extraction now reuses the parsed XML root through validation and article assembly, validates usable body paragraphs with a named threshold, and continues with DOI-derived XML/PDF URLs when landing HTML cannot be fetched.
 - Copernicus XML assets now use `original_url` as the canonical remote URL while shared asset download mirrors the compatibility URL fields after download; table assets are emitted directly as `kind="table"` with `table_render_kind`.
-- 安装器结束摘要现在会明确提示 Elsevier 全文抓取需要从 <https://dev.elsevier.com/> 申请并配置 `ELSEVIER_API_KEY`，并指向对应 `.env` 文件。
-- Windows 离线发布产物改为 `paper-fetch-skill-windows-x86_64-setup.exe`，内置 CPython 3.13 x64、Python 依赖、Playwright Chromium、formula tools、FlareSolverr runtime、Codex / Claude Code skill 和 MCP 注册 helper。
-- GitHub Actions 在 `v*` tag push 或显式手动发布时，会等常规验证、完整 Linux 离线包矩阵和 Windows x86_64 setup exe 成功后创建 GitHub Release，并上传 4 个 Linux tarball 加 1 个 Windows 安装器 release asset。
-- 扩展正文图片 payload 识别与落盘格式：除现有 PNG/JPEG/GIF/WebP/AVIF/TIFF 外，支持 SVG 文本、BMP、ICO、APNG、HEIC/HEIF 的 MIME/扩展名映射；正文图片保存前会确认 payload 具备图片 magic 或顶层 SVG 文档特征，避免把 challenge HTML 当图片保存。
-- 将 Science `10.1126/science.adz3492` 加入 golden fixture，保留真实 SVG 正文图资产，防止 Science/PNAS SVG 图片落盘路径回归。
-- 为 Wiley / Science / PNAS 正文抓取增加 FlareSolverr HTML 快速首轮：主 HTML 请求使用 `waitInSeconds=0` 和 `disableMedia=true`，遇到 challenge、访问拦截、摘要重定向或正文抽取不足时自动回退到原保守等待策略。
-- 图片恢复、正文/附件资产下载、figure-page HTML 发现继续走允许媒体资源的路径，避免 `disableMedia` 阻断 full-size 图片发现与下载。
-- 收敛 HTML availability/container、section hint、browser-workflow Markdown profile、作者 fallback、Crossref resolve 转发和 HTML heading/table helper 的重复实现；canonical owner 分别为 `quality.html_availability`、`extraction.section_hints` / `extraction.html.semantics`、`ProviderBrowserProfile` / `_html_authors.py`、`metadata.crossref`。
-- 明确 Science / PNAS / Wiley 共享浏览器抽取为 Atypon-only profile，并把 asset scope、Wiley abbreviations、Wiley author noise、supplementary URL/filename 和 AAAS/PNAS/Wiley datalayer 判定收敛到 provider-owned callback/schema。
-- 将 HTML asset canonical owner 移到 `paper_fetch.extraction.html.assets` 包，删除 `paper_fetch.extraction.html._assets` 与 `paper_fetch.providers.html_assets` 兼容门面；下载 hook 现在从 extraction asset 包或 `paper_fetch.extraction.html.assets.download` patch。
-- 将 `paper_fetch.models` 物化为包，并按 schema、markdown、tokens、quality、render、sections、builders 拆分实现；`from paper_fetch.models import ...` 继续兼容。
-- 将 Science/PNAS browser-workflow HTML 实现物化为 `paper_fetch.providers.science_pnas` 包，删除 `paper_fetch.providers._science_pnas_html` 兼容门面，并抽出 provider HTML asset policy engine 与 Playwright document fetcher 基类。
+- Installer completion summaries now explicitly prompt users to request and configure `ELSEVIER_API_KEY` from <https://dev.elsevier.com/> before Elsevier full-text fetching, and point to the relevant `.env` file.
+- Windows offline release artifacts now use `paper-fetch-skill-windows-x86_64-setup.exe` and bundle CPython 3.13 x64, Python dependencies, Playwright Chromium, formula tools, the FlareSolverr runtime, Codex / Claude Code skills, and MCP registration helpers.
+- GitHub Actions now creates a GitHub Release on `v*` tag pushes or explicit manual releases after regular validation, the full Linux offline package matrix, and the Windows x86_64 setup exe succeed, uploading 4 Linux tarballs plus 1 Windows installer release asset.
+- Expanded body-image payload recognition and persistence formats: in addition to PNG/JPEG/GIF/WebP/AVIF/TIFF, SVG text, BMP, ICO, APNG, and HEIC/HEIF MIME/extension mappings are supported; body images are verified for image magic bytes or top-level SVG document signatures before being saved, avoiding challenge HTML being persisted as images.
+- Added Science `10.1126/science.adz3492` to the golden fixtures with real SVG body-image assets to guard against Science/PNAS SVG image persistence regressions.
+- Added a fast initial FlareSolverr HTML pass for Wiley / Science / PNAS full-text fetching: primary HTML requests use `waitInSeconds=0` and `disableMedia=true`, then automatically fall back to the original conservative wait strategy on challenges, access blocks, abstract redirects, or insufficient body extraction.
+- Image recovery, body/supplementary asset downloads, and figure-page HTML discovery continue to use media-enabled paths so `disableMedia` does not block full-size image discovery or downloads.
+- Consolidated duplicate implementations for HTML availability/container handling, section hints, browser-workflow Markdown profiles, author fallback, Crossref resolve forwarding, and HTML heading/table helpers; canonical owners are now `quality.html_availability`, `extraction.section_hints` / `extraction.html.semantics`, `ProviderBrowserProfile` / `_html_authors.py`, and `metadata.crossref`.
+- Clarified that the shared Science / PNAS / Wiley browser extraction is an Atypon-only profile, and consolidated asset scope, Wiley abbreviations, Wiley author noise, supplementary URL/filename rules, and AAAS/PNAS/Wiley datalayer detection into provider-owned callbacks/schemas.
+- Moved the HTML asset canonical owner to the `paper_fetch.extraction.html.assets` package, removed the `paper_fetch.extraction.html._assets` and `paper_fetch.providers.html_assets` compatibility facades, and made download hooks patch from the extraction asset package or `paper_fetch.extraction.html.assets.download`.
+- Materialized `paper_fetch.models` as a package split by schema, markdown, tokens, quality, render, sections, and builders while keeping `from paper_fetch.models import ...` compatible.
+- Materialized the Science/PNAS browser-workflow HTML implementation as the `paper_fetch.providers.science_pnas` package, removed the `paper_fetch.providers._science_pnas_html` compatibility facade, and extracted the provider HTML asset policy engine plus Playwright document fetcher base class.
 
 ## 1.0.0 - 2026-04-26
 

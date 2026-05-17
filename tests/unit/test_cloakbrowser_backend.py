@@ -132,6 +132,17 @@ def _runtime_config(tmp_path):
     )
 
 
+def _runtime_config_without_browser_user_agent(tmp_path):
+    return _cloakbrowser.CloakBrowserRuntimeConfig(
+        provider="wiley",
+        doi="10.1029/2023JD040418",
+        artifact_dir=tmp_path / "artifacts",
+        headless=True,
+        user_agent=None,
+        timeout_ms=12345,
+    )
+
+
 class _FakeWorkflowClient:
     name = "science"
 
@@ -166,6 +177,23 @@ def test_fetch_html_with_cloakbrowser_returns_existing_html_contract(tmp_path) -
     assert fake_module.browser.context.page.continued_document is True
     assert fake_module.browser.context.closed is True
     assert fake_module.browser.closed is True
+
+
+def test_fetch_html_with_cloakbrowser_omits_user_agent_when_not_configured(tmp_path) -> None:
+    fake_module = _FakeCloakBrowserModule()
+    config = _runtime_config_without_browser_user_agent(tmp_path)
+
+    with mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module):
+        result = _cloakbrowser.fetch_html_with_cloakbrowser(
+            ["https://agupubs.onlinelibrary.wiley.com/doi/full/10.1029/2023JD040418"],
+            publisher="wiley",
+            config=config,
+            disable_media=True,
+            wait_seconds=0,
+        )
+
+    assert "user_agent" not in fake_module.browser.new_context_kwargs
+    assert result.browser_context_seed["browser_user_agent"] is None
 
 
 def test_fetch_html_with_cloakbrowser_uses_runtime_context_shared_browser(tmp_path) -> None:

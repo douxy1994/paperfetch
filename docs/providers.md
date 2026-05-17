@@ -651,8 +651,20 @@ PAPER_FETCH_ENV_FILE=/path/to/.env
 
 #### `PAPER_FETCH_SKILL_USER_AGENT`
 
-- 自定义请求用 `User-Agent`。
+- 自定义非浏览器 HTTP metadata/API 请求用 `User-Agent`。
 - 建议配置为稳定项目标识。
+- 为兼容旧配置，如果未设置 `PAPER_FETCH_BROWSER_USER_AGENT`，显式配置的这个值也会用于 browser context；未显式配置时，browser context 不会继承默认 `paper-fetch-skill/<version>` UA。
+
+#### `PAPER_FETCH_BROWSER_USER_AGENT`
+
+- 可选。
+- 仅覆盖 CloakBrowser/Playwright browser context 的 `User-Agent`。
+- 未配置时默认使用 CloakBrowser/Chromium 自身 UA。
+- AGU/Wiley 页面遇到 Cloudflare challenge 时，可配置为普通 Chrome UA；例如：
+
+```bash
+export PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+```
 
 #### `CROSSREF_MAILTO`
 
@@ -798,6 +810,12 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 
 - 可选，默认 `120000`。
 - 控制 CloakBrowser HTML bootstrap 的页面导航超时。
+
+#### AGU/Wiley browser UA
+
+- 可选。
+- 仅用于 Wiley / Science / PNAS / AMS 的 CloakBrowser HTML、图片资产恢复和 seeded-browser PDF/ePDF fallback。
+- AGU/Wiley 站点触发 Cloudflare challenge 时，优先在 `.env` 中设置普通 Chrome UA；`CLOAKBROWSER_HEADLESS=true` 仍可继续使用，成功不应依赖 headed 模式。
 
 <!-- SCAFFOLD: provider-docs -->
 

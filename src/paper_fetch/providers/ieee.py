@@ -7,7 +7,7 @@ import tempfile
 import urllib.parse
 from typing import Any, Mapping
 
-from ..config import build_user_agent
+from ..config import build_browser_user_agent, build_user_agent
 from ..extraction.html import decode_html
 from ..extraction.html.availability_policy import AvailabilityPolicy
 from ..extraction.html.landing import LandingRedirectLimitExceeded, fetch_landing_html
@@ -105,6 +105,7 @@ class IeeeClient(ProviderClient):
         self.transport = transport
         self.env = dict(env)
         self.user_agent = build_user_agent(env)
+        self.browser_user_agent = build_browser_user_agent(env)
 
     def probe_status(self) -> ProviderStatusResult:
         return summarize_capability_status(
@@ -346,7 +347,7 @@ class IeeeClient(ProviderClient):
         article_number = landing_attempt.article_number
         return ieee_browser_html.fetch_ieee_browser_html_payload(
             provider_name=self.name,
-            user_agent=self.user_agent,
+            browser_user_agent=self.browser_user_agent,
             landing_attempt=landing_attempt,
             document_url=self._document_url(article_number),
             rest_url=self._rest_url(article_number),
@@ -396,7 +397,7 @@ class IeeeClient(ProviderClient):
                 return (fetch_pdf_with_playwright if fetch_pdf_with_playwright is not _FETCH_PDF_WITH_BROWSER else fetch_pdf_with_browser)(
                     candidates,
                     artifact_dir=active_artifact_dir,
-                    browser_user_agent=self.user_agent,
+                    browser_user_agent=self.browser_user_agent,
                     headless=True,
                     referer=document_url,
                     seed_urls=browser_seed_urls,

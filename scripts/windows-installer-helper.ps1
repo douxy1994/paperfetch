@@ -205,6 +205,7 @@ function Write-ManagedEnvFile {
             $lines.Add("$name=$(Quote-DotenvValue $value)")
         }
     }
+    $lines.Add("# PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'")
     $lines.Add("# CLOAKBROWSER_BINARY_PATH='C:/path/to/preinstalled/browser.exe'")
     $lines.Add($OfflineManagedEnd)
     [System.IO.File]::WriteAllLines($target, $lines, [System.Text.UTF8Encoding]::new($false))

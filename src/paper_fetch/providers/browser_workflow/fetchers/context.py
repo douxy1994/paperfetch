@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Callable, Mapping
 
-from ....config import build_user_agent
 from ....runtime import RuntimeContext
+from ....runtime_browser import browser_context_options
 from ....utils import normalize_text
 from ..._pdf_candidates import BROWSER_WORKFLOW_PDF_URL_TOKENS
 from ...browser_runtime.seed import parse_optional_int
@@ -71,14 +71,10 @@ def _new_browser_context(
     *,
     runtime_context: RuntimeContext | None,
     headless: bool,
-    user_agent: str,
+    user_agent: str | None,
     use_runtime_shared_browser: bool = True,
 ) -> tuple[Any | None, Any | None, Any]:
-    context_kwargs = {
-        "user_agent": user_agent,
-        "locale": "en-US",
-        "viewport": {"width": 1440, "height": 1600},
-    }
+    context_kwargs = browser_context_options(user_agent=user_agent)
     if runtime_context is not None and use_runtime_shared_browser:
         return (
             None,
@@ -155,7 +151,6 @@ class _BaseBrowserDocumentFetcher:
         active_user_agent = (
             normalize_text(self._current_seed().get("browser_user_agent"))
             or normalize_text(self._browser_user_agent)
-            or build_user_agent({})
         )
         try:
             self._browser_manager, _unused_browser, self._context = _new_browser_context(

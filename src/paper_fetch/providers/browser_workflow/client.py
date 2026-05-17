@@ -6,7 +6,7 @@ from functools import partial
 from pathlib import Path
 from typing import Any, Mapping
 
-from ...config import build_user_agent, resolve_asset_download_concurrency
+from ...config import build_browser_user_agent, build_user_agent, resolve_asset_download_concurrency
 from ...extraction.html import decode_html
 from ...extraction.html.signals import HtmlExtractionFailure
 from ...metadata.types import ProviderMetadata
@@ -66,6 +66,7 @@ class BrowserWorkflowClient(ProviderClient):
         self.transport = transport
         self.env = dict(env)
         self.user_agent = build_user_agent(env)
+        self.browser_user_agent = build_browser_user_agent(env)
         self.deps = deps
 
     def probe_status(self):

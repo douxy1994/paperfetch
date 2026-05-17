@@ -321,6 +321,7 @@ $OfflineManagedBegin
 PAPER_FETCH_DOWNLOAD_DIR='$($Staging.Replace("\", "/"))/downloads'
 PAPER_FETCH_FORMULA_TOOLS_DIR='$($Staging.Replace("\", "/"))/formula-tools'
 CLOAKBROWSER_HEADLESS='true'
+# PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
 # CLOAKBROWSER_BINARY_PATH='C:/path/to/preinstalled/browser.exe'
 PYTHONUTF8='1'
 PYTHONIOENCODING='utf-8'

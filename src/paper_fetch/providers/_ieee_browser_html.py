@@ -10,6 +10,7 @@ from ..http.headers import header_value
 from ..quality.html_availability import HtmlQualityAssessor, availability_failure_message
 from ..reason_codes import ERROR, NO_RESULT
 from ..runtime import RuntimeContext
+from ..runtime_browser import browser_context_options
 from ..tracing import fulltext_marker
 from ..utils import normalize_text
 from . import _ieee_html as ieee_html
@@ -53,7 +54,7 @@ def _playwright_response_status(response: Any | None) -> int | None:
 def fetch_ieee_browser_html_payload(
     *,
     provider_name: str,
-    user_agent: str,
+    browser_user_agent: str | None,
     landing_attempt: ieee_metadata.IeeeLandingAttempt,
     document_url: str,
     rest_url: str,
@@ -80,12 +81,13 @@ def fetch_ieee_browser_html_payload(
     html_text = ""
 
     try:
+        context_kwargs = browser_context_options(
+            user_agent=browser_user_agent,
+            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+        )
         browser_context = context.new_playwright_context(
             headless=True,
-            user_agent=user_agent,
-            locale="en-US",
-            viewport={"width": 1440, "height": 1600},
-            extra_http_headers={"Accept-Language": "en-US,en;q=0.9"},
+            **context_kwargs,
         )
 
         def route_handler(route: Any) -> None:

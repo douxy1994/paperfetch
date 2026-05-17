@@ -13,7 +13,7 @@ class BrowserRuntimeConfig:
     doi: str
     artifact_dir: Path
     headless: bool
-    user_agent: str
+    user_agent: str | None
     timeout_ms: int = 120000
 
 

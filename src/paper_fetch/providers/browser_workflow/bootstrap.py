@@ -107,7 +107,7 @@ def bootstrap_browser_workflow(
             html_result = deps.fetch_html_with_fast_browser(
                 html_candidates,
                 publisher=client.name,
-                user_agent=client.user_agent,
+                user_agent=client.browser_user_agent,
                 context=context,
             )
             result.browser_context_seed = html_result.browser_context_seed
