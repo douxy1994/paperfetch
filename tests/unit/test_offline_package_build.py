@@ -56,13 +56,24 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertNotIn("sessions.list", script)
         self.assertNotIn("playwright.sync_api", script)
 
-    def test_windows_package_build_excludes_local_legacy_backup_and_playwright_bundles(self) -> None:
+    def test_windows_package_build_creates_runtime_only_staging(self) -> None:
         script = BUILD_OFFLINE_PACKAGE_WINDOWS.read_text(encoding="utf-8")
 
-        self.assertIn('Join-Path $RepoDir "legacy"', script)
+        self.assertIn("Copy-RuntimeAssets", script)
+        self.assertIn("windows-runtime-wheelhouse", script)
+        self.assertIn("runtime/Lib/site-packages", script)
+        self.assertIn("Assert-RuntimeOnlyStaging", script)
+        self.assertIn("scripts/windows-installer-helper.ps1", script)
+        self.assertIn("installer/manifest.json", script)
+        self.assertIn('$sourceSkill = Join-Path (Join-Path $RepoDir "skills") $SkillName', script)
         self.assertIn('Get-ChildItem -Path $wheelhouse -Filter "cloakbrowser-*.whl"', script)
         self.assertIn('browser_binary = "not_bundled"', script)
         self.assertIn("Write-OfflineReadme", script)
+        self.assertNotIn("Copy-SourceSnapshot", script)
+        self.assertNotIn("robocopy", script)
+        self.assertNotIn('Join-Path $RepoDir "legacy"', script)
+        self.assertNotIn('Join-Path $Staging "wheelhouse"', script)
+        self.assertNotIn('Join-Path $Staging "dist"', script)
         self.assertNotIn("Add-PlaywrightChromium", script)
         self.assertNotIn("-m playwright install chromium", script)
 
@@ -73,7 +84,12 @@ class OfflinePackageBuildTests(unittest.TestCase):
 
         self.assertIn("paper-fetch.cmd", wrapper_block)
         self.assertIn("paper-fetch-mcp.cmd", wrapper_block)
+        self.assertIn("command_wrappers = \"bin\"", manifest_block)
         self.assertIn("cloakbrowser = [ordered]@{", manifest_block)
+        self.assertNotIn("project_wheels", manifest_block)
+        self.assertNotIn("wheelhouse_count", manifest_block)
+        self.assertNotIn("source_snapshot", manifest_block)
+        self.assertNotIn("inno_setup", manifest_block)
         self.assertNotIn("playwright_browsers", manifest_block)
 
     def test_windows_powershell_here_string_terminators_are_flush_left(self) -> None:

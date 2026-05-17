@@ -6,6 +6,12 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.5.3 - 2026-05-17
+
+### 变更
+
+- Windows 离线安装器改为只打包 embedded runtime、已安装 Python 包、命令启动器、静态 skill、formula tools 和安装器元数据，不再把仓库源码快照或构建 wheelhouse 放进安装后的 payload。
+
 ## 1.5.2 - 2026-05-17
 
 ### 变更

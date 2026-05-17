@@ -24,6 +24,8 @@ $BuildDir = if ($env:PAPER_FETCH_OFFLINE_BUILD_DIR) {
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $RepoDir "dist"
 }
+$ProjectWheelPath = ""
+$DependencyWheelhouse = ""
 
 function Write-Log {
     param([string]$Message)
@@ -100,39 +102,30 @@ function Get-ProjectVersion {
     return $version.Trim()
 }
 
-function Copy-SourceSnapshot {
+function Copy-RuntimeAssets {
     param([string]$Staging)
 
-    Write-Log "Copying source snapshot"
-    New-Item -ItemType Directory -Force -Path $Staging | Out-Null
-    $excludeDirs = @(
-        ".git",
-        ".venv",
-        ".offline-build",
-        ".formula-tools",
-        ".pytest_cache",
-        ".ruff_cache",
-        "build",
-        "dist",
-        "tests",
-        "live-downloads",
-        "__pycache__",
-        (Join-Path $RepoDir "legacy")
-    )
-    & robocopy $RepoDir $Staging /E /XD @excludeDirs /NFL /NDL /NJH /NJS /NC /NS | Out-Null
-    if ($LASTEXITCODE -ge 8) {
-        throw "robocopy failed with exit code $LASTEXITCODE."
+    Write-Log "Copying runtime installer assets"
+    $installerDir = Join-Path $Staging "installer"
+    $scriptsDir = Join-Path $Staging "scripts"
+    $skillsDir = Join-Path $Staging "skills"
+    New-Item -ItemType Directory -Force -Path $installerDir, $scriptsDir, $skillsDir | Out-Null
+
+    Copy-Item -LiteralPath $InstallerManifestPath -Destination (Join-Path $installerDir "manifest.json")
+    Copy-Item -LiteralPath (Join-Path (Join-Path $RepoDir "scripts") "windows-installer-helper.ps1") -Destination (Join-Path $scriptsDir "windows-installer-helper.ps1")
+
+    $sourceSkill = Join-Path (Join-Path $RepoDir "skills") $SkillName
+    if (-not (Test-Path -LiteralPath (Join-Path $sourceSkill "SKILL.md") -PathType Leaf)) {
+        throw "Missing static skill source at $sourceSkill."
     }
-    $global:LASTEXITCODE = 0
+    Copy-Item -LiteralPath $sourceSkill -Destination $skillsDir -Recurse
 }
 
 function Build-ProjectWheelhouse {
-    param([string]$Staging)
-
     $projectDist = Join-Path $BuildDir "project-dist"
-    $wheelhouse = Join-Path $Staging "wheelhouse"
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $projectDist
-    New-Item -ItemType Directory -Force -Path $projectDist, $wheelhouse, (Join-Path $Staging "dist") | Out-Null
+    $wheelhouse = Join-Path $BuildDir "windows-runtime-wheelhouse"
+    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $projectDist, $wheelhouse
+    New-Item -ItemType Directory -Force -Path $projectDist, $wheelhouse | Out-Null
 
     Write-Log "Building project wheel"
     Invoke-Native $PythonBin -m pip wheel --no-deps --wheel-dir $projectDist $RepoDir
@@ -142,7 +135,8 @@ function Build-ProjectWheelhouse {
         throw "Expected one built project wheel, found $($wheels.Count)."
     }
     $projectWheelPath = $wheels[0].FullName
-    Copy-Item -LiteralPath $projectWheelPath -Destination (Join-Path $Staging "dist")
+    $script:ProjectWheelPath = $projectWheelPath
+    $script:DependencyWheelhouse = $wheelhouse
 
     Write-Log "Downloading Windows dependency wheelhouse"
     Invoke-Native $PythonBin -m pip download --dest $wheelhouse --only-binary=:all: $projectWheelPath
@@ -153,15 +147,15 @@ function Build-ProjectWheelhouse {
 }
 
 function New-BuildVenv {
-    param([string]$Staging)
-
     $buildVenv = Join-Path $BuildDir "build-venv-windows"
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $buildVenv
     Invoke-Native $PythonBin -m venv $buildVenv
     $buildPython = Join-Path $buildVenv "Scripts/python.exe"
     Invoke-Native $buildPython -m pip install --quiet --upgrade pip
-    $projectWheel = @(Get-ChildItem -Path (Join-Path $Staging "dist") -Filter "paper_fetch_skill-*.whl")[0].FullName
-    Invoke-Native $buildPython -m pip install --no-index --find-links (Join-Path $Staging "wheelhouse") $projectWheel
+    if ([string]::IsNullOrWhiteSpace($script:ProjectWheelPath) -or [string]::IsNullOrWhiteSpace($script:DependencyWheelhouse)) {
+        throw "Project wheelhouse must be built before creating the Windows build venv."
+    }
+    Invoke-Native $buildPython -m pip install --no-index --find-links $script:DependencyWheelhouse $script:ProjectWheelPath
     return $buildPython
 }
 
@@ -215,28 +209,22 @@ function Install-EmbeddedPythonPackages {
 
     $runtime = Join-Path $Staging "runtime"
     $sitePackages = Join-Path $runtime "Lib/site-packages"
-    $projectWheel = @(Get-ChildItem -Path (Join-Path $Staging "dist") -Filter "paper_fetch_skill-*.whl")[0].FullName
+    if ([string]::IsNullOrWhiteSpace($script:ProjectWheelPath) -or [string]::IsNullOrWhiteSpace($script:DependencyWheelhouse)) {
+        throw "Project wheelhouse must be built before installing embedded runtime packages."
+    }
     New-Item -ItemType Directory -Force -Path $sitePackages | Out-Null
 
     Write-Log "Installing project and dependencies into embedded runtime"
     $previousSkip = $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
     try {
         $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
-        Invoke-Native $PythonBin -m pip install --no-index --find-links (Join-Path $Staging "wheelhouse") --target $sitePackages $projectWheel
+        Invoke-Native $PythonBin -m pip install --no-index --find-links $script:DependencyWheelhouse --only-binary=:all: --target $sitePackages $script:ProjectWheelPath
     } finally {
         $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = $previousSkip
     }
 
     $runtimePython = Join-Path $runtime "python.exe"
     Invoke-Native $runtimePython -X utf8 -c "import paper_fetch; import paper_fetch.mcp.server; print('embedded runtime ok')"
-}
-
-function Remove-BuildOnlyArtifacts {
-    param([string]$Staging)
-
-    Write-Log "Removing build-only wheel artifacts from Windows staging"
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Staging "wheelhouse")
-    Remove-Item -Recurse -Force -ErrorAction SilentlyContinue (Join-Path $Staging "dist")
 }
 
 function Add-FormulaTools {
@@ -383,15 +371,13 @@ function Write-ManifestAndChecksums {
             bin = "bin"
             skills = "skills/$SkillName"
             installer_manifest = "installer/manifest.json"
-            project_wheels = @()
-            wheelhouse_count = 0
+            command_wrappers = "bin"
             formula_tools = "formula-tools"
             cloakbrowser = [ordered]@{
                 python_package = "runtime/Lib/site-packages"
                 browser_binary = "not_bundled"
             }
             installer = [ordered]@{
-                inno_setup = "installer/paper-fetch-skill.iss"
                 post_install_helper = "scripts/windows-installer-helper.ps1"
             }
         }
@@ -407,6 +393,38 @@ function Write-ManifestAndChecksums {
             "$hash  ./$relative"
         }
     $checksumLines | Set-Content -LiteralPath (Join-Path $Staging "sha256sums.txt") -Encoding ASCII
+}
+
+function Assert-RuntimeOnlyStaging {
+    param([string]$Staging)
+
+    Write-Log "Verifying Windows runtime-only staging layout"
+    foreach ($relative in @(
+        "runtime/python.exe",
+        "runtime/Lib/site-packages/paper_fetch/__init__.py",
+        "bin/paper-fetch.cmd",
+        "bin/paper-fetch-mcp.cmd",
+        "skills/$SkillName/SKILL.md",
+        "installer/manifest.json",
+        "scripts/windows-installer-helper.ps1"
+    )) {
+        if (-not (Test-Path -LiteralPath (Join-Path $Staging $relative))) {
+            throw "Windows runtime staging is missing required path: $relative"
+        }
+    }
+
+    foreach ($relative in @(
+        "src",
+        "tests",
+        ".github",
+        "wheelhouse",
+        "dist",
+        "pyproject.toml"
+    )) {
+        if (Test-Path -LiteralPath (Join-Path $Staging $relative)) {
+            throw "Windows runtime staging must not include source/build path: $relative"
+        }
+    }
 }
 
 function Find-InnoCompiler {
@@ -465,18 +483,18 @@ $staging = Join-Path $BuildDir "paper-fetch-standalone"
 $version = Get-ProjectVersion
 
 Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $staging
-New-Item -ItemType Directory -Force -Path $BuildDir | Out-Null
+New-Item -ItemType Directory -Force -Path $BuildDir, $staging | Out-Null
 
-Copy-SourceSnapshot $staging
-Build-ProjectWheelhouse $staging
-$buildPython = New-BuildVenv $staging
+Copy-RuntimeAssets $staging
+Build-ProjectWheelhouse
+$buildPython = New-BuildVenv
 Add-EmbeddedPythonRuntime $staging
 Install-EmbeddedPythonPackages $staging
-Remove-BuildOnlyArtifacts $staging
 Add-FormulaTools -Staging $staging -BuildPython $buildPython
 Write-CmdWrappers $staging
 Add-SkillAgentManifest $staging
 Write-DefaultOfflineEnv $staging
 Write-OfflineReadme $staging
+Assert-RuntimeOnlyStaging $staging
 Write-ManifestAndChecksums -Staging $staging -Version $version -PythonTag $pythonTag -SetupBaseName $PackageName
 Build-InnoInstaller -Staging $staging -Version $version -SetupBaseName $PackageName

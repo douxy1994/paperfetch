@@ -44,6 +44,17 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("/bin/paper-fetch-install-formula-tools", workflow)
         self.assertIn("^[^/]+/(src|wheelhouse)(/|$)", workflow)
 
+    def test_windows_offline_ci_verifies_runtime_only_package_layout(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("Windows installer is missing runtime path", workflow)
+        self.assertIn("runtime/Lib/site-packages/paper_fetch/__init__.py", workflow)
+        self.assertIn("bin/paper-fetch.cmd", workflow)
+        self.assertIn("skills/paper-fetch-skill/SKILL.md", workflow)
+        self.assertIn("scripts/windows-installer-helper.ps1", workflow)
+        self.assertIn("Windows runtime package must not include source/build path", workflow)
+        self.assertIn("pyproject.toml", workflow)
+
 
 if __name__ == "__main__":
     unittest.main()

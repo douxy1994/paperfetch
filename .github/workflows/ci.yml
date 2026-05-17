@@ -325,6 +325,32 @@ jobs:
 
           $runtimePython = Join-Path $installRoot "runtime/python.exe"
           $mathmlNode = Join-Path $installRoot "runtime/Lib/site-packages/playwright/driver/node.exe"
+          foreach ($requiredPath in @(
+            "runtime/Lib/site-packages/paper_fetch/__init__.py",
+            "bin/paper-fetch.cmd",
+            "bin/paper-fetch-mcp.cmd",
+            "skills/paper-fetch-skill/SKILL.md",
+            "installer/manifest.json",
+            "scripts/windows-installer-helper.ps1"
+          )) {
+            $absoluteRequiredPath = Join-Path $installRoot $requiredPath
+            if (-not (Test-Path -LiteralPath $absoluteRequiredPath)) {
+              throw "Windows installer is missing runtime path: $requiredPath"
+            }
+          }
+          foreach ($forbiddenPath in @(
+            "src",
+            "tests",
+            ".github",
+            "wheelhouse",
+            "dist",
+            "pyproject.toml"
+          )) {
+            $absoluteForbiddenPath = Join-Path $installRoot $forbiddenPath
+            if (Test-Path -LiteralPath $absoluteForbiddenPath) {
+              throw "Windows runtime package must not include source/build path: $forbiddenPath"
+            }
+          }
           $offlineEnv = Get-Content -LiteralPath (Join-Path $installRoot "offline.env") -Raw
           $offlineEnvRoot = $installRoot.Replace("\", "/")
           $managedBeginCount = [regex]::Matches($offlineEnv, [regex]::Escape("# BEGIN paper-fetch offline managed")).Count

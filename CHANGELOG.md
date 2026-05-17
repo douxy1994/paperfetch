@@ -6,6 +6,12 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.5.3 - 2026-05-17
+
+### Changed
+
+- Changed the Windows offline installer to package only the embedded runtime, installed packages, command wrappers, static skill, formula tools, and installer metadata, removing the repository source snapshot and build wheelhouse from the installed payload.
+
 ## 1.5.2 - 2026-05-17
 
 ### Changed
