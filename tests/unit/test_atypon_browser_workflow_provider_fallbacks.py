@@ -612,11 +612,25 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         self.assertNotIn("fulltext:wiley_pdf_fallback_ok", result.article.quality.source_trail)
         self.assertTrue(any("returning abstract-only content" in warning for warning in result.article.quality.warnings))
 
-    def test_wiley_cloudflare_html_failure_does_not_fall_back_to_pdf(self) -> None:
+    def test_wiley_cloudflare_html_failure_falls_back_to_browser_pdf(self) -> None:
         client = wiley_provider.WileyClient(transport=None, env={})
         doi = "10.1111/gcb.70541"
         title = "Wiley HTML First Example"
-        mocked_pdf = mock.Mock()
+        landing_url = f"https://onlinelibrary.wiley.com/doi/full/{doi}"
+        seed = {
+            "browser_cookies": [{"name": "cf_clearance", "value": "secret", "domain": ".wiley.com", "path": "/"}],
+            "browser_user_agent": "Mozilla/5.0",
+        }
+        pdf_payload = _typed_raw_payload(
+            provider="wiley",
+            source_url=f"https://onlinelibrary.wiley.com/doi/epdf/{doi}",
+            content_type="application/pdf",
+            body=fulltext_pdf_bytes(),
+            route="pdf_fallback",
+            markdown_text=f"# {title}\n\n## Results\n\n" + ("Wiley fallback body. " * 80),
+            suggested_filename="wiley.pdf",
+        )
+        mocked_pdf = mock.Mock(return_value=pdf_payload)
 
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "wiley", doi)
@@ -628,23 +642,28 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
                     side_effect=browser_runtime.BrowserRuntimeFailure(
                         "cloudflare_challenge",
                         "Encountered a challenge or CAPTCHA page while loading publisher HTML.",
+                        browser_context_seed=seed,
                     )
                 ),
                 fetch_seeded_browser_pdf_payload=mocked_pdf,
             )
-            with self.assertRaises(wiley_provider.ProviderFailure) as caught:
-                client.fetch_raw_fulltext(
-                    doi,
-                    {
-                        "doi": doi,
-                        "title": title,
-                        "landing_page_url": f"https://onlinelibrary.wiley.com/doi/full/{doi}",
-                    },
-                )
+            raw_payload = client.fetch_raw_fulltext(
+                doi,
+                {
+                    "doi": doi,
+                    "title": title,
+                    "landing_page_url": landing_url,
+                },
+            )
 
-        mocked_pdf.assert_not_called()
-        self.assertIn("Wiley HTML route hit a Cloudflare challenge", caught.exception.message)
-        self.assertIn("CLOAKBROWSER_HEADLESS=false", caught.exception.message)
+        mocked_pdf.assert_called_once()
+        self.assertEqual(mocked_pdf.call_args.kwargs["browser_context_seed"], seed)
+        self.assertEqual(mocked_pdf.call_args.kwargs["html_failure_reason"], "cloudflare_challenge")
+        self.assertIn("challenge", mocked_pdf.call_args.kwargs["html_failure_message"].lower())
+        self.assertEqual(_payload_route(raw_payload), "pdf_fallback")
+        self.assertIn("fulltext:wiley_html_fail", _payload_source_trail(raw_payload))
+        self.assertIn("fulltext:wiley_pdf_browser_ok", _payload_source_trail(raw_payload))
+        self.assertIn("fulltext:wiley_pdf_fallback_ok", _payload_source_trail(raw_payload))
 
     def test_pnas_provider_falls_back_to_pdf_with_browser_seed(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
