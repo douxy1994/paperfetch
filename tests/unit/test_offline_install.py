@@ -17,6 +17,7 @@ LINUX_INSTALLER = REPO_ROOT / "install-offline.sh"
 WINDOWS_INSTALLER = REPO_ROOT / "install-offline.ps1"
 WINDOWS_INSTALLER_HELPER = REPO_ROOT / "scripts" / "windows-installer-helper.ps1"
 WINDOWS_OFFLINE_BUILD = REPO_ROOT / "scripts" / "build-offline-package-windows.ps1"
+WINDOWS_INNO_INSTALLER = REPO_ROOT / "installer" / "paper-fetch-skill.iss"
 
 
 def _write_file(path: Path, content: str = "") -> None:
@@ -192,6 +193,8 @@ class OfflineInstallTests(unittest.TestCase):
         *args: str,
         shell: str | None = "/bin/bash",
         extra_env: dict[str, str] | None = None,
+        install_dir: Path | None = None,
+        use_default_install_dir: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["HOME"] = str(home)
@@ -203,8 +206,12 @@ class OfflineInstallTests(unittest.TestCase):
             env["SHELL"] = shell
         if extra_env:
             env.update(extra_env)
+        command = [str(bundle / "install-offline.sh"), "--skip-smoke"]
+        if not use_default_install_dir:
+            command.extend(["--install-dir", str(install_dir or bundle)])
+        command.extend(args)
         return subprocess.run(
-            [str(bundle / "install-offline.sh"), "--skip-smoke", *args],
+            command,
             cwd=bundle,
             env=env,
             text=True,
@@ -229,6 +236,59 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH", offline_env)
             self.assertEqual((bundle / "runtime" / "python-bin").read_text(encoding="utf-8"), f"{fake_bin / 'python3'}\n")
             self.assertIn("CloakBrowser headless: true", result.stdout)
+
+    def test_default_install_copies_runtime_to_user_data_dir(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle, fake_bin, home = self._create_bundle(Path(tmpdir))
+            install_root = home / ".local" / "share" / "paper-fetch-skill"
+
+            result = self._run_installer(bundle, fake_bin, home, use_default_install_dir=True)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue((install_root / "runtime" / "site-packages" / "paper_fetch" / "__init__.py").exists())
+            self.assertTrue((install_root / "bin" / "paper-fetch").exists())
+            self.assertTrue((install_root / "install-offline.sh").exists())
+            self.assertTrue((install_root / "activate-offline.sh").exists())
+            self.assertTrue((install_root / "offline.env").exists())
+            bashrc = (home / ".bashrc").read_text(encoding="utf-8")
+            self.assertIn(f'export PAPER_FETCH_ENV_FILE="{install_root / "offline.env"}"', bashrc)
+            self.assertIn(f"{install_root / 'bin'}", bashrc)
+            self.assertFalse((bundle / "offline.env").exists())
+            self.assertIn(f"Install directory: {install_root}", result.stdout)
+
+    def test_install_dir_upgrade_cleans_old_payload_and_preserves_offline_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bundle, fake_bin, home = self._create_bundle(root)
+            install_root = root / "fixed-install"
+            for stale in ("src", "tests", "wheelhouse", "dist", ".github"):
+                _write_file(install_root / stale / "old.txt", "old\n")
+            _write_file(install_root / "pyproject.toml", "[project]\n")
+            _write_file(
+                install_root / "offline.env",
+                textwrap.dedent(
+                    """
+                    ELSEVIER_API_KEY="secret"
+                    USER_NOTE="keep"
+
+                    # BEGIN paper-fetch offline managed
+                    PAPER_FETCH_DOWNLOAD_DIR="/old/downloads"
+                    # END paper-fetch offline managed
+                    """
+                ).lstrip(),
+            )
+
+            result = self._run_installer(bundle, fake_bin, home, install_dir=install_root)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            for stale in ("src", "tests", "wheelhouse", "dist", ".github", "pyproject.toml"):
+                self.assertFalse((install_root / stale).exists(), stale)
+            self.assertTrue((install_root / "runtime" / "site-packages" / "paper_fetch" / "__init__.py").exists())
+            offline_env = (install_root / "offline.env").read_text(encoding="utf-8")
+            self.assertIn('ELSEVIER_API_KEY="secret"', offline_env)
+            self.assertIn('USER_NOTE="keep"', offline_env)
+            self.assertNotIn("/old/downloads", offline_env)
+            self.assertIn(f'PAPER_FETCH_DOWNLOAD_DIR="{install_root / "downloads"}"', offline_env)
 
     def test_shell_startup_blocks_use_cloakbrowser_headless(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -366,7 +426,22 @@ class OfflineInstallTests(unittest.TestCase):
             calls = [line.split("\t") for line in cli_log.read_text(encoding="utf-8").splitlines()]
             self.assertIn(["codex", "mcp", "remove", "paper-fetch"], calls)
             self.assertFalse(any(call[:3] == ["codex", "mcp", "add"] for call in calls))
-            self.assertIn("Bundle files were left in place", result.stdout)
+            self.assertIn("Install directory was left in place", result.stdout)
+
+    def test_purge_removes_install_directory_after_user_level_cleanup(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir)
+            bundle, fake_bin, home = self._create_bundle(root)
+            install_root = root / "installed"
+            result = self._run_installer(bundle, fake_bin, home, install_dir=install_root)
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertTrue(install_root.exists())
+
+            purge = self._run_installer(bundle, fake_bin, home, "--purge", install_dir=install_root)
+
+            self.assertEqual(purge.returncode, 0, purge.stderr)
+            self.assertFalse(install_root.exists())
+            self.assertIn("Install directory deleted", purge.stdout)
 
     def test_matching_manifest_and_interpreter_tags_are_accepted(self) -> None:
         for python_version, python_tag in (("3.11.9", "cp311"), ("3.12.7", "cp312"), ("3.13.3", "cp313")):
@@ -428,6 +503,24 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("bundled node.exe --version failed", script)
         self.assertIn("Test-CloakBrowserPackage", script)
         self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH =", script)
+
+    def test_windows_inno_installer_cleans_old_payload_and_restores_offline_env_before_helper(self) -> None:
+        script = WINDOWS_INNO_INSTALLER.read_text(encoding="utf-8")
+
+        self.assertIn("BackupOfflineEnv", script)
+        self.assertIn("RunOldUninstaller", script)
+        self.assertIn("CleanOldInstallDirectory", script)
+        self.assertIn("RestoreOfflineEnv", script)
+        self.assertIn("QuietUninstallString", script)
+        self.assertIn("UninstallString", script)
+        self.assertIn("/VERYSILENT /SUPPRESSMSGBOXES /NORESTART", script)
+        self.assertIn("DelTree(AppDir, True, True, True)", script)
+        self.assertIn("CurStep = ssInstall", script)
+        self.assertIn("CurStep = ssPostInstall", script)
+        self.assertIn("RunPostInstallHelper", script)
+        self.assertIn("HelperPath := ExpandConstant('{app}\\scripts\\windows-installer-helper.ps1')", script)
+        self.assertIn('" -Action Install', script)
+        self.assertIn("RestoreOfflineEnv;\n    RunPostInstallHelper;", script)
 
     def test_installer_manifest_declares_mathml_node_env_for_mcp_registration(self) -> None:
         manifest = (REPO_ROOT / "installer" / "manifest.json").read_text(encoding="utf-8")

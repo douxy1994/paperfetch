@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Linux x86_64 CPython 3.11-3.14 offline runtime tarball.
+# Build the Linux x86_64 CPython 3.11-3.14 offline self-extracting installer.
 
 set -euo pipefail
 
@@ -18,11 +18,12 @@ usage() {
 Usage:
   scripts/build-offline-package.sh [--output-dir <path>] [--package-name <name>]
 
-Builds a Linux x86_64 CPython 3.11-3.14 tar.gz bundle containing:
+Builds a Linux x86_64 CPython 3.11-3.14 self-extracting .sh installer containing:
   - preinstalled Python runtime under runtime/site-packages
   - command wrappers under bin/
   - texmath under formula-tools/
   - cloakbrowser Python package; the CloakBrowser browser binary is not bundled
+The release artifact is a single self-extracting .sh installer.
 EOF
 }
 
@@ -235,6 +236,8 @@ write_offline_readme() {
 This package includes an installed Python runtime under `runtime/site-packages`, command wrappers under `bin/`, and formula tools.
 It does not redistribute the CloakBrowser browser binary.
 
+Run the release `.sh` installer directly. By default it installs to `~/.local/share/paper-fetch-skill`; pass `--install-dir <path>` to use a fixed custom directory.
+
 The first browser-backed fetch may need network access so CloakBrowser can download its runtime. In restricted environments, preinstall a compatible browser runtime and set `CLOAKBROWSER_BINARY_PATH` before using browser-backed providers.
 
 Set `CLOAKBROWSER_HEADLESS=false` only when running with a display-capable session.
@@ -306,14 +309,49 @@ PY
   )
 }
 
-create_archive() {
+create_self_extracting_installer() {
   local staging_parent="$1"
   local package_name="$2"
   local output_dir="$3"
+  local output_path payload_path
   mkdir -p "$output_dir"
-  log "Creating tar.gz archive"
-  tar -C "$staging_parent" -czf "$output_dir/$package_name.tar.gz" "$package_name"
-  printf '%s\n' "$output_dir/$package_name.tar.gz"
+  output_path="$output_dir/$package_name.sh"
+  payload_path="$BUILD_DIR/$package_name.payload.tar.gz"
+  rm -f "$output_path" "$payload_path"
+
+  log "Creating self-extracting shell installer"
+  tar -C "$staging_parent" -czf "$payload_path" "$package_name"
+  cat > "$output_path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+marker="__PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__"
+archive_line="$(awk -v marker="$marker" '$0 == marker { print NR + 1; found = 1; exit } END { if (!found) exit 1 }' "$0")" || {
+  printf 'Could not locate embedded offline payload.\n' >&2
+  exit 1
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/paper-fetch-offline.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+tail -n +"$archive_line" "$0" | tar -xzf - -C "$tmp_root"
+payload_root="$tmp_root/__PACKAGE_NAME__"
+if [ ! -x "$payload_root/install-offline.sh" ]; then
+  printf 'Embedded offline payload is missing install-offline.sh.\n' >&2
+  exit 1
+fi
+
+exec "$payload_root/install-offline.sh" "$@"
+__PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__
+EOF
+  sed -i "s|__PACKAGE_NAME__|$package_name|g" "$output_path"
+  cat "$payload_path" >> "$output_path"
+  chmod +x "$output_path"
+  rm -f "$payload_path"
+  printf '%s\n' "$output_path"
 }
 
 main() {
@@ -335,7 +373,7 @@ main() {
   write_cmd_wrappers "$staging"
   write_offline_readme "$staging"
   write_manifest_and_checksums "$staging" "$version" "$python_tag"
-  create_archive "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
+  create_self_extracting_installer "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
 }
 
 main "$@"

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline installer for the Linux x86_64 CPython ABI-specific bundle.
+# Offline installer for the Linux x86_64 CPython ABI-specific runtime payload.
 
 set -euo pipefail
 
@@ -9,9 +9,11 @@ PRESET="headless"
 MERGE_USER_CONFIG=0
 RUN_SMOKE=1
 UNINSTALL=0
-OFFLINE_ENV_FILE="$BUNDLE_ROOT/offline.env"
+PURGE=0
+INSTALL_ROOT=""
+OFFLINE_ENV_FILE=""
 REUSE_ENV_FILE=0
-INSTALLER_MANIFEST_FILE="$BUNDLE_ROOT/installer/manifest.json"
+INSTALLER_MANIFEST_FILE=""
 
 MANAGED_BEGIN="# BEGIN paper-fetch offline managed"
 MANAGED_END="# END paper-fetch offline managed"
@@ -34,12 +36,20 @@ warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
 load_installer_manifest() {
+  INSTALLER_MANIFEST_FILE="$BUNDLE_ROOT/installer/manifest.json"
+  if [ ! -f "$INSTALLER_MANIFEST_FILE" ] && [ -n "$INSTALL_ROOT" ]; then
+    INSTALLER_MANIFEST_FILE="$INSTALL_ROOT/installer/manifest.json"
+  fi
   if [ ! -f "$INSTALLER_MANIFEST_FILE" ]; then
-    [ "$UNINSTALL" = "1" ] && return 0
+    if [ "$UNINSTALL" = "1" ] || [ "$PURGE" = "1" ]; then
+      return 0
+    fi
     die "Missing installer manifest: $INSTALLER_MANIFEST_FILE"
   fi
   if ! command -v "$PYTHON_BIN" >/dev/null 2>&1; then
-    [ "$UNINSTALL" = "1" ] && return 0
+    if [ "$UNINSTALL" = "1" ] || [ "$PURGE" = "1" ]; then
+      return 0
+    fi
     die "$PYTHON_BIN was not found on PATH; cannot read installer manifest."
   fi
 
@@ -82,16 +92,19 @@ for key in manifest["mcp"]["env_keys"]:
 usage() {
   cat <<'EOF'
 Usage:
-  ./install-offline.sh [--preset=headless|wslg] [--user-config] [--reuse-env-file <path>]
-  ./install-offline.sh --uninstall
+  ./install-offline.sh [--install-dir <path>] [--preset=headless|wslg] [--user-config] [--reuse-env-file <path>]
+  ./install-offline.sh [--install-dir <path>] --uninstall
+  ./install-offline.sh [--install-dir <path>] --purge
 
 Options:
+  --install-dir <path>    Install runtime files here. Default: ~/.local/share/paper-fetch-skill.
   --preset=headless|wslg  Select CloakBrowser headless/headful runtime env. Default: headless.
   --user-config           Also merge the offline runtime block into ~/.config/paper-fetch/.env.
   --no-user-config        Do not touch ~/.config/paper-fetch/.env. This is the default.
   --reuse-env-file <path> Use an existing offline.env without modifying it.
   --skip-smoke            Skip local command smoke checks after installation.
-  --uninstall             Remove user-level shell, skill, and MCP integration without deleting this bundle.
+  --uninstall             Remove user-level shell, skill, and MCP integration without deleting the install directory.
+  --purge                 Remove user-level integration and delete the install directory.
   -h, --help              Show this help.
 
 Environment:
@@ -143,6 +156,14 @@ normalize_path() {
 
 while (($#)); do
   case "$1" in
+    --install-dir=*)
+      INSTALL_ROOT="$(normalize_path "${1#*=}")"
+      ;;
+    --install-dir)
+      shift
+      [ "$#" -gt 0 ] || die "--install-dir requires a path"
+      INSTALL_ROOT="$(normalize_path "$1")"
+      ;;
     --preset=*)
       PRESET="${1#*=}"
       ;;
@@ -173,6 +194,10 @@ while (($#)); do
     --uninstall)
       UNINSTALL=1
       ;;
+    --purge)
+      UNINSTALL=1
+      PURGE=1
+      ;;
     -h|--help)
       usage
       exit 0
@@ -183,6 +208,15 @@ while (($#)); do
   esac
   shift
 done
+
+if [ -z "$INSTALL_ROOT" ]; then
+  [ -n "${HOME:-}" ] || die "HOME is required for the default install directory."
+  INSTALL_ROOT="$HOME/.local/share/paper-fetch-skill"
+fi
+
+if [ "$REUSE_ENV_FILE" != "1" ]; then
+  OFFLINE_ENV_FILE="$INSTALL_ROOT/offline.env"
+fi
 
 if [ "$UNINSTALL" != "1" ]; then
   case "$PRESET" in
@@ -248,8 +282,8 @@ check_python() {
 write_runtime_python_file() {
   local resolved_python
   resolved_python="$(command -v "$PYTHON_BIN")"
-  mkdir -p "$BUNDLE_ROOT/runtime"
-  printf '%s\n' "$resolved_python" > "$BUNDLE_ROOT/runtime/python-bin"
+  mkdir -p "$INSTALL_ROOT/runtime"
+  printf '%s\n' "$resolved_python" > "$INSTALL_ROOT/runtime/python-bin"
 }
 
 verify_checksums() {
@@ -291,11 +325,11 @@ check_bundle_assets() {
 }
 
 mcp_python_bin() {
-  printf '%s\n' "$BUNDLE_ROOT/bin/python"
+  printf '%s\n' "$INSTALL_ROOT/bin/python"
 }
 
 mathml_node_bin() {
-  local bundled_node="$BUNDLE_ROOT/runtime/site-packages/playwright/driver/node"
+  local bundled_node="$INSTALL_ROOT/runtime/site-packages/playwright/driver/node"
   if [ -x "$bundled_node" ]; then
     printf '%s\n' "$bundled_node"
   else
@@ -310,8 +344,8 @@ mcp_env_value() {
     PYTHONIOENCODING) printf 'utf-8\n' ;;
     PAPER_FETCH_ENV_FILE) printf '%s\n' "$OFFLINE_ENV_FILE" ;;
     PAPER_FETCH_MCP_PYTHON_BIN) mcp_python_bin ;;
-    PAPER_FETCH_DOWNLOAD_DIR) printf '%s\n' "$BUNDLE_ROOT/downloads" ;;
-    PAPER_FETCH_FORMULA_TOOLS_DIR) printf '%s\n' "$BUNDLE_ROOT/formula-tools" ;;
+    PAPER_FETCH_DOWNLOAD_DIR) printf '%s\n' "$INSTALL_ROOT/downloads" ;;
+    PAPER_FETCH_FORMULA_TOOLS_DIR) printf '%s\n' "$INSTALL_ROOT/formula-tools" ;;
     MATHML_TO_LATEX_NODE_BIN) mathml_node_bin ;;
     CLOAKBROWSER_HEADLESS) cloakbrowser_headless_value ;;
     *) die "Unknown MCP env key: $key" ;;
@@ -320,7 +354,7 @@ mcp_env_value() {
 
 copy_installed_skill() {
   local destination="$1"
-  local source="$BUNDLE_ROOT/skills/$SKILL_NAME"
+  local source="$INSTALL_ROOT/skills/$SKILL_NAME"
 
   require_file "$source/SKILL.md"
   rm -rf "$destination"
@@ -367,20 +401,20 @@ select_shell_startup_file() {
 
 write_posix_shell_block() {
   printf '%s\n' "$MANAGED_BEGIN"
-  printf 'export PATH=%s:%s:$PATH\n' "$(quote_env_value "$BUNDLE_ROOT/bin")" "$(quote_env_value "$BUNDLE_ROOT/formula-tools/bin")"
+  printf 'export PATH=%s:%s:$PATH\n' "$(quote_env_value "$INSTALL_ROOT/bin")" "$(quote_env_value "$INSTALL_ROOT/formula-tools/bin")"
   printf 'export PAPER_FETCH_ENV_FILE=%s\n' "$(quote_env_value "$OFFLINE_ENV_FILE")"
-  printf 'export PAPER_FETCH_DOWNLOAD_DIR=%s\n' "$(quote_env_value "$BUNDLE_ROOT/downloads")"
-  printf 'export PAPER_FETCH_FORMULA_TOOLS_DIR=%s\n' "$(quote_env_value "$BUNDLE_ROOT/formula-tools")"
+  printf 'export PAPER_FETCH_DOWNLOAD_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/downloads")"
+  printf 'export PAPER_FETCH_FORMULA_TOOLS_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/formula-tools")"
   printf 'export CLOAKBROWSER_HEADLESS=%s\n' "$(quote_env_value "$(cloakbrowser_headless_value)")"
   printf '%s\n' "$MANAGED_END"
 }
 
 write_fish_shell_block() {
   printf '%s\n' "$MANAGED_BEGIN"
-  printf 'set -gx PATH %s %s $PATH\n' "$(quote_env_value "$BUNDLE_ROOT/bin")" "$(quote_env_value "$BUNDLE_ROOT/formula-tools/bin")"
+  printf 'set -gx PATH %s %s $PATH\n' "$(quote_env_value "$INSTALL_ROOT/bin")" "$(quote_env_value "$INSTALL_ROOT/formula-tools/bin")"
   printf 'set -gx PAPER_FETCH_ENV_FILE %s\n' "$(quote_env_value "$OFFLINE_ENV_FILE")"
-  printf 'set -gx PAPER_FETCH_DOWNLOAD_DIR %s\n' "$(quote_env_value "$BUNDLE_ROOT/downloads")"
-  printf 'set -gx PAPER_FETCH_FORMULA_TOOLS_DIR %s\n' "$(quote_env_value "$BUNDLE_ROOT/formula-tools")"
+  printf 'set -gx PAPER_FETCH_DOWNLOAD_DIR %s\n' "$(quote_env_value "$INSTALL_ROOT/downloads")"
+  printf 'set -gx PAPER_FETCH_FORMULA_TOOLS_DIR %s\n' "$(quote_env_value "$INSTALL_ROOT/formula-tools")"
   printf 'set -gx CLOAKBROWSER_HEADLESS %s\n' "$(quote_env_value "$(cloakbrowser_headless_value)")"
   printf '%s\n' "$MANAGED_END"
 }
@@ -643,7 +677,16 @@ uninstall_user_integrations() {
 
   echo
   echo "Offline user-level integration removed."
-  echo "Bundle files were left in place: $BUNDLE_ROOT"
+  echo "Install directory was left in place: $INSTALL_ROOT"
+}
+
+purge_install_root() {
+  [ -n "$INSTALL_ROOT" ] || die "INSTALL_ROOT is required for --purge."
+  case "$INSTALL_ROOT" in
+    /|"") die "Refusing to purge unsafe install directory: $INSTALL_ROOT" ;;
+  esac
+  rm -rf "$INSTALL_ROOT"
+  echo "Install directory deleted: $INSTALL_ROOT"
 }
 
 write_managed_env_file() {
@@ -658,16 +701,16 @@ write_managed_env_file() {
       $0 == end { skip = 0; next }
       !skip { print }
     ' "$target" > "$tmp"
-  elif [ -f "$BUNDLE_ROOT/.env.example" ]; then
-    cp "$BUNDLE_ROOT/.env.example" "$tmp"
+  elif [ -f "$INSTALL_ROOT/.env.example" ]; then
+    cp "$INSTALL_ROOT/.env.example" "$tmp"
   else
     : > "$tmp"
   fi
 
   {
     printf '\n%s\n' "$MANAGED_BEGIN"
-    printf 'PAPER_FETCH_DOWNLOAD_DIR=%s\n' "$(quote_env_value "$BUNDLE_ROOT/downloads")"
-    printf 'PAPER_FETCH_FORMULA_TOOLS_DIR=%s\n' "$(quote_env_value "$BUNDLE_ROOT/formula-tools")"
+    printf 'PAPER_FETCH_DOWNLOAD_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/downloads")"
+    printf 'PAPER_FETCH_FORMULA_TOOLS_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/formula-tools")"
     printf 'CLOAKBROWSER_HEADLESS=%s\n' "$(quote_env_value "$(cloakbrowser_headless_value)")"
     printf '# PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"\n'
     printf '# CLOAKBROWSER_BINARY_PATH="/absolute/path/to/preinstalled/browser"\n'
@@ -678,7 +721,7 @@ write_managed_env_file() {
 }
 
 write_activate_script() {
-  local target="$BUNDLE_ROOT/activate-offline.sh"
+  local target="$INSTALL_ROOT/activate-offline.sh"
   local offline_env_literal
 
   if [ "$REUSE_ENV_FILE" = "1" ]; then
@@ -760,8 +803,8 @@ run_smoke_checks() {
   local key env_args=()
 
   log "Running local smoke checks"
-  "$BUNDLE_ROOT/bin/paper-fetch" --help >/dev/null
-  "$BUNDLE_ROOT/formula-tools/bin/texmath" --help >/dev/null
+  "$INSTALL_ROOT/bin/paper-fetch" --help >/dev/null
+  "$INSTALL_ROOT/formula-tools/bin/texmath" --help >/dev/null
   check_cloakbrowser_package
   for key in "${MCP_ENV_KEYS[@]}"; do
     env_args+=("$key=$(mcp_env_value "$key")")
@@ -769,11 +812,69 @@ run_smoke_checks() {
   env "${env_args[@]}" "$(mcp_python_bin)" -c 'from paper_fetch.mcp.fetch_tool import provider_status_payload; payload = provider_status_payload(); assert "providers" in payload'
 }
 
+same_directory() {
+  local left="$1"
+  local right="$2"
+  [ -d "$left" ] || return 1
+  [ -d "$right" ] || return 1
+  [ "$(cd "$left" && pwd -P)" = "$(cd "$right" && pwd -P)" ]
+}
+
+clean_install_root_payload() {
+  mkdir -p "$INSTALL_ROOT"
+  rm -rf \
+    "$INSTALL_ROOT/bin" \
+    "$INSTALL_ROOT/runtime" \
+    "$INSTALL_ROOT/formula-tools" \
+    "$INSTALL_ROOT/skills" \
+    "$INSTALL_ROOT/installer" \
+    "$INSTALL_ROOT/install-offline.sh" \
+    "$INSTALL_ROOT/activate-offline.sh" \
+    "$INSTALL_ROOT/README.offline.md" \
+    "$INSTALL_ROOT/offline-manifest.json" \
+    "$INSTALL_ROOT/sha256sums.txt" \
+    "$INSTALL_ROOT/LICENSE" \
+    "$INSTALL_ROOT/.env.example" \
+    "$INSTALL_ROOT/src" \
+    "$INSTALL_ROOT/tests" \
+    "$INSTALL_ROOT/.github" \
+    "$INSTALL_ROOT/wheelhouse" \
+    "$INSTALL_ROOT/dist" \
+    "$INSTALL_ROOT/pyproject.toml"
+}
+
+install_runtime_payload() {
+  local env_backup=""
+
+  mkdir -p "$INSTALL_ROOT"
+  if same_directory "$BUNDLE_ROOT" "$INSTALL_ROOT"; then
+    log "Using existing offline runtime directory: $INSTALL_ROOT"
+    return 0
+  fi
+
+  if [ "$REUSE_ENV_FILE" != "1" ] && [ -f "$INSTALL_ROOT/offline.env" ]; then
+    env_backup="$(mktemp)"
+    cp "$INSTALL_ROOT/offline.env" "$env_backup"
+  fi
+
+  log "Installing runtime payload to $INSTALL_ROOT"
+  clean_install_root_payload
+  cp -a "$BUNDLE_ROOT/." "$INSTALL_ROOT/"
+
+  if [ -n "$env_backup" ]; then
+    cp "$env_backup" "$INSTALL_ROOT/offline.env"
+    rm -f "$env_backup"
+  fi
+}
+
 main() {
   load_installer_manifest
 
   if [ "$UNINSTALL" = "1" ]; then
     uninstall_user_integrations
+    if [ "$PURGE" = "1" ]; then
+      purge_install_root
+    fi
     return 0
   fi
 
@@ -782,6 +883,7 @@ main() {
   verify_checksums
   check_preset_requirements
   check_bundle_assets
+  install_runtime_payload
   write_runtime_python_file
 
   warm_cloakbrowser_runtime
@@ -789,7 +891,7 @@ main() {
   if [ "$REUSE_ENV_FILE" = "1" ]; then
     log "Reusing offline.env without modifying it: $OFFLINE_ENV_FILE"
   else
-    log "Writing repo-local offline.env"
+    log "Writing install offline.env"
     write_managed_env_file "$OFFLINE_ENV_FILE"
   fi
   write_activate_script
@@ -811,7 +913,8 @@ main() {
   echo
   echo "Offline installation complete."
   echo "Shell startup file updated: $SHELL_STARTUP_TARGET"
-  echo "Open a new shell, or activate the current one with: source $BUNDLE_ROOT/activate-offline.sh"
+  echo "Install directory: $INSTALL_ROOT"
+  echo "Open a new shell, or activate the current one with: source $INSTALL_ROOT/activate-offline.sh"
   echo "CloakBrowser headless: $(cloakbrowser_headless_value)"
   echo "Optional runtime override: set CLOAKBROWSER_BINARY_PATH in $OFFLINE_ENV_FILE before first browser fetch."
   echo "Restart Codex, Claude Code, and Gemini CLI so they rescan skills and MCP registration."

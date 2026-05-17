@@ -6,6 +6,14 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.5.4 - 2026-05-17
+
+### Changed
+
+- Changed Linux offline release assets from `.tar.gz` bundles to single self-extracting `.sh` installers with `--install-dir <path>` support and the default install root `~/.local/share/paper-fetch-skill`.
+- Changed Linux and Windows offline upgrades to clear the old runtime payload before installing the new runtime-only payload while preserving user-authored `offline.env` content and refreshing managed environment, PATH, skill, and MCP registration blocks.
+- Changed Linux offline uninstall semantics so `--uninstall` removes only user-level shell/skill/MCP integration and `--purge` explicitly deletes the fixed install directory.
+
 ## 1.5.3 - 2026-05-17
 
 ### Changed

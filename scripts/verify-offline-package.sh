@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify an offline tarball in a temporary extracted installation.
+# Verify an offline self-extracting installer in a temporary installation.
 
 set -euo pipefail
 
@@ -10,7 +10,7 @@ log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
 if [ -z "$PACKAGE_PATH" ]; then
-  die "Usage: scripts/verify-offline-package.sh <offline-package.tar.gz>"
+  die "Usage: scripts/verify-offline-package.sh <offline-installer.sh>"
 fi
 
 PACKAGE_PATH="$(cd "$(dirname "$PACKAGE_PATH")" && pwd)/$(basename "$PACKAGE_PATH")"
@@ -22,14 +22,9 @@ cleanup() {
 }
 trap cleanup EXIT
 
-log "Extracting $PACKAGE_PATH"
-tar -xzf "$PACKAGE_PATH" -C "$TMP_ROOT"
-EXTRACTED_ROOT="$(find "$TMP_ROOT" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-[ -n "$EXTRACTED_ROOT" ] || die "Could not locate extracted package root."
-[ -d "$EXTRACTED_ROOT/runtime/site-packages/paper_fetch" ] || die "Offline package is missing installed paper_fetch runtime."
-[ -x "$EXTRACTED_ROOT/bin/python" ] || die "Offline package is missing Python wrapper."
-[ ! -d "$EXTRACTED_ROOT/src" ] || die "Offline package should not include the source tree."
-[ ! -d "$EXTRACTED_ROOT/wheelhouse" ] || die "Offline package should not include the build wheelhouse."
+INSTALL_ROOT="$TMP_ROOT/install-root"
+mkdir -p "$INSTALL_ROOT/src" "$INSTALL_ROOT/tests" "$INSTALL_ROOT/wheelhouse" "$INSTALL_ROOT/dist"
+printf 'ELSEVIER_API_KEY="secret"\nUSER_NOTE="keep"\n' > "$INSTALL_ROOT/offline.env"
 
 GUARD_DIR="$(mktemp -d)"
 FAKE_HOME="$TMP_ROOT/home"
@@ -62,12 +57,23 @@ log "Running installer with network/build command guard"
 export HOME="$FAKE_HOME"
 export SHELL="/bin/bash"
 export PAPER_FETCH_FAKE_CLI_LOG="$FAKE_CLI_LOG"
-PATH="$GUARD_DIR:$PATH" "$EXTRACTED_ROOT/install-offline.sh" --preset=headless --no-user-config
+PATH="$GUARD_DIR:$PATH" "$PACKAGE_PATH" --install-dir "$INSTALL_ROOT" --preset=headless --no-user-config
+
+log "Verifying installed runtime package layout"
+[ -d "$INSTALL_ROOT/runtime/site-packages/paper_fetch" ] || die "Offline install is missing installed paper_fetch runtime."
+[ -x "$INSTALL_ROOT/bin/python" ] || die "Offline install is missing Python wrapper."
+[ -x "$INSTALL_ROOT/install-offline.sh" ] || die "Offline install is missing installed installer."
+[ ! -d "$INSTALL_ROOT/src" ] || die "Offline install should not include the source tree."
+[ ! -d "$INSTALL_ROOT/tests" ] || die "Offline install should not include tests."
+[ ! -d "$INSTALL_ROOT/wheelhouse" ] || die "Offline install should not include the build wheelhouse."
+[ ! -d "$INSTALL_ROOT/dist" ] || die "Offline install should not include dist."
+grep -F -q 'ELSEVIER_API_KEY="secret"' "$INSTALL_ROOT/offline.env"
+grep -F -q 'USER_NOTE="keep"' "$INSTALL_ROOT/offline.env"
 
 log "Verifying user shell, skill, and MCP registration"
-grep -F -q "export PAPER_FETCH_ENV_FILE=\"$EXTRACTED_ROOT/offline.env\"" "$FAKE_HOME/.bashrc"
-grep -F -q "$EXTRACTED_ROOT/bin" "$FAKE_HOME/.bashrc"
-grep -F -q "$EXTRACTED_ROOT/formula-tools/bin" "$FAKE_HOME/.bashrc"
+grep -F -q "export PAPER_FETCH_ENV_FILE=\"$INSTALL_ROOT/offline.env\"" "$FAKE_HOME/.bashrc"
+grep -F -q "$INSTALL_ROOT/bin" "$FAKE_HOME/.bashrc"
+grep -F -q "$INSTALL_ROOT/formula-tools/bin" "$FAKE_HOME/.bashrc"
 [ -f "$FAKE_HOME/.codex/skills/paper-fetch-skill/SKILL.md" ] || die "Codex skill was not installed."
 [ -f "$FAKE_HOME/.claude/skills/paper-fetch-skill/SKILL.md" ] || die "Claude skill was not installed."
 [ -f "$FAKE_HOME/.gemini/skills/paper-fetch-skill/SKILL.md" ] || die "Gemini skill was not installed."
@@ -77,13 +83,13 @@ grep -F -q "claude mcp remove -s user paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "claude mcp add -s user" "$FAKE_CLI_LOG"
 grep -F -q "gemini mcp remove paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "gemini mcp add" "$FAKE_CLI_LOG"
-grep -F -q "PAPER_FETCH_ENV_FILE=$EXTRACTED_ROOT/offline.env" "$FAKE_CLI_LOG"
-grep -F -q "PAPER_FETCH_FORMULA_TOOLS_DIR=$EXTRACTED_ROOT/formula-tools" "$FAKE_CLI_LOG"
+grep -F -q "PAPER_FETCH_ENV_FILE=$INSTALL_ROOT/offline.env" "$FAKE_CLI_LOG"
+grep -F -q "PAPER_FETCH_FORMULA_TOOLS_DIR=$INSTALL_ROOT/formula-tools" "$FAKE_CLI_LOG"
 grep -F -q "MATHML_TO_LATEX_NODE_BIN=" "$FAKE_CLI_LOG"
 grep -F -q "CLOAKBROWSER_HEADLESS=true" "$FAKE_CLI_LOG"
 
 # shellcheck disable=SC1091
-source "$EXTRACTED_ROOT/activate-offline.sh"
+source "$INSTALL_ROOT/activate-offline.sh"
 
 log "Verifying command entrypoints"
 paper-fetch --help >/dev/null
@@ -127,7 +133,7 @@ fi
 
 log "Verifying user-level uninstall"
 : > "$FAKE_CLI_LOG"
-PATH="$GUARD_DIR:$PATH" "$EXTRACTED_ROOT/install-offline.sh" --uninstall
+PATH="$GUARD_DIR:$PATH" "$INSTALL_ROOT/install-offline.sh" --install-dir "$INSTALL_ROOT" --uninstall
 [ -f "$FAKE_HOME/.bashrc" ] || die "Bash startup file was removed."
 if grep -F -q "# BEGIN paper-fetch offline managed" "$FAKE_HOME/.bashrc"; then
   die "Managed shell block was not removed from .bashrc."
@@ -138,8 +144,12 @@ fi
 grep -F -q "codex mcp remove paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "claude mcp remove -s user paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "gemini mcp remove paper-fetch" "$FAKE_CLI_LOG"
-[ -f "$EXTRACTED_ROOT/offline.env" ] || die "Uninstall removed offline.env."
-[ -x "$EXTRACTED_ROOT/bin/python" ] || die "Uninstall removed Python wrapper."
-[ -d "$EXTRACTED_ROOT/runtime/site-packages" ] || die "Uninstall removed package runtime."
+[ -f "$INSTALL_ROOT/offline.env" ] || die "Uninstall removed offline.env."
+[ -x "$INSTALL_ROOT/bin/python" ] || die "Uninstall removed Python wrapper."
+[ -d "$INSTALL_ROOT/runtime/site-packages" ] || die "Uninstall removed package runtime."
+
+log "Verifying purge removes the install directory"
+PATH="$GUARD_DIR:$PATH" "$PACKAGE_PATH" --install-dir "$INSTALL_ROOT" --purge
+[ ! -e "$INSTALL_ROOT" ] || die "Purge did not remove the install directory."
 
 log "Offline package verification completed"

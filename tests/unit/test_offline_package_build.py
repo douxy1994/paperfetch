@@ -15,6 +15,8 @@ class OfflinePackageBuildTests(unittest.TestCase):
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
         self.assertIn("copy_runtime_assets", script)
+        self.assertIn("create_self_extracting_installer", script)
+        self.assertIn("__PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__", script)
         self.assertIn("runtime/site-packages", script)
         self.assertIn("runtime/python-bin", script)
         self.assertIn("write_cmd_wrappers", script)
@@ -27,6 +29,7 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertNotIn("source_snapshot", script)
         self.assertNotIn("--exclude='./legacy'", script)
         self.assertNotIn("-m playwright install chromium", script)
+        self.assertNotIn("Creating tar.gz archive", script)
 
     def test_linux_manifest_and_readme_document_cloakbrowser_binary_policy(self) -> None:
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
@@ -46,9 +49,11 @@ class OfflinePackageBuildTests(unittest.TestCase):
     def test_linux_offline_verifier_uses_cloakbrowser_smoke(self) -> None:
         script = VERIFY_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
+        self.assertIn("--install-dir \"$INSTALL_ROOT\"", script)
         self.assertIn("runtime/site-packages/paper_fetch", script)
-        self.assertIn("Offline package should not include the source tree", script)
-        self.assertIn("Offline package should not include the build wheelhouse", script)
+        self.assertIn("Offline install should not include the source tree", script)
+        self.assertIn("Offline install should not include the build wheelhouse", script)
+        self.assertIn("Purge did not remove the install directory", script)
         self.assertIn("import cloakbrowser", script)
         self.assertIn('assert hasattr(cloakbrowser, "launch")', script)
         self.assertIn("CLOAKBROWSER_HEADLESS=true", script)
