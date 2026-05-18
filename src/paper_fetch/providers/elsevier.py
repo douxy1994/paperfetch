@@ -6,6 +6,7 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import json
 import mimetypes
+import re
 import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
@@ -62,7 +63,7 @@ from ._retry_categories import (
     NETWORK_RETRYABLE_REASON_TOKENS,
 )
 from ._waterfall import ProviderWaterfallStep, ProviderWaterfallState, run_provider_waterfall
-from ..reason_codes import NO_RESULT, NOT_CONFIGURED, NOT_SUPPORTED, OK, PDF_FALLBACK
+from ..reason_codes import ERROR, NO_RESULT, NOT_CONFIGURED, NOT_SUPPORTED, OK, PDF_FALLBACK, RATE_LIMITED
 from ..quality.html_availability import (
     assess_plain_text_fulltext_availability,
     assess_structured_article_fulltext_availability,
@@ -128,6 +129,8 @@ _ELSEVIER_NON_RETRYABLE_ASSET_REASON_TOKENS = (
     *ASSET_BLOCKING_REASON_TOKENS,
 )
 _ELSEVIER_RETRYABLE_ASSET_REASON_TOKENS = NETWORK_RETRYABLE_REASON_TOKENS
+_ELSEVIER_PII_PATH_TOKENS = ("pii",)
+_ELSEVIER_PII_RETRYABLE_CODES = frozenset({ERROR, RATE_LIMITED})
 
 
 def first_xml_child_text(element: ET.Element, child_local_name: str) -> str | None:
@@ -195,6 +198,46 @@ def elsevier_asset_priority(asset_kind: str, asset_type: str, category: str | No
 def build_elsevier_object_url(attachment_eid: str) -> str:
     encoded_eid = urllib.parse.quote(attachment_eid.strip(), safe="")
     return f"https://api.elsevier.com/content/object/eid/{encoded_eid}?httpAccept=%2A%2F%2A"
+
+
+def extract_elsevier_pii_from_url(url: str | None) -> str | None:
+    normalized_url = normalize_text(url)
+    if not normalized_url:
+        return None
+    parsed = urllib.parse.urlparse(normalized_url)
+    path_segments = [
+        urllib.parse.unquote(segment).strip()
+        for segment in parsed.path.split("/")
+        if urllib.parse.unquote(segment).strip()
+    ]
+    for index, segment in enumerate(path_segments[:-1]):
+        if segment.lower() not in _ELSEVIER_PII_PATH_TOKENS:
+            continue
+        pii = re.sub(r"[^A-Za-z0-9]", "", path_segments[index + 1])
+        if pii:
+            return pii
+    return None
+
+
+def elsevier_pii_candidates_from_metadata(metadata: Mapping[str, Any]) -> list[str]:
+    candidates: list[str] = []
+
+    def add_url(value: Any) -> None:
+        if not isinstance(value, str):
+            return
+        pii = extract_elsevier_pii_from_url(value)
+        if pii and pii not in candidates:
+            candidates.append(pii)
+
+    add_url(metadata.get("landing_page_url"))
+    add_url(metadata.get("source_url"))
+    for item in metadata.get("fulltext_links") or []:
+        if isinstance(item, Mapping):
+            add_url(item.get("url"))
+            add_url(item.get("URL"))
+        else:
+            add_url(item)
+    return candidates
 
 
 def elsevier_xml_root_from_payload(
@@ -671,8 +714,16 @@ class ElsevierClient(ProviderClient):
     def _official_article_url(self, doi: str) -> str:
         return f"https://api.elsevier.com/content/article/doi/{urllib.parse.quote(doi, safe='')}"
 
-    def _fetch_official_xml_payload(self, doi: str) -> RawFulltextPayload:
-        url = self._official_article_url(doi)
+    def _official_article_pii_url(self, pii: str) -> str:
+        return f"https://api.elsevier.com/content/article/pii/{urllib.parse.quote(pii, safe='')}"
+
+    def _fetch_official_xml_payload_from_url(
+        self,
+        url: str,
+        *,
+        reason: str,
+        trace_route: str,
+    ) -> RawFulltextPayload:
         try:
             response = self.transport.request(
                 "GET",
@@ -705,9 +756,23 @@ class ElsevierClient(ProviderClient):
             source_url=response["url"],
             content_type=content_type,
             body=response["body"],
-            reason="Downloaded full text from the official Elsevier API.",
-            trace_markers=[fulltext_marker("elsevier", "ok", route="xml")],
+            reason=reason,
+            trace_markers=[fulltext_marker("elsevier", "ok", route=trace_route)],
             needs_local_copy=False,
+        )
+
+    def _fetch_official_xml_payload(self, doi: str) -> RawFulltextPayload:
+        return self._fetch_official_xml_payload_from_url(
+            self._official_article_url(doi),
+            reason="Downloaded full text from the official Elsevier API.",
+            trace_route="xml",
+        )
+
+    def _fetch_official_pii_xml_payload(self, pii: str) -> RawFulltextPayload:
+        return self._fetch_official_xml_payload_from_url(
+            self._official_article_pii_url(pii),
+            reason="Downloaded full text from the official Elsevier API PII route.",
+            trace_route="xml_pii",
         )
 
     def _fetch_official_pdf_payload(self, doi: str) -> RawFulltextPayload:
@@ -883,6 +948,7 @@ class ElsevierClient(ProviderClient):
         normalized_doi = normalize_doi(doi)
         if not normalized_doi:
             raise ProviderFailure(NOT_SUPPORTED, "Elsevier full-text retrieval requires a DOI.")
+        pii_candidates = elsevier_pii_candidates_from_metadata(metadata)
 
         def run_xml(_state: ProviderWaterfallState) -> RawFulltextPayload:
             xml_payload = self._fetch_official_xml_payload(normalized_doi)
@@ -896,28 +962,63 @@ class ElsevierClient(ProviderClient):
         def xml_failure_warning(failure: ProviderFailure, _state: ProviderWaterfallState) -> str:
             if failure.message == "Elsevier official XML response did not produce enough article body text.":
                 return "Elsevier official XML response did not produce enough article body text; attempting official PDF fallback."
+            if pii_candidates and failure.code in _ELSEVIER_PII_RETRYABLE_CODES:
+                return f"Elsevier official XML route was not usable ({failure.message}); attempting Elsevier PII XML fallback."
             return f"Elsevier official XML route was not usable ({failure.message}); attempting official PDF fallback."
 
-        return run_provider_waterfall(
-            [
-                ProviderWaterfallStep(
-                    label="xml",
-                    run=run_xml,
-                    failure_marker=fulltext_marker("elsevier", "fail", route="xml"),
-                    failure_warning=xml_failure_warning,
+        def pii_xml_condition(state: ProviderWaterfallState) -> bool:
+            xml_failure = state.failure("xml")
+            return bool(pii_candidates and xml_failure is not None and xml_failure.code in _ELSEVIER_PII_RETRYABLE_CODES)
+
+        def run_pii_xml(_state: ProviderWaterfallState) -> RawFulltextPayload:
+            last_failure: ProviderFailure | None = None
+            for pii in pii_candidates:
+                try:
+                    xml_payload = self._fetch_official_pii_xml_payload(pii)
+                except ProviderFailure as exc:
+                    last_failure = exc
+                    continue
+                if self._official_payload_is_usable(metadata, xml_payload, context=context):
+                    return xml_payload
+                last_failure = ProviderFailure(
+                    NO_RESULT,
+                    "Elsevier official PII XML response did not produce enough article body text.",
+                )
+            if last_failure is not None:
+                raise last_failure
+            raise ProviderFailure(NO_RESULT, "Elsevier PII XML fallback did not have a usable PII candidate.")
+
+        steps = [
+            ProviderWaterfallStep(
+                label="xml",
+                run=run_xml,
+                failure_marker=fulltext_marker("elsevier", "fail", route="xml"),
+                failure_warning=xml_failure_warning,
+                continue_codes=(NO_RESULT, ERROR, RATE_LIMITED),
+            ),
+            ProviderWaterfallStep(
+                label="pii_xml",
+                run=run_pii_xml,
+                condition=pii_xml_condition,
+                failure_marker=fulltext_marker("elsevier", "fail", route="xml_pii"),
+                success_markers=(fulltext_marker("elsevier", "ok", route="xml_pii"),),
+                failure_warning=lambda failure, _state: (
+                    f"Elsevier PII XML fallback was not usable ({failure.message}); attempting official PDF fallback."
                 ),
-                ProviderWaterfallStep(
-                    label="pdf",
-                    run=lambda _state: self._fetch_official_pdf_payload(normalized_doi),
-                    failure_marker=fulltext_marker("elsevier", "fail", route="pdf_api"),
-                    success_markers=(
-                        fulltext_marker("elsevier", "ok", route="pdf_api"),
-                        fulltext_marker("elsevier", "ok", route=PDF_FALLBACK),
-                    ),
-                    success_warning="Full text was extracted from the Elsevier API PDF fallback after the XML route was not usable.",
+                continue_codes=(NO_RESULT, ERROR, RATE_LIMITED),
+            ),
+            ProviderWaterfallStep(
+                label="pdf",
+                run=lambda _state: self._fetch_official_pdf_payload(normalized_doi),
+                failure_marker=fulltext_marker("elsevier", "fail", route="pdf_api"),
+                success_markers=(
+                    fulltext_marker("elsevier", "ok", route="pdf_api"),
+                    fulltext_marker("elsevier", "ok", route=PDF_FALLBACK),
                 ),
-            ],
-        )
+                success_warning="Full text was extracted from the Elsevier API PDF fallback after the XML route was not usable.",
+            ),
+        ]
+        return run_provider_waterfall(steps)
 
     def to_article_model(
         self,

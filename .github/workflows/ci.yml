@@ -215,18 +215,22 @@ jobs:
         run: scripts/build-offline-package.sh --output-dir "$PWD/offline-artifacts"
 
       - name: Verify offline package
-        run: scripts/verify-offline-package.sh "$PWD/offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.sh"
+        run: scripts/verify-offline-package.sh "$PWD/offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.tar.gz"
 
       - name: Verify Linux runtime package layout
         shell: bash
         run: |
           set -euo pipefail
-          installer="$PWD/offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.sh"
+          package="$PWD/offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.tar.gz"
+          bundle_root="$RUNNER_TEMP/paper-fetch-bundle-${{ matrix.python-tag }}"
+          bundle="$bundle_root/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}"
           install_root="$RUNNER_TEMP/paper-fetch-layout-${{ matrix.python-tag }}"
           layout_home="$RUNNER_TEMP/paper-fetch-layout-home-${{ matrix.python-tag }}"
-          rm -rf "$install_root" "$layout_home"
+          rm -rf "$bundle_root" "$install_root" "$layout_home"
+          mkdir -p "$bundle_root"
+          tar -xzf "$package" -C "$bundle_root"
           mkdir -p "$layout_home"
-          HOME="$layout_home" SHELL=/bin/bash "$installer" --install-dir "$install_root" --preset=headless --no-user-config --skip-smoke
+          HOME="$layout_home" SHELL=/bin/bash "$bundle/install-offline.sh" --install-dir "$install_root" --preset=headless --no-user-config --skip-smoke
           test -f "$install_root/runtime/site-packages/paper_fetch/__init__.py"
           test -x "$install_root/bin/paper-fetch"
           test -x "$install_root/bin/paper-fetch-install-formula-tools"
@@ -241,7 +245,7 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}
-          path: offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.sh
+          path: offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.tar.gz
           if-no-files-found: error
 
   offline-windows-x86-64:
@@ -484,10 +488,10 @@ jobs:
         run: |
           set -euo pipefail
           expected=(
-            paper-fetch-skill-offline-linux-x86_64-cp311.sh
-            paper-fetch-skill-offline-linux-x86_64-cp312.sh
-            paper-fetch-skill-offline-linux-x86_64-cp313.sh
-            paper-fetch-skill-offline-linux-x86_64-cp314.sh
+            paper-fetch-skill-offline-linux-x86_64-cp311.tar.gz
+            paper-fetch-skill-offline-linux-x86_64-cp312.tar.gz
+            paper-fetch-skill-offline-linux-x86_64-cp313.tar.gz
+            paper-fetch-skill-offline-linux-x86_64-cp314.tar.gz
             paper-fetch-skill-windows-x86_64-setup.exe
           )
 

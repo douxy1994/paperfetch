@@ -3,6 +3,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import os
 import sys
 import tempfile
 import unittest
@@ -834,6 +835,44 @@ class CliTests(unittest.TestCase):
 
             self.assertIn("![Figure 1](10.1073_pnas.1219683110_assets/pnas.1219683110fig01.jpeg)", rewritten)
             self.assertNotIn(f"![Figure 1]({repo_relative_path.as_posix()})", rewritten)
+
+    def test_rewrite_markdown_asset_links_resolves_symlinked_absolute_asset_paths(self) -> None:
+        article = sample_article()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            real_root = tmp_root / "real"
+            alias_root = tmp_root / "alias"
+            real_root.mkdir()
+            try:
+                os.symlink(real_root, alias_root)
+            except (OSError, NotImplementedError):
+                self.skipTest("filesystem does not support symlinks")
+
+            output_dir = real_root / "downloads"
+            asset_dir = alias_root / "downloads" / "10.1016_test_assets"
+            asset_dir.mkdir(parents=True)
+            figure_path = asset_dir / "figure-1.png"
+            figure_path.write_bytes(b"figure")
+            article.sections[0].text = f"![Figure 1]({figure_path})"
+            article.assets = [
+                Asset(kind="figure", heading="Figure 1", caption="Body figure.", path=str(figure_path), section="body")
+            ]
+            envelope = paper_fetch.build_fetch_envelope(
+                article,
+                modes={"article", "markdown"},
+                render=RenderOptions(asset_profile="body"),
+            )
+
+            rewritten = paper_fetch_cli.rewrite_markdown_asset_links(
+                envelope.markdown or "",
+                envelope,
+                target_path=output_dir / "article.md",
+                render=RenderOptions(asset_profile="body"),
+            )
+
+            self.assertIn("![Figure 1](10.1016_test_assets/figure-1.png)", rewritten)
+            self.assertNotIn(str(figure_path), rewritten)
 
     def test_main_rewrites_local_asset_links_for_both_output_file(self) -> None:
         article = sample_article()

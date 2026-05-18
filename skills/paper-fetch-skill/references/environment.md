@@ -9,7 +9,9 @@
 - `ELSEVIER_AUTHTOKEN`: Optional Elsevier bearer token credential.
 - `ELSEVIER_CLICKTHROUGH_TOKEN`: Optional Elsevier clickthrough credential.
 - `WILEY_TDM_CLIENT_TOKEN`: Optional Wiley Text and Data Mining client token for the official Wiley PDF lane; browser PDF/ePDF fallback can still run without it when the local runtime is ready.
-- `CLOAKBROWSER_HEADLESS`: Optional override (`true`/`false`) for the CloakBrowser browser runtime. Defaults to `true`.
+- `CLOAKBROWSER_HEADLESS`: Optional override (`true`/`false`) for the CloakBrowser browser runtime. Defaults to `true`; macOS users who need a visible browser can set it to `false` or install the offline bundle with `--preset=headful`.
+- `CLOAKBROWSER_BINARY_PATH`: Optional path to a preinstalled browser binary. Offline Linux/macOS installs skip CloakBrowser runtime download when this points to an executable; runtime config and provider status validate that the path is executable before browser workflow fetches run. Values from configured environment files, shell env, or MCP env are passed to CloakBrowser launch.
+- `CLOAKBROWSER_USER_DATA_DIR`: Optional writable directory for CloakBrowser browser workflow storage state. When set, runtime loads `<dir>/storage-state.json` if present and writes it back after browser fetches; use it to preserve a headed browser session that the operator completed legitimately. It does not solve CAPTCHA or bypass access controls.
 - `CLOAKBROWSER_TIMEOUT_MS`: Optional override for CloakBrowser per-request timeout. Defaults to `120000`.
 - IEEE dynamic HTML / direct HTTP PDF / seeded-browser PDF fallback does not use an IEEE API key; full text availability still depends on the current environment's lawful IEEE Xplore access context. The browser PDF fallback only runs after non-PDF PDF candidates and fails closed on access, challenge, or temporary unavailable pages.
 - `PAPER_FETCH_DOWNLOAD_DIR`: Overrides the default CLI/MCP download directory; otherwise downloads use the user data directory, with CLI falling back to `live-downloads` only if that directory cannot be created.

@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
+import os
 import threading
 from dataclasses import dataclass, field
 from typing import Any
 
 from ._cloakbrowser_runtime import import_cloakbrowser
+from .config import CLOAKBROWSER_BINARY_PATH_ENV_VAR
 
 DEFAULT_BROWSER_LOCALE = "en-US"
 DEFAULT_BROWSER_VIEWPORT = {"width": 1440, "height": 1600}
+_CLOAKBROWSER_BINARY_PATH_ENV_LOCK = threading.RLock()
 
 
 def browser_context_options(
@@ -39,10 +43,30 @@ def browser_page_user_agent(page: Any) -> str | None:
     return normalized or None
 
 
+@contextmanager
+def cloakbrowser_binary_path_env(binary_path: str | None):
+    active_path = str(binary_path or "").strip()
+    with _CLOAKBROWSER_BINARY_PATH_ENV_LOCK:
+        if not active_path:
+            yield
+            return
+
+        previous = os.environ.get(CLOAKBROWSER_BINARY_PATH_ENV_VAR)
+        os.environ[CLOAKBROWSER_BINARY_PATH_ENV_VAR] = active_path
+        try:
+            yield
+        finally:
+            if previous is None:
+                os.environ.pop(CLOAKBROWSER_BINARY_PATH_ENV_VAR, None)
+            else:
+                os.environ[CLOAKBROWSER_BINARY_PATH_ENV_VAR] = previous
+
+
 @dataclass
 class BrowserContextManager:
     """Owns a shared CloakBrowser-launched browser for one fetch runtime."""
 
+    binary_path: str | None = None
     _lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _browser: Any | None = field(default=None, init=False, repr=False)
     _headless: bool | None = field(default=None, init=False, repr=False)
@@ -56,7 +80,8 @@ class BrowserContextManager:
                 self.close()
 
             cloakbrowser = import_cloakbrowser()
-            browser = cloakbrowser.launch(headless=active_headless, locale="en-US")
+            with cloakbrowser_binary_path_env(self.binary_path):
+                browser = cloakbrowser.launch(headless=active_headless, locale="en-US")
             self._browser = browser
             self._headless = active_headless
             return browser
@@ -86,4 +111,5 @@ __all__ = [
     "BrowserContextManager",
     "browser_context_options",
     "browser_page_user_agent",
+    "cloakbrowser_binary_path_env",
 ]

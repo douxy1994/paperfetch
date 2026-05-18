@@ -53,14 +53,15 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("Verify Linux runtime package layout", workflow)
-        self.assertIn(".sh", workflow)
+        self.assertIn(".tar.gz", workflow)
+        self.assertIn("tar -xzf", workflow)
+        self.assertIn("/install-offline.sh", workflow)
         self.assertIn("--install-dir \"$install_root\"", workflow)
         self.assertIn("/runtime/site-packages/paper_fetch/__init__.py", workflow)
         self.assertIn("/bin/paper-fetch", workflow)
         self.assertIn("/bin/paper-fetch-install-formula-tools", workflow)
         self.assertIn("Linux runtime package must not include source/build path", workflow)
-        self.assertNotIn("tar -tzf", workflow)
-        self.assertNotIn(".tar.gz", workflow)
+        self.assertNotIn("paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.sh", workflow)
 
     def test_windows_offline_ci_verifies_runtime_only_package_layout(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")

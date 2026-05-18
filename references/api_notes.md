@@ -11,10 +11,12 @@ Canonical runtime behavior lives in [`docs/providers.md`](../docs/providers.md),
 - Endpoints:
   - Metadata: `https://api.elsevier.com/content/abstract/doi/{doi}`
   - Full text: `https://api.elsevier.com/content/article/doi/{doi}`
+  - PII fallback full text: `https://api.elsevier.com/content/article/pii/{pii}` when merged metadata exposes a LinkingHub or ScienceDirect PII URL.
 - Required env: `ELSEVIER_API_KEY`
 - Optional entitlement env: `ELSEVIER_INSTTOKEN`, `ELSEVIER_AUTHTOKEN`, `ELSEVIER_CLICKTHROUGH_TOKEN`
 - Constraints:
   - Full-text retrieval requests `text/xml` first so the fetcher can parse article XML, object metadata, attachments, figures, supplementary files, bibliography, tables, and formula nodes.
+  - DOI XML transient or rate-limit failures may use the PII article endpoint before the API PDF fallback; this still requires Elsevier API credentials and does not use generic HTML scraping.
   - Structured Elsevier bibliography is preferred over metadata fallback when present.
   - Some endpoints are entitlement-gated even with an API key.
 - Reference URL: `https://dev.elsevier.com/`

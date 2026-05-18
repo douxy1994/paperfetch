@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest import mock
 
+from paper_fetch import config
 from paper_fetch.providers import _cloakbrowser
 from paper_fetch.providers.ams import AmsClient
 from paper_fetch.providers.arxiv import ArxivClient
@@ -161,6 +162,19 @@ class ProviderStatusTests(unittest.TestCase):
                 self.assertEqual(result.status, "not_configured")
                 self.assertEqual(checks["runtime_env"].status, "not_configured")
                 self.assertEqual(checks["cloakbrowser_dependency"].status, "not_configured")
+
+    def test_browser_workflow_provider_rejects_invalid_cloakbrowser_binary_path(self) -> None:
+        env = {config.CLOAKBROWSER_BINARY_PATH_ENV_VAR: "/definitely/missing/chrome"}
+        with mock.patch.object(_cloakbrowser, "_dependency_available", return_value=True):
+            result = ScienceClient(DummyTransport(), env).probe_status()
+        checks = {check.name: check for check in result.checks}
+
+        self.assertEqual(result.status, "not_configured")
+        self.assertFalse(result.available)
+        self.assertEqual(checks["runtime_env"].status, "not_configured")
+        self.assertIn("CLOAKBROWSER_BINARY_PATH", checks["runtime_env"].message)
+        self.assertEqual(checks["runtime_env"].details["binary_path_configured"], True)
+        self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
 
     def test_browser_workflow_providers_ignore_unrelated_rate_limit_env(self) -> None:
         for provider in ("science", "pnas", "ams"):

@@ -616,9 +616,17 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
         ):
             self.assertNotIn(noise, markdown)
 
-        self.assertIn("by predicting $\\mathbf{\\hat{p}}", markdown)
+        self.assertRegex(markdown, r"by predicting \$(?:\\mathbf\{)?\\hat\{p\}")
         self.assertIn("Here, $S \\equiv", markdown)
-        self.assertIn("denoted as $p{({\\mu_{n},\\sigma_{n}^{2}", markdown)
+        self.assertTrue(
+            any(
+                candidate in markdown
+                for candidate in (
+                    "denoted as $p(\\mu_{n}, \\sigma_{n}^{2}",
+                    "denoted as $p{({\\mu_{n},\\sigma_{n}^{2}",
+                )
+            )
+        )
         self.assertIn("(*μ*<sub>n</sub>, $\\sigma_{n}^{2}$)", markdown)
         self.assertIn("climatology: $\\text{BSS}", markdown)
         self.assertIn("*ν*<sub>n</sub> > 0", markdown)
@@ -639,7 +647,10 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
                     "*γ*<sub>1</sub>",
                     "*A*<sub>N</sub>",
                     "*ϕ*<sub>ON</sub>",
-                    "$\\overset{˙}{q}{({q,\\phi_{2}})}$ (blue)",
+                    (
+                        "$\\overset{\\cdot}{q}(q, \\phi_{2})$ (blue)",
+                        "$\\overset{˙}{q}{({q,\\phi_{2}})}$ (blue)",
+                    ),
                     "*ϕ*<sub>OFF</sub> (blue)",
                 ),
             ),
@@ -660,7 +671,10 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
                 for forbidden in forbidden_values:
                     self.assertNotIn(forbidden, markdown)
                 for expected in expected_values:
-                    self.assertIn(expected, markdown)
+                    if isinstance(expected, tuple):
+                        self.assertTrue(any(candidate in markdown for candidate in expected))
+                    else:
+                        self.assertIn(expected, markdown)
 
     def test_ams_inline_renderer_preserves_body_subscripts_and_spacing(self) -> None:
         """rule: rule-preserve-inline-semantics-in-body-and-tables"""

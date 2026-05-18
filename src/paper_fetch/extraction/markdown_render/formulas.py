@@ -11,7 +11,7 @@ from ...extraction.html.formula_rules import (
     looks_like_formula_image,
     mathml_element_from_html_node,
 )
-from ...formula.convert import normalize_latex_macros
+from ...formula.convert import normalize_latex
 from ...providers._article_markdown_math import render_external_mathml_expression, render_mathml_expression
 from ...utils import normalize_text
 from ._ir import MarkdownFormula
@@ -49,6 +49,23 @@ def is_mathjax_tex_node(node: Any) -> bool:
     return bool(normalized_classes & {"mathjax-tex", "tex", "tex2jax_ignore"})
 
 
+def normalize_tex_formula_text(value: str | None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    delimiter_pairs = (
+        ("$$", "$$"),
+        (r"\(", r"\)"),
+        (r"\[", r"\]"),
+        ("$", "$"),
+    )
+    for opener, closer in delimiter_pairs:
+        if text.startswith(opener) and text.endswith(closer) and len(text) > len(opener) + len(closer):
+            latex = normalize_latex(text[len(opener) : -len(closer)].strip())
+            return f"{opener}{latex}{closer}" if latex else ""
+    return normalize_latex(text)
+
+
 def html_formula_latex_from_node(node: Any) -> str:
     if not isinstance(node, Tag):
         return ""
@@ -66,7 +83,7 @@ def html_formula_latex_from_node(node: Any) -> str:
         if identity in seen:
             continue
         seen.add(identity)
-        latex = normalize_latex_macros(candidate.get_text("", strip=False).strip())
+        latex = normalize_tex_formula_text(candidate.get_text("", strip=False))
         if latex:
             return latex
     return ""

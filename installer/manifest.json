@@ -33,6 +33,8 @@
   "packages": {
     "linux_offline_name_prefix": "paper-fetch-skill-offline-linux-x86_64",
     "linux_manifest_name": "paper-fetch-skill-offline",
+    "macos_offline_name_prefix": "paper-fetch-skill-offline-macos",
+    "macos_manifest_name": "paper-fetch-skill-offline",
     "windows_setup_base_name": "paper-fetch-skill-windows-x86_64-setup",
     "windows_manifest_name": "paper-fetch-skill-windows-setup"
   }
