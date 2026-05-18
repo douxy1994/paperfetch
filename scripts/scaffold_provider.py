@@ -846,7 +846,6 @@ def _print_checklist(paths: list[Path], root: Path, *, docs_paths: list[Path]) -
     print("- Add positive Markdown assertions for expected article content.")
     print("- Add negative Markdown assertions for site chrome, access noise, and duplicate boilerplate.")
     print("- Ensure each non-null fixture purpose is named or asserted in the provider test.")
-    print("- Add the provider entry module to provider discovery in the same PR.")
     print("- Run python3 scripts/validate_extraction_rules.py and targeted pytest.")
     print("Generated files:")
     for path in paths:

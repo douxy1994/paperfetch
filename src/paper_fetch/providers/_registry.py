@@ -53,7 +53,10 @@ def register_provider_bundle(bundle: ProviderBundle) -> None:
 
 
 def iter_provider_bundles() -> Iterator[ProviderBundle]:
-    yield from MappingProxyType(_REGISTERED_PROVIDERS).values()
+    yield from sorted(
+        MappingProxyType(_REGISTERED_PROVIDERS).values(),
+        key=lambda bundle: bundle.catalog.status_order,
+    )
 
 
 def provider_bundle(name: str) -> ProviderBundle:

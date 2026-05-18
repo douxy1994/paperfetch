@@ -1,6 +1,10 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError, fields
+import os
+import subprocess
+import sys
+from pathlib import Path
 
 import pytest
 
@@ -12,6 +16,8 @@ from paper_fetch.providers._registry import (
     iter_provider_bundles,
     provider_bundle,
 )
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
 
 
 def test_each_provider_bundle_is_registered_once() -> None:
@@ -53,3 +59,73 @@ def test_provider_bundle_rejects_mutable_sequence_fields() -> None:
         ProviderBundle(catalog=catalog, metadata_merge=[])  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         ProviderBundle(catalog=catalog, sources=["crossref_meta"])  # type: ignore[arg-type]
+
+
+def test_provider_entry_discovery_imports_new_bundle_modules_without_central_edit(
+    tmp_path: Path,
+) -> None:
+    provider_dir = tmp_path / "paper_fetch" / "providers"
+    provider_dir.mkdir(parents=True)
+    (provider_dir / "autodiscovered.py").write_text(
+        '''
+from __future__ import annotations
+
+from paper_fetch.provider_catalog import ProviderSpec
+from paper_fetch.providers._registry import ProviderBundle, register_provider_bundle
+
+
+register_provider_bundle(
+    ProviderBundle(
+        catalog=ProviderSpec(
+            name="autodiscovered",
+            display_name="Autodiscovered",
+            official=True,
+            domains=("autodiscovered.example",),
+            doi_prefixes=("10.4242/",),
+            publisher_aliases=("autodiscovered",),
+            asset_default="none",
+            probe_capability="routing_signal",
+            provider_managed_abstract_only=False,
+            client_factory_path="paper_fetch.providers.autodiscovered:AutodiscoveredClient",
+            status_order=998,
+            html_capable=False,
+        ),
+        sources=("autodiscovered_html",),
+    )
+)
+''',
+        encoding="utf-8",
+    )
+
+    probe = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            f"""
+from pathlib import Path
+
+import paper_fetch.providers as provider_entries
+from paper_fetch.provider_catalog import PROVIDER_CATALOG, SOURCE_PROVIDER_MAP, provider_for_source
+from paper_fetch.providers._registry import provider_bundle
+
+provider_entries.__path__ = [
+    str(Path({str(provider_dir)!r})),
+    *list(provider_entries.__path__),
+]
+provider_entries.import_provider_entry_modules()
+
+assert ".autodiscovered" in tuple(provider_entries._PROVIDER_ENTRY_MODULES)
+assert PROVIDER_CATALOG["autodiscovered"].domains == ("autodiscovered.example",)
+assert SOURCE_PROVIDER_MAP["autodiscovered_html"] == "autodiscovered"
+assert provider_for_source("autodiscovered_html") == "autodiscovered"
+assert provider_bundle("autodiscovered").catalog.html_capable is False
+""",
+        ],
+        check=False,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT / "src")},
+    )
+
+    assert probe.returncode == 0, probe.stderr

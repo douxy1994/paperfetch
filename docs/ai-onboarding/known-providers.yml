@@ -6,11 +6,11 @@ providers:
   - name: elsevier
     display_source: elsevier_xml
     status: implemented
-    manifest_path: null
+    manifest_path: docs/ai-onboarding/manifests/elsevier.yml
   - name: springer
     display_source: springer_html
     status: implemented
-    manifest_path: null
+    manifest_path: docs/ai-onboarding/manifests/springer.yml
   - name: wiley
     display_source: wiley_browser
     status: implemented
@@ -18,15 +18,15 @@ providers:
   - name: science
     display_source: science
     status: implemented
-    manifest_path: null
+    manifest_path: docs/ai-onboarding/manifests/science.yml
   - name: pnas
     display_source: pnas
     status: implemented
-    manifest_path: null
+    manifest_path: docs/ai-onboarding/manifests/pnas.yml
   - name: ieee
-    display_source: ieee
+    display_source: ieee_html
     status: implemented
-    manifest_path: null
+    manifest_path: docs/ai-onboarding/manifests/ieee.yml
   - name: arxiv
     display_source: arxiv_html
     status: implemented
@@ -36,6 +36,6 @@ providers:
     status: implemented
     manifest_path: docs/ai-onboarding/manifests/copernicus.yml
   - name: ams
-    display_source: ams
+    display_source: ams_html
     status: implemented
-    manifest_path: null
+    manifest_path: docs/ai-onboarding/manifests/ams.yml

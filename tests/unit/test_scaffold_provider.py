@@ -57,6 +57,7 @@ def test_scaffold_provider_generates_repo_like_structure(tmp_path: Path) -> None
     assert "positive Markdown assertions" in result.stdout
     assert "negative Markdown assertions" in result.stdout
     assert "Ensure each non-null fixture purpose is named or asserted" in result.stdout
+    assert "provider discovery" not in result.stdout
 
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     assert manifest["samples"]["10.1234_sample"] == {

@@ -1,0 +1,135 @@
+schema_version: 1
+name: ams
+display_source: ams_html
+generation:
+  generated_by: manual_replay
+  generated_at: "2026-05-18T00:00:00Z"
+  source_queries:
+    - "paper_fetch.provider_catalog ams ProviderSpec"
+    - "tests/fixtures/golden_criteria ams samples"
+    - "tests/unit/test_ams_provider.py"
+  confidence: high
+routing:
+  primary: doi_prefix
+  doi_prefixes:
+    - "10.1175/"
+  domains:
+    - journals.ametsoc.org
+    - ametsoc.org
+  domain_suffixes: []
+  publisher_aliases:
+    - american meteorological society
+    - ams
+    - american meteorological society (ams)
+  crossref_publisher: null
+main_path:
+  - landing_html
+  - article_html
+  - pdf_fallback
+  - abstract_only
+success_criteria: {}
+asset_profile:
+  none: []
+  body:
+    - figures
+    - body_tables
+    - formula_images
+  all:
+    - figures
+    - body_tables
+    - formula_images
+    - supplementary
+supplementary_scope:
+  selector: null
+  url_pattern: null
+abstract_only_strategy: provider_managed
+probe:
+  env_requirements: []
+  requires_playwright: false
+  requires_browser_runtime: true
+  ping_url: https://journals.ametsoc.org/
+fixtures:
+  doi_samples:
+    structure:
+      doi: "10.1175/bams-d-24-0223.1"
+      evidence_url: "https://journals.ametsoc.org/view/journals/bams/aop/BAMS-D-24-0223.1/BAMS-D-24-0223.1.xml"
+      evidence_reason: "Provider-local tests verify AMS/BAMS section ordering, footnotes, and Markdown cleanup from a real fixture."
+      observed_signals:
+        - browser_html
+        - body_sections
+      confidence: high
+    table:
+      doi: "10.1175/jamc-d-24-0048.1"
+      evidence_url: "https://journals.ametsoc.org/"
+      evidence_reason: "Provider-local tests verify AMS image-only table extraction and inline table asset placement."
+      observed_signals:
+        - browser_html
+        - body_table
+      confidence: high
+    formula:
+      doi: "10.1175/aies-d-23-0093.1"
+      evidence_url: "https://journals.ametsoc.org/"
+      evidence_reason: "Provider-local tests verify AMS inline and display formula normalization from a real fixture."
+      observed_signals:
+        - browser_html
+        - math_markup
+      confidence: high
+    figure:
+      doi: "10.1175/jamc-d-24-0048.1"
+      evidence_url: "https://journals.ametsoc.org/"
+      evidence_reason: "Provider-local tests verify AMS figure asset placement and duplicate figure appendix suppression."
+      observed_signals:
+        - browser_html
+        - figures
+      confidence: high
+    supplementary:
+      doi: null
+      evidence_url: "https://journals.ametsoc.org/"
+      evidence_reason: "Current provider-local fixtures do not include a stable AMS supplementary-material sample."
+      observed_signals: []
+      confidence: low
+    references:
+      doi: "10.1175/jcli-d-23-0738.1"
+      evidence_url: "https://journals.ametsoc.org/view/journals/clim/37/24/JCLI-D-23-0738.1.xml"
+      evidence_reason: "Provider-local tests exercise AMS article assembly on a real fixture that includes reference extraction behavior."
+      observed_signals:
+        - browser_html
+        - references
+      confidence: medium
+    pdf_fallback:
+      doi: "10.1175/bams-d-24-0270.1"
+      evidence_url: "https://journals.ametsoc.org/"
+      evidence_reason: "Golden fixture records AMS PDF fallback with a real PDF payload and expected output."
+      observed_signals:
+        - pdf_fallback
+        - application_pdf
+      confidence: high
+    abstract_only:
+      doi: null
+      evidence_url: "https://journals.ametsoc.org/"
+      evidence_reason: "Current recorded fixtures do not include a stable AMS provider-managed abstract-only sample."
+      observed_signals: []
+      confidence: low
+    access_gate:
+      doi: null
+      evidence_url: "https://journals.ametsoc.org/"
+      evidence_reason: "Current recorded fixtures do not include a stable AMS access-gate sample."
+      observed_signals: []
+      confidence: low
+    empty_shell:
+      doi: null
+      evidence_url: "https://journals.ametsoc.org/"
+      evidence_reason: "Current recorded fixtures do not include an AMS empty-shell sample."
+      observed_signals: []
+      confidence: low
+extraction_hints:
+  datalayer_signal_set: null
+  text_marker_signal_set: []
+  front_matter: null
+  asset_retry: null
+  metadata_merge: []
+owner_reuse_exceptions: []
+docs:
+  providers_md_capability_row: "AMS | Crossref | DOI landing -> CloakBrowser HTML -> seeded-browser publisher PDF | HTML body/all assets; PDF fallback is text-only | ams_html / ams_pdf"
+  changelog_summary: "Track AMS implemented provider manifest for browser HTML, image tables, formula handling, and PDF fallback onboarding sync."
+  extraction_rules_summary: null

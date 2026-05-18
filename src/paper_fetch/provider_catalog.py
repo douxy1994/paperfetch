@@ -75,7 +75,8 @@ _METADATA_PROBE_SHORT_CIRCUITS: dict[str, MetadataProbeShortCircuit] = {}
 _PROVIDER_CATALOG_CACHE: MappingABC[str, ProviderSpec] | None = None
 _SOURCE_PROVIDER_MAP_CACHE: MappingABC[str, str] | None = None
 def _registered_provider_bundles():
-    import paper_fetch.providers  # noqa: F401
+    import paper_fetch.providers as providers
+    providers.import_provider_entry_modules()
     from .providers._registry import iter_provider_bundles
     return tuple(iter_provider_bundles())
 def _build_provider_catalog() -> MappingABC[str, ProviderSpec]:

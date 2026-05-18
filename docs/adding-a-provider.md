@@ -2,7 +2,7 @@
 
 > Human reference only. AI/coordinator provider onboarding must use docs/ai-onboarding/.
 
-这是为第一次给 paper_fetch 接入新出版社（如 MDPI、PLOS、Frontiers）的开发者写的。完整规约见 [`provider-development.md`](provider-development.md)，本文只讲流程。
+这是为第一次给 paper_fetch 接入新出版社（如 MDPI、PLOS、Frontiers）的人类开发者写的快速教程。它不作为 AI/coordinator worker 输入；AI/coordinator 的权威入口是 [`docs/ai-onboarding/README.md`](ai-onboarding/README.md)，DAG、manifest schema、hard constraints 和 merge-ready gate 分别见 [`coordinator-spec.md`](ai-onboarding/coordinator-spec.md)、[`provider-manifest.schema.json`](ai-onboarding/provider-manifest.schema.json)、[`hard-constraints.md`](ai-onboarding/hard-constraints.md) 和 [`acceptance.md`](ai-onboarding/acceptance.md)。完整人工规约见 [`provider-development.md`](provider-development.md)，本文只讲流程。
 
 ## 你要做什么
 
@@ -128,7 +128,7 @@ python3 scripts/scaffold_provider.py --name mdpi --doi 10.3390/membranes15030093
 
 ### 3.5 Markdown Review Loop
 
-对 manifest 中每个 non-null `fixtures.doi_samples.<purpose>` 固定执行：
+对 manifest 中每个 non-null `fixtures.doi_samples.<purpose>` 固定执行；AI/coordinator manifest 字段定义以 [`docs/ai-onboarding/provider-manifest.md`](ai-onboarding/provider-manifest.md) 和 [`provider-manifest.schema.json`](ai-onboarding/provider-manifest.schema.json) 为准：
 
 1. 生成 baseline Markdown。
 2. 逐篇阅读，记录 `fixture/purpose -> issue -> assertion -> fix`。

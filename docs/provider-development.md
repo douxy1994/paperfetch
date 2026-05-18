@@ -2,13 +2,15 @@
 
 > Human reference only. AI/coordinator provider onboarding must use docs/ai-onboarding/.
 
-这份文档是后续接入新出版社 provider 的工程标准。目标是让新 provider 一开始就接入当前架构边界，减少后续因为路由、typed payload、资产语义、测试夹具或文档事实来源不一致造成的返工。
+这份文档是后续接入新出版社 provider 的人工教程和解释性参考。目标是让人类维护者理解当前架构边界，减少后续因为路由、typed payload、资产语义、测试夹具或文档事实来源不一致造成的返工。
 
-本文只描述新增 provider 的开发流程和验收标准。当前已支持 provider 的能力矩阵、运行时行为和环境变量仍以 [`providers.md`](providers.md) 为准；系统分层、typed contract 和 owner 边界仍以 [`architecture/target-architecture.md`](architecture/target-architecture.md) 为准；用户可见提取 / 渲染规则仍以 [`extraction-rules.md`](extraction-rules.md) 为准。
+本文不作为 AI/coordinator worker 的行为输入，也不定义机器编排事实源。AI/coordinator onboarding 的权威入口是 [`docs/ai-onboarding/README.md`](ai-onboarding/README.md)：DAG 见 [`coordinator-spec.md`](ai-onboarding/coordinator-spec.md)，manifest 字段与 schema 见 [`provider-manifest.md`](ai-onboarding/provider-manifest.md) 和 [`provider-manifest.schema.json`](ai-onboarding/provider-manifest.schema.json)，hard constraints 见 [`hard-constraints.md`](ai-onboarding/hard-constraints.md)，merge-ready gate 见 [`acceptance.md`](ai-onboarding/acceptance.md)。
+
+当前已支持 provider 的能力矩阵、运行时行为和环境变量仍以 [`providers.md`](providers.md) 为准；系统分层、typed contract 和 owner 边界仍以 [`architecture/target-architecture.md`](architecture/target-architecture.md) 为准；用户可见提取 / 渲染规则仍以 [`extraction-rules.md`](extraction-rules.md) 为准。
 
 ## 端到端流程速览
 
-新增 provider 是一条 **Step 0 → Step 6 的串行流程**，每步对应本文一段详细规约：
+新增 provider 的人工开发流程通常是 **Step 0 → Step 6**。AI/coordinator 的固定 task DAG 不以本节为准，必须使用 [`docs/ai-onboarding/coordinator-spec.md`](ai-onboarding/coordinator-spec.md)。
 
 | Step | 任务 | 详细规约 | 预估 |
 |---|---|---|---|
@@ -186,7 +188,7 @@ step 函数放在 provider-owned 模块中，签名使用 `def newpub_fetch_html
 
 实现过程中必须把 Markdown Review Loop 当作主循环：
 
-1. 对 manifest 中每个 non-null `fixtures.doi_samples.<purpose>` 生成 baseline Markdown。
+1. 对 manifest 中每个 non-null `fixtures.doi_samples.<purpose>` 生成 baseline Markdown；AI/coordinator manifest 字段定义以 [`docs/ai-onboarding/provider-manifest.md`](ai-onboarding/provider-manifest.md) 和 [`provider-manifest.schema.json`](ai-onboarding/provider-manifest.schema.json) 为准。
 2. 逐篇阅读 Markdown，记录 `fixture/purpose -> issue -> assertion -> fix`。
 3. 每个 issue 先落到 `tests/unit/test_<provider>_provider.py` 的 provider-local 断言，再修改 provider-owned 清洗 / 转换代码。
 4. 主成功路径至少保留一个正向 Markdown 内容断言和一个负向站点 chrome / access noise / boilerplate 断言。

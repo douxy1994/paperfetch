@@ -106,10 +106,15 @@ def test_known_providers_manifest_paths_and_statuses_do_not_conflict() -> None:
             f"{KNOWN_PROVIDERS_PATH.relative_to(REPO_ROOT)}: provider={provider}: "
             f"unsupported status {status!r}"
         )
-        if status in STRICT_SYNC_BACK_STATUSES | {"draft"}:
+        if status in STRICT_SYNC_BACK_STATUSES | {"draft", "implemented"}:
             assert manifest_value is not None, (
                 f"{KNOWN_PROVIDERS_PATH.relative_to(REPO_ROOT)}: provider={provider}: "
                 f"status {status!r} requires manifest_path"
+            )
+        if manifest_value is None:
+            assert status == "infrastructure", (
+                f"{KNOWN_PROVIDERS_PATH.relative_to(REPO_ROOT)}: provider={provider}: "
+                "only infrastructure status may omit manifest_path"
             )
         if manifest_value is not None:
             manifest_path = REPO_ROOT / str(manifest_value)

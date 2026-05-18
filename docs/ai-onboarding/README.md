@@ -81,9 +81,15 @@ Provider-local acceptance commands must come from the generated task brief. Hard
 | [`provider-manifest.schema.json`](./provider-manifest.schema.json) | Provider manifest JSON Schema |
 | [`onboarding-state.schema.json`](./onboarding-state.schema.json) | Coordinator state JSON Schema |
 | [`known-providers.yml`](./known-providers.yml) | Provider manifest index and status registry |
+| [`manifests/elsevier.yml`](./manifests/elsevier.yml) | Elsevier provider manifest |
+| [`manifests/springer.yml`](./manifests/springer.yml) | Springer provider manifest |
+| [`manifests/wiley.yml`](./manifests/wiley.yml) | Wiley provider manifest |
+| [`manifests/science.yml`](./manifests/science.yml) | Science provider manifest |
+| [`manifests/pnas.yml`](./manifests/pnas.yml) | PNAS provider manifest |
+| [`manifests/ieee.yml`](./manifests/ieee.yml) | IEEE provider manifest |
 | [`manifests/arxiv.yml`](./manifests/arxiv.yml) | arXiv provider manifest |
 | [`manifests/copernicus.yml`](./manifests/copernicus.yml) | Copernicus provider manifest |
-| [`manifests/wiley.yml`](./manifests/wiley.yml) | Wiley provider manifest |
+| [`manifests/ams.yml`](./manifests/ams.yml) | AMS provider manifest |
 
 ## Legacy Human References
 

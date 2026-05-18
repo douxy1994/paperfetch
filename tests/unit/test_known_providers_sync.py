@@ -35,6 +35,16 @@ def test_known_providers_manifest_paths_are_synced() -> None:
     }
 
     assert indexed_manifest_names == manifest_names
+    for entry in entries:
+        provider = entry["name"]
+        status = entry["status"]
+        manifest_path = entry.get("manifest_path")
+        if status == "implemented":
+            assert manifest_path is not None, f"{provider} implemented provider needs manifest_path"
+        if manifest_path is None:
+            assert status == "infrastructure", (
+                f"{provider} is {status!r}; only infrastructure providers may omit manifest_path"
+            )
 
     for manifest_path in manifest_paths:
         manifest = load_yaml(manifest_path)
