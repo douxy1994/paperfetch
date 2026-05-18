@@ -337,6 +337,24 @@ jobs:
 
           $runtimePython = Join-Path $installRoot "runtime/python.exe"
           $mathmlNode = Join-Path $installRoot "runtime/Lib/site-packages/playwright/driver/node.exe"
+          function Invoke-RuntimePythonScript {
+            param(
+              [string]$Script,
+              [string[]]$Arguments = @()
+            )
+
+            $scriptPath = Join-Path $env:RUNNER_TEMP ("paper-fetch-smoke-{0}.py" -f [System.Guid]::NewGuid().ToString("N"))
+            try {
+              [System.IO.File]::WriteAllText($scriptPath, $Script, [System.Text.UTF8Encoding]::new($false))
+              & $runtimePython -X utf8 $scriptPath @Arguments
+              if ($LASTEXITCODE -ne 0) {
+                throw "Bundled Python smoke script failed with exit code $LASTEXITCODE"
+              }
+            } finally {
+              Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
+            }
+          }
+
           foreach ($requiredPath in @(
             "runtime/Lib/site-packages/paper_fetch/__init__.py",
             "bin/paper-fetch.cmd",
@@ -385,7 +403,14 @@ jobs:
             throw "offline.env managed block does not pin bundled MathML Node.`n$offlineEnv"
           }
 
-          & $runtimePython -X utf8 -c "import paper_fetch; import paper_fetch.mcp.server; from paper_fetch.mcp.fetch_tool import provider_status_payload; assert 'providers' in provider_status_payload()"
+          $providerStatusCheck = @'
+          import paper_fetch
+          import paper_fetch.mcp.server
+          from paper_fetch.mcp.fetch_tool import provider_status_payload
+
+          assert "providers" in provider_status_payload()
+          '@
+          Invoke-RuntimePythonScript -Script $providerStatusCheck
           & (Join-Path $installRoot "bin/paper-fetch.cmd") --help | Out-Null
           & (Join-Path $installRoot "formula-tools/bin/texmath.exe") --help | Out-Null
           & $mathmlNode --version | Out-Null
@@ -395,7 +420,7 @@ jobs:
 
           assert hasattr(cloakbrowser, "launch")
           '@
-          & $runtimePython -X utf8 -c $cloakbrowserCheck
+          Invoke-RuntimePythonScript -Script $cloakbrowserCheck
 
           $log = Get-Content -LiteralPath $fakeLog -Raw
           foreach ($expected in @(

@@ -6,6 +6,12 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.5.6 - 2026-05-18
+
+### 修复
+
+- 修复 Windows 离线安装器 smoke check：改为把 bundled Python 探针写入临时 `.py` 文件后执行，不再通过 `python.exe -c` 传递多行脚本，避免 PowerShell/native command 边界剥离 CloakBrowser 检查中的引号。
+
 ## 1.5.5 - 2026-05-17
 
 ### 修复

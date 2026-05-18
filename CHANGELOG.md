@@ -6,6 +6,12 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.5.6 - 2026-05-18
+
+### Fixed
+
+- Fixed Windows offline installer smoke checks by running bundled Python probes from temporary `.py` files instead of passing multi-line scripts through `python.exe -c`, avoiding PowerShell native-command quote stripping around CloakBrowser checks.
+
 ## 1.5.5 - 2026-05-17
 
 ### Fixed

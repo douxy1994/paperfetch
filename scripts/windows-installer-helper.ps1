@@ -146,6 +146,21 @@ function Invoke-Checked {
     }
 }
 
+function Invoke-RuntimePythonScript {
+    param(
+        [string]$Script,
+        [string[]]$Arguments = @()
+    )
+
+    $scriptPath = Join-Path ([System.IO.Path]::GetTempPath()) ("paper-fetch-smoke-{0}.py" -f [System.Guid]::NewGuid().ToString("N"))
+    try {
+        [System.IO.File]::WriteAllText($scriptPath, $Script, [System.Text.UTF8Encoding]::new($false))
+        Invoke-Checked -FilePath (ConvertTo-FullPath (Get-RuntimePython)) -Arguments (@("-X", "utf8", $scriptPath) + $Arguments)
+    } finally {
+        Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 function Get-RuntimePython {
     return Join-Path (Join-Path $InstallRoot "runtime") "python.exe"
 }
@@ -513,16 +528,18 @@ function Unregister-GeminiMcp {
 }
 
 function Invoke-SmokeChecks {
-    $python = ConvertTo-FullPath (Get-RuntimePython)
     $texmath = ConvertTo-FullPath (Join-Path (Join-Path $InstallRoot "formula-tools") "bin/texmath.exe")
     $node = ConvertTo-FullPath (Get-MathmlToLatexNode)
 
     Set-ProcessRuntimeEnv
     Write-Log "Running bundled Python smoke checks"
-    Invoke-Checked -FilePath $python -Arguments @(
-        "-X", "utf8", "-c",
-        "import paper_fetch; from paper_fetch.mcp.fetch_tool import provider_status_payload; payload = provider_status_payload(); assert 'providers' in payload"
-    )
+    Invoke-RuntimePythonScript -Script @'
+import paper_fetch
+from paper_fetch.mcp.fetch_tool import provider_status_payload
+
+payload = provider_status_payload()
+assert "providers" in payload
+'@
 
     $cloakbrowserCheck = @'
 from pathlib import Path
@@ -542,11 +559,11 @@ if len(sys.argv) > 1 and sys.argv[1] == "probe-launch":
     browser = cloakbrowser.launch(headless=headless)
     browser.close()
 '@
-    $args = @("-X", "utf8", "-c", $cloakbrowserCheck)
+    $args = @()
     if ($ProbeLaunch) {
         $args += "probe-launch"
     }
-    Invoke-Checked -FilePath $python -Arguments $args
+    Invoke-RuntimePythonScript -Script $cloakbrowserCheck -Arguments $args
     Invoke-Checked -FilePath $texmath -Arguments @("--help")
     Invoke-Checked -FilePath $node -Arguments @("--version")
 }

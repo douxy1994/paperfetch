@@ -18,6 +18,8 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("from paper_fetch.mcp.fetch_tool import provider_status_payload", workflow)
+        self.assertIn("Invoke-RuntimePythonScript -Script $providerStatusCheck", workflow)
+        self.assertNotIn('& $runtimePython -X utf8 -c "import paper_fetch', workflow)
         self.assertNotIn("from paper_fetch.mcp.tools import provider_status_payload", workflow)
 
     def test_windows_offline_ci_uses_cloakbrowser_package_smoke(self) -> None:
@@ -25,6 +27,8 @@ class CiReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn("import cloakbrowser", workflow)
         self.assertIn('assert hasattr(cloakbrowser, "launch")', workflow)
+        self.assertIn("Invoke-RuntimePythonScript -Script $cloakbrowserCheck", workflow)
+        self.assertNotIn("& $runtimePython -X utf8 -c $cloakbrowserCheck", workflow)
         self.assertNotIn("playwright.sync_api", workflow)
         self.assertNotIn("ms-playwright", workflow)
 
