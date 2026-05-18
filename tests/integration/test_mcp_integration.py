@@ -259,7 +259,10 @@ SERVER_SCRIPT = textwrap.dedent(
                         build_provider_status_check(
                             "metadata_api",
                             "ok",
-                            "arXiv API metadata route is optional enrichment.",
+                            (
+                                "arXiv API metadata route uses the internal Atom client "
+                                "for default metadata enrichment."
+                            ),
                         ),
                         build_provider_status_check(
                             "html_route",

@@ -11,6 +11,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
+from xml.sax.saxutils import escape
 
 from paper_fetch import artifacts as paper_fetch_artifacts
 from paper_fetch import service as paper_fetch
@@ -129,6 +130,64 @@ def _atom_feed(arxiv_id: str) -> bytes:
 """.encode("utf-8")
 
 
+def _atom_feed_from_raw_result(raw: dict) -> bytes:
+    categories = "\n".join(
+        f'    <category term="{escape(str(category))}" />'
+        for category in raw.get("categories", [])
+    )
+    authors = "\n".join(
+        f"    <author><name>{escape(str(author))}</name></author>"
+        for author in raw.get("authors", [])
+    )
+    primary_category = escape(str(raw.get("primary_category") or ""))
+    comment = (
+        f"    <arxiv:comment>{escape(str(raw['comment']))}</arxiv:comment>\n"
+        if raw.get("comment")
+        else ""
+    )
+    journal_ref = (
+        f"    <arxiv:journal_ref>{escape(str(raw['journal_ref']))}</arxiv:journal_ref>\n"
+        if raw.get("journal_ref")
+        else ""
+    )
+    doi = (
+        f"    <arxiv:doi>{escape(str(raw['doi']))}</arxiv:doi>\n"
+        if raw.get("doi")
+        else ""
+    )
+    pdf_url = escape(str(raw.get("pdf_url") or ""))
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom" xmlns:arxiv="http://arxiv.org/schemas/atom">
+  <entry>
+    <id>{escape(str(raw.get("entry_id") or ""))}</id>
+    <updated>{escape(str(raw.get("updated") or ""))}</updated>
+    <published>{escape(str(raw.get("published") or ""))}</published>
+    <title>{escape(str(raw.get("title") or ""))}</title>
+    <summary>{escape(str(raw.get("summary") or ""))}</summary>
+{authors}
+{comment}{journal_ref}{doi}    <arxiv:primary_category term="{primary_category}" />
+{categories}
+    <link href="{escape(str(raw.get("entry_id") or ""))}" rel="alternate" type="text/html" />
+    <link title="pdf" href="{pdf_url}" rel="related" type="application/pdf" />
+  </entry>
+</feed>
+""".encode("utf-8")
+
+
+def _atom_feed_from_fixture(arxiv_id: str) -> bytes:
+    return _atom_feed_from_raw_result(_api_payload(arxiv_id)["raw_result"])
+
+
+def _api_atom_response(
+    arxiv_id: str, *, body: bytes | None = None
+) -> dict[str, object]:
+    return http_response(
+        _arxiv_atom.ARXIV_API_URL,
+        body if body is not None else _atom_feed_from_fixture(arxiv_id),
+        "application/atom+xml",
+    )
+
+
 class ReplayArxivResult:
     def __init__(self, raw: dict) -> None:
         self.entry_id = raw["entry_id"]
@@ -180,6 +239,7 @@ def _html_transport(
     *,
     html_body: bytes | None = None,
     html_content_type: str = "text/html; charset=utf-8",
+    api_body: bytes | None = None,
     extra_responses: dict[tuple[str, str], object] | None = None,
 ) -> RecordingTransport:
     html_url = canonical_arxiv_html_url(arxiv_id)
@@ -188,7 +248,10 @@ def _html_transport(
             html_url,
             html_body if html_body is not None else _fixture_html(arxiv_id),
             html_content_type,
-        )
+        ),
+        ("GET", _arxiv_atom.ARXIV_API_URL): _api_atom_response(
+            arxiv_id, body=api_body
+        ),
     }
     responses.update(extra_responses or {})
     return RecordingTransport(responses)
@@ -218,6 +281,7 @@ def _html_then_pdf_transport(
             ("GET", pdf_url): http_response(
                 pdf_url, _fixture_pdf(arxiv_id), "application/pdf"
             ),
+            ("GET", _arxiv_atom.ARXIV_API_URL): _api_atom_response(arxiv_id),
         }
     )
 
@@ -492,7 +556,9 @@ class ArxivProviderTests(unittest.TestCase):
         self.assertEqual(references[0]["year"], "2024")
         self.assertEqual(references[0]["doi"], "10.1000/example")
 
-    def test_html_success_only_requests_official_html(self) -> None:
+    def test_html_success_requests_official_html_then_default_api_enrichment(
+        self,
+    ) -> None:
         arxiv_id = "2605.06663v1"
         metadata = _metadata(arxiv_id)
         transport = _html_transport(arxiv_id)
@@ -509,7 +575,11 @@ class ArxivProviderTests(unittest.TestCase):
         self.assertEqual(raw_payload.warnings, [])
         self.assertEqual(
             [call["url"] for call in transport.calls],
-            [canonical_arxiv_html_url(arxiv_id)],
+            [canonical_arxiv_html_url(arxiv_id), _arxiv_atom.ARXIV_API_URL],
+        )
+        self.assertEqual(
+            transport.calls[-1]["query"],
+            {"id_list": arxiv_id, "max_results": "1"},
         )
 
     def test_html_404_directly_requests_pdf_fallback(self) -> None:
@@ -534,7 +604,11 @@ class ArxivProviderTests(unittest.TestCase):
                 )
                 self.assertEqual(
                     [call["url"] for call in transport.calls],
-                    [metadata["html_url"], metadata["pdf_url"]],
+                    [
+                        metadata["html_url"],
+                        metadata["pdf_url"],
+                        _arxiv_atom.ARXIV_API_URL,
+                    ],
                 )
                 self.assertIn("html:", raw_payload.content.html_failure_message)
 
@@ -567,7 +641,7 @@ class ArxivProviderTests(unittest.TestCase):
         self.assertIn("fulltext:arxiv_pdf_fallback_ok", article.quality.source_trail)
         self.assertEqual(
             [call["url"] for call in transport.calls],
-            [metadata["html_url"], metadata["pdf_url"]],
+            [metadata["html_url"], metadata["pdf_url"], _arxiv_atom.ARXIV_API_URL],
         )
 
     def test_insufficient_html_body_directly_requests_pdf_fallback(self) -> None:
@@ -595,7 +669,7 @@ class ArxivProviderTests(unittest.TestCase):
         self.assertIn("fulltext:arxiv_pdf_fallback_ok", article.quality.source_trail)
         self.assertEqual(
             [call["url"] for call in transport.calls],
-            [metadata["html_url"], metadata["pdf_url"]],
+            [metadata["html_url"], metadata["pdf_url"], _arxiv_atom.ARXIV_API_URL],
         )
 
     def test_polluted_html_body_directly_requests_pdf_fallback(self) -> None:
@@ -628,7 +702,7 @@ class ArxivProviderTests(unittest.TestCase):
         )
         self.assertEqual(
             [call["url"] for call in transport.calls],
-            [metadata["html_url"], metadata["pdf_url"]],
+            [metadata["html_url"], metadata["pdf_url"], _arxiv_atom.ARXIV_API_URL],
         )
 
     def test_api_transient_failure_with_arxiv_doi_uses_derived_html_url(self) -> None:
@@ -718,6 +792,74 @@ class ArxivProviderTests(unittest.TestCase):
         )
         self.assertEqual(api_client.queries, [[arxiv_id]])
 
+    def test_default_api_enrichment_fills_authors_when_html_has_no_author_dom(
+        self,
+    ) -> None:
+        arxiv_id = "2605.05255v1"
+        repeated_body = " ".join(
+            [
+                "This synthetic arXiv article describes storm-scale machine learning experiments, reproducible evaluation protocols, and measured forecasting outcomes."
+                for _ in range(80)
+            ]
+        )
+        html_body = f"""
+        <html><body><article class="ltx_document">
+          <h1 class="ltx_title ltx_title_document">HTML Title Without Author Nodes</h1>
+          <div id="abstract" class="ltx_abstract">
+            <h6 class="ltx_title ltx_title_abstract">Abstract.</h6>
+            <p>This abstract intentionally has no author-bearing DOM nearby.</p>
+          </div>
+          <section id="S1" class="ltx_section">
+            <h2 class="ltx_title ltx_title_section">1 Introduction</h2>
+            <p>{repeated_body}</p>
+          </section>
+          <section id="S2" class="ltx_section">
+            <h2 class="ltx_title ltx_title_section">2 Experiments</h2>
+            <p>{repeated_body}</p>
+          </section>
+          <section id="bib" class="ltx_bibliography">
+            <h2 class="ltx_title ltx_title_bibliography">References</h2>
+            <ul><li class="ltx_bibitem">Example Author. Example reference. 2026.</li></ul>
+          </section>
+        </article></body></html>
+        """.encode("utf-8")
+        api_raw = {
+            "entry_id": f"http://arxiv.org/abs/{arxiv_id}",
+            "updated": "2026-05-08T12:00:00+00:00",
+            "published": "2026-05-08T12:00:00+00:00",
+            "title": "API Title With Complete Authors",
+            "authors": ["Stuart Edris", "Amy McGovern", "Jason Hickey"],
+            "summary": "API abstract for the synthetic arXiv author enrichment replay.",
+            "comment": None,
+            "journal_ref": None,
+            "doi": None,
+            "primary_category": "cs.LG",
+            "categories": ["cs.LG", "physics.ao-ph"],
+            "pdf_url": canonical_arxiv_pdf_url(arxiv_id),
+            "short_id": arxiv_id,
+        }
+        transport = _html_transport(
+            arxiv_id,
+            html_body=html_body,
+            api_body=_atom_feed_from_raw_result(api_raw),
+        )
+        client = ArxivClient(transport, {})
+
+        raw_payload = client.fetch_raw_fulltext(_doi(arxiv_id), {})
+        article = client.to_article_model({}, raw_payload)
+
+        self.assertEqual(raw_payload.content.route_kind, "html")
+        self.assertEqual(
+            article.metadata.authors,
+            ["Stuart Edris", "Amy McGovern", "Jason Hickey"],
+        )
+        self.assertEqual(article.metadata.title, "API Title With Complete Authors")
+        self.assertEqual(raw_payload.warnings, [])
+        self.assertEqual(
+            [call["url"] for call in transport.calls],
+            [canonical_arxiv_html_url(arxiv_id), _arxiv_atom.ARXIV_API_URL],
+        )
+
     def test_api_transient_failure_continues_to_pdf_fallback_when_html_is_unavailable(
         self,
     ) -> None:
@@ -754,10 +896,7 @@ class ArxivProviderTests(unittest.TestCase):
                 )
             },
         )
-        api_client = _arxiv_atom.InternalArxivApiClient(
-            transport, "paper-fetch-test"
-        )
-        client = ArxivClient(transport, {}, api_client=api_client)
+        client = ArxivClient(transport, {})
 
         raw_payload = client.fetch_raw_fulltext(_doi(arxiv_id), {})
 
@@ -812,7 +951,7 @@ class ArxivProviderTests(unittest.TestCase):
         )
         self.assertEqual(
             [call["url"] for call in transport.calls],
-            [canonical_arxiv_html_url(arxiv_id)],
+            [canonical_arxiv_html_url(arxiv_id), _arxiv_atom.ARXIV_API_URL],
         )
         diagnostics = raw_payload.content.diagnostics["extraction"]
         self.assertEqual(diagnostics["parser"], "latexml_html")
@@ -1462,10 +1601,12 @@ class ArxivProviderTests(unittest.TestCase):
             markdown = result.article.to_ai_markdown(asset_profile="body")
             self.assertGreater(markdown.count("!["), 0)
             cookie_opener.assert_not_called()
+            non_asset_urls = {
+                canonical_arxiv_html_url(arxiv_id),
+                _arxiv_atom.ARXIV_API_URL,
+            }
             asset_calls = [
-                call
-                for call in transport.calls
-                if call["url"] != canonical_arxiv_html_url(arxiv_id)
+                call for call in transport.calls if call["url"] not in non_asset_urls
             ]
             self.assertGreater(len(asset_calls), 0)
             self.assertTrue(
@@ -1632,7 +1773,7 @@ class ArxivProviderTests(unittest.TestCase):
         self.assertEqual(result.artifacts.assets, [])
         self.assertEqual(
             [call["url"] for call in transport.calls],
-            [canonical_arxiv_html_url(arxiv_id)],
+            [canonical_arxiv_html_url(arxiv_id), _arxiv_atom.ARXIV_API_URL],
         )
 
     def test_html_route_recovers_missing_official_html_images_from_source_archive(

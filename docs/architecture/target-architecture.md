@@ -372,7 +372,7 @@ provider 内部的多层 metadata enrichment 使用 `paper_fetch.metadata.types.
   - dynamic HTML 成功公开为 `ieee_html`；无可用 HTML 但 PDF payload 成功时公开为 `ieee_pdf`
 - `arxiv`
   - 走 provider 自管 `arXiv ID 解析 -> arXiv official HTML -> direct HTTP PDF fallback`
-  - arXiv API / HTML metadata merge 只作为 enrichment，不是全文主路径节点
+  - 默认使用内部 Atom API client 执行 arXiv API / HTML metadata merge；该步骤只作为 enrichment，不是全文主路径节点，失败只记录 warning
   - official HTML 成功公开为 `arxiv_html`；HTML 不可用、返回非 HTML、正文不足或质量检测失败时直接进入 text-only PDF fallback 并公开为 `arxiv_pdf`
 - `copernicus`
   - 走 provider 自管 `landing HTML / DOI-derived URL -> NLM/JATS XML -> direct HTTP PDF fallback`

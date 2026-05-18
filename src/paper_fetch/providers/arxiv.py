@@ -120,7 +120,7 @@ class ArxivClient(ProviderClient):
         self.transport = transport
         self.env = dict(env)
         self.user_agent = build_user_agent(env)
-        self.api_enrichment_enabled = api_client is not None
+        self.api_enrichment_enabled = True
         self.api_client = api_client or _InternalArxivApiClient(
             transport=self.transport,
             user_agent=self.user_agent,
@@ -134,7 +134,10 @@ class ArxivClient(ProviderClient):
                 build_provider_status_check(
                     "metadata_api",
                     OK,
-                    "arXiv API metadata route is an optional metadata enrichment path.",
+                    (
+                        "arXiv API metadata route uses the internal Atom client for "
+                        "default metadata enrichment."
+                    ),
                     details={
                         "mode": "arxiv_api",
                         "client": "internal_atom",
