@@ -54,6 +54,7 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertEqual(len(result.checks), 1)
         self.assertEqual(result.checks[0].name, "fulltext_api")
         self.assertEqual(result.checks[0].status, "ok")
+        self.assertEqual(result.checks[0].details, {})
 
     def test_springer_direct_html_route_is_ready_without_env(self) -> None:
         result = SpringerClient(DummyTransport(), {}).probe_status()

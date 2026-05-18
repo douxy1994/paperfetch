@@ -103,7 +103,7 @@ register_provider_bundle(
             client_factory_path="paper_fetch.providers.elsevier:ElsevierClient",
             status_order=1,
             api_hosts=("scopus.com", "www.scopus.com"),
-            sensitive_headers=("x-els-apikey", "x-els-insttoken"),
+            sensitive_headers=("x-els-apikey",),
             xml_root_tags=("full-text-retrieval-response",),
             xml_file_tokens=("elsevier", "10.1016"),
         ),
@@ -616,9 +616,6 @@ class ElsevierClient(ProviderClient):
         self.transport = transport
         self.env = dict(env)
         self.api_key = env.get("ELSEVIER_API_KEY", "").strip()
-        self.insttoken = env.get("ELSEVIER_INSTTOKEN", "").strip()
-        self.authtoken = env.get("ELSEVIER_AUTHTOKEN", "").strip()
-        self.clickthrough_token = env.get("ELSEVIER_CLICKTHROUGH_TOKEN", "").strip()
         self.user_agent = build_user_agent(env)
 
     def _base_headers(self, accept: str) -> dict[str, str]:
@@ -634,12 +631,6 @@ class ElsevierClient(ProviderClient):
             "User-Agent": self.user_agent,
             "X-ELS-ReqId": str(uuid.uuid4()),
         }
-        if self.insttoken:
-            headers["X-ELS-Insttoken"] = self.insttoken
-        if self.authtoken:
-            headers["Authorization"] = f"Bearer {self.authtoken}"
-        if self.clickthrough_token:
-            headers["CR-Clickthrough-Client-Token"] = self.clickthrough_token
         return headers
 
     def probe_status(self) -> ProviderStatusResult:
@@ -659,11 +650,6 @@ class ElsevierClient(ProviderClient):
                     check_status,
                     message,
                     missing_env=missing_env,
-                    details={
-                        "insttoken_configured": bool(self.insttoken),
-                        "authtoken_configured": bool(self.authtoken),
-                        "clickthrough_token_configured": bool(self.clickthrough_token),
-                    },
                 ),
             ],
         )

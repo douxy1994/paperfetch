@@ -25,7 +25,6 @@ DEFAULT_FETCH_NOTES: tuple[str, ...] = (
 
 SKILL_ENVIRONMENT_VARIABLES: tuple[tuple[str, str], ...] = (
     ("ELSEVIER_API_KEY", "Required for official Elsevier full-text access."),
-    ("ELSEVIER_INSTTOKEN", "Optional institution token for Elsevier entitlement."),
     ("WILEY_TDM_CLIENT_TOKEN", "Optional Wiley Text and Data Mining client token for the official Wiley PDF lane; browser PDF/ePDF fallback can still run without it when the local runtime is ready."),
     ("CLOAKBROWSER_HEADLESS", "Optional override (true/false) for the CloakBrowser browser runtime. Defaults to true."),
     ("CLOAKBROWSER_TIMEOUT_MS", "Optional override for CloakBrowser per-request timeout. Defaults to 120000."),

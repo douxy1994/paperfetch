@@ -88,7 +88,6 @@ def _fake_python_script(version: str) -> str:
     PYTHONUTF8
     PYTHONIOENCODING
     PAPER_FETCH_ENV_FILE
-    PAPER_FETCH_MCP_PYTHON_BIN
     PAPER_FETCH_DOWNLOAD_DIR
     PAPER_FETCH_FORMULA_TOOLS_DIR
     MATHML_TO_LATEX_NODE_BIN
@@ -342,7 +341,7 @@ class OfflineInstallTests(unittest.TestCase):
             calls = [line.split("\t") for line in cli_log.read_text(encoding="utf-8").splitlines()]
             codex_add = next(call for call in calls if call[:3] == ["codex", "mcp", "add"])
             self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", codex_add)
-            self.assertIn(f"PAPER_FETCH_MCP_PYTHON_BIN={bundle / 'bin' / 'python'}", codex_add)
+            self.assertFalse(any(arg.startswith("PAPER_FETCH_MCP_PYTHON_BIN=") for arg in codex_add))
             self.assertIn(
                 f"MATHML_TO_LATEX_NODE_BIN={bundle / 'runtime' / 'site-packages' / 'playwright' / 'driver' / 'node'}",
                 codex_add,

@@ -5,9 +5,6 @@
 - `PAPER_FETCH_BROWSER_USER_AGENT`: Optional browser-only `User-Agent` override for CloakBrowser/Playwright contexts. Leave unset to use CloakBrowser/Chromium's own UA. For AGU/Wiley Cloudflare challenge issues, set this to a normal Chrome UA.
 - `CROSSREF_MAILTO`: Recommended contact email for Crossref polite pool requests.
 - `ELSEVIER_API_KEY`: Required for official Elsevier full-text access.
-- `ELSEVIER_INSTTOKEN`: Optional institution token for Elsevier entitlement.
-- `ELSEVIER_AUTHTOKEN`: Optional Elsevier bearer token credential.
-- `ELSEVIER_CLICKTHROUGH_TOKEN`: Optional Elsevier clickthrough credential.
 - `WILEY_TDM_CLIENT_TOKEN`: Optional Wiley Text and Data Mining client token for the official Wiley PDF lane; browser PDF/ePDF fallback can still run without it when the local runtime is ready.
 - `CLOAKBROWSER_HEADLESS`: Optional override (`true`/`false`) for the CloakBrowser browser runtime. Defaults to `true`.
 - `CLOAKBROWSER_TIMEOUT_MS`: Optional override for CloakBrowser per-request timeout. Defaults to `120000`.

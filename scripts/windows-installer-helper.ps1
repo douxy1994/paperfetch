@@ -20,7 +20,6 @@ $McpEnvKeys = @(
     "PYTHONUTF8",
     "PYTHONIOENCODING",
     "PAPER_FETCH_ENV_FILE",
-    "PAPER_FETCH_MCP_PYTHON_BIN",
     "PAPER_FETCH_DOWNLOAD_DIR",
     "PAPER_FETCH_FORMULA_TOOLS_DIR",
     "MATHML_TO_LATEX_NODE_BIN",
@@ -195,7 +194,6 @@ function Get-McpEnv {
         PYTHONUTF8 = "1"
         PYTHONIOENCODING = "utf-8"
         PAPER_FETCH_ENV_FILE = (ConvertTo-FullPath $offlineEnv)
-        PAPER_FETCH_MCP_PYTHON_BIN = (ConvertTo-FullPath (Get-RuntimePython))
         PAPER_FETCH_DOWNLOAD_DIR = (ConvertTo-FullPath $downloads)
         PAPER_FETCH_FORMULA_TOOLS_DIR = (ConvertTo-FullPath $formulaTools)
         MATHML_TO_LATEX_NODE_BIN = (ConvertTo-FullPath (Get-MathmlToLatexNode))

@@ -118,11 +118,19 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             }
         )
 
-        client = ElsevierClient(transport, {"ELSEVIER_API_KEY": "secret"})
+        legacy_elsevier_env = {
+            f"ELSEVIER_{name}": "ignored"
+            for name in ("INSTTOKEN", "AUTHTOKEN", "CLICKTHROUGH_TOKEN")
+        }
+        client = ElsevierClient(transport, {"ELSEVIER_API_KEY": "secret", **legacy_elsevier_env})
         with mock.patch.object(client, "_official_payload_is_usable", return_value=True):
             payload = client.fetch_raw_fulltext(doi, {})
 
         self.assertEqual(payload.content_type, "text/xml")
+        self.assertEqual(transport.calls[0]["headers"]["X-ELS-APIKey"], "secret")
+        self.assertNotIn("X-ELS-" + "Insttoken", transport.calls[0]["headers"])
+        self.assertNotIn("Authorization", transport.calls[0]["headers"])
+        self.assertNotIn("CR-" + "Clickthrough-Client-Token", transport.calls[0]["headers"])
         self.assertEqual(transport.calls[0]["timeout"], DEFAULT_FULLTEXT_TIMEOUT_SECONDS)
         self.assertTrue(transport.calls[0]["retry_on_rate_limit"])
         self.assertTrue(transport.calls[0]["retry_on_transient"])

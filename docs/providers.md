@@ -747,21 +747,6 @@ export PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64)
 - 必填。
 - Elsevier metadata 和全文 API 的核心凭证。
 
-#### `ELSEVIER_INSTTOKEN`
-
-- 可选。
-- 机构授权场景补充凭证。
-
-#### `ELSEVIER_AUTHTOKEN`
-
-- 可选。
-- Bearer token 形式的补充凭证。
-
-#### `ELSEVIER_CLICKTHROUGH_TOKEN`
-
-- 可选。
-- clickthrough 场景补充凭证。
-
 ### Springer
 
 Springer direct HTML / direct HTTP PDF 路线当前没有额外必填 publisher env：
