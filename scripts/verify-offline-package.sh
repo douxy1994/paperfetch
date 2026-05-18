@@ -69,6 +69,11 @@ log "Verifying installed runtime package layout"
 [ ! -d "$INSTALL_ROOT/dist" ] || die "Offline install should not include dist."
 grep -F -q 'ELSEVIER_API_KEY="secret"' "$INSTALL_ROOT/offline.env"
 grep -F -q 'USER_NOTE="keep"' "$INSTALL_ROOT/offline.env"
+expected_browser_user_agent='PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"'
+grep -F -q "$expected_browser_user_agent" "$INSTALL_ROOT/offline.env" || die "Offline install did not enable default browser UA."
+if grep -E -q '^[[:space:]]*#.*PAPER_FETCH_BROWSER_USER_AGENT' "$INSTALL_ROOT/offline.env"; then
+  die "Offline install left default browser UA commented."
+fi
 
 log "Verifying user shell, skill, and MCP registration"
 grep -F -q "export PAPER_FETCH_ENV_FILE=\"$INSTALL_ROOT/offline.env\"" "$FAKE_HOME/.bashrc"

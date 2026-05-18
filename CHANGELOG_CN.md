@@ -6,6 +6,10 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+### 变更
+
+- 离线安装器生成和刷新 `offline.env` managed block 时默认启用普通 Chrome browser User-Agent，降低 CloakBrowser 抓取 AGU/Wiley 时停在 Cloudflare challenge 页的概率。
+
 ## 1.5.6 - 2026-05-18
 
 ### 修复

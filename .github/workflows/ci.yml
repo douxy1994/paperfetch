@@ -402,6 +402,13 @@ jobs:
           if (-not $offlineEnv.Contains("MATHML_TO_LATEX_NODE_BIN='$offlineEnvRoot/runtime/Lib/site-packages/playwright/driver/node.exe'")) {
             throw "offline.env managed block does not pin bundled MathML Node.`n$offlineEnv"
           }
+          $expectedBrowserUserAgent = "PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'"
+          if (-not $offlineEnv.Contains($expectedBrowserUserAgent)) {
+            throw "offline.env managed block does not enable default browser UA.`n$offlineEnv"
+          }
+          if ($offlineEnv -match "(?m)^\s*#.*PAPER_FETCH_BROWSER_USER_AGENT") {
+            throw "offline.env managed block left default browser UA commented.`n$offlineEnv"
+          }
 
           $providerStatusCheck = @'
           import paper_fetch

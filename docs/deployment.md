@@ -140,11 +140,11 @@ source ~/.local/share/paper-fetch-skill/activate-offline.sh
 - CloakBrowser Python 包随 Linux `runtime/site-packages` 和 Windows embedded runtime 分发；浏览器 binary 不随包分发，受限环境可预先安装并设置 `CLOAKBROWSER_BINARY_PATH`
 - Linux `.sh` payload 不包含仓库源码快照和 `tests/` 目录；离线安装目标是运行已打包工具，不在目标机执行项目测试
 - Linux 公式工具使用包内 `formula-tools/bin/texmath`，Windows 使用 `formula-tools/bin/texmath.exe`；目标机不编译 texmath，也不运行 `npm install`
-- Linux 默认写固定安装目录内的 `offline.env`、生成 `activate-offline.sh`、复制 `~/.codex/skills/paper-fetch-skill`、`~/.claude/skills/paper-fetch-skill` 和 `~/.gemini/skills/paper-fetch-skill`，并把离线 CLI PATH、formula tools PATH、`PAPER_FETCH_ENV_FILE`、`PAPER_FETCH_FORMULA_TOOLS_DIR`、`CLOAKBROWSER_HEADLESS` 写入当前 shell 对应启动文件；只有显式传 `--user-config` 才会把受标记管理的运行时块合并到 `~/.config/paper-fetch/.env`
+- Linux 默认写固定安装目录内的 `offline.env`、生成 `activate-offline.sh`、复制 `~/.codex/skills/paper-fetch-skill`、`~/.claude/skills/paper-fetch-skill` 和 `~/.gemini/skills/paper-fetch-skill`，并把离线 CLI PATH、formula tools PATH、`PAPER_FETCH_ENV_FILE`、`PAPER_FETCH_FORMULA_TOOLS_DIR`、`CLOAKBROWSER_HEADLESS` 写入当前 shell 对应启动文件；`offline.env` 的 managed block 默认启用普通 Chrome `PAPER_FETCH_BROWSER_USER_AGENT`，只有显式传 `--user-config` 才会把受标记管理的运行时块合并到 `~/.config/paper-fetch/.env`
 - Linux `--install-dir <path>` 会把 runtime-only payload 固定安装到指定目录；升级同一目录时会清理旧 `src/`、`tests/`、`wheelhouse/`、`dist/`、`.github/` 等残留并保留安装目录内 `offline.env`
 - Linux `--reuse-env-file <path>` 会把 `PAPER_FETCH_ENV_FILE` 指向现有文件且不修改该文件；其它 runtime 路径仍由新安装目录写入 shell / MCP 环境
 - Linux 写入 shell 启动文件和 Codex fallback config 时会先替换旧的受管理 block，重复安装不会重复追加；不修改 `/etc/profile`
-- Windows 首次安装会写安装目录内 `offline.env`；升级安装会保留用户已有内容，只替换 `# BEGIN/END paper-fetch offline managed` 包围的运行时 block。MCP 注册环境固定指向安装目录内 `offline.env`、`downloads/`、`formula-tools/` 和包内 `runtime/Lib/site-packages/playwright/driver/node.exe`，并设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`、`CLOAKBROWSER_HEADLESS=true`、`MATHML_TO_LATEX_NODE_BIN=<install-root>/runtime/Lib/site-packages/playwright/driver/node.exe`。Linux 也会在包内 Playwright Node 存在时把 `MATHML_TO_LATEX_NODE_BIN` 指向 `runtime/site-packages/playwright/driver/node`
+- Windows 首次安装会写安装目录内 `offline.env`；升级安装会保留用户已有内容，只替换 `# BEGIN/END paper-fetch offline managed` 包围的运行时 block。MCP 注册环境固定指向安装目录内 `offline.env`、`downloads/`、`formula-tools/` 和包内 `runtime/Lib/site-packages/playwright/driver/node.exe`，并设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`、`CLOAKBROWSER_HEADLESS=true`、`PAPER_FETCH_BROWSER_USER_AGENT=<普通 Chrome UA>`、`MATHML_TO_LATEX_NODE_BIN=<install-root>/runtime/Lib/site-packages/playwright/driver/node.exe`。Linux 也会在包内 Playwright Node 存在时把 `MATHML_TO_LATEX_NODE_BIN` 指向 `runtime/site-packages/playwright/driver/node`
 - Windows 安装、升级或手工修改 `offline.env` 后，需要重启 Codex Desktop / Claude Code / Gemini CLI；已启动的 MCP 服务不会自动继承新写入的 env。
 - Windows GUI 安装完成页会提示 Elsevier API key 申请入口和包内 `offline.env` 位置，并提供可选的 Notepad 打开项；silent 安装不会弹出该提示。离线环境抓取 Elsevier 全文前，从 <https://dev.elsevier.com/> 申请 key，并在该文件中填写 `ELSEVIER_API_KEY`
 - `--preset=headless` 会在安装阶段检查 `Xvfb`；`--preset=wslg` 会检查 `DISPLAY` 或 `WAYLAND_DISPLAY`
@@ -294,10 +294,10 @@ export CLOAKBROWSER_HEADLESS="true"
 export CLOAKBROWSER_TIMEOUT_MS="120000"
 ```
 
-AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，可先覆盖 browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求，`CLOAKBROWSER_HEADLESS=true` 可以保持默认；如果 GUI/WSLg 环境下仍被 challenge，再设置 `CLOAKBROWSER_HEADLESS=false` 或用 Linux 安装器的 `--preset=wslg`：
+AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，离线安装器已默认启用普通 Chrome browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求；`CLOAKBROWSER_HEADLESS=true` 可以保持默认。如果 GUI/WSLg 环境下仍被 challenge，再设置 `CLOAKBROWSER_HEADLESS=false` 或用 Linux 安装器的 `--preset=wslg`：
 
 ```bash
-export PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
 # GUI/WSLg 环境需要时再启用：
 export CLOAKBROWSER_HEADLESS="false"
 ```

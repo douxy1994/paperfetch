@@ -7,6 +7,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
+LINUX_OFFLINE_VERIFY = REPO_ROOT / "scripts" / "verify-offline-package.sh"
 
 
 class CiReleaseWorkflowTests(unittest.TestCase):
@@ -38,6 +39,15 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("MATHML_TO_LATEX_NODE_BIN", workflow)
         self.assertIn("runtime/Lib/site-packages/playwright/driver/node.exe", workflow)
         self.assertIn("$mathmlNode --version", workflow)
+
+    def test_offline_ci_verifies_default_browser_user_agent(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        linux_verify = LINUX_OFFLINE_VERIFY.read_text(encoding="utf-8")
+
+        self.assertIn("PAPER_FETCH_BROWSER_USER_AGENT", workflow)
+        self.assertIn("offline.env managed block does not enable default browser UA", workflow)
+        self.assertIn("PAPER_FETCH_BROWSER_USER_AGENT", linux_verify)
+        self.assertIn("Offline install did not enable default browser UA", linux_verify)
 
     def test_linux_offline_ci_verifies_runtime_package_layout(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")

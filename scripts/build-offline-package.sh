@@ -240,6 +240,8 @@ Run the release `.sh` installer directly. By default it installs to `~/.local/sh
 
 The first browser-backed fetch may need network access so CloakBrowser can download its runtime. In restricted environments, preinstall a compatible browser runtime and set `CLOAKBROWSER_BINARY_PATH` before using browser-backed providers.
 
+The installer writes `PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"` into `offline.env` by default for CloakBrowser-backed AGU/Wiley fetches.
+
 Set `CLOAKBROWSER_HEADLESS=false` only when running with a display-capable session.
 EOF
 }

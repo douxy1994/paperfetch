@@ -712,7 +712,7 @@ write_managed_env_file() {
     printf 'PAPER_FETCH_DOWNLOAD_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/downloads")"
     printf 'PAPER_FETCH_FORMULA_TOOLS_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/formula-tools")"
     printf 'CLOAKBROWSER_HEADLESS=%s\n' "$(quote_env_value "$(cloakbrowser_headless_value)")"
-    printf '# PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"\n'
+    printf 'PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"\n'
     printf '# CLOAKBROWSER_BINARY_PATH="/absolute/path/to/preinstalled/browser"\n'
     printf '%s\n' "$MANAGED_END"
   } >> "$tmp"

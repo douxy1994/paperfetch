@@ -6,6 +6,10 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+### Changed
+
+- Enabled the normal Chrome browser User-Agent in offline installer-managed `offline.env` blocks by default so CloakBrowser-backed AGU/Wiley fetches are less likely to stop at Cloudflare challenge pages.
+
 ## 1.5.6 - 2026-05-18
 
 ### Fixed
