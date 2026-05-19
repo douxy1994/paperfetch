@@ -62,18 +62,31 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn("tar -tzf", workflow)
         self.assertNotIn("paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.tar.gz", workflow)
 
-    def test_macos_offline_ci_verifies_headful_install_layout_without_release_asset(self) -> None:
+    def test_macos_offline_ci_verifies_headful_install_layout_and_uploads_release_asset(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("offline-macos-install:", workflow)
         self.assertIn("runs-on: macos-latest", workflow)
+        self.assertIn('python-version: "3.12"', workflow)
         self.assertIn("Build macOS offline package", workflow)
         self.assertIn("paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz", workflow)
         self.assertIn("--preset=headful", workflow)
         self.assertIn('CLOAKBROWSER_HEADLESS="false"', workflow)
         self.assertIn("macOS runtime package must not include source/build path", workflow)
         self.assertIn("- offline-macos-install", workflow)
-        self.assertNotIn("name: paper-fetch-skill-offline-macos", workflow)
+        self.assertIn("Upload macOS offline package", workflow)
+        self.assertIn("name: paper-fetch-skill-offline-macos-cp312", workflow)
+        self.assertIn("path: offline-artifacts/paper-fetch-skill-offline-macos-*-cp312.tar.gz", workflow)
+
+    def test_release_asset_set_includes_one_macos_cp312_tarball(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("macos_assets=(release-artifacts/paper-fetch-skill-offline-macos-*-cp312.tar.gz)", workflow)
+        self.assertIn("Expected exactly one macOS cp312 release asset", workflow)
+        self.assertIn("paper-fetch-skill-offline-macos-arm64-cp312.tar.gz", workflow)
+        self.assertIn("paper-fetch-skill-offline-macos-x86_64-cp312.tar.gz", workflow)
+        self.assertIn('expected_count="$((${#expected[@]} + ${#macos_assets[@]}))"', workflow)
+        self.assertIn('Expected $expected_count release assets', workflow)
 
     def test_macos_offline_ci_runs_installed_package_browser_smoke(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
@@ -87,7 +100,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("cloakbrowser.launch(headless=True)", workflow)
         self.assertIn("data:text/html,<title>paper-fetch macOS browser smoke</title>", workflow)
         self.assertIn("\n          from pathlib import Path\n", workflow)
-        self.assertIn("\n          PY\n\n  offline-windows-x86-64:", workflow)
+        self.assertIn("\n          PY\n\n      - name: Upload macOS offline package", workflow)
         self.assertNotIn("\nfrom pathlib import Path\n", workflow)
 
     def test_windows_offline_ci_verifies_runtime_only_package_layout(self) -> None:
