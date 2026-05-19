@@ -67,25 +67,28 @@ class CiReleaseWorkflowTests(unittest.TestCase):
 
         self.assertIn("offline-macos-install:", workflow)
         self.assertIn("runs-on: macos-latest", workflow)
-        self.assertIn('python-version: "3.12"', workflow)
+        for python_version, python_tag in (("3.11", "cp311"), ("3.12", "cp312"), ("3.13", "cp313"), ("3.14", "cp314")):
+            self.assertIn(f'python-version: "{python_version}"', workflow)
+            self.assertIn(f'python-tag: "{python_tag}"', workflow)
         self.assertIn("Build macOS offline package", workflow)
-        self.assertIn("paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz", workflow)
+        self.assertIn("paper-fetch-skill-offline-macos-$package_arch-${{ matrix.python-tag }}.tar.gz", workflow)
         self.assertIn("--preset=headful", workflow)
         self.assertIn('CLOAKBROWSER_HEADLESS="false"', workflow)
         self.assertIn("macOS runtime package must not include source/build path", workflow)
         self.assertIn("- offline-macos-install", workflow)
         self.assertIn("Upload macOS offline package", workflow)
-        self.assertIn("name: paper-fetch-skill-offline-macos-cp312", workflow)
-        self.assertIn("path: offline-artifacts/paper-fetch-skill-offline-macos-*-cp312.tar.gz", workflow)
+        self.assertIn("name: paper-fetch-skill-offline-macos-${{ matrix.python-tag }}", workflow)
+        self.assertIn("path: offline-artifacts/paper-fetch-skill-offline-macos-*-${{ matrix.python-tag }}.tar.gz", workflow)
 
-    def test_release_asset_set_includes_one_macos_cp312_tarball(self) -> None:
+    def test_release_asset_set_includes_one_macos_tarball_for_each_python_tag(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
-        self.assertIn("macos_assets=(release-artifacts/paper-fetch-skill-offline-macos-*-cp312.tar.gz)", workflow)
-        self.assertIn("Expected exactly one macOS cp312 release asset", workflow)
-        self.assertIn("paper-fetch-skill-offline-macos-arm64-cp312.tar.gz", workflow)
-        self.assertIn("paper-fetch-skill-offline-macos-x86_64-cp312.tar.gz", workflow)
-        self.assertIn('expected_count="$((${#expected[@]} + ${#macos_assets[@]}))"', workflow)
+        self.assertIn("python_tags=(cp311 cp312 cp313 cp314)", workflow)
+        self.assertIn('macos_assets=(release-artifacts/paper-fetch-skill-offline-macos-*-"$python_tag".tar.gz)', workflow)
+        self.assertIn('Expected exactly one macOS $python_tag release asset', workflow)
+        self.assertIn('paper-fetch-skill-offline-macos-arm64-$python_tag.tar.gz', workflow)
+        self.assertIn('paper-fetch-skill-offline-macos-x86_64-$python_tag.tar.gz', workflow)
+        self.assertIn('expected_count="$((${#expected[@]} + macos_asset_count))"', workflow)
         self.assertIn('Expected $expected_count release assets', workflow)
 
     def test_macos_offline_ci_runs_installed_package_browser_smoke(self) -> None:

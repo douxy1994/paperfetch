@@ -252,6 +252,18 @@ jobs:
   offline-macos-install:
     if: ${{ github.event_name != 'workflow_dispatch' || !inputs.run_offline_windows_only }}
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - python-version: "3.11"
+            python-tag: "cp311"
+          - python-version: "3.12"
+            python-tag: "cp312"
+          - python-version: "3.13"
+            python-tag: "cp313"
+          - python-version: "3.14"
+            python-tag: "cp314"
 
     steps:
       - name: Check out repository
@@ -260,7 +272,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: ${{ matrix.python-version }}
 
       - name: Set up Haskell toolchain for bundled texmath
         id: setup-haskell
@@ -291,7 +303,7 @@ jobs:
             x86_64|amd64) package_arch="x86_64" ;;
             *) echo "Unsupported macOS runner architecture: $arch" >&2; exit 1 ;;
           esac
-          scripts/verify-offline-package.sh "$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz"
+          scripts/verify-offline-package.sh "$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-${{ matrix.python-tag }}.tar.gz"
 
       - name: Verify macOS headful install layout
         shell: bash
@@ -303,9 +315,9 @@ jobs:
             x86_64|amd64) package_arch="x86_64" ;;
             *) echo "Unsupported macOS runner architecture: $arch" >&2; exit 1 ;;
           esac
-          package="$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz"
+          package="$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-${{ matrix.python-tag }}.tar.gz"
           bundle_root="$RUNNER_TEMP/paper-fetch-macos-bundle"
-          bundle="$bundle_root/paper-fetch-skill-offline-macos-$package_arch-cp312"
+          bundle="$bundle_root/paper-fetch-skill-offline-macos-$package_arch-${{ matrix.python-tag }}"
           install_root="$RUNNER_TEMP/paper-fetch-macos-install"
           layout_home="$RUNNER_TEMP/paper-fetch-macos-home"
           rm -rf "$bundle_root" "$install_root" "$layout_home"
@@ -333,9 +345,9 @@ jobs:
             x86_64|amd64) package_arch="x86_64" ;;
             *) echo "Unsupported macOS runner architecture: $arch" >&2; exit 1 ;;
           esac
-          package="$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz"
+          package="$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-${{ matrix.python-tag }}.tar.gz"
           bundle_root="$RUNNER_TEMP/paper-fetch-macos-browser-bundle"
-          bundle="$bundle_root/paper-fetch-skill-offline-macos-$package_arch-cp312"
+          bundle="$bundle_root/paper-fetch-skill-offline-macos-$package_arch-${{ matrix.python-tag }}"
           install_root="$RUNNER_TEMP/paper-fetch-macos-browser-install"
           browser_home="$RUNNER_TEMP/paper-fetch-macos-browser-home"
           browser_profile="$RUNNER_TEMP/paper-fetch-macos-browser-profile"
@@ -396,8 +408,8 @@ jobs:
       - name: Upload macOS offline package
         uses: actions/upload-artifact@v7
         with:
-          name: paper-fetch-skill-offline-macos-cp312
-          path: offline-artifacts/paper-fetch-skill-offline-macos-*-cp312.tar.gz
+          name: paper-fetch-skill-offline-macos-${{ matrix.python-tag }}
+          path: offline-artifacts/paper-fetch-skill-offline-macos-*-${{ matrix.python-tag }}.tar.gz
           if-no-files-found: error
 
   offline-windows-x86-64:
@@ -647,9 +659,7 @@ jobs:
             paper-fetch-skill-offline-linux-x86_64-cp314.sh
             paper-fetch-skill-windows-x86_64-setup.exe
           )
-          shopt -s nullglob
-          macos_assets=(release-artifacts/paper-fetch-skill-offline-macos-*-cp312.tar.gz)
-          shopt -u nullglob
+          python_tags=(cp311 cp312 cp313 cp314)
 
           for asset in "${expected[@]}"; do
             if [ ! -f "release-artifacts/$asset" ]; then
@@ -657,21 +667,26 @@ jobs:
               exit 1
             fi
           done
-          if [ "${#macos_assets[@]}" -ne 1 ]; then
-            echo "Expected exactly one macOS cp312 release asset, found ${#macos_assets[@]}:" >&2
-            find release-artifacts -maxdepth 1 -type f -name 'paper-fetch-skill-offline-macos-*.tar.gz' -print | sort >&2
-            exit 1
-          fi
-          case "$(basename "${macos_assets[0]}")" in
-            paper-fetch-skill-offline-macos-arm64-cp312.tar.gz|paper-fetch-skill-offline-macos-x86_64-cp312.tar.gz) ;;
-            *)
+          macos_asset_count=0
+          for python_tag in "${python_tags[@]}"; do
+            shopt -s nullglob
+            macos_assets=(release-artifacts/paper-fetch-skill-offline-macos-*-"$python_tag".tar.gz)
+            shopt -u nullglob
+            if [ "${#macos_assets[@]}" -ne 1 ]; then
+              echo "Expected exactly one macOS $python_tag release asset, found ${#macos_assets[@]}:" >&2
+              find release-artifacts -maxdepth 1 -type f -name 'paper-fetch-skill-offline-macos-*.tar.gz' -print | sort >&2
+              exit 1
+            fi
+            macos_asset_name="$(basename "${macos_assets[0]}")"
+            if [[ "$macos_asset_name" != "paper-fetch-skill-offline-macos-arm64-$python_tag.tar.gz" && "$macos_asset_name" != "paper-fetch-skill-offline-macos-x86_64-$python_tag.tar.gz" ]]; then
               echo "Unexpected macOS release asset name: ${macos_assets[0]}" >&2
               exit 1
-              ;;
-          esac
+            fi
+            macos_asset_count=$((macos_asset_count + ${#macos_assets[@]}))
+          done
 
           actual_count="$(find release-artifacts -maxdepth 1 -type f | wc -l | tr -d ' ')"
-          expected_count="$((${#expected[@]} + ${#macos_assets[@]}))"
+          expected_count="$((${#expected[@]} + macos_asset_count))"
           if [ "$actual_count" -ne "$expected_count" ]; then
             echo "Expected $expected_count release assets, found $actual_count:" >&2
             find release-artifacts -maxdepth 1 -type f -print | sort >&2
