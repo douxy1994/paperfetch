@@ -102,6 +102,41 @@ class ProviderWaterfallRunnerTests(unittest.TestCase):
             ["fulltext:template_html_fail", "fulltext:template_pdf_fail"],
         )
 
+    def test_runner_skips_step_when_condition_is_false(self) -> None:
+        calls: list[str] = []
+
+        def first(_state):
+            calls.append("first")
+            raise ProviderFailure("no_result", "HTML failed.")
+
+        def skipped(_state):
+            calls.append("skipped")
+            return _payload()
+
+        def second(_state):
+            calls.append("second")
+            return _payload(markers=["fulltext:template_pdf_ok"])
+
+        payload = run_provider_waterfall(
+            [
+                ProviderWaterfallStep(
+                    label="html",
+                    run=first,
+                    failure_marker="fulltext:template_html_fail",
+                ),
+                ProviderWaterfallStep(
+                    label="conditional",
+                    run=skipped,
+                    condition=lambda state: state.failure("html") is None,
+                    failure_marker="fulltext:template_conditional_fail",
+                ),
+                ProviderWaterfallStep(label="pdf", run=second),
+            ]
+        )
+
+        self.assertEqual(calls, ["first", "second"])
+        self.assertEqual(payload.content.source_url, "https://example.test/article")
+
 
 class RawFulltextPayloadMetadataCompatibilityTests(unittest.TestCase):
     def test_metadata_magic_keys_are_not_ingested_as_structured_payload_fields(self) -> None:

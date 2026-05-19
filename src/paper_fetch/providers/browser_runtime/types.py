@@ -15,6 +15,8 @@ class BrowserRuntimeConfig:
     headless: bool
     user_agent: str | None
     timeout_ms: int = 120000
+    binary_path: str | None = None
+    user_data_dir: Path | None = None
 
 
 @dataclass(frozen=True)

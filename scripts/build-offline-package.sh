@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Linux x86_64 CPython 3.11-3.14 offline self-extracting installer.
+# Build Linux x86_64 self-extracting installers and macOS runtime tarballs.
 
 set -euo pipefail
 
@@ -18,12 +18,12 @@ usage() {
 Usage:
   scripts/build-offline-package.sh [--output-dir <path>] [--package-name <name>]
 
-Builds a Linux x86_64 CPython 3.11-3.14 self-extracting .sh installer containing:
+Builds a CPython 3.11-3.14 offline runtime package containing:
   - preinstalled Python runtime under runtime/site-packages
   - command wrappers under bin/
   - texmath under formula-tools/
   - cloakbrowser Python package; the CloakBrowser browser binary is not bundled
-The release artifact is a single self-extracting .sh installer.
+Linux builds produce a self-extracting .sh installer. macOS builds produce a .tar.gz bundle.
 EOF
 }
 
@@ -68,18 +68,36 @@ is_supported_python_tag() {
   esac
 }
 
-check_target() {
-  [ "$(uname -s)" = "Linux" ] || die "Offline package build currently targets Linux only."
-  case "$(uname -m)" in
-    x86_64|amd64) ;;
-    *) die "Offline package build currently targets x86_64 only." ;;
+detect_platform() {
+  case "$(uname -s)" in
+    Linux) printf 'linux\n' ;;
+    Darwin) printf 'macos\n' ;;
+    *) return 1 ;;
   esac
-  local python_tag
+}
+
+detect_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'x86_64\n' ;;
+    arm64|aarch64) printf 'arm64\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+check_target() {
+  local platform arch python_tag
+  platform="$(detect_platform)" || die "Offline package build supports Linux and macOS only."
+  arch="$(detect_arch)" || die "Offline package build supports x86_64 and arm64 only."
+  case "$platform:$arch" in
+    linux:x86_64|macos:x86_64|macos:arm64) ;;
+    linux:arm64) die "Offline package build currently targets Linux x86_64 only." ;;
+    *) die "Unsupported offline package target: $platform/$arch." ;;
+  esac
   python_tag="$(detect_python_tag)" \
     || die "Offline package build requires CPython 3.11, 3.12, 3.13, or 3.14."
   is_supported_python_tag "$python_tag" \
     || die "Offline package build requires CPython 3.11, 3.12, 3.13, or 3.14; detected $python_tag."
-  printf '%s\n' "$python_tag"
+  printf '%s %s %s\n' "$platform" "$arch" "$python_tag"
 }
 
 project_version() {
@@ -230,14 +248,23 @@ EOF
 
 write_offline_readme() {
   local staging="$1"
+  local target_platform="$2"
+  local install_line
+  if [ "$target_platform" = "macos" ]; then
+    install_line='Unpack the release `.tar.gz` bundle, then run `./install-offline.sh` from the unpacked directory. By default it installs to `~/.local/share/paper-fetch-skill`; pass `--install-dir <path>` to use a fixed custom directory.'
+  else
+    install_line='Run the release `.sh` installer directly. By default it installs to `~/.local/share/paper-fetch-skill`; pass `--install-dir <path>` to use a fixed custom directory.'
+  fi
   cat > "$staging/README.offline.md" <<'EOF'
 # Paper Fetch Offline Package
 
 This package includes an installed Python runtime under `runtime/site-packages`, command wrappers under `bin/`, and formula tools.
 It does not redistribute the CloakBrowser browser binary.
+EOF
 
-Run the release `.sh` installer directly. By default it installs to `~/.local/share/paper-fetch-skill`; pass `--install-dir <path>` to use a fixed custom directory.
+  printf '\n%s\n\n' "$install_line" >> "$staging/README.offline.md"
 
+  cat >> "$staging/README.offline.md" <<'EOF'
 The first browser-backed fetch may need network access so CloakBrowser can download its runtime. In restricted environments, preinstall a compatible browser runtime and set `CLOAKBROWSER_BINARY_PATH` before using browser-backed providers.
 
 The installer writes `PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"` into `offline.env` by default for CloakBrowser-backed AGU/Wiley fetches.
@@ -246,15 +273,36 @@ Set `CLOAKBROWSER_HEADLESS=false` only when running with a display-capable sessi
 EOF
 }
 
+write_checksums() {
+  local staging="$1"
+  "$PYTHON_BIN" - "$staging" <<'PY'
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+import sys
+
+staging = Path(sys.argv[1])
+lines = []
+for path in sorted(item for item in staging.rglob("*") if item.is_file() and item.name != "sha256sums.txt"):
+    digest = hashlib.sha256(path.read_bytes()).hexdigest()
+    relative = path.relative_to(staging).as_posix()
+    lines.append(f"{digest}  ./{relative}\n")
+(staging / "sha256sums.txt").write_text("".join(lines), encoding="utf-8")
+PY
+}
+
 write_manifest_and_checksums() {
   local staging="$1"
   local version="$2"
-  local python_tag="$3"
+  local target_platform="$3"
+  local target_arch="$4"
+  local python_tag="$5"
   local git_revision
   git_revision="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
 
   log "Writing manifest and checksums"
-  "$PYTHON_BIN" - "$staging" "$version" "$git_revision" "$python_tag" "$INSTALLER_MANIFEST_FILE" <<'PY'
+  "$PYTHON_BIN" - "$staging" "$version" "$git_revision" "$target_platform" "$target_arch" "$python_tag" "$INSTALLER_MANIFEST_FILE" <<'PY'
 from __future__ import annotations
 
 import json
@@ -266,21 +314,24 @@ from datetime import UTC, datetime
 staging = Path(sys.argv[1])
 version = sys.argv[2]
 git_revision = sys.argv[3] or None
-python_tag = sys.argv[4]
-installer_manifest = json.loads(Path(sys.argv[5]).read_text(encoding="utf-8"))
+target_platform = sys.argv[4]
+target_arch = sys.argv[5]
+python_tag = sys.argv[6]
+installer_manifest = json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
 site_packages = staging / "runtime" / "site-packages"
 installed_packages = sorted(path.name for path in site_packages.glob("*.dist-info"))
+manifest_name_key = f"{target_platform}_manifest_name"
 
 payload = {
     "schema_version": 2,
-    "name": installer_manifest["packages"]["linux_manifest_name"],
+    "name": installer_manifest["packages"][manifest_name_key],
     "project": installer_manifest["project"],
     "version": version,
     "built_at_utc": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     "git_revision": git_revision,
     "target": {
-        "platform": "linux",
-        "arch": "x86_64",
+        "platform": target_platform,
+        "arch": target_arch,
         "python_tag": python_tag,
     },
     "entrypoint": "install-offline.sh",
@@ -301,14 +352,10 @@ payload = {
     json.dumps(payload, ensure_ascii=False, indent=2) + os.linesep,
     encoding="utf-8",
 )
+
 PY
 
-  (
-    cd "$staging"
-    find . -type f ! -name sha256sums.txt -print0 \
-      | sort -z \
-      | xargs -0 sha256sum > sha256sums.txt
-  )
+  write_checksums "$staging"
 }
 
 create_self_extracting_installer() {
@@ -349,20 +396,53 @@ fi
 exec "$payload_root/install-offline.sh" "$@"
 __PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__
 EOF
-  sed -i "s|__PACKAGE_NAME__|$package_name|g" "$output_path"
+  "$PYTHON_BIN" - "$output_path" "$package_name" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+package_name = sys.argv[2]
+path.write_text(path.read_text(encoding="utf-8").replace("__PACKAGE_NAME__", package_name), encoding="utf-8")
+PY
   cat "$payload_path" >> "$output_path"
   chmod +x "$output_path"
   rm -f "$payload_path"
   printf '%s\n' "$output_path"
 }
 
+create_archive() {
+  local staging_parent="$1"
+  local package_name="$2"
+  local output_dir="$3"
+  local output_path
+  mkdir -p "$output_dir"
+  output_path="$output_dir/$package_name.tar.gz"
+  rm -f "$output_path"
+
+  log "Creating macOS tar.gz archive"
+  tar -C "$staging_parent" -czf "$output_path" "$package_name"
+  printf '%s\n' "$output_path"
+}
+
 main() {
-  local package_name package_prefix python_tag staging version
+  local package_name package_prefix target_info target_platform target_arch python_tag staging version
 
   [ -f "$INSTALLER_MANIFEST_FILE" ] || die "Missing installer manifest: $INSTALLER_MANIFEST_FILE"
-  python_tag="$(check_target)"
-  package_prefix="$(installer_manifest_value packages.linux_offline_name_prefix)"
-  package_name="${PACKAGE_NAME:-$package_prefix-$python_tag}"
+  target_info="$(check_target)"
+  read -r target_platform target_arch python_tag <<< "$target_info"
+  case "$target_platform" in
+    linux)
+      package_prefix="$(installer_manifest_value packages.linux_offline_name_prefix)"
+      package_name="${PACKAGE_NAME:-$package_prefix-$python_tag}"
+      ;;
+    macos)
+      package_prefix="$(installer_manifest_value packages.macos_offline_name_prefix)"
+      package_name="${PACKAGE_NAME:-$package_prefix-$target_arch-$python_tag}"
+      ;;
+    *)
+      die "Unsupported offline package target: $target_platform"
+      ;;
+  esac
   staging="$BUILD_DIR/$package_name"
   version="$(project_version)"
   rm -rf "$staging"
@@ -373,9 +453,13 @@ main() {
   build_project_runtime "$staging"
   bundle_formula_tools "$staging"
   write_cmd_wrappers "$staging"
-  write_offline_readme "$staging"
-  write_manifest_and_checksums "$staging" "$version" "$python_tag"
-  create_self_extracting_installer "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
+  write_offline_readme "$staging" "$target_platform"
+  write_manifest_and_checksums "$staging" "$version" "$target_platform" "$target_arch" "$python_tag"
+  if [ "$target_platform" = "macos" ]; then
+    create_archive "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
+  else
+    create_self_extracting_installer "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
+  fi
 }
 
 main "$@"

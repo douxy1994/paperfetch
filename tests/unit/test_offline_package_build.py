@@ -11,12 +11,14 @@ VERIFY_OFFLINE_PACKAGE = REPO_ROOT / "scripts" / "verify-offline-package.sh"
 
 
 class OfflinePackageBuildTests(unittest.TestCase):
-    def test_linux_package_build_creates_installed_runtime_package(self) -> None:
+    def test_posix_package_build_creates_installed_runtime_package(self) -> None:
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
         self.assertIn("copy_runtime_assets", script)
         self.assertIn("create_self_extracting_installer", script)
         self.assertIn("__PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__", script)
+        self.assertIn("create_archive", script)
+        self.assertIn("macos_offline_name_prefix", script)
         self.assertIn("runtime/site-packages", script)
         self.assertIn("runtime/python-bin", script)
         self.assertIn("write_cmd_wrappers", script)
@@ -29,9 +31,9 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertNotIn("source_snapshot", script)
         self.assertNotIn("--exclude='./legacy'", script)
         self.assertNotIn("-m playwright install chromium", script)
-        self.assertNotIn("Creating tar.gz archive", script)
+        self.assertIn("Creating macOS tar.gz archive", script)
 
-    def test_linux_manifest_and_readme_document_cloakbrowser_binary_policy(self) -> None:
+    def test_posix_manifest_and_readme_document_cloakbrowser_binary_policy(self) -> None:
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
         manifest_block = script[script.index("payload = {") : script.index("(staging / \"offline-manifest.json\")")]
 
@@ -40,17 +42,33 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertIn('"command_wrappers": "bin"', manifest_block)
         self.assertIn('"cloakbrowser"', manifest_block)
         self.assertIn('"browser_binary": "not_bundled"', manifest_block)
+        self.assertIn('"platform": target_platform', manifest_block)
+        self.assertIn('"arch": target_arch', manifest_block)
         self.assertIn("README.offline.md", script)
         self.assertIn('PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64)', script)
         self.assertIn("CLOAKBROWSER_BINARY_PATH", script)
         self.assertNotIn('# PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0', script)
         self.assertNotIn('"source_snapshot"', manifest_block)
         self.assertNotIn('"wheelhouse_count"', manifest_block)
+        self.assertIn("macos_offline_name_prefix", script)
         self.assertNotIn('"playwright_browsers"', manifest_block)
 
-    def test_linux_offline_verifier_uses_cloakbrowser_smoke(self) -> None:
+    def test_posix_checksums_are_portable_to_macos(self) -> None:
+        script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8") + (REPO_ROOT / "install-offline.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("shasum -a 256", script)
+        self.assertIn("sha256sum", script)
+        self.assertNotIn("sed -i \"s|__CLOAKBROWSER_HEADLESS__", script)
+        self.assertNotIn("sed -i", script)
+
+    def test_posix_offline_verifier_uses_cloakbrowser_smoke(self) -> None:
         script = VERIFY_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
+        self.assertIn("offline-installer.sh|offline-bundle.tar.gz", script)
+        self.assertIn("tar -xzf", script)
+        self.assertIn("INSTALLER_PATH", script)
         self.assertIn("--install-dir \"$INSTALL_ROOT\"", script)
         self.assertIn("runtime/site-packages/paper_fetch", script)
         self.assertIn("Offline install should not include the source tree", script)

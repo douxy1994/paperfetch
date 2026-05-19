@@ -13,6 +13,7 @@ from typing import Any, Hashable, Mapping
 
 from .artifacts import DEFAULT_ARTIFACT_MODE, ArtifactMode, ArtifactStore
 from .config import (
+    CLOAKBROWSER_BINARY_PATH_ENV_VAR,
     HTTP_DISK_CACHE_DIR_ENV_VAR,
     HTTP_DISK_CACHE_ENV_VAR,
     HTTP_DISK_CACHE_MAX_AGE_DAYS_ENV_VAR,
@@ -185,7 +186,8 @@ class RuntimeContext:
     def _browser_lifecycle(self) -> BrowserContextManager:
         with self._browser_context_manager_lock:
             if self._browser_context_manager is None:
-                self._browser_context_manager = BrowserContextManager()
+                binary_path = str((self.env or {}).get(CLOAKBROWSER_BINARY_PATH_ENV_VAR, "")).strip() or None
+                self._browser_context_manager = BrowserContextManager(binary_path=binary_path)
             return self._browser_context_manager
 
     def close(self) -> None:

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline installer for the Linux x86_64 CPython ABI-specific runtime payload.
+# Offline installer for CPython ABI-specific Linux/macOS runtime payloads.
 
 set -euo pipefail
 
@@ -52,8 +52,11 @@ load_installer_manifest() {
     die "$PYTHON_BIN was not found on PATH; cannot read installer manifest."
   fi
 
-  local values
-  mapfile -t values < <("$PYTHON_BIN" -c '
+  local values=()
+  local value
+  while IFS= read -r value; do
+    values+=("$value")
+  done < <("$PYTHON_BIN" -c '
 import json
 import sys
 
@@ -91,13 +94,15 @@ for key in manifest["mcp"]["env_keys"]:
 usage() {
   cat <<'EOF'
 Usage:
-  ./install-offline.sh [--install-dir <path>] [--preset=headless|wslg] [--user-config] [--reuse-env-file <path>]
+  ./install-offline.sh [--install-dir <path>] [--preset=headless|headful|wslg] [--user-config] [--reuse-env-file <path>]
   ./install-offline.sh [--install-dir <path>] --uninstall
   ./install-offline.sh [--install-dir <path>] --purge
 
 Options:
   --install-dir <path>    Install runtime files here. Default: ~/.local/share/paper-fetch-skill.
-  --preset=headless|wslg  Select CloakBrowser headless/headful runtime env. Default: headless.
+  --preset=headless|headful|wslg
+                            Select CloakBrowser headless/headful runtime env. Default: headless.
+                            wslg is Linux-only; use headful on macOS.
   --user-config           Also merge the offline runtime block into ~/.config/paper-fetch/.env.
   --no-user-config        Do not touch ~/.config/paper-fetch/.env. This is the default.
   --reuse-env-file <path> Use an existing offline.env without modifying it.
@@ -168,7 +173,7 @@ while (($#)); do
       ;;
     --preset)
       shift
-      [ "$#" -gt 0 ] || die "--preset requires headless or wslg"
+      [ "$#" -gt 0 ] || die "--preset requires headless, headful, or wslg"
       PRESET="$1"
       ;;
     --user-config)
@@ -219,8 +224,8 @@ fi
 
 if [ "$UNINSTALL" != "1" ]; then
   case "$PRESET" in
-    headless|wslg) ;;
-    *) die "--preset must be headless or wslg" ;;
+    headless|headful|wslg) ;;
+    *) die "--preset must be headless, headful, or wslg" ;;
   esac
   if [ "$REUSE_ENV_FILE" = "1" ]; then
     [ -f "$OFFLINE_ENV_FILE" ] || die "Missing reusable offline env file: $OFFLINE_ENV_FILE"
@@ -255,15 +260,58 @@ mcp_name_regex() {
   printf '%s' "$MCP_NAME" | sed 's/[][\\.^$*+?{}|()]/\\&/g'
 }
 
-check_platform() {
-  local kernel machine
-  kernel="$(uname -s)"
-  machine="$(uname -m)"
-  [ "$kernel" = "Linux" ] || die "This offline bundle supports Linux only; detected $kernel."
-  case "$machine" in
-    x86_64|amd64) ;;
-    *) die "This offline bundle supports x86_64 only; detected $machine." ;;
+offline_manifest_value() {
+  "$PYTHON_BIN" -c '
+import json
+import sys
+
+data = json.load(open(sys.argv[1], encoding="utf-8"))
+value = data
+for part in sys.argv[2].split("."):
+    value = value.get(part, "") if isinstance(value, dict) else ""
+print(value)
+' "$BUNDLE_ROOT/offline-manifest.json" "$1"
+}
+
+host_platform() {
+  case "$(uname -s)" in
+    Linux) printf 'linux\n' ;;
+    Darwin) printf 'macos\n' ;;
+    *) return 1 ;;
   esac
+}
+
+host_arch() {
+  case "$(uname -m)" in
+    x86_64|amd64) printf 'x86_64\n' ;;
+    arm64|aarch64) printf 'arm64\n' ;;
+    *) return 1 ;;
+  esac
+}
+
+file_mode() {
+  stat -c '%a' "$1" 2>/dev/null || stat -f '%Lp' "$1" 2>/dev/null || true
+}
+
+check_platform() {
+  require_file "$BUNDLE_ROOT/offline-manifest.json"
+
+  local platform arch manifest_platform manifest_arch
+  platform="$(host_platform)" || die "This offline bundle supports Linux and macOS only; detected $(uname -s)."
+  arch="$(host_arch)" || die "This offline bundle supports x86_64 and arm64 only; detected $(uname -m)."
+  manifest_platform="$(offline_manifest_value target.platform)"
+  manifest_arch="$(offline_manifest_value target.arch)"
+  [ -n "$manifest_platform" ] || die "offline-manifest.json is missing target.platform."
+  [ -n "$manifest_arch" ] || die "offline-manifest.json is missing target.arch."
+
+  case "$platform:$arch" in
+    linux:x86_64|macos:x86_64|macos:arm64) ;;
+    linux:arm64) die "Linux offline bundles currently support x86_64 only; detected arm64." ;;
+    *) die "Unsupported offline target host: $platform/$arch." ;;
+  esac
+
+  [ "$platform" = "$manifest_platform" ] || die "bundle targets $manifest_platform; detected $platform."
+  [ "$arch" = "$manifest_arch" ] || die "bundle targets $manifest_arch; detected $arch."
 }
 
 check_python() {
@@ -287,19 +335,29 @@ write_runtime_python_file() {
 
 verify_checksums() {
   require_file "$BUNDLE_ROOT/sha256sums.txt"
-  command -v sha256sum >/dev/null 2>&1 || die "sha256sum is required to verify the offline bundle."
   log "Verifying bundled file checksums"
-  (cd "$BUNDLE_ROOT" && sha256sum --check sha256sums.txt --quiet)
+  if command -v sha256sum >/dev/null 2>&1; then
+    (cd "$BUNDLE_ROOT" && sha256sum --check sha256sums.txt --quiet)
+  elif command -v shasum >/dev/null 2>&1; then
+    (cd "$BUNDLE_ROOT" && shasum -a 256 --check sha256sums.txt >/dev/null)
+  else
+    die "sha256sum or shasum is required to verify the offline bundle."
+  fi
 }
 
 check_preset_requirements() {
-  if [ "$PRESET" = "wslg" ] && [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-    die "DISPLAY or WAYLAND_DISPLAY is required for --preset=wslg."
+  local platform
+  platform="$(host_platform)" || die "This offline bundle supports Linux and macOS only; detected $(uname -s)."
+  if [ "$PRESET" = "wslg" ]; then
+    [ "$platform" = "linux" ] || die "--preset=wslg is Linux/WSLg-only; use --preset=headful on macOS."
+    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
+      die "DISPLAY or WAYLAND_DISPLAY is required for --preset=wslg."
+    fi
   fi
 }
 
 cloakbrowser_headless_value() {
-  if [ "$PRESET" = "wslg" ]; then
+  if [ "$PRESET" = "wslg" ] || [ "$PRESET" = "headful" ]; then
     printf 'false\n'
   else
     printf 'true\n'
@@ -425,7 +483,7 @@ write_shell_startup_file() {
   mode=""
   mkdir -p "$(dirname "$SHELL_STARTUP_TARGET")"
   if [ -f "$SHELL_STARTUP_TARGET" ]; then
-    mode="$(stat -c '%a' "$SHELL_STARTUP_TARGET" 2>/dev/null || true)"
+    mode="$(file_mode "$SHELL_STARTUP_TARGET")"
     awk -v begin="$MANAGED_BEGIN" -v end="$MANAGED_END" '
       $0 == begin { skip = 1; next }
       $0 == end { skip = 0; next }
@@ -566,7 +624,7 @@ remove_managed_block_from_file() {
 
   [ -f "$target" ] || return 0
   tmp="$(mktemp)"
-  mode="$(stat -c '%a' "$target" 2>/dev/null || true)"
+  mode="$(file_mode "$target")"
   awk -v begin="$MANAGED_BEGIN" -v end="$MANAGED_END" '
     $0 == begin { skip = 1; next }
     $0 == end { skip = 0; next }
@@ -616,7 +674,7 @@ remove_codex_config_toml() {
   [ -f "$config_path" ] || return 0
 
   tmp="$(mktemp)"
-  mode="$(stat -c '%a' "$config_path" 2>/dev/null || true)"
+  mode="$(file_mode "$config_path")"
   mcp_table_re="^[[:space:]]*[[]mcp_servers[.]$(mcp_name_regex)([.].*)?[]][[:space:]]*$"
   awk -v begin="$CODEX_MANAGED_BEGIN" -v end="$CODEX_MANAGED_END" -v old_begin="$MANAGED_BEGIN" -v old_end="$MANAGED_END" -v mcp_table_re="$mcp_table_re" '
     $0 == begin || $0 == old_begin { skip_block = 1; next }
@@ -720,14 +778,22 @@ write_managed_env_file() {
 
 write_activate_script() {
   local target="$INSTALL_ROOT/activate-offline.sh"
-  local offline_env_literal
+  local offline_env_literal target_tmp
 
   if [ "$REUSE_ENV_FILE" = "1" ]; then
     offline_env_literal="$(quote_env_value "$OFFLINE_ENV_FILE")"
     cat > "$target" <<EOF
 #!/usr/bin/env bash
 
-INSTALL_ROOT="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "\${BASH_SOURCE:-}" ]; then
+  PAPER_FETCH_ACTIVATE_SCRIPT="\${BASH_SOURCE[0]}"
+elif [ -n "\${ZSH_VERSION:-}" ]; then
+  PAPER_FETCH_ACTIVATE_SCRIPT="\${(%):-%x}"
+else
+  PAPER_FETCH_ACTIVATE_SCRIPT="\$0"
+fi
+INSTALL_ROOT="\$(cd "\$(dirname "\$PAPER_FETCH_ACTIVATE_SCRIPT")" && pwd)"
+unset PAPER_FETCH_ACTIVATE_SCRIPT
 export PAPER_FETCH_ENV_FILE=$offline_env_literal
 
 if [ -f "\$PAPER_FETCH_ENV_FILE" ]; then
@@ -750,7 +816,15 @@ EOF
     cat > "$target" <<'EOF'
 #!/usr/bin/env bash
 
-INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${BASH_SOURCE:-}" ]; then
+  PAPER_FETCH_ACTIVATE_SCRIPT="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+  PAPER_FETCH_ACTIVATE_SCRIPT="${(%):-%x}"
+else
+  PAPER_FETCH_ACTIVATE_SCRIPT="$0"
+fi
+INSTALL_ROOT="$(cd "$(dirname "$PAPER_FETCH_ACTIVATE_SCRIPT")" && pwd)"
+unset PAPER_FETCH_ACTIVATE_SCRIPT
 export PAPER_FETCH_ENV_FILE="${PAPER_FETCH_ENV_FILE:-$INSTALL_ROOT/offline.env}"
 
 if [ -f "$PAPER_FETCH_ENV_FILE" ]; then
@@ -768,7 +842,9 @@ export CLOAKBROWSER_HEADLESS="${CLOAKBROWSER_HEADLESS:-__CLOAKBROWSER_HEADLESS__
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 EOF
-    sed -i "s|__CLOAKBROWSER_HEADLESS__|$(cloakbrowser_headless_value)|g" "$target"
+    target_tmp="$(mktemp)"
+    awk -v headless="$(cloakbrowser_headless_value)" '{ gsub(/__CLOAKBROWSER_HEADLESS__/, headless); print }' "$target" > "$target_tmp"
+    mv "$target_tmp" "$target"
   fi
   chmod +x "$target"
 }

@@ -46,6 +46,7 @@ class ProviderWaterfallState:
 WarningFactory = Callable[[ProviderFailure, ProviderWaterfallState], str | None]
 StepRunner = Callable[..., RawFulltextPayload]
 FinalFailureFactory = Callable[[ProviderWaterfallState], ProviderFailure]
+StepCondition = Callable[[ProviderWaterfallState], bool]
 
 
 @dataclass(frozen=True)
@@ -58,6 +59,7 @@ class WaterfallStep:
     failure_warning: str | WarningFactory | None = None
     success_warning: str | None = None
     include_failure_trail_on_success: bool = True
+    condition: StepCondition | None = None
 
 
 ProviderWaterfallStep = WaterfallStep
@@ -162,6 +164,8 @@ def run_provider_waterfall(
     _append_unique_text(state.initial_source_trail, list(initial_source_trail or []))
 
     for step in steps:
+        if step.condition is not None and not step.condition(state):
+            continue
         try:
             payload = _run_step(step, state, doi, metadata, context=context, client=client)
         except ProviderFailure as exc:

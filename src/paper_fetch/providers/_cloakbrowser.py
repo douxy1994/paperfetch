@@ -6,15 +6,19 @@ import base64
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
 import logging
+import os
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Mapping
 
 from bs4 import BeautifulSoup
 
 from .._cloakbrowser_runtime import import_cloakbrowser
 from ..config import (
+    CLOAKBROWSER_BINARY_PATH_ENV_VAR,
     CLOAKBROWSER_HEADLESS_ENV_VAR,
     CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
+    CLOAKBROWSER_USER_DATA_DIR_ENV_VAR,
     build_browser_user_agent,
     parse_positive_int_env,
     resolve_user_data_dir,
@@ -28,7 +32,7 @@ from ..quality.html_availability import choose_parser, extract_page_title
 from ..quality.html_signals import looks_like_abstract_redirect
 from ..quality.reason_codes import REDIRECTED_TO_ABSTRACT
 from ..reason_codes import ERROR, NOT_CONFIGURED, OK, READY
-from ..runtime_browser import browser_context_options, browser_page_user_agent
+from ..runtime_browser import browser_context_options, browser_page_user_agent, cloakbrowser_binary_path_env
 from ..utils import normalize_text, provider_display_name, sanitize_filename
 from .browser_runtime.seed import (
     merge_browser_context_seeds,
@@ -114,9 +118,32 @@ def _env_flag_false(value: str | None) -> bool:
     return normalize_text(value).lower() in {"0", "false", "no", "off"}
 
 
+def _configured_binary_path(env: Mapping[str, str]) -> str | None:
+    value = env.get(CLOAKBROWSER_BINARY_PATH_ENV_VAR, "").strip()
+    return value or None
+
+
+def _configured_user_data_dir(env: Mapping[str, str]) -> Path | None:
+    value = env.get(CLOAKBROWSER_USER_DATA_DIR_ENV_VAR, "").strip()
+    return Path(value).expanduser() if value else None
+
+
+def _validate_binary_path(binary_path: str | None) -> None:
+    if not binary_path:
+        return
+    path = Path(binary_path).expanduser()
+    if not path.is_file() or not os.access(path, os.X_OK):
+        raise ProviderFailure(
+            NOT_CONFIGURED,
+            f"{CLOAKBROWSER_BINARY_PATH_ENV_VAR} is set but does not point to an executable browser binary.",
+        )
+
+
 def load_runtime_config(env: Mapping[str, str], *, provider: str, doi: str) -> CloakBrowserRuntimeConfig:
     headless = not _env_flag_false(env.get(CLOAKBROWSER_HEADLESS_ENV_VAR))
     artifact_dir = resolve_user_data_dir(env) / "publisher-browser-artifacts" / provider / sanitize_filename(doi)
+    binary_path = _configured_binary_path(env)
+    _validate_binary_path(binary_path)
     return CloakBrowserRuntimeConfig(
         provider=provider,
         doi=doi,
@@ -128,10 +155,13 @@ def load_runtime_config(env: Mapping[str, str], *, provider: str, doi: str) -> C
             CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
             default=DEFAULT_CLOAKBROWSER_TIMEOUT_MS,
         ),
+        binary_path=binary_path,
+        user_data_dir=_configured_user_data_dir(env),
     )
 
 
 def ensure_runtime_ready(config: CloakBrowserRuntimeConfig) -> None:
+    _validate_binary_path(config.binary_path)
     try:
         _import_cloakbrowser()
     except ProviderFailure as exc:
@@ -154,6 +184,8 @@ def _runtime_probe_details(env: Mapping[str, str], config: CloakBrowserRuntimeCo
             CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
             default=DEFAULT_CLOAKBROWSER_TIMEOUT_MS,
         ),
+        "binary_path_configured": bool(config.binary_path if config is not None else _configured_binary_path(env)),
+        "user_data_dir_configured": bool(config.user_data_dir if config is not None else _configured_user_data_dir(env)),
     }
     return details
 
@@ -508,6 +540,35 @@ def _safe_close(value: Any) -> None:
         pass
 
 
+def _storage_state_path(config: CloakBrowserRuntimeConfig) -> Path | None:
+    if config.user_data_dir is None:
+        return None
+    return config.user_data_dir / "storage-state.json"
+
+
+def _storage_context_options(config: CloakBrowserRuntimeConfig) -> dict[str, Any]:
+    storage_state_path = _storage_state_path(config)
+    if storage_state_path is None or not storage_state_path.is_file():
+        return {}
+    return {"storage_state": str(storage_state_path)}
+
+
+def _save_storage_state(context: Any, config: CloakBrowserRuntimeConfig) -> None:
+    storage_state_path = _storage_state_path(config)
+    if context is None or storage_state_path is None:
+        return
+    try:
+        storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+        context.storage_state(path=str(storage_state_path))
+    except Exception:
+        logger.debug(
+            "cloakbrowser_storage_state provider=%s action=save_failed path=%s",
+            config.provider,
+            storage_state_path,
+            exc_info=True,
+        )
+
+
 def fetch_html_with_cloakbrowser(
     candidate_urls: list[str],
     *,
@@ -545,6 +606,7 @@ def fetch_html_with_cloakbrowser(
         try:
             context_kwargs = browser_context_options(
                 user_agent=configured_user_agent,
+                **_storage_context_options(config),
             )
             if runtime_context is not None:
                 browser_context = runtime_context.new_browser_context(
@@ -552,7 +614,8 @@ def fetch_html_with_cloakbrowser(
                     **context_kwargs,
                 )
             else:
-                browser = cloakbrowser.launch(headless=config.headless, locale="en-US")
+                with cloakbrowser_binary_path_env(config.binary_path):
+                    browser = cloakbrowser.launch(headless=config.headless, locale="en-US")
                 browser_context = browser.new_context(**context_kwargs)
             page = browser_context.new_page()
         except Exception as exc:
@@ -745,6 +808,7 @@ def fetch_html_with_cloakbrowser(
                 image_payload=image_payload,
             )
     finally:
+        _save_storage_state(browser_context, config)
         _safe_close(page)
         _safe_close(browser_context)
         _safe_close(browser)

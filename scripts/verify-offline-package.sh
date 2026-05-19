@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Verify an offline self-extracting installer in a temporary installation.
+# Verify an offline installer or macOS tarball in a temporary installation.
 
 set -euo pipefail
 
@@ -10,7 +10,7 @@ log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
 if [ -z "$PACKAGE_PATH" ]; then
-  die "Usage: scripts/verify-offline-package.sh <offline-installer.sh>"
+  die "Usage: scripts/verify-offline-package.sh <offline-installer.sh|offline-bundle.tar.gz>"
 fi
 
 PACKAGE_PATH="$(cd "$(dirname "$PACKAGE_PATH")" && pwd)/$(basename "$PACKAGE_PATH")"
@@ -21,6 +21,27 @@ cleanup() {
   rm -rf "$TMP_ROOT"
 }
 trap cleanup EXIT
+
+EXTRACT_ROOT="$TMP_ROOT/extracted"
+INSTALLER_PATH="$PACKAGE_PATH"
+case "$PACKAGE_PATH" in
+  *.tar.gz|*.tgz)
+    mkdir -p "$EXTRACT_ROOT"
+    log "Extracting offline bundle"
+    tar -xzf "$PACKAGE_PATH" -C "$EXTRACT_ROOT"
+    extracted_count=0
+    bundle_root=""
+    while IFS= read -r extracted_dir; do
+      extracted_count=$((extracted_count + 1))
+      bundle_root="$extracted_dir"
+    done < <(find "$EXTRACT_ROOT" -mindepth 1 -maxdepth 1 -type d | sort)
+    [ "$extracted_count" -eq 1 ] || die "Expected exactly one top-level directory in offline bundle."
+    INSTALLER_PATH="$bundle_root/install-offline.sh"
+    [ -x "$INSTALLER_PATH" ] || die "Offline bundle is missing executable install-offline.sh."
+    ;;
+  *.sh) ;;
+  *) die "Unsupported offline package extension: $PACKAGE_PATH" ;;
+esac
 
 INSTALL_ROOT="$TMP_ROOT/install-root"
 mkdir -p "$INSTALL_ROOT/src" "$INSTALL_ROOT/tests" "$INSTALL_ROOT/wheelhouse" "$INSTALL_ROOT/dist"
@@ -57,7 +78,7 @@ log "Running installer with network/build command guard"
 export HOME="$FAKE_HOME"
 export SHELL="/bin/bash"
 export PAPER_FETCH_FAKE_CLI_LOG="$FAKE_CLI_LOG"
-PATH="$GUARD_DIR:$PATH" "$PACKAGE_PATH" --install-dir "$INSTALL_ROOT" --preset=headless --no-user-config
+PATH="$GUARD_DIR:$PATH" "$INSTALLER_PATH" --install-dir "$INSTALL_ROOT" --preset=headless --no-user-config
 
 log "Verifying installed runtime package layout"
 [ -d "$INSTALL_ROOT/runtime/site-packages/paper_fetch" ] || die "Offline install is missing installed paper_fetch runtime."
@@ -154,7 +175,7 @@ grep -F -q "gemini mcp remove -s user paper-fetch" "$FAKE_CLI_LOG"
 [ -d "$INSTALL_ROOT/runtime/site-packages" ] || die "Uninstall removed package runtime."
 
 log "Verifying purge removes the install directory"
-PATH="$GUARD_DIR:$PATH" "$PACKAGE_PATH" --install-dir "$INSTALL_ROOT" --purge
+PATH="$GUARD_DIR:$PATH" "$INSTALLER_PATH" --install-dir "$INSTALL_ROOT" --purge
 [ ! -e "$INSTALL_ROOT" ] || die "Purge did not remove the install directory."
 
 log "Offline package verification completed"
