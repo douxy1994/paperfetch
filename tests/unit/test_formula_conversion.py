@@ -141,6 +141,20 @@ class FormulaConversionTests(unittest.TestCase):
 
         self.assertEqual(normalized, r"SO + ab + cd + e\hspace{1pt}f")
 
+    def test_normalize_latex_removes_texmath_empty_delimiter_artifacts(self) -> None:
+        normalized = formula_conversion.normalize_latex(
+            r"s \left(\right. s + 1 \left.\right) + \left(\right. D + 1 \left.\right)"
+        )
+
+        self.assertEqual(normalized, "s(s + 1) + (D + 1)")
+
+    def test_normalize_latex_compacts_split_math_identifiers(self) -> None:
+        normalized = formula_conversion.normalize_latex(
+            r"F_{c r i t} = \sum_{t_{p}}^{S O S_{y 0}} R_{f} + \mathcal{ℴ}"
+        )
+
+        self.assertEqual(normalized, r"F_{crit} = \sum\limits_{t_{p}}^{SOS_{y0}} R_{f} + \mathcal{O}")
+
     def test_backend_registry_preserves_public_backend_groups(self) -> None:
         self.assertEqual(
             formula_conversion.SUPPORTED_BACKENDS,

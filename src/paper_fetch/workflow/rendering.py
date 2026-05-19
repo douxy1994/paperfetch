@@ -44,11 +44,11 @@ def relative_asset_link(value: str | None, *, target_path: Path) -> str | None:
     original = str(value or "").strip()
     if not original or original.startswith(("http://", "https://", "//")):
         return None
-    source_path = Path(original)
+    source_path = Path(original).expanduser()
     if not source_path.is_absolute():
         if not source_path.exists():
             return None
-        source_path = source_path.resolve()
+    source_path = source_path.resolve()
     target_dir = target_path.parent.resolve()
     relative = Path(os.path.relpath(source_path, start=target_dir))
     return urllib.parse.quote(relative.as_posix(), safe="/._-")

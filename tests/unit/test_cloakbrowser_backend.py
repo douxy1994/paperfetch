@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from dataclasses import replace
+import os
 from unittest import mock
 
 from paper_fetch import _cloakbrowser_runtime
@@ -130,12 +132,18 @@ class _FakeContext:
     def __init__(self) -> None:
         self.page = _FakePage()
         self.closed = False
+        self.storage_state_path: str | None = None
 
     def new_page(self) -> _FakePage:
         return self.page
 
     def cookies(self) -> list[dict[str, str]]:
         return [{"name": "cf_clearance", "value": "secret", "domain": ".science.org", "path": "/"}]
+
+    def storage_state(self, *, path: str) -> None:
+        self.storage_state_path = path
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write("{}")
 
     def close(self) -> None:
         self.closed = True
@@ -159,9 +167,11 @@ class _FakeCloakBrowserModule:
     def __init__(self) -> None:
         self.browser = _FakeBrowser()
         self.launch_kwargs: dict[str, object] = {}
+        self.launch_binary_path: str | None = None
 
     def launch(self, **kwargs):
         self.launch_kwargs = dict(kwargs)
+        self.launch_binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
         return self.browser
 
 
@@ -254,6 +264,42 @@ def test_fetch_html_with_cloakbrowser_returns_existing_html_contract(tmp_path) -
     assert fake_module.browser.context.page.continued_document is True
     assert fake_module.browser.context.closed is True
     assert fake_module.browser.closed is True
+
+
+def test_fetch_html_with_cloakbrowser_reuses_and_saves_storage_state(tmp_path) -> None:
+    fake_module = _FakeCloakBrowserModule()
+    user_data_dir = tmp_path / "cloakbrowser-profile"
+    state_path = user_data_dir / "storage-state.json"
+    user_data_dir.mkdir()
+    state_path.write_text('{"cookies":[]}', encoding="utf-8")
+    config = replace(_runtime_config(tmp_path), user_data_dir=user_data_dir)
+
+    with mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module):
+        _cloakbrowser.fetch_html_with_cloakbrowser(
+            ["https://www.science.org/doi/full/10.1126/science.example"],
+            publisher="science",
+            config=config,
+            disable_media=True,
+            wait_seconds=0,
+        )
+
+    assert fake_module.browser.new_context_kwargs["storage_state"] == str(state_path)
+    assert fake_module.browser.context.storage_state_path == str(state_path)
+    assert state_path.read_text(encoding="utf-8") == "{}"
+
+
+def test_load_runtime_config_accepts_cloakbrowser_user_data_dir(tmp_path) -> None:
+    config = _cloakbrowser.load_runtime_config(
+        {
+            "CLOAKBROWSER_USER_DATA_DIR": str(tmp_path / "profile"),
+            "CLOAKBROWSER_TIMEOUT_MS": "15000",
+        },
+        provider="wiley",
+        doi="10.1111/example",
+    )
+
+    assert config.user_data_dir == tmp_path / "profile"
+    assert config.timeout_ms == 15000
 
 
 def test_fetch_html_with_cloakbrowser_skips_challenge_block_after_wiley_body_dom_ready(tmp_path) -> None:
@@ -352,6 +398,24 @@ def test_fetch_html_with_cloakbrowser_omits_user_agent_when_not_configured(tmp_p
 
     assert "user_agent" not in fake_module.browser.new_context_kwargs
     assert result.browser_context_seed["browser_user_agent"] is None
+
+
+def test_fetch_html_with_cloakbrowser_applies_config_binary_path_during_launch(tmp_path, monkeypatch) -> None:
+    fake_module = _FakeCloakBrowserModule()
+    config = replace(_runtime_config(tmp_path), binary_path="/tmp/chrome")
+    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
+
+    with mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module):
+        _cloakbrowser.fetch_html_with_cloakbrowser(
+            ["https://www.science.org/doi/full/10.1126/science.example"],
+            publisher="science",
+            config=config,
+            disable_media=True,
+            wait_seconds=0,
+        )
+
+    assert fake_module.launch_binary_path == "/tmp/chrome"
+    assert "CLOAKBROWSER_BINARY_PATH" not in os.environ
 
 
 def test_fetch_html_with_cloakbrowser_uses_runtime_context_shared_browser(tmp_path) -> None:

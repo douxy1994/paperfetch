@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import inspect
+import os
 import sys
+import threading
 from types import SimpleNamespace
 from typing import Any
 
@@ -68,6 +70,98 @@ def test_headless_change_restarts_browser(monkeypatch) -> None:
     assert first_browser.close_count == 1
     assert second_browser.close_count == 0
     assert second_browser.headless is False
+
+
+def test_browser_manager_applies_binary_path_only_during_launch(monkeypatch) -> None:
+    launches: list[str | None] = []
+
+    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
+        launches.append(os.environ.get("CLOAKBROWSER_BINARY_PATH"))
+        return _FakeBrowser(headless=headless, locale=locale)
+
+    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
+    monkeypatch.setattr("cloakbrowser.launch", launch)
+    lifecycle = BrowserContextManager(binary_path="/tmp/chrome")
+
+    lifecycle.browser(headless=True)
+
+    assert launches == ["/tmp/chrome"]
+    assert "CLOAKBROWSER_BINARY_PATH" not in os.environ
+
+
+def test_browser_manager_serializes_binary_path_env_during_launch(monkeypatch) -> None:
+    launches: list[str | None] = []
+    errors: list[BaseException] = []
+    launch_lock = threading.Lock()
+    first_launch_entered = threading.Event()
+    allow_first_launch_exit = threading.Event()
+    second_thread_started = threading.Event()
+    second_launch_entered = threading.Event()
+
+    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
+        binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
+        with launch_lock:
+            launches.append(binary_path)
+        if binary_path == "/tmp/chrome-a":
+            first_launch_entered.set()
+            if not allow_first_launch_exit.wait(timeout=5):
+                raise AssertionError("timed out waiting to release first browser launch")
+        if binary_path == "/tmp/chrome-b":
+            second_launch_entered.set()
+        return _FakeBrowser(headless=headless, locale=locale)
+
+    def open_browser(binary_path: str, *, started: threading.Event | None = None) -> None:
+        if started is not None:
+            started.set()
+        try:
+            BrowserContextManager(binary_path=binary_path).browser(headless=True)
+        except BaseException as exc:
+            errors.append(exc)
+
+    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
+    monkeypatch.setattr("cloakbrowser.launch", launch)
+    first_thread = threading.Thread(target=open_browser, args=("/tmp/chrome-a",))
+    second_thread = threading.Thread(
+        target=open_browser,
+        args=("/tmp/chrome-b",),
+        kwargs={"started": second_thread_started},
+    )
+
+    first_thread.start()
+    assert first_launch_entered.wait(timeout=2)
+    second_thread.start()
+    assert second_thread_started.wait(timeout=2)
+    assert not second_launch_entered.wait(timeout=0.1)
+
+    allow_first_launch_exit.set()
+    first_thread.join(timeout=2)
+    second_thread.join(timeout=2)
+
+    assert not first_thread.is_alive()
+    assert not second_thread.is_alive()
+    assert errors == []
+    assert launches == ["/tmp/chrome-a", "/tmp/chrome-b"]
+    assert "CLOAKBROWSER_BINARY_PATH" not in os.environ
+
+
+def test_runtime_context_passes_env_binary_path_to_browser_manager(monkeypatch) -> None:
+    launches: list[str | None] = []
+
+    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
+        launches.append(os.environ.get("CLOAKBROWSER_BINARY_PATH"))
+        return _FakeBrowser(headless=headless, locale=locale)
+
+    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
+    monkeypatch.setattr("cloakbrowser.launch", launch)
+    context = RuntimeContext(env={"CLOAKBROWSER_BINARY_PATH": "/tmp/chrome"})
+
+    try:
+        context.new_browser_context(headless=True)
+    finally:
+        context.close()
+
+    assert launches == ["/tmp/chrome"]
+    assert "CLOAKBROWSER_BINARY_PATH" not in os.environ
 
 
 def test_cloakbrowser_welcome_banner_is_suppressed(monkeypatch, capsys) -> None:

@@ -76,6 +76,21 @@ def _fake_python_script(version: str) -> str:
         fi
         exit 0
       fi
+      if [[ "$code" == *'sys.argv[2].split'* ]]; then
+        manifest="${{3:-}}"
+        key="${{4:-}}"
+        if [[ -f "$manifest" ]]; then
+          case "$key" in
+            target.platform)
+              grep -oE '"platform"[[:space:]]*:[[:space:]]*"[^"]+"' "$manifest" | head -n 1 | sed -E 's/.*"platform"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/'
+              ;;
+            target.arch)
+              grep -oE '"arch"[[:space:]]*:[[:space:]]*"[^"]+"' "$manifest" | head -n 1 | sed -E 's/.*"arch"[[:space:]]*:[[:space:]]*"([^"]+)".*/\\1/'
+              ;;
+          esac
+        fi
+        exit 0
+      fi
       if [[ "$code" == *'installer_manifest_values'* ]]; then
         cat <<'OUT'
     installer_manifest_values
@@ -130,6 +145,17 @@ def _fake_python_script(version: str) -> str:
     """
 
 
+def _fake_uname_script(kernel: str, machine: str) -> str:
+    return f"""\
+    #!/usr/bin/env bash
+    case "${{1:-}}" in
+      -s) echo "{kernel}" ;;
+      -m) echo "{machine}" ;;
+      *) echo "{kernel}" ;;
+    esac
+    """
+
+
 def _write_checksums(root: Path) -> None:
     lines: list[str] = []
     for path in sorted(item for item in root.rglob("*") if item.is_file() and item.name != "sha256sums.txt"):
@@ -146,6 +172,10 @@ class OfflineInstallTests(unittest.TestCase):
         *,
         python_version: str = "3.11.9",
         manifest_python_tag: str | None = None,
+        target_platform: str = "linux",
+        target_arch: str = "x86_64",
+        uname_kernel: str = "Linux",
+        uname_machine: str = "x86_64",
     ) -> tuple[Path, Path, Path]:
         bundle = root / "bundle"
         bundle.mkdir()
@@ -156,7 +186,13 @@ class OfflineInstallTests(unittest.TestCase):
         manifest_python_tag = manifest_python_tag or _python_tag(python_version)
         _write_file(
             bundle / "offline-manifest.json",
-            f'{{"target": {{"platform": "linux", "arch": "x86_64", "python_tag": "{manifest_python_tag}"}}}}\n',
+            (
+                '{"target": {'
+                f'"platform": "{target_platform}", '
+                f'"arch": "{target_arch}", '
+                f'"python_tag": "{manifest_python_tag}"'
+                "}}\n"
+            ),
         )
         _write_file(bundle / ".env.example", 'ELSEVIER_API_KEY=""\n')
         _write_file(bundle / "runtime" / "site-packages" / "paper_fetch" / "__init__.py", "\n")
@@ -178,6 +214,7 @@ class OfflineInstallTests(unittest.TestCase):
 
         fake_bin = root / "fake-bin"
         _write_executable(fake_bin / "python3", _fake_python_script(python_version))
+        _write_executable(fake_bin / "uname", _fake_uname_script(uname_kernel, uname_machine))
 
         _write_checksums(bundle)
         home = root / "home"
@@ -325,6 +362,31 @@ class OfflineInstallTests(unittest.TestCase):
             result = self._run_installer(bundle, fake_bin, home, "--preset=wslg", extra_env={"DISPLAY": ":0"})
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('CLOAKBROWSER_HEADLESS="false"', (bundle / "offline.env").read_text(encoding="utf-8"))
+
+    def test_macos_bundle_accepts_headful_preset_without_wslg_display(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle, fake_bin, home = self._create_bundle(
+                Path(tmpdir),
+                target_platform="macos",
+                target_arch="arm64",
+                uname_kernel="Darwin",
+                uname_machine="arm64",
+            )
+
+            result = self._run_installer(
+                bundle,
+                fake_bin,
+                home,
+                "--preset=headful",
+                extra_env={"DISPLAY": "", "WAYLAND_DISPLAY": ""},
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertIn('CLOAKBROWSER_HEADLESS="false"', (bundle / "offline.env").read_text(encoding="utf-8"))
+
+            wslg_result = self._run_installer(bundle, fake_bin, home, "--preset=wslg")
+            self.assertNotEqual(wslg_result.returncode, 0)
+            self.assertIn("--preset=wslg is Linux/WSLg-only", wslg_result.stderr)
 
     def test_cli_registration_uses_cloakbrowser_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

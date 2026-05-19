@@ -24,7 +24,7 @@
 | Provider | 元数据 | 全文主路径 | 资产下载 | Markdown 能力 | 备注 |
 | --- | --- | --- | --- | --- | --- |
 | `crossref` | 支持 | 不负责 publisher fulltext | 不支持 | 不适用 | 负责 resolve、routing signal、metadata merge 与 metadata-only fallback |
-| `elsevier` | 官方 API | `官方 XML/API -> 官方 API PDF fallback` | XML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | XML 成功时公开为 `elsevier_xml`；PDF fallback 成功时公开为 `elsevier_pdf` |
+| `elsevier` | 官方 API | `官方 DOI XML/API -> PII XML/API fallback -> 官方 API PDF fallback` | XML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | XML 成功时公开为 `elsevier_xml`；PDF fallback 成功时公开为 `elsevier_pdf`；PII fallback 来自 Crossref/landing metadata 中的 LinkingHub 或 ScienceDirect PII URL |
 | `springer` | 依赖 Crossref merge | `direct HTML -> direct HTTP PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | `nature.com` 继续挂在 `springer` provider 下；HTML 成功公开 `springer_html`，PDF fallback 成功公开 `springer_pdf`；必要时可返回 provider `abstract_only` |
 | `wiley` | 依赖 Crossref merge | `CloakBrowser HTML -> CloakBrowser-seeded publisher PDF/ePDF -> Wiley TDM API PDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | HTML 默认通过 CloakBrowser backend；`WILEY_TDM_CLIENT_TOKEN` 可在 browser PDF/ePDF fallback 失败或 browser runtime 不可用时继续尝试官方 TDM PDF lane；必要时可返回 provider `abstract_only` |
 | `science` | 依赖 Crossref | `CloakBrowser HTML -> CloakBrowser-seeded publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | 与 `wiley` 的 HTML / browser PDF/ePDF 路径共用浏览器工作流基座；AAAS access gate / entitlement 不满足时会停在 provider 内部并降级 `abstract_only` / `metadata_only` |
@@ -236,7 +236,8 @@ resolve
 ### 3. provider 全文主路径
 
 - `elsevier`
-  - 固定顺序是 `官方 XML/API -> 官方 API PDF fallback -> metadata-only`。
+  - 固定顺序是 `官方 DOI XML/API -> PII XML/API fallback -> 官方 API PDF fallback -> metadata-only`。
+  - PII XML/API fallback 只在 DOI XML/API 出现 transient / rate-limit 类失败，且 merged metadata 中能从 LinkingHub 或 ScienceDirect URL 提取 PII 时启用；它仍使用 Elsevier 官方 Article API，不走通用 HTML 抓取。
   - XML/API 成功时公开 `source="elsevier_xml"`。
   - 官方 PDF fallback 成功时公开 `source="elsevier_pdf"`。
 - `springer`
@@ -352,10 +353,11 @@ resolve
 但它们的 fulltext 形态不同：
 
 - `elsevier`
-  - provider 自管 `官方 XML/API -> 官方 API PDF fallback`
+  - provider 自管 `官方 DOI XML/API -> PII XML/API fallback -> 官方 API PDF fallback`
   - XML article document builder 通过 provider dispatch table 进入 Elsevier renderer；未知 provider 不会落入半成品分支
   - XML attachment MIME 优先使用 publisher 响应/节点声明；缺失时用 Python `mimetypes.guess_type` 按文件扩展推断
   - XML/PDF 官方 representation 的 `404/406/415` 统一经 `providers.base.map_request_failure` 映射为 `no_result`
+  - DOI XML/API 的 transient / rate-limit 类失败会优先尝试从 public landing URL 提取 PII，并请求 `content/article/pii/{pii}`；PII XML 成功时会带 `fulltext:elsevier_xml_pii_ok`
   - 进入 PDF lane 时会组合 `fulltext:elsevier_xml_fail`、`fulltext:elsevier_pdf_api_ok`、`fulltext:elsevier_pdf_fallback_ok`
   - PDF lane 失败时会带 `fulltext:elsevier_pdf_api_fail`
 - `springer`
@@ -405,7 +407,7 @@ resolve
 因此：
 
 - 不再存在 public HTML fallback 开关
-- 对 `elsevier` 来说，系统始终按内部 `官方 XML/API -> 官方 API PDF fallback` waterfall 执行
+- 对 `elsevier` 来说，系统始终按内部 `官方 DOI XML/API -> PII XML/API fallback -> 官方 API PDF fallback` waterfall 执行
 - 对 `springer` 来说，系统始终按内部 `direct HTML -> direct HTTP PDF` waterfall 执行
 - 对 `wiley` / `science` / `pnas` / `ams` 来说，系统始终按上文声明的 provider-owned browser workflow 执行。
 - `pnas` preflight 只做快速成功路径，不改变 CloakBrowser/PDF 回退语义。
@@ -532,6 +534,7 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 - `render_state="appendix"` 的资产仍可进入尾部兜底块；当同类资产全是 appendix 状态时，标题会显示为 `Additional Figures` / `Additional Tables`。
 - 正文 Markdown 图片链接和资产路径会按 URL、路径、相对 `body_assets/...` 后缀和 basename 做等价比较。
 - 保存 Markdown 时也会按 `full_size_url`、`preview_url`、`download_url`、`original_url`、`source_url` 和最终 `path` 改写远端图片链接。
+- 保存 Markdown 时，本地资产路径会先解析 symlink / 平台真实路径，再相对目标 Markdown 文件改写，避免 macOS `/var` 与 `/private/var` 这类等价路径导出成过深的 `../../...` 链接。
 - 这可以避免正文图在尾部重复，或导出残留可本地化远端图。
 - 文章组装阶段也会用 `article.assets[*]` 把正文里的远程 figure / table / formula image 链接改写为已下载本地路径，再做 Markdown 图片块边界归一化，避免图片和标题、正文句子或公式块粘连。
 - 下载资产会保留 `download_tier`、`download_url`、`original_url`、`preview_url`、`full_size_url`、`content_type`、`downloaded_bytes`、`width`、`height`。
@@ -626,6 +629,8 @@ CLI 主输出、artifact 与命令组合的用户语义见 [`cli.md`](cli.md)；
 
 - 公式输出会在公共公式 normalize 层处理 publisher-specific LaTeX 宏。
 - `\updelta` 等 upright Greek 宏会改写成普通 KaTeX 可渲染宏；`\mspace{Nmu}` 会改写成 `\mkernNmu`，其它单位不改。
+- 外部 MathML 后端返回的常见伪影也会在同一层处理，例如 texmath / mathml-to-latex 产生的空 delimiter `\left(\right.` / `\left.\right)`、被拆成空格的下标标识符 `F_{c r i t}` 和 `S O S_{y 0}`。
+- HTML 中源站直接提供的 MathJax / `tex-math` 片段会复用同一套 LaTeX normalize，同时保留原始 `$...$` / `$$...$$` / `\(...\)` / `\[...\]` 包裹，避免 display 公式在清洗后退化成行内公式。
 - HTML 公式如果能从 MathML 转成 LaTeX，会按行内或 display 语境渲染；如果只有站点提供的公式图片 fallback，会保留为 `![Formula](...)` 并进入资产下载/改写流程。
 - HTML references 会去除 publisher 链接 chrome，如 `Google Scholar`、`Crossref`、相关链接和隐藏文本，并优先保留用户可见 citation body。
 - 默认 reference 组装规则是：fulltext provider 已经从 HTML / XML / 出版社 REST 显式提供非空 references 时，最终 `ArticleModel.references` 和 Markdown references 以这些全文/出版社 references 为准；metadata / Crossref references 只在 provider references 为空、失败或不可用时兜底，不允许追加未匹配的 metadata-only 条目。
@@ -790,7 +795,20 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 #### `CLOAKBROWSER_HEADLESS`
 
 - 可选，默认 `true`。
-- 设为 `false` 时，CloakBrowser HTML bootstrap 会以 headed browser 运行，便于调试强防护站点。
+- 设为 `false` 时，CloakBrowser HTML bootstrap 会以 headed browser 运行，便于在 macOS 或桌面会话中调试强防护站点。
+
+#### `CLOAKBROWSER_BINARY_PATH`
+
+- 可选。
+- 指向预安装浏览器二进制时，离线 Linux / macOS 安装和运行时会复用该二进制，避免首次 CloakBrowser runtime 下载。
+- 配置后必须指向可执行文件；runtime config 和 provider status 会在启动 browser workflow 前校验该路径。
+- 可通过 shell 环境、`offline.env`、用户 `.env` 或 MCP env 注入；运行时会在 CloakBrowser launch 阶段临时传递给底层包。
+
+#### `CLOAKBROWSER_USER_DATA_DIR`
+
+- 可选。
+- 指向一个可写目录时，browser workflow 会在该目录维护 `storage-state.json`：启动 context 时复用已有 cookie / local storage，结束时写回新的 storage state。
+- 这不处理 CAPTCHA、不自动登录，也不绕过权限；它只保留操作者在 headed browser 中合法完成的站点验证或登录态，便于后续同一环境下继续抓取。
 
 #### `CLOAKBROWSER_TIMEOUT_MS`
 
@@ -801,7 +819,8 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 
 - 可选。
 - 仅用于 Wiley / Science / PNAS / AMS 的 CloakBrowser HTML、图片资产恢复和 seeded-browser PDF/ePDF fallback。
-- AGU/Wiley 站点触发 Cloudflare challenge 时，优先在 `.env` 中设置普通 Chrome UA，并保持默认 `CLOAKBROWSER_HEADLESS=true`；如果 GUI/WSLg 环境下仍被 challenge，再设置 `CLOAKBROWSER_HEADLESS=false` 或用 Linux 离线安装器的 `--preset=wslg`。
+- AGU/Wiley 站点触发 Cloudflare challenge 时，优先在 `.env` 中设置普通 Chrome UA。纯 stateless headless 环境仍可能被 challenge；需要人工验证时，临时设置 `CLOAKBROWSER_HEADLESS=false`，并把 `CLOAKBROWSER_USER_DATA_DIR` 指到稳定目录以保存合法完成的 session。
+- 完成一次 headed 验证后，同一 `CLOAKBROWSER_USER_DATA_DIR` 可在 `CLOAKBROWSER_HEADLESS=true` 下继续复用；macOS 可使用离线安装器的 `--preset=headful`，Linux WSLg 可使用 `--preset=wslg`。
 
 #### Atypon HTML readiness
 

@@ -360,6 +360,58 @@ class PublisherWaterfallTests(unittest.TestCase):
                     [{"view": "FULL"}, {"view": "FULL"}],
                 )
 
+    def test_elsevier_transient_doi_xml_failure_uses_pii_xml_fallback(self) -> None:
+        doi = "10.1016/test-campus-entitlement"
+        metadata = {
+            "doi": doi,
+            "title": "Elsevier Campus Article",
+            "landing_page_url": "https://linkinghub.elsevier.com/retrieve/pii/S0034425723001712",
+            "fulltext_links": [],
+        }
+        xml_body = (FIXTURE_DIR / ELSEVIER_SAMPLE.fixture_name).read_bytes()
+        doi_url = "https://api.elsevier.com/content/article/doi/10.1016%2Ftest-campus-entitlement"
+        pii_url = "https://api.elsevier.com/content/article/pii/S0034425723001712"
+        transport = RecordingTransport(
+            {
+                ("GET", doi_url): RequestFailure(503, f"HTTP 503 for {doi_url}?view=FULL"),
+                ("GET", pii_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "text/xml"},
+                    "body": xml_body,
+                    "url": f"{pii_url}?view=FULL",
+                },
+            }
+        )
+        client = elsevier_provider.ElsevierClient(transport=transport, env={"ELSEVIER_API_KEY": "secret"})
+
+        with (
+            mock.patch.object(client, "_official_payload_is_usable", return_value=True),
+            mock.patch.object(client, "_fetch_official_pdf_payload") as mocked_pdf,
+        ):
+            raw_payload = client.fetch_raw_fulltext(doi, metadata)
+
+        mocked_pdf.assert_not_called()
+        self.assertEqual(_payload_route(raw_payload), "official")
+        self.assertEqual(raw_payload.source_url, f"{pii_url}?view=FULL")
+        self.assertIn("fulltext:elsevier_xml_fail", _payload_source_trail(raw_payload))
+        self.assertIn("fulltext:elsevier_xml_pii_ok", _payload_source_trail(raw_payload))
+        self.assertNotIn("fulltext:elsevier_pdf_api_ok", _payload_source_trail(raw_payload))
+        self.assertEqual([str(call["url"]) for call in transport.calls], [doi_url, pii_url])
+
+    def test_elsevier_pii_candidates_are_extracted_from_public_landing_urls(self) -> None:
+        metadata = {
+            "landing_page_url": "https://linkinghub.elsevier.com/retrieve/pii/S0034-4257(23)00171-2",
+            "fulltext_links": [
+                {"url": "https://www.sciencedirect.com/science/article/pii/S0034425723001712"},
+                {"url": "https://example.test/not-elsevier"},
+            ],
+        }
+
+        self.assertEqual(
+            elsevier_provider.elsevier_pii_candidates_from_metadata(metadata),
+            ["S0034425723001712"],
+        )
+
     def test_elsevier_xml_and_pdf_failures_are_combined_without_html_markers(self) -> None:
         doi = "10.1016/test-no-fulltext"
         metadata = {

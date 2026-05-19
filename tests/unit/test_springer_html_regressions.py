@@ -909,6 +909,42 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         self.assertIn(r"$$\delta Q_{i,t} = \alpha _{i,t}E_{{\mathrm{p}}(i,t)}S_{i,t}$$", markdown)
         self.assertNotIn(r"\updelta", markdown)
 
+    def test_springer_mathjax_tex_uses_shared_latex_normalization(self) -> None:
+        html = r"""
+        <html>
+          <body>
+            <article>
+              <h1>Math Example</h1>
+              <div class="c-article-body">
+                <div class="main-content">
+                  <section data-title="Methods">
+                    <h2 class="c-article-section__title">Methods</h2>
+                    <div class="c-article-section__content">
+                      <p>Inline <span class="mathjax-tex">s \left(\right. s + 1 \left.\right)</span>.</p>
+                      <div class="c-article-equation">
+                        <div class="c-article-equation__content">
+                          <span class="mathjax-tex">$$F_{c r i t} = \sum_{t_{p}}^{S O S_{y 0}} R_{f}$$</span>
+                        </div>
+                      </div>
+                    </div>
+                  </section>
+                </div>
+              </div>
+            </article>
+          </body>
+        </html>
+        """
+
+        markdown = html_springer_nature.extract_springer_nature_markdown(
+            html,
+            "https://www.nature.com/articles/s41561-022-00912-7",
+        )
+
+        self.assertIn("s(s + 1)", markdown)
+        self.assertRegex(markdown, r"\$\$F_\{crit\} = \\sum\\limits_\{t_\{p\}\}\^\{SOS_\{y0\}\}\s*R_\{f\}\$\$")
+        self.assertNotIn(r"\left(\right.", markdown)
+        self.assertNotIn("F_{c r i t}", markdown)
+
     def test_springer_bilingual_fixture_enters_body_without_duplicate_title_or_cta(self) -> None:
         html = golden_criteria_asset("10.1007/s13158-025-00473-x", "bilingual.html").read_text(
             encoding="utf-8",

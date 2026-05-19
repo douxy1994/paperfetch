@@ -115,6 +115,23 @@ LATEX_ZERO_HSPACE_PATTERN = re.compile(
     r"\\hspace\*?\s*\{\s*[+-]?(?:0+(?:\.0*)?|\.0+)\s*(?:pt|em|ex|mu|mm|cm|in|pc)?\s*\}"
 )
 ZERO_WIDTH_SPACE_PATTERN = re.compile(r"[\u200b\u200c\u200d\u2060\ufeff]")
+LATEX_SCRIPT_SPLIT_IDENTIFIER_PATTERN = re.compile(r"(?P<script>[_^])\{(?P<body>[A-Za-z0-9](?:\s+[A-Za-z0-9]){1,})\}")
+LATEX_UPPERCASE_SPLIT_IDENTIFIER_WITH_SCRIPT_PATTERN = re.compile(
+    r"(?<![A-Za-z])(?P<body>[A-Z](?:\s+[A-Z]){1,})(?=\s*[_^])"
+)
+LATEX_EMPTY_DELIMITER_REPLACEMENTS = (
+    (re.compile(r"\\left\s*\(\s*\\right\."), "("),
+    (re.compile(r"\\left\.\s*\\right\s*\)"), ")"),
+    (re.compile(r"\\left\s*\[\s*\\right\."), "["),
+    (re.compile(r"\\left\.\s*\\right\s*\]"), "]"),
+    (re.compile(r"\\left\s*(?:\\\{|\{)\s*\\right\."), r"\\{"),
+    (re.compile(r"\\left\.\s*\\right\s*(?:\\\}|\})"), r"\\}"),
+    (re.compile(r"\\left\s*\|\s*\\right\."), "|"),
+    (re.compile(r"\\left\.\s*\\right\s*\|"), "|"),
+)
+LATEX_UNICODE_MATH_ALIASES = {
+    "ℴ": "O",
+}
 
 
 @dataclass(slots=True)
@@ -430,9 +447,41 @@ def normalize_latex_macros(value: str | None) -> str:
         return rf"\mkern{match.group(1)}mu{suffix}"
 
     text = ZERO_WIDTH_SPACE_PATTERN.sub("", text)
+    for source, replacement in LATEX_UNICODE_MATH_ALIASES.items():
+        text = text.replace(source, replacement)
     text = LATEX_ZERO_HSPACE_PATTERN.sub("", text)
     text = UPGREEK_LATEX_ALIAS_PATTERN.sub(replace_alias, text)
     return LATEX_MSPACE_MU_PATTERN.sub(replace_mspace, text)
+
+
+def _normalize_texmath_empty_delimiters(value: str) -> str:
+    text = value
+    for pattern, replacement in LATEX_EMPTY_DELIMITER_REPLACEMENTS:
+        text = pattern.sub(replacement, text)
+    text = re.sub(r"(?<=[A-Za-z0-9}_])\s+\(", "(", text)
+    text = re.sub(r"\(\s+", "(", text)
+    text = re.sub(r"\s+\)", ")", text)
+    text = re.sub(r"\[\s+", "[", text)
+    text = re.sub(r"\s+\]", "]", text)
+    text = re.sub(r"\\\{\s+", r"\\{", text)
+    text = re.sub(r"\s+\\\}", r"\\}", text)
+    return text
+
+
+def _normalize_split_latex_identifiers(value: str) -> str:
+    def compact_script_identifier(match: re.Match[str]) -> str:
+        return f"{match.group('script')}{{{match.group('body').replace(' ', '')}}}"
+
+    def compact_uppercase_identifier(match: re.Match[str]) -> str:
+        return match.group("body").replace(" ", "")
+
+    text = LATEX_SCRIPT_SPLIT_IDENTIFIER_PATTERN.sub(compact_script_identifier, value)
+    return LATEX_UPPERCASE_SPLIT_IDENTIFIER_WITH_SCRIPT_PATTERN.sub(compact_uppercase_identifier, text)
+
+
+def _normalize_latex_operator_spacing(value: str) -> str:
+    text = re.sub(r"\\sum(?!\\limits)(?=_)", r"\\sum\\limits", value)
+    return re.sub(r"(\\sum\\limits_\{[^{}]+\}\^\{[^{}]+\})\s+(?=[A-Za-z\\])", r"\1", text)
 
 
 def normalize_latex(value: str | None) -> str:
@@ -448,6 +497,9 @@ def normalize_latex(value: str | None) -> str:
     text = re.sub(r"\s+", " ", text)
     text = re.sub(r"(?<=[A-Za-z0-9])\\textbackslash\\_(?=[A-Za-z0-9])", r"\\_", text)
     text = normalize_latex_macros(text)
+    text = _normalize_texmath_empty_delimiters(text)
+    text = _normalize_split_latex_identifiers(text)
+    text = _normalize_latex_operator_spacing(text)
     text = re.sub(r"^\$(.+)\$$", r"\1", text)
     return text.strip()
 

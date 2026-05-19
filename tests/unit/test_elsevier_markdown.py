@@ -341,7 +341,10 @@ class ElsevierMarkdownTests(unittest.TestCase):
         markdown = _render_elsevier_golden_markdown("10.1016/j.agrformet.2024.109975")
 
         self.assertIn("(26)", markdown)
-        self.assertIn("$$\nF_{crit} = \\sum\\limits_{t_{p}}^{SOS_{y0}}R_{f}\n$$", markdown)
+        self.assertRegex(
+            markdown,
+            r"\$\$\nF_\{crit\} = \\sum(?:\\limits)?_\{t_\{p\}\}\^\{SOS_\{y0\}\}\s*R_\{f\}\n\$\$",
+        )
         self.assertLess(markdown.index("(26)"), markdown.index("$$"))
 
     def _assert_inline_math_symbols_in_paragraph_do_not_repeat_as_display_blocks(self) -> None:

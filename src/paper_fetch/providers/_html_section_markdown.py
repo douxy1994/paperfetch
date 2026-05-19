@@ -27,12 +27,12 @@ from ..extraction.markdown_render.formulas import (
     is_html_formula_container as _is_formula_container,
     is_html_formula_image_node as _is_formula_image_node,
     is_mathjax_tex_node as _is_mathjax_tex_node,
+    normalize_tex_formula_text as _normalize_tex_formula_text,
     render_html_formula_container as _render_formula_container,
     render_html_formula_image_node as _render_formula_image_node,
     render_html_mathml_node as _render_mathml_node,
 )
 from ..extraction.html.semantics import has_explicit_reference_marker, normalize_section_title
-from ..formula.convert import normalize_latex_macros
 from ..models import normalize_text
 from ..markdown.citations import is_citation_link, numeric_citation_payload
 from .html_noise import HTML_BLOCK_TAGS, HTML_DROP_TAGS, should_drop_html_element
@@ -316,7 +316,7 @@ def render_clean_html_node(node: Any) -> str:
     if node.name in HTML_DROP_TAGS:
         return ""
     if _is_mathjax_tex_node(node):
-        return normalize_latex_macros(node.get_text("", strip=False).strip())
+        return _normalize_tex_formula_text(node.get_text("", strip=False))
     if normalize_text(node.name or "").lower() == "math":
         return _render_mathml_node(node)
     if _is_formula_image_node(node):
@@ -354,7 +354,7 @@ def _raw_inline_markdown_from_node(node: Any) -> str | None:
     if not isinstance(node, Tag):
         return None
     if _is_mathjax_tex_node(node):
-        return normalize_latex_macros(node.get_text("", strip=False).strip()) or None
+        return _normalize_tex_formula_text(node.get_text("", strip=False)) or None
     if normalize_text(node.name or "").lower() == "math":
         return _render_mathml_node(node) or None
     if _is_formula_image_node(node):

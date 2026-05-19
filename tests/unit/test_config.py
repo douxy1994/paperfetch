@@ -235,8 +235,12 @@ class ConfigTests(unittest.TestCase):
 
     def test_cloakbrowser_runtime_config_expands_env_overrides(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
+            browser_binary = Path(tmpdir) / "chrome"
+            browser_binary.write_text("#!/bin/sh\n", encoding="utf-8")
+            browser_binary.chmod(0o755)
             runtime_config = browser_runtime.load_runtime_config(
                 {
+                    config.CLOAKBROWSER_BINARY_PATH_ENV_VAR: str(browser_binary),
                     config.CLOAKBROWSER_HEADLESS_ENV_VAR: "false",
                     config.CLOAKBROWSER_TIMEOUT_MS_ENV_VAR: "12345",
                     config.XDG_DATA_HOME_ENV_VAR: tmpdir,
@@ -247,7 +251,20 @@ class ConfigTests(unittest.TestCase):
 
         self.assertFalse(runtime_config.headless)
         self.assertEqual(runtime_config.timeout_ms, 12345)
+        self.assertEqual(runtime_config.binary_path, str(browser_binary))
         self.assertTrue(str(runtime_config.artifact_dir).startswith(str(Path(tmpdir).expanduser())))
+
+    def test_cloakbrowser_runtime_config_rejects_invalid_binary_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with self.assertRaisesRegex(Exception, "CLOAKBROWSER_BINARY_PATH"):
+                browser_runtime.load_runtime_config(
+                    {
+                        config.CLOAKBROWSER_BINARY_PATH_ENV_VAR: str(Path(tmpdir) / "missing-chrome"),
+                        config.XDG_DATA_HOME_ENV_VAR: tmpdir,
+                    },
+                    provider="science",
+                    doi="10.1126/science.ady3136",
+                )
 
 
 if __name__ == "__main__":
