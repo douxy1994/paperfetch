@@ -15,8 +15,10 @@ class OfflinePackageBuildTests(unittest.TestCase):
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
         self.assertIn("copy_runtime_assets", script)
+        self.assertIn("create_self_extracting_installer", script)
+        self.assertIn("__PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__", script)
         self.assertIn("create_archive", script)
-        self.assertIn("$package_name.tar.gz", script)
+        self.assertIn("macos_offline_name_prefix", script)
         self.assertIn("runtime/site-packages", script)
         self.assertIn("runtime/python-bin", script)
         self.assertIn("write_cmd_wrappers", script)
@@ -29,9 +31,7 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertNotIn("source_snapshot", script)
         self.assertNotIn("--exclude='./legacy'", script)
         self.assertNotIn("-m playwright install chromium", script)
-        self.assertNotIn("create_self_extracting_installer", script)
-        self.assertNotIn("__PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__", script)
-        self.assertIn("Creating tar.gz archive", script)
+        self.assertIn("Creating macOS tar.gz archive", script)
 
     def test_posix_manifest_and_readme_document_cloakbrowser_binary_policy(self) -> None:
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
@@ -61,13 +61,14 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertIn("shasum -a 256", script)
         self.assertIn("sha256sum", script)
         self.assertNotIn("sed -i \"s|__CLOAKBROWSER_HEADLESS__", script)
+        self.assertNotIn("sed -i", script)
 
     def test_posix_offline_verifier_uses_cloakbrowser_smoke(self) -> None:
         script = VERIFY_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
-        self.assertIn("offline-bundle.tar.gz", script)
+        self.assertIn("offline-installer.sh|offline-bundle.tar.gz", script)
         self.assertIn("tar -xzf", script)
-        self.assertIn("$BUNDLE_ROOT/install-offline.sh", script)
+        self.assertIn("INSTALLER_PATH", script)
         self.assertIn("--install-dir \"$INSTALL_ROOT\"", script)
         self.assertIn("runtime/site-packages/paper_fetch", script)
         self.assertIn("Offline install should not include the source tree", script)

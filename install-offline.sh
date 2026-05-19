@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Offline installer for CPython ABI-specific Linux/macOS bundles.
+# Offline installer for CPython ABI-specific Linux/macOS runtime payloads.
 
 set -euo pipefail
 
@@ -99,16 +99,17 @@ Usage:
   ./install-offline.sh [--install-dir <path>] --purge
 
 Options:
-  --install-dir <path>             Install runtime files here. Default: ~/.local/share/paper-fetch-skill.
-  --preset=headless|headful|wslg  Select CloakBrowser headless/headful runtime env. Default: headless.
-                                  wslg is Linux-only; use headful on macOS.
-  --user-config                   Also merge the offline runtime block into ~/.config/paper-fetch/.env.
-  --no-user-config                Do not touch ~/.config/paper-fetch/.env. This is the default.
-  --reuse-env-file <path>         Use an existing offline.env without modifying it.
-  --skip-smoke                    Skip local command smoke checks after installation.
-  --uninstall                     Remove user-level shell, skill, and MCP integration without deleting the install directory.
-  --purge                         Remove user-level integration and delete the install directory.
-  -h, --help                      Show this help.
+  --install-dir <path>    Install runtime files here. Default: ~/.local/share/paper-fetch-skill.
+  --preset=headless|headful|wslg
+                            Select CloakBrowser headless/headful runtime env. Default: headless.
+                            wslg is Linux-only; use headful on macOS.
+  --user-config           Also merge the offline runtime block into ~/.config/paper-fetch/.env.
+  --no-user-config        Do not touch ~/.config/paper-fetch/.env. This is the default.
+  --reuse-env-file <path> Use an existing offline.env without modifying it.
+  --skip-smoke            Skip local command smoke checks after installation.
+  --uninstall             Remove user-level shell, skill, and MCP integration without deleting the install directory.
+  --purge                 Remove user-level integration and delete the install directory.
+  -h, --help              Show this help.
 
 Environment:
   CLOAKBROWSER_HEADLESS     Set to false for a headful CloakBrowser runtime.
@@ -784,7 +785,15 @@ write_activate_script() {
     cat > "$target" <<EOF
 #!/usr/bin/env bash
 
-INSTALL_ROOT="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "\${BASH_SOURCE:-}" ]; then
+  PAPER_FETCH_ACTIVATE_SCRIPT="\${BASH_SOURCE[0]}"
+elif [ -n "\${ZSH_VERSION:-}" ]; then
+  PAPER_FETCH_ACTIVATE_SCRIPT="\${(%):-%x}"
+else
+  PAPER_FETCH_ACTIVATE_SCRIPT="\$0"
+fi
+INSTALL_ROOT="\$(cd "\$(dirname "\$PAPER_FETCH_ACTIVATE_SCRIPT")" && pwd)"
+unset PAPER_FETCH_ACTIVATE_SCRIPT
 export PAPER_FETCH_ENV_FILE=$offline_env_literal
 
 if [ -f "\$PAPER_FETCH_ENV_FILE" ]; then
@@ -807,7 +816,15 @@ EOF
     cat > "$target" <<'EOF'
 #!/usr/bin/env bash
 
-INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ -n "${BASH_SOURCE:-}" ]; then
+  PAPER_FETCH_ACTIVATE_SCRIPT="${BASH_SOURCE[0]}"
+elif [ -n "${ZSH_VERSION:-}" ]; then
+  PAPER_FETCH_ACTIVATE_SCRIPT="${(%):-%x}"
+else
+  PAPER_FETCH_ACTIVATE_SCRIPT="$0"
+fi
+INSTALL_ROOT="$(cd "$(dirname "$PAPER_FETCH_ACTIVATE_SCRIPT")" && pwd)"
+unset PAPER_FETCH_ACTIVATE_SCRIPT
 export PAPER_FETCH_ENV_FILE="${PAPER_FETCH_ENV_FILE:-$INSTALL_ROOT/offline.env}"
 
 if [ -f "$PAPER_FETCH_ENV_FILE" ]; then

@@ -53,15 +53,42 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("Verify Linux runtime package layout", workflow)
-        self.assertIn(".tar.gz", workflow)
-        self.assertIn("tar -xzf", workflow)
-        self.assertIn("/install-offline.sh", workflow)
+        self.assertIn(".sh", workflow)
         self.assertIn("--install-dir \"$install_root\"", workflow)
         self.assertIn("/runtime/site-packages/paper_fetch/__init__.py", workflow)
         self.assertIn("/bin/paper-fetch", workflow)
         self.assertIn("/bin/paper-fetch-install-formula-tools", workflow)
         self.assertIn("Linux runtime package must not include source/build path", workflow)
-        self.assertNotIn("paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.sh", workflow)
+        self.assertNotIn("tar -tzf", workflow)
+        self.assertNotIn("paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.tar.gz", workflow)
+
+    def test_macos_offline_ci_verifies_headful_install_layout_without_release_asset(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("offline-macos-install:", workflow)
+        self.assertIn("runs-on: macos-latest", workflow)
+        self.assertIn("Build macOS offline package", workflow)
+        self.assertIn("paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz", workflow)
+        self.assertIn("--preset=headful", workflow)
+        self.assertIn('CLOAKBROWSER_HEADLESS="false"', workflow)
+        self.assertIn("macOS runtime package must not include source/build path", workflow)
+        self.assertIn("- offline-macos-install", workflow)
+        self.assertNotIn("name: paper-fetch-skill-offline-macos", workflow)
+
+    def test_macos_offline_ci_runs_installed_package_browser_smoke(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+
+        self.assertIn("Verify macOS installed package browser smoke", workflow)
+        self.assertIn("CLOAKBROWSER_BINARY_PATH=\"$browser_binary\"", workflow)
+        self.assertIn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", workflow)
+        self.assertIn("source \"$install_root/activate-offline.sh\"", workflow)
+        self.assertIn("paper-fetch --help >/dev/null", workflow)
+        self.assertIn("from paper_fetch._cloakbrowser_runtime import import_cloakbrowser", workflow)
+        self.assertIn("cloakbrowser.launch(headless=True)", workflow)
+        self.assertIn("data:text/html,<title>paper-fetch macOS browser smoke</title>", workflow)
+        self.assertIn("\n          from pathlib import Path\n", workflow)
+        self.assertIn("\n          PY\n\n  offline-windows-x86-64:", workflow)
+        self.assertNotIn("\nfrom pathlib import Path\n", workflow)
 
     def test_windows_offline_ci_verifies_runtime_only_package_layout(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")

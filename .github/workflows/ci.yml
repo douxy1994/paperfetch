@@ -220,22 +220,18 @@ jobs:
         run: scripts/build-offline-package.sh --output-dir "$PWD/offline-artifacts"
 
       - name: Verify offline package
-        run: scripts/verify-offline-package.sh "$PWD/offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.tar.gz"
+        run: scripts/verify-offline-package.sh "$PWD/offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.sh"
 
       - name: Verify Linux runtime package layout
         shell: bash
         run: |
           set -euo pipefail
-          package="$PWD/offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.tar.gz"
-          bundle_root="$RUNNER_TEMP/paper-fetch-bundle-${{ matrix.python-tag }}"
-          bundle="$bundle_root/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}"
+          package="$PWD/offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.sh"
           install_root="$RUNNER_TEMP/paper-fetch-layout-${{ matrix.python-tag }}"
           layout_home="$RUNNER_TEMP/paper-fetch-layout-home-${{ matrix.python-tag }}"
-          rm -rf "$bundle_root" "$install_root" "$layout_home"
-          mkdir -p "$bundle_root"
-          tar -xzf "$package" -C "$bundle_root"
+          rm -rf "$install_root" "$layout_home"
           mkdir -p "$layout_home"
-          HOME="$layout_home" SHELL=/bin/bash "$bundle/install-offline.sh" --install-dir "$install_root" --preset=headless --no-user-config --skip-smoke
+          HOME="$layout_home" SHELL=/bin/bash "$package" --install-dir "$install_root" --preset=headless --no-user-config --skip-smoke
           test -f "$install_root/runtime/site-packages/paper_fetch/__init__.py"
           test -x "$install_root/bin/paper-fetch"
           test -x "$install_root/bin/paper-fetch-install-formula-tools"
@@ -250,8 +246,152 @@ jobs:
         uses: actions/upload-artifact@v7
         with:
           name: paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}
-          path: offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.tar.gz
+          path: offline-artifacts/paper-fetch-skill-offline-linux-x86_64-${{ matrix.python-tag }}.sh
           if-no-files-found: error
+
+  offline-macos-install:
+    if: ${{ github.event_name != 'workflow_dispatch' || !inputs.run_offline_windows_only }}
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      - name: Set up Haskell toolchain for bundled texmath
+        id: setup-haskell
+        uses: haskell-actions/setup@v2.11.0
+        with:
+          ghc-version: "9.8.4"
+          cabal-version: "latest"
+
+      - name: Restore formula tool cache
+        uses: actions/cache@v5
+        with:
+          path: |
+            ${{ steps.setup-haskell.outputs.cabal-store }}
+          key: ${{ runner.os }}-offline-formula-tools-${{ steps.setup-haskell.outputs.ghc-version }}-${{ hashFiles('src/paper_fetch/formula/install.py', 'src/paper_fetch/resources/formula/package-lock.json') }}
+          restore-keys: |
+            ${{ runner.os }}-offline-formula-tools-${{ steps.setup-haskell.outputs.ghc-version }}-
+
+      - name: Build macOS offline package
+        run: scripts/build-offline-package.sh --output-dir "$PWD/offline-artifacts"
+
+      - name: Verify macOS offline package
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            arm64|aarch64) package_arch="arm64" ;;
+            x86_64|amd64) package_arch="x86_64" ;;
+            *) echo "Unsupported macOS runner architecture: $arch" >&2; exit 1 ;;
+          esac
+          scripts/verify-offline-package.sh "$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz"
+
+      - name: Verify macOS headful install layout
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            arm64|aarch64) package_arch="arm64" ;;
+            x86_64|amd64) package_arch="x86_64" ;;
+            *) echo "Unsupported macOS runner architecture: $arch" >&2; exit 1 ;;
+          esac
+          package="$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz"
+          bundle_root="$RUNNER_TEMP/paper-fetch-macos-bundle"
+          bundle="$bundle_root/paper-fetch-skill-offline-macos-$package_arch-cp312"
+          install_root="$RUNNER_TEMP/paper-fetch-macos-install"
+          layout_home="$RUNNER_TEMP/paper-fetch-macos-home"
+          rm -rf "$bundle_root" "$install_root" "$layout_home"
+          mkdir -p "$bundle_root" "$layout_home"
+          tar -xzf "$package" -C "$bundle_root"
+          HOME="$layout_home" SHELL=/bin/bash "$bundle/install-offline.sh" --install-dir "$install_root" --preset=headful --no-user-config --skip-smoke
+          test -f "$install_root/runtime/site-packages/paper_fetch/__init__.py"
+          test -x "$install_root/bin/paper-fetch"
+          test -x "$install_root/bin/paper-fetch-install-formula-tools"
+          grep -F -q 'CLOAKBROWSER_HEADLESS="false"' "$install_root/offline.env"
+          for forbidden in src tests wheelhouse dist .github pyproject.toml; do
+            if [ -e "$install_root/$forbidden" ]; then
+              echo "macOS runtime package must not include source/build path: $forbidden" >&2
+              exit 1
+            fi
+          done
+
+      - name: Verify macOS installed package browser smoke
+        shell: bash
+        run: |
+          set -euo pipefail
+          arch="$(uname -m)"
+          case "$arch" in
+            arm64|aarch64) package_arch="arm64" ;;
+            x86_64|amd64) package_arch="x86_64" ;;
+            *) echo "Unsupported macOS runner architecture: $arch" >&2; exit 1 ;;
+          esac
+          package="$PWD/offline-artifacts/paper-fetch-skill-offline-macos-$package_arch-cp312.tar.gz"
+          bundle_root="$RUNNER_TEMP/paper-fetch-macos-browser-bundle"
+          bundle="$bundle_root/paper-fetch-skill-offline-macos-$package_arch-cp312"
+          install_root="$RUNNER_TEMP/paper-fetch-macos-browser-install"
+          browser_home="$RUNNER_TEMP/paper-fetch-macos-browser-home"
+          browser_profile="$RUNNER_TEMP/paper-fetch-macos-browser-profile"
+          rm -rf "$bundle_root" "$install_root" "$browser_home" "$browser_profile"
+          mkdir -p "$bundle_root" "$browser_home" "$browser_profile"
+          tar -xzf "$package" -C "$bundle_root"
+
+          browser_binary=""
+          for candidate in \
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+            "/Applications/Chromium.app/Contents/MacOS/Chromium" \
+            "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge"; do
+            if [ -x "$candidate" ]; then
+              browser_binary="$candidate"
+              break
+            fi
+          done
+          [ -n "$browser_binary" ] || {
+            echo "No executable browser binary found for macOS CloakBrowser smoke." >&2
+            exit 1
+          }
+
+          HOME="$browser_home" \
+          SHELL=/bin/bash \
+          CLOAKBROWSER_BINARY_PATH="$browser_binary" \
+          "$bundle/install-offline.sh" --install-dir "$install_root" --preset=headless --no-user-config
+
+          # shellcheck disable=SC1091
+          source "$install_root/activate-offline.sh"
+          export CLOAKBROWSER_BINARY_PATH="$browser_binary"
+          export CLOAKBROWSER_HEADLESS="true"
+          export CLOAKBROWSER_USER_DATA_DIR="$browser_profile"
+
+          paper-fetch --help >/dev/null
+          python - <<'PY'
+          from pathlib import Path
+          import os
+
+          from paper_fetch._cloakbrowser_runtime import import_cloakbrowser
+
+          binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
+          assert binary_path and Path(binary_path).is_file(), binary_path
+
+          cloakbrowser = import_cloakbrowser()
+          browser = cloakbrowser.launch(headless=True)
+          try:
+              context = browser.new_context()
+              try:
+                  page = context.new_page()
+                  page.goto("data:text/html,<title>paper-fetch macOS browser smoke</title><main>ok</main>")
+                  assert page.title() == "paper-fetch macOS browser smoke"
+              finally:
+                  context.close()
+          finally:
+              browser.close()
+          PY
 
   offline-windows-x86-64:
     runs-on: windows-latest
@@ -465,6 +605,7 @@ jobs:
       - integration
       - package-smoke
       - offline-linux-x86-64
+      - offline-macos-install
       - offline-windows-x86-64
     if: >-
       ${{
@@ -493,10 +634,10 @@ jobs:
         run: |
           set -euo pipefail
           expected=(
-            paper-fetch-skill-offline-linux-x86_64-cp311.tar.gz
-            paper-fetch-skill-offline-linux-x86_64-cp312.tar.gz
-            paper-fetch-skill-offline-linux-x86_64-cp313.tar.gz
-            paper-fetch-skill-offline-linux-x86_64-cp314.tar.gz
+            paper-fetch-skill-offline-linux-x86_64-cp311.sh
+            paper-fetch-skill-offline-linux-x86_64-cp312.sh
+            paper-fetch-skill-offline-linux-x86_64-cp313.sh
+            paper-fetch-skill-offline-linux-x86_64-cp314.sh
             paper-fetch-skill-windows-x86_64-setup.exe
           )
 

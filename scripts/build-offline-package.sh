@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build a Linux/macOS CPython 3.11-3.14 offline runtime tarball.
+# Build Linux x86_64 self-extracting installers and macOS runtime tarballs.
 
 set -euo pipefail
 
@@ -18,12 +18,12 @@ usage() {
 Usage:
   scripts/build-offline-package.sh [--output-dir <path>] [--package-name <name>]
 
-Builds a platform-specific Linux/macOS CPython 3.11-3.14 tar.gz bundle containing:
+Builds a CPython 3.11-3.14 offline runtime package containing:
   - preinstalled Python runtime under runtime/site-packages
   - command wrappers under bin/
   - texmath under formula-tools/
   - cloakbrowser Python package; the CloakBrowser browser binary is not bundled
-The release artifact is a .tar.gz bundle.
+Linux builds produce a self-extracting .sh installer. macOS builds produce a .tar.gz bundle.
 EOF
 }
 
@@ -248,14 +248,23 @@ EOF
 
 write_offline_readme() {
   local staging="$1"
+  local target_platform="$2"
+  local install_line
+  if [ "$target_platform" = "macos" ]; then
+    install_line='Unpack the release `.tar.gz` bundle, then run `./install-offline.sh` from the unpacked directory. By default it installs to `~/.local/share/paper-fetch-skill`; pass `--install-dir <path>` to use a fixed custom directory.'
+  else
+    install_line='Run the release `.sh` installer directly. By default it installs to `~/.local/share/paper-fetch-skill`; pass `--install-dir <path>` to use a fixed custom directory.'
+  fi
   cat > "$staging/README.offline.md" <<'EOF'
 # Paper Fetch Offline Package
 
 This package includes an installed Python runtime under `runtime/site-packages`, command wrappers under `bin/`, and formula tools.
 It does not redistribute the CloakBrowser browser binary.
+EOF
 
-Unpack the release `.tar.gz` bundle, then run `./install-offline.sh` from the unpacked directory. By default it installs to `~/.local/share/paper-fetch-skill`; pass `--install-dir <path>` to use a fixed custom directory.
+  printf '\n%s\n\n' "$install_line" >> "$staging/README.offline.md"
 
+  cat >> "$staging/README.offline.md" <<'EOF'
 The first browser-backed fetch may need network access so CloakBrowser can download its runtime. In restricted environments, preinstall a compatible browser runtime and set `CLOAKBROWSER_BINARY_PATH` before using browser-backed providers.
 
 The installer writes `PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"` into `offline.env` by default for CloakBrowser-backed AGU/Wiley fetches.
@@ -343,9 +352,62 @@ payload = {
     json.dumps(payload, ensure_ascii=False, indent=2) + os.linesep,
     encoding="utf-8",
 )
+
 PY
 
   write_checksums "$staging"
+}
+
+create_self_extracting_installer() {
+  local staging_parent="$1"
+  local package_name="$2"
+  local output_dir="$3"
+  local output_path payload_path
+  mkdir -p "$output_dir"
+  output_path="$output_dir/$package_name.sh"
+  payload_path="$BUILD_DIR/$package_name.payload.tar.gz"
+  rm -f "$output_path" "$payload_path"
+
+  log "Creating self-extracting shell installer"
+  tar -C "$staging_parent" -czf "$payload_path" "$package_name"
+  cat > "$output_path" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+marker="__PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__"
+archive_line="$(awk -v marker="$marker" '$0 == marker { print NR + 1; found = 1; exit } END { if (!found) exit 1 }' "$0")" || {
+  printf 'Could not locate embedded offline payload.\n' >&2
+  exit 1
+}
+
+tmp_root="$(mktemp -d "${TMPDIR:-/tmp}/paper-fetch-offline.XXXXXX")"
+cleanup() {
+  rm -rf "$tmp_root"
+}
+trap cleanup EXIT
+
+tail -n +"$archive_line" "$0" | tar -xzf - -C "$tmp_root"
+payload_root="$tmp_root/__PACKAGE_NAME__"
+if [ ! -x "$payload_root/install-offline.sh" ]; then
+  printf 'Embedded offline payload is missing install-offline.sh.\n' >&2
+  exit 1
+fi
+
+exec "$payload_root/install-offline.sh" "$@"
+__PAPER_FETCH_OFFLINE_PAYLOAD_BELOW__
+EOF
+  "$PYTHON_BIN" - "$output_path" "$package_name" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+package_name = sys.argv[2]
+path.write_text(path.read_text(encoding="utf-8").replace("__PACKAGE_NAME__", package_name), encoding="utf-8")
+PY
+  cat "$payload_path" >> "$output_path"
+  chmod +x "$output_path"
+  rm -f "$payload_path"
+  printf '%s\n' "$output_path"
 }
 
 create_archive() {
@@ -357,7 +419,7 @@ create_archive() {
   output_path="$output_dir/$package_name.tar.gz"
   rm -f "$output_path"
 
-  log "Creating tar.gz archive"
+  log "Creating macOS tar.gz archive"
   tar -C "$staging_parent" -czf "$output_path" "$package_name"
   printf '%s\n' "$output_path"
 }
@@ -391,9 +453,13 @@ main() {
   build_project_runtime "$staging"
   bundle_formula_tools "$staging"
   write_cmd_wrappers "$staging"
-  write_offline_readme "$staging"
+  write_offline_readme "$staging" "$target_platform"
   write_manifest_and_checksums "$staging" "$version" "$target_platform" "$target_arch" "$python_tag"
-  create_archive "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
+  if [ "$target_platform" = "macos" ]; then
+    create_archive "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
+  else
+    create_self_extracting_installer "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
+  fi
 }
 
 main "$@"

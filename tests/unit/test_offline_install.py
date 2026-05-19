@@ -473,6 +473,59 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertEqual(probe.returncode, 0, probe.stderr)
             self.assertEqual(probe.stdout.splitlines(), [str(reused_env), str(bundle / "downloads"), "true"])
 
+            zsh = shutil.which("zsh")
+            if zsh:
+                zsh_probe = subprocess.run(
+                    [
+                        zsh,
+                        "-lc",
+                        (
+                            f'source "{bundle / "activate-offline.sh"}"; '
+                            'printf "%s\\n%s\\n%s\\n" '
+                            '"$PAPER_FETCH_ENV_FILE" "$PAPER_FETCH_DOWNLOAD_DIR" "$CLOAKBROWSER_HEADLESS"'
+                        ),
+                    ],
+                    text=True,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    check=False,
+                )
+                self.assertEqual(zsh_probe.returncode, 0, zsh_probe.stderr)
+                self.assertEqual(zsh_probe.stdout.splitlines(), [str(reused_env), str(bundle / "downloads"), "true"])
+
+    def test_activate_script_is_sourceable_from_macos_default_zsh(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            bundle, fake_bin, home = self._create_bundle(Path(tmpdir))
+
+            result = self._run_installer(bundle, fake_bin, home)
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            activate_script = (bundle / "activate-offline.sh").read_text(encoding="utf-8")
+            self.assertIn('${BASH_SOURCE:-}', activate_script)
+            self.assertIn('${ZSH_VERSION:-}', activate_script)
+            self.assertIn('${(%):-%x}', activate_script)
+
+            zsh = shutil.which("zsh")
+            if not zsh:
+                self.skipTest("zsh is not installed in this test environment")
+            probe = subprocess.run(
+                [
+                    zsh,
+                    "-lc",
+                    (
+                        f'source "{bundle / "activate-offline.sh"}"; '
+                        'printf "%s\\n%s\\n%s\\n" '
+                        '"$PAPER_FETCH_ENV_FILE" "$PAPER_FETCH_DOWNLOAD_DIR" "$CLOAKBROWSER_HEADLESS"'
+                    ),
+                ],
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                check=False,
+            )
+            self.assertEqual(probe.returncode, 0, probe.stderr)
+            self.assertEqual(probe.stdout.splitlines(), [str(bundle / "offline.env"), str(bundle / "downloads"), "true"])
+
     def test_uninstall_removes_user_level_integrations_without_deleting_bundle_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
