@@ -1,6 +1,8 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+import re
+
 from paper_fetch.providers import _ieee_html, _ieee_metadata, _ieee_url
 
 from ._ieee_provider_support import *
@@ -286,13 +288,16 @@ class IeeeProviderPdfGoldenTests(unittest.TestCase):
                         self.assertIn("### A. Background on Near-Data Processing", markdown)
                         section_text = "\n\n".join(section.text for section in article.sections)
                         for prefix, listing in [
-                            ("standard processing system.", "Listing 1."),
-                            ("post-processing.", "Listing 2."),
-                            ("NDPmulator).", "Listing 3."),
-                            ("ndaccAlloc).", "Listing 4."),
+                            ("standard processing system.", "Listing 1"),
+                            ("post-processing.", "Listing 2"),
+                            ("NDPmulator).", "Listing 3"),
+                            ("ndaccAlloc).", "Listing 4"),
                         ]:
                             with self.subTest(listing=listing):
-                                self.assertIn(f"{prefix}\n\n![{listing}]", section_text)
+                                self.assertRegex(
+                                    section_text,
+                                    re.escape(prefix) + r"\n\n!\[" + re.escape(listing) + r"\]\(",
+                                )
                                 self.assertNotIn(f"{prefix}![{listing}]", section_text)
                     elif label == "CICTN":
                         self.assertGreaterEqual(extraction.marker_counts["formulas"], 4)

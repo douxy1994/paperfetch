@@ -33,6 +33,99 @@ main_path:
   - abstract_only
   - metadata_only
 success_criteria: {}
+route_contract:
+  article_html:
+    success_requires:
+    - provider article container is present
+    - title or DOI metadata is present
+    - body text or body sections are present
+    reject_if_any:
+    - challenge page
+    - access gate only
+    - site navigation only
+    - empty article shell
+    min_body_chars: 1200
+    min_body_sections: 1
+  pdf_fallback:
+    success_requires:
+    - PDF response has application/pdf content type or PDF magic bytes
+    - PDF text extraction produces body text
+    reject_if_any:
+    - HTML wrapper
+    - challenge page
+    - access gate page
+    - error page
+    require_pdf_magic: true
+    reject_html_wrapper: true
+  abstract_only:
+    success_requires:
+    - provider-managed page or payload exposes abstract text
+    - source trail marks abstract-only degradation
+    reject_if_any:
+    - empty shell
+    - fulltext body misclassified as abstract-only
+  metadata_only:
+    success_requires:
+    - metadata contains DOI or title
+    - source trail marks metadata-only fallback
+    reject_if_any:
+    - fabricated body text
+    - provider-specific fulltext source without fulltext
+markdown_contract:
+  structure:
+    doi: 10.1038/s43247-024-01885-8
+    must_include:
+    - '## Abstract'
+    must_not_include:
+    - Download PDF
+  table:
+    doi: 10.1038/s43247-024-01295-w
+    must_include:
+    - Table
+    must_not_include:
+    - Google Scholar
+    must_match:
+    - (?m)^\|.+\|$
+  formula:
+    doi: 10.1038/nature12915
+    must_include:
+    - Equation
+    must_not_include:
+    - '[Formula unavailable]'
+    must_match:
+    - (?:\$\$|!\[Formula\]|Equation)
+  figure:
+    doi: 10.1038/s41561-022-00912-7
+    must_include:
+    - Figure
+    must_not_include:
+    - Article Metrics
+    must_match:
+    - (?:!\[Figure|\*\*Figure)
+  supplementary:
+    doi: 10.1038/s41561-022-00912-7
+    must_include:
+    - Supplementary
+    must_not_include:
+    - Download Citation
+  references:
+    doi: 10.1007/s10584-011-0143-4
+    must_include:
+    - Reference
+    must_not_include:
+    - Google Scholar
+  abstract_only:
+    doi: 10.1007/s00382-018-4286-0
+    must_include:
+    - '## Abstract'
+    must_not_include:
+    - Download PDF
+  access_gate:
+    doi: 10.1007/s00382-018-4286-0
+    must_include:
+    - '## Abstract'
+    must_not_include:
+    - Subscribe
 asset_profile:
   none: []
   body:

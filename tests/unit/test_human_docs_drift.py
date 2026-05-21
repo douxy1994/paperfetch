@@ -63,6 +63,7 @@ HUMAN_ONLY_API_ALLOWLIST = frozenset(
         "register_provider_bundle",
     }
 )
+HUMAN_DOC_NON_API_TOKENS = frozenset({"Formula", "Image"})
 
 FENCE_PATTERN = re.compile(r"```(?P<lang>[^\n`]*)\n(?P<body>.*?)```", re.DOTALL)
 PROVIDER_API_CALL_PATTERN = re.compile(
@@ -290,7 +291,9 @@ def test_human_only_api_drift_warns_but_ai_prohibition_conflicts_fail() -> None:
         + ", ".join(allowlist_prohibition_conflicts)
     )
 
-    missing_from_ai = sorted(human_apis - ai_apis - HUMAN_ONLY_API_ALLOWLIST)
+    missing_from_ai = sorted(
+        human_apis - ai_apis - HUMAN_ONLY_API_ALLOWLIST - HUMAN_DOC_NON_API_TOKENS
+    )
     if missing_from_ai:
         warnings.warn(
             "Human reference docs mention APIs not present in docs/ai-onboarding/: "

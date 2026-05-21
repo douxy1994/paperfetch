@@ -20,6 +20,7 @@ from ..extraction.html.parsing import choose_parser
 from ..extraction.html.figure_links import rewrite_inline_figure_links
 from ..extraction.html.tables import inject_inline_table_blocks, render_table_markdown, table_placeholder
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, PDF_MIME_TYPE, RequestFailure
+from ..markdown.images import render_markdown_image
 from ..metadata.types import ProviderMetadata
 from ..models import AssetProfile, article_from_markdown, metadata_only_article
 from ..publisher_identity import normalize_doi
@@ -488,7 +489,7 @@ def _springer_table_image_markdown(asset: Mapping[str, Any], *, label: str) -> s
     caption = normalize_text(str(asset.get("caption") or ""))
     if not image_url:
         return ""
-    lines = [f"![{heading}]({image_url})"]
+    lines = [render_markdown_image("table", heading, image_url)]
     label_text = normalize_text(label) or f"{heading}."
     caption_line = f"**{label_text}** {caption}".strip()
     if caption_line:

@@ -1635,7 +1635,7 @@
     "10.1007_s11430-021-9892-6__block": {
       "doi": "10.1007/s11430-021-9892-6",
       "publisher": "springer",
-      "title": "Estimation of China’s terrestrial ecosystem carbon sink: Methods, progress and prospects",
+      "title": "Estimation of China\u2019s terrestrial ecosystem carbon sink: Methods, progress and prospects",
       "source_url": "https://link.springer.com/article/10.1007/s11430-021-9892-6",
       "origin_kind": "real_replay",
       "usage_kind": "content",
@@ -2068,7 +2068,7 @@
         "original.html": "tests/fixtures/golden_criteria/10.1175_bams-d-24-0223.1/original.html"
       },
       "fixture_family": "golden",
-      "title": "What Makes a Successful Community Model for Research and Operations? Lessons Learned from WAVEWATCH III®",
+      "title": "What Makes a Successful Community Model for Research and Operations? Lessons Learned from WAVEWATCH III\u00ae",
       "landing_url": "https://journals.ametsoc.org/view/journals/bams/107/5/BAMS-D-24-0223.1.xml",
       "route_kind": "html",
       "content_type": "text/html"
@@ -2100,7 +2100,7 @@
         "original.html": "tests/fixtures/golden_criteria/10.1175_jtech-d-24-0028.1/original.html"
       },
       "fixture_family": "golden",
-      "title": "Assessing Air–Sea Surface Turbulent Heat Fluxes from Reanalyses Using Concurrent Shipboard Measurements",
+      "title": "Assessing Air\u2013Sea Surface Turbulent Heat Fluxes from Reanalyses Using Concurrent Shipboard Measurements",
       "landing_url": "https://journals.ametsoc.org/view/journals/atot/41/12/JTECH-D-24-0028.1.xml",
       "route_kind": "html",
       "content_type": "text/html"
@@ -2218,6 +2218,159 @@
       "landing_url": "https://journals.ametsoc.org/view/journals/clim/39/10/JCLI-D-25-0547.1.xml",
       "route_kind": "pdf_fallback",
       "content_type": "application/pdf"
+    },
+    "10.3390_en16186655": {
+      "doi": "10.3390/en16186655",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/1996-1073/16/18/6655",
+      "fetched_at": "2026-05-18T10:51:55Z",
+      "purpose": "pdf_fallback",
+      "expected_outcome": "blocked",
+      "fixture_family": "golden",
+      "content_type": "application/pdf",
+      "route_kind": "pdf_fallback",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.pdf": "tests/fixtures/golden_criteria/10.3390_en16186655/original.pdf",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_en16186655/expected.json"
+      }
+    },
+    "10.3390_membranes15030093": {
+      "doi": "10.3390/membranes15030093",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/2077-0375/15/3/93",
+      "fetched_at": "2026-05-18T10:52:33Z",
+      "purpose": "structure",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.3390_membranes15030093/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_membranes15030093/expected.json"
+      }
+    },
+    "10.3390_su12072826": {
+      "doi": "10.3390/su12072826",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/2071-1050/12/7/2826",
+      "fetched_at": "2026-05-18T10:52:36Z",
+      "purpose": "table",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.3390_su12072826/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_su12072826/expected.json"
+      }
+    },
+    "10.3390_math11030657": {
+      "doi": "10.3390/math11030657",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/2227-7390/11/3/657",
+      "fetched_at": "2026-05-18T10:52:39Z",
+      "purpose": "formula",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.3390_math11030657/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_math11030657/expected.json"
+      }
+    },
+    "10.3390_rs16010010": {
+      "doi": "10.3390/rs16010010",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/2072-4292/16/1/10",
+      "fetched_at": "2026-05-18T10:52:42Z",
+      "purpose": "figure",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.3390_rs16010010/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_rs16010010/expected.json"
+      }
+    },
+    "10.3390_foods10081757": {
+      "doi": "10.3390/foods10081757",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/2304-8158/10/8/1757",
+      "fetched_at": "2026-05-18T10:52:45Z",
+      "purpose": "structure",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.3390_foods10081757/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_foods10081757/expected.json"
+      }
+    },
+    "10.3390_w15040758": {
+      "doi": "10.3390/w15040758",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/2073-4441/15/4/758",
+      "fetched_at": "2026-05-18T10:52:48Z",
+      "purpose": "references",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.3390_w15040758/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_w15040758/expected.json"
+      }
+    },
+    "10.3390_ijerph18094484": {
+      "doi": "10.3390/ijerph18094484",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/1660-4601/18/9/4484",
+      "fetched_at": "2026-05-18T10:52:58Z",
+      "purpose": "structure",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.3390_ijerph18094484/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_ijerph18094484/expected.json"
+      }
+    },
+    "10.3390_s23010001": {
+      "doi": "10.3390/s23010001",
+      "publisher": "mdpi",
+      "source_url": "https://www.mdpi.com/1424-8220/23/1/1",
+      "fetched_at": "2026-05-18T10:53:01Z",
+      "purpose": "supplementary",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.3390_s23010001/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.3390_s23010001/expected.json"
+      }
     }
   },
   "tests": [

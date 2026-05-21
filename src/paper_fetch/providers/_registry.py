@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any, Callable
 
 from ..provider_catalog import ProviderSpec
 
@@ -16,12 +16,22 @@ if TYPE_CHECKING:
 
 
 @dataclass(frozen=True)
+class ProviderRenderPolicy:
+    mark_inline_assets: Callable[[str, list[Any], str], None] | None = None
+
+    def __post_init__(self) -> None:
+        if self.mark_inline_assets is not None and not callable(self.mark_inline_assets):
+            raise TypeError("Provider render policy mark_inline_assets must be callable.")
+
+
+@dataclass(frozen=True)
 class ProviderBundle:
     catalog: ProviderSpec
     html_rules: ProviderHtmlRules | None = None
     asset_retry: AssetRetryPolicy | None = None
     metadata_merge: tuple[MetadataMergeRule, ...] = ()
     sources: tuple[str, ...] = ()
+    render_policy: ProviderRenderPolicy | None = None
 
     def __post_init__(self) -> None:
         if not self.catalog.name:
@@ -30,6 +40,11 @@ class ProviderBundle:
             raise TypeError("Provider bundle metadata_merge must be a tuple.")
         if not isinstance(self.sources, tuple):
             raise TypeError("Provider bundle sources must be a tuple.")
+        if self.render_policy is not None and not isinstance(
+            self.render_policy,
+            ProviderRenderPolicy,
+        ):
+            raise TypeError("Provider bundle render_policy must be a ProviderRenderPolicy.")
         if self.html_rules is not None and self.html_rules.name != self.catalog.name:
             if self.catalog.name not in (self.html_rules.name, *self.html_rules.aliases):
                 raise ValueError(

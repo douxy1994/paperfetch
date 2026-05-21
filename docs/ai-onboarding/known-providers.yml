@@ -39,3 +39,7 @@ providers:
     display_source: ams_html
     status: implemented
     manifest_path: docs/ai-onboarding/manifests/ams.yml
+  - name: mdpi
+    display_source: mdpi_html
+    status: implemented
+    manifest_path: docs/ai-onboarding/manifests/mdpi.yml

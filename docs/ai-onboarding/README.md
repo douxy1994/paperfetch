@@ -5,26 +5,33 @@
 ## Authority Boundary
 
 - `scripts/onboard_from_manifests.py` 负责 coordinator DAG、state、task brief 和 verification plan。
+- `docs/ai-onboarding/access-reviews/<name>.yml` 是 operator 对合法访问、runtime、challenge/CAPTCHA 和临时站点策略的批准记录；未批准时 coordinator 不进入 discovery。
 - `docs/ai-onboarding/provider-manifest.schema.json` 定义 provider manifest schema。
 - `docs/ai-onboarding/manifests/<name>.yml` 是单 provider 的 routing、fixture、probe、asset profile、sync-back 和 docs fact base。
-- `scripts/capture_fixture.py --from-manifest` 负责按 manifest DOI sample 捕获 fixture，并用 structured JSON error code 报告不可用样本。
-- `scripts/scaffold_provider.py --from-manifest` 负责从 manifest 生成 provider-owned skeleton。
-- `scripts/manifest_sync_back.py --provider <name> --manifest <path>` 是 `extraction_hints` 和 `success_criteria` sync-back 字段的唯一 writer。
+- `docs/ai-onboarding/reviews/<name>.yml` 是 fixture 代表性和最终 Markdown 语义审查 artifact；acceptance 不接受只写在 worker 回复里的审查结果。
+- `docs/ai-onboarding/instruction.md` 是可复用 `/goal` provider onboarding 入口，按 manifest contract 驱动新增 provider。
+- `scripts/capture_fixture.py --from-manifest <manifest> --all` 批量捕获所有 non-null DOI sample 和 `extra_fixtures`，自动跳过 null DOI purpose，并用 structured JSON error code 报告不可用样本。
+- `scripts/capture_fixture.py --from-manifest <manifest> --all --auto-via --fail-fast` 是 coordinator capture 默认入口，按 manifest probe 和 access review 选择 `http` / `browser`。
+- `scripts/scaffold_provider.py --from-manifest --merge-existing=safe` 负责从 manifest 生成 provider-owned skeleton；已有输出时复用安全内容或返回 JSON merge plan 和 diff preview。
+- `scripts/bootstrap_review_artifact.py --provider <name> --manifest <path>` 生成 Markdown review 草稿，但不会把最终语义审查自动签为 true。
+- `scripts/manifest_sync_back.py --provider <name> --manifest <path> --sync-docs` 是 `extraction_hints`、`success_criteria` 和 manifest docs facts 自动同步入口。
 - `docs/ai-onboarding/failure-recovery.md` 定义 coordinator 对 structured JSON error code 的恢复动作。
+- `docs/ai-onboarding/automation-roadmap.md` 记录 runner、worker dispatch、live gate 和不可自动化边界。
 
 ## S14-S16 Toolchain
 
-S14 coordinator:
+S14/S17 coordinator:
 
 - local entrypoint: `python3 scripts/onboard_from_manifests.py`
-- supported actions: `start`, `next`, `verify`, `advance`
+- supported actions: `start`, `run`, `next`, `verify`, `advance`
 - provider execution model: one active provider, serial task DAG, retry counters per task
 - worker dispatch input: generated task brief plus manifest/hard-constraints material
+- full automation entrypoint: `python3 scripts/onboard_from_manifests.py run --manifest docs/ai-onboarding/manifests/<name>.yml --until merge-ready`
 
 S15 manifest capture/retry:
 
 - discovery output: `docs/ai-onboarding/manifests/<name>.yml`
-- capture entrypoint: `python3 scripts/capture_fixture.py --from-manifest docs/ai-onboarding/manifests/<name>.yml`
+- capture entrypoint: `python3 scripts/capture_fixture.py --from-manifest docs/ai-onboarding/manifests/<name>.yml --all --auto-via --fail-fast`
 - fixture retry routing: `UNSUITABLE_DOI_SAMPLE`, `HTTP_FORBIDDEN`, `HTTP_RATE_LIMITED`, `CHALLENGE_DETECTED`, `NON_PDF_FALLBACK_CONTENT`, `ACCESS_GATE_CAPTURED`, `EMPTY_ARTICLE_SHELL`, `NETWORK_TRANSIENT`
 - retry target: replace only the failed `fixtures.doi_samples.<purpose>` object or rerun the failed capture step according to `failure-recovery.md`
 
@@ -39,18 +46,20 @@ S16 structured error:
 
 The provider DAG is fixed:
 
-1. `discover-manifest`
-2. `validate-manifest`
-3. `capture-fixtures`
-4. `scaffold`
-5. `implement-provider`
-6. `snapshot-expected`
-7. `manifest-sync-back`
-8. `provider-local-acceptance`
-9. `global-lint`
-10. `merge-ready`
+1. `operator-access-preflight`
+2. `discover-manifest`
+3. `validate-manifest`
+4. `capture-fixtures`
+5. `scaffold`
+6. `implement-provider`
+7. `shared-integration`
+8. `snapshot-expected`
+9. `manifest-sync-back`
+10. `provider-local-acceptance`
+11. `global-lint`
+12. `merge-ready`
 
-`start --provider` includes all tasks and writes discovery plus implementation briefs. `start --manifest` skips `discover-manifest`, reads provider identity from manifest YAML, and writes the implementation brief.
+`operator-access-preflight` validates `docs/ai-onboarding/access-reviews/<name>.yml` before discovery. `start --provider` includes all tasks and writes discovery plus implementation briefs. `start --manifest` skips `discover-manifest`, reads provider identity from manifest YAML, and still starts with the access preflight gate.
 
 ## Required Verification
 
@@ -60,9 +69,15 @@ Merge-ready requires machine checks, not narrative review:
 PYTHONPATH=src python3 -m pytest tests/unit/test_provider_manifest_schema.py -q
 PYTHONPATH=src python3 -m pytest tests/unit/test_manifest_bundle_sync.py -q
 PYTHONPATH=src python3 -m pytest tests/unit/test_provider_bundle_completeness.py tests/unit/test_provider_owner_reuse.py -q
+PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contract.py -q
+PYTHONPATH=src python3 -m pytest tests/unit/test_provider_route_contract.py -q
 PYTHONPATH=src python3 -m pytest tests/unit/test_human_docs_drift.py -q
 python3 scripts/validate_extraction_rules.py
 ```
+
+For local operator execution, `python3 scripts/onboard_from_manifests.py run-checks --provider <name> --all-local` runs the access, manifest, review/provider-local, shared integration, and global lint gates without triggering GitHub CI.
+
+For end-to-end local orchestration, `python3 scripts/onboard_from_manifests.py run --provider <name> --domain <domain> --output-dir .paper-fetch-runs/<name>-onboarding` executes the serial DAG and dispatches worker steps through `PROVIDER_ONBOARDING_AGENT_CLI`. It still cannot approve access, solve challenges, or mark semantic review complete.
 
 Provider-local acceptance commands must come from the generated task brief. Hard-constraint grep checks must be listed in the brief or `hard-constraints.md`; non-empty forbidden central-provider matches fail acceptance.
 
@@ -73,10 +88,14 @@ Provider-local acceptance commands must come from the generated task brief. Hard
 | [`agent-task-brief.md`](./agent-task-brief.md) | Required fields for discovery and implementation worker briefs |
 | [`operator-prompts.md`](./operator-prompts.md) | Operator-facing prompt templates for coordinator session and worker dispatch |
 | [`coordinator-spec.md`](./coordinator-spec.md) | Coordinator invocation, DAG, state machine, retry and worker isolation |
+| [`automation-roadmap.md`](./automation-roadmap.md) | 可自动化项、不可自动化边界、runner、worker dispatch、live gate 和 failure recovery 映射 |
 | [`failure-recovery.md`](./failure-recovery.md) | Structured JSON error `code` to deterministic recovery action |
 | [`hard-constraints.md`](./hard-constraints.md) | Worker scope, provider logic boundary, pytest and grep acceptance |
+| [`instruction.md`](./instruction.md) | 通用 `/goal follow docs/ai-onboarding/instruction.md 添加 <provider> provider` 执行入口 |
 | [`manifest-discovery.md`](./manifest-discovery.md) | Discovery worker input, evidence requirements, schema output and retry rules |
 | [`acceptance.md`](./acceptance.md) | Machine-verifiable merge-ready definition |
+| [`access-review.schema.json`](./access-review.schema.json) | Operator access preflight JSON Schema |
+| [`provider-review.schema.json`](./provider-review.schema.json) | Fixture representativeness and Markdown semantic review JSON Schema |
 | [`provider-manifest.md`](./provider-manifest.md) | Provider manifest field reference |
 | [`provider-manifest.schema.json`](./provider-manifest.schema.json) | Provider manifest JSON Schema |
 | [`onboarding-state.schema.json`](./onboarding-state.schema.json) | Coordinator state JSON Schema |

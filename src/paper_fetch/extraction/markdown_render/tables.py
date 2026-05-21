@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from ...markdown.images import render_markdown_image
 from ...utils import normalize_text
 from ._ir import MarkdownTable
 
@@ -40,7 +41,7 @@ def render_table(table: MarkdownTable) -> list[str]:
             lines.append("| " + " | ".join(row) + " |")
         lines.append("")
     elif table.image_fallback_url:
-        lines.extend([f"![{table.label}]({table.image_fallback_url})", ""])
+        lines.extend([render_markdown_image("table", table.label, table.image_fallback_url), ""])
     for footnote in table.footnotes:
         text = normalize_text(str(footnote))
         if text:

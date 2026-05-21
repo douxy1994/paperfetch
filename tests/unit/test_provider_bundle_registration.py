@@ -13,6 +13,7 @@ from paper_fetch.extraction.html.provider_rules import PROVIDER_HTML_RULES
 from paper_fetch.provider_catalog import PROVIDER_CATALOG, SOURCE_PROVIDER_MAP
 from paper_fetch.providers._registry import (
     ProviderBundle,
+    ProviderRenderPolicy,
     iter_provider_bundles,
     provider_bundle,
 )
@@ -44,7 +45,14 @@ def test_provider_bundle_fields_are_typed_and_frozen() -> None:
     bundle = provider_bundle("ieee")
     field_names = {field.name for field in fields(ProviderBundle)}
 
-    assert {"catalog", "html_rules", "asset_retry", "metadata_merge", "sources"} <= field_names
+    assert {
+        "catalog",
+        "html_rules",
+        "asset_retry",
+        "metadata_merge",
+        "sources",
+        "render_policy",
+    } <= field_names
     assert isinstance(bundle.metadata_merge, tuple)
     assert isinstance(bundle.sources, tuple)
 
@@ -59,6 +67,10 @@ def test_provider_bundle_rejects_mutable_sequence_fields() -> None:
         ProviderBundle(catalog=catalog, metadata_merge=[])  # type: ignore[arg-type]
     with pytest.raises(TypeError):
         ProviderBundle(catalog=catalog, sources=["crossref_meta"])  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        ProviderBundle(catalog=catalog, render_policy=object())  # type: ignore[arg-type]
+    with pytest.raises(TypeError):
+        ProviderRenderPolicy(mark_inline_assets=object())  # type: ignore[arg-type]
 
 
 def test_provider_entry_discovery_imports_new_bundle_modules_without_central_edit(

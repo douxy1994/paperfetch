@@ -509,7 +509,7 @@ browser workflow 内部不再通过包级 facade 反射查找 patch 点；`Brows
 
 - `assets[*].render_state` 决定资产是否可追加到尾部附录；`inline` / `suppressed` 不追加，`appendix` 可追加。
 - 正文已内联图片会按 URL、相对路径、后缀和 basename 与资产做等价比较，避免重复渲染。
-- 文章组装会先用已下载资产把正文里的远程 figure / table / formula image 链接改写成本地路径，再做 Markdown 图片块边界归一化，避免图片和标题、正文句子或 display math 粘连。
+- 文章组装会先用已下载资产把正文里的远程 figure / table / formula image 链接改写成本地路径，再做 Markdown 图片块边界和短 alt 归一化，避免图片和标题、正文句子或 display math 粘连；图片行 alt 统一由 `paper_fetch.markdown.images` 生成，caption 不进入 `![alt]`。
 - 结构化 metadata 在进入 front matter 前会解开 HTML entity，避免 `&amp;` 这类站点编码泄漏到标题、作者、期刊或摘要。
 - `assets[*].download_tier`、`download_url`、`content_type`、`downloaded_bytes`、`width`、`height` 是下载诊断，不应被下游丢弃。
 - 图片 payload MIME/尺寸来自 `filetype` / `imagesize` helper；不能识别时继续不写入宽高，preview acceptance threshold 仍是既有策略。

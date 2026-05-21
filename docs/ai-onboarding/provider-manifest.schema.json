@@ -11,6 +11,8 @@
     "generation",
     "routing",
     "main_path",
+    "route_contract",
+    "markdown_contract",
     "success_criteria",
     "asset_profile",
     "supplementary_scope",
@@ -30,6 +32,15 @@
     },
     "display_source": {
       "$ref": "#/$defs/provider_name"
+    },
+    "route_sources": {
+      "type": "object",
+      "propertyNames": {
+        "$ref": "#/$defs/main_path_step"
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/provider_name"
+      }
     },
     "generation": {
       "type": "object",
@@ -93,6 +104,48 @@
       "minItems": 1,
       "items": {
         "$ref": "#/$defs/main_path_step"
+      }
+    },
+    "route_contract": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/route_step_contract"
+      }
+    },
+    "markdown_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "structure": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "table": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "formula": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "figure": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "supplementary": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "references": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "pdf_fallback": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "abstract_only": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "access_gate": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        },
+        "empty_shell": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        }
       }
     },
     "success_criteria": {
@@ -213,6 +266,12 @@
         }
       }
     },
+    "extra_fixtures": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/extra_fixture"
+      }
+    },
     "extraction_hints": {
       "type": "object",
       "additionalProperties": false,
@@ -312,6 +371,75 @@
         "minLength": 1
       }
     },
+    "non_empty_string_array": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "route_step_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["success_requires"],
+      "properties": {
+        "success_requires": {
+          "$ref": "#/$defs/non_empty_string_array"
+        },
+        "reject_if_any": {
+          "$ref": "#/$defs/string_array"
+        },
+        "min_body_chars": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "min_body_sections": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "require_pdf_magic": {
+          "type": "boolean"
+        },
+        "reject_html_wrapper": {
+          "type": "boolean"
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "markdown_purpose_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["doi", "must_include", "must_not_include"],
+      "properties": {
+        "doi": {
+          "$ref": "#/$defs/doi"
+        },
+        "must_include": {
+          "$ref": "#/$defs/non_empty_string_array"
+        },
+        "must_not_include": {
+          "$ref": "#/$defs/non_empty_string_array"
+        },
+        "must_match": {
+          "$ref": "#/$defs/string_array"
+        },
+        "count_equals": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer",
+            "minimum": 0
+          }
+        },
+        "notes": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
     "asset_kind_array": {
       "type": "array",
       "uniqueItems": true,
@@ -397,6 +525,44 @@
           }
         }
       ]
+    },
+    "extra_fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "purpose",
+        "doi",
+        "evidence_url",
+        "evidence_reason",
+        "observed_signals",
+        "confidence"
+      ],
+      "properties": {
+        "purpose": {
+          "type": "string",
+          "minLength": 1
+        },
+        "doi": {
+          "$ref": "#/$defs/doi"
+        },
+        "evidence_url": {
+          "type": "string",
+          "format": "uri"
+        },
+        "evidence_reason": {
+          "type": "string",
+          "minLength": 1
+        },
+        "observed_signals": {
+          "$ref": "#/$defs/non_empty_string_array"
+        },
+        "confidence": {
+          "$ref": "#/$defs/confidence"
+        },
+        "markdown_contract": {
+          "$ref": "#/$defs/markdown_purpose_contract"
+        }
+      }
     }
   }
 }

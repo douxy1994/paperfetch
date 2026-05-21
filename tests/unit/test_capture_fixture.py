@@ -19,7 +19,9 @@ def _args(tmp_path: Path, **overrides: object) -> argparse.Namespace:
         "via": "http",
         "purpose": "structure",
         "from_manifest": None,
+        "all": False,
         "retry_via": None,
+        "auto_via": False,
         "fail_fast": False,
         "dry_run": False,
         "output_dir": str(tmp_path),
@@ -34,8 +36,10 @@ def _write_provider_manifest(
     *,
     provider: str = "mdpi",
     doi: str | None = "10.3390/membranes15030093",
+    requires_browser_runtime: bool = False,
 ) -> None:
     rendered_doi = "null" if doi is None else f'"{doi}"'
+    rendered_browser = "true" if requires_browser_runtime else "false"
     path.write_text(
         f"""
 name: {provider}
@@ -44,7 +48,7 @@ routing:
   doi_prefixes:
     - "10.3390/"
 probe:
-  requires_browser_runtime: false
+  requires_browser_runtime: {rendered_browser}
 fixtures:
   doi_samples:
     structure:
@@ -153,7 +157,7 @@ def test_capture_fixture_reads_doi_and_evidence_from_manifest(
     class FakeTransport:
         def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
             assert method == "GET"
-            assert url == "https://doi.org/10.3390/membranes15030093"
+            assert url == "https://example.test/article"
             return {
                 "headers": {"content-type": "text/html"},
                 "body": b"<html><body><article>Full article body</article></body></html>",
@@ -172,6 +176,69 @@ def test_capture_fixture_reads_doi_and_evidence_from_manifest(
     assert summary["manifest_sample"]["evidence_url"] == "https://example.test/article"
     assert summary["evidence_confidence"] == "high"
     assert summary["provider_routing"]["primary"] == "doi_prefix"
+
+
+def test_capture_fixture_auto_via_selects_browser_for_browser_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("capture_fixture")
+    manifest_path = tmp_path / "mdpi.yml"
+    _write_provider_manifest(manifest_path, requires_browser_runtime=True)
+
+    class FailingTransport:
+        def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("dry-run must not fetch")
+
+    monkeypatch.setattr(module, "HttpTransport", FailingTransport)
+
+    summary = module.capture_fixture(
+        _args(
+            tmp_path,
+            doi=None,
+            provider=None,
+            from_manifest=str(manifest_path),
+            purpose="structure",
+            dry_run=True,
+            auto_via=True,
+        ),
+    )
+
+    assert summary["capture_route"] == "browser"
+
+
+def test_capture_fixture_auto_via_defaults_to_http_for_non_browser_manifest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("capture_fixture")
+    manifest_path = tmp_path / "newpub.yml"
+    _write_provider_manifest(
+        manifest_path,
+        provider="newpub",
+        doi="10.1234/example",
+        requires_browser_runtime=False,
+    )
+
+    class FailingTransport:
+        def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("dry-run must not fetch")
+
+    monkeypatch.setattr(module, "HttpTransport", FailingTransport)
+
+    summary = module.capture_fixture(
+        _args(
+            tmp_path,
+            doi=None,
+            provider=None,
+            from_manifest=str(manifest_path),
+            purpose="structure",
+            dry_run=True,
+            auto_via=True,
+        ),
+    )
+
+    assert summary["capture_route"] == "http"
 
 
 def test_capture_fixture_skips_manifest_null_doi(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -195,6 +262,79 @@ def test_capture_fixture_skips_manifest_null_doi(tmp_path: Path, monkeypatch: py
     assert not (tmp_path / "tests").exists()
 
 
+def test_capture_fixture_from_manifest_all_dry_run_plans_non_null_and_skips_null(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("capture_fixture")
+    manifest_path = tmp_path / "mdpi.yml"
+    manifest_path.write_text(
+        """
+name: mdpi
+routing:
+  primary: doi_prefix
+  doi_prefixes:
+    - "10.3390/"
+probe:
+  requires_browser_runtime: false
+fixtures:
+  doi_samples:
+    structure:
+      doi: "10.3390/membranes15030093"
+      evidence_url: "https://example.test/structure"
+      evidence_reason: "Structure sample."
+      observed_signals:
+        - html_body
+      confidence: high
+    figure:
+      doi: null
+      evidence_url: "https://example.test/figure"
+      evidence_reason: "No figure sample selected."
+      observed_signals: []
+      confidence: low
+extra_fixtures:
+  - purpose: structure
+    doi: "10.3390/foods10081757"
+    evidence_url: "https://example.test/extra"
+    evidence_reason: "Extra structure sample."
+    observed_signals:
+      - html_body
+    confidence: high
+""",
+        encoding="utf-8",
+    )
+
+    class FailingTransport:
+        def request(self, *_args: object, **_kwargs: object) -> dict[str, object]:
+            raise AssertionError("dry-run --all must not fetch")
+
+    monkeypatch.setattr(module, "HttpTransport", FailingTransport)
+
+    summary = module.capture_all_from_manifest(
+        _args(
+            tmp_path,
+            doi=None,
+            provider=None,
+            purpose=None,
+            from_manifest=str(manifest_path),
+            all=True,
+            dry_run=True,
+        )
+    )
+
+    assert summary["status"] == "OK"
+    assert summary["target_count"] == 3
+    assert summary["captured_count"] == 2
+    assert summary["skipped_count"] == 1
+    reasons = [item.get("reason") for item in summary["results"]]
+    assert "fixtures.doi_samples.figure.doi is null" in reasons
+    planned = [item for item in summary["results"] if item.get("status") == "OK"]
+    assert {
+        item["manifest_sample_path"] for item in planned
+    } == {"fixtures.doi_samples.structure", "extra_fixtures[0]"}
+    assert not (tmp_path / "tests").exists()
+
+
 def test_capture_fixture_retries_403_with_browser_placeholder(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -206,6 +346,18 @@ def test_capture_fixture_retries_403_with_browser_placeholder(
             return {"headers": {"content-type": "text/html"}, "body": b"forbidden", "status_code": 403}
 
     monkeypatch.setattr(module, "HttpTransport", ForbiddenTransport)
+    monkeypatch.setattr(
+        module,
+        "_capture_browser",
+        lambda *_args, **kwargs: (_ for _ in ()).throw(
+            module.CaptureFixtureError(
+                "BROWSER_RUNTIME_REQUIRED",
+                "browser fixture capture requires an interactive browser runtime",
+                retryable=False,
+                route=kwargs["route"],
+            )
+        ),
+    )
 
     with pytest.raises(module.CaptureFixtureError) as exc_info:
         module.capture_fixture(_args(tmp_path, retry_via="browser"))

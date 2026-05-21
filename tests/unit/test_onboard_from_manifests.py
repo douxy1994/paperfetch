@@ -12,6 +12,7 @@ from jsonschema import Draft202012Validator
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "onboard_from_manifests.py"
 STATE_SCHEMA_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "onboarding-state.schema.json"
+ACCESS_REVIEW_SCHEMA_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "access-review.schema.json"
 HARD_CONSTRAINTS_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "hard-constraints.md"
 FAILURE_RECOVERY_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "failure-recovery.md"
 CENTRAL_PROVIDER_LOGIC_PATHS = {
@@ -40,8 +41,10 @@ def test_help_includes_discover() -> None:
     result = run_cli("--help")
 
     assert "discover" in result.stdout
+    assert "run" in result.stdout
     assert "next" in result.stdout
     assert "verify" in result.stdout
+    assert "run-checks" in result.stdout
     assert "advance" in result.stdout
 
 
@@ -66,11 +69,13 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
 
     assert any(step["id"] == "discover-manifest" for step in dag["steps"])
     assert [step["id"] for step in dag["steps"]] == [
+        "operator-access-preflight",
         "discover-manifest",
         "validate-manifest",
         "capture-fixtures",
         "scaffold",
         "implement-provider",
+        "shared-integration",
         "snapshot-expected",
         "manifest-sync-back",
         "provider-local-acceptance",
@@ -88,6 +93,11 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     assert implement_brief["provider_manifest"] == "docs/ai-onboarding/manifests/mdpi.yml"
     assert implement_brief["current_step"] == "implement-provider"
     assert implement_brief["runtime"] == "coding-agent-subagent"
+    assert implement_brief["access_review"] == (
+        "docs/ai-onboarding/access-reviews/mdpi.yml"
+    )
+    assert implement_brief["access_policy_constraints"]["do_not_auto_login"] is True
+    assert implement_brief["access_policy_constraints"]["do_not_solve_captcha"] is True
     assert implement_brief["hard_constraints"] == (
         "docs/ai-onboarding/hard-constraints.md"
     )
@@ -95,15 +105,36 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     assert implement_brief["no_commit"] is True
     assert implement_brief["markdown_review_loop"] == {
         "required": True,
-        "fixture_source": "provider_manifest.fixtures.doi_samples",
+        "fixture_source": (
+            "provider_manifest.fixtures.doi_samples + "
+            "provider_manifest.extra_fixtures"
+        ),
+        "route_contract_source": "provider_manifest.route_contract",
+        "markdown_contract_source": "provider_manifest.markdown_contract",
         "require_each_non_null_purpose_asserted": True,
         "require_positive_and_negative_markdown_assertions": True,
         "forbid_skipped_scaffold_placeholder": True,
     }
+    assert implement_brief["coordinator_integration_scope"] == {
+        "route_sources": (
+            "provider_manifest.route_sources maps main_path steps to "
+            "runtime sources."
+        ),
+        "extra_fixtures": (
+            "provider_manifest.extra_fixtures extends capture and Markdown "
+            "review beyond fixed purpose slots."
+        ),
+        "post_worker_integrations": [
+            "golden corpus adapter wiring",
+            "runtime source/schema registration",
+            "manifest/bundle sync-back",
+        ],
+    }
     assert implement_brief["output_requirements"] == {
+        "review_artifact": "docs/ai-onboarding/reviews/mdpi.yml",
         "reviewed_fixtures": (
-            "one entry per non-null "
-            "provider_manifest.fixtures.doi_samples purpose"
+            "one entry per non-null provider_manifest.fixtures.doi_samples "
+            "purpose and per provider_manifest.extra_fixtures item"
         ),
         "reviewed_fixture_fields": [
             "fixture",
@@ -118,9 +149,22 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     )
     assert FAILURE_RECOVERY_PATH.is_file()
     assert "acceptance" in implement_brief
+    assert implement_brief["acceptance"]["live_review"] == {
+        "required_for_browser_or_cdn_risk": True,
+        "command": (
+            "PAPER_FETCH_RUN_LIVE=1 python3 "
+            "scripts/run_golden_criteria_live_review.py --providers mdpi"
+        ),
+        "source_contract": "provider_manifest.route_sources",
+        "markdown_contract": "provider_manifest.markdown_contract",
+    }
     assert (
         "PYTHONPATH=src python3 -m pytest "
         "tests/unit/test_provider_markdown_review_contract.py -q"
+    ) in implement_brief["acceptance"]["pytest"]
+    assert (
+        "PYTHONPATH=src python3 -m pytest "
+        "tests/unit/test_provider_route_contract.py -q"
     ) in implement_brief["acceptance"]["pytest"]
     assert "files_allowed_to_modify" in implement_brief
     assert "files_must_not_modify" in implement_brief
@@ -146,6 +190,7 @@ def test_discover_prints_brief_with_requested_output_manifest() -> None:
     assert "task_id: mdpi-discover-manifest" in result.stdout
     assert "current_step: discover-manifest" in result.stdout
     assert "output_manifest: docs/ai-onboarding/manifests/mdpi.yml" in result.stdout
+    assert "access_review: docs/ai-onboarding/access-reviews/mdpi.yml" in result.stdout
 
 
 def test_start_manifest_replay_skips_discover_brief(tmp_path: Path) -> None:
@@ -163,6 +208,7 @@ def test_start_manifest_replay_skips_discover_brief(tmp_path: Path) -> None:
 
     dag = json.loads((tmp_path / "task-dag.json").read_text(encoding="utf-8"))
     assert all(step["id"] != "discover-manifest" for step in dag["steps"])
+    assert dag["steps"][0]["id"] == "operator-access-preflight"
     assert dag["provider"] == "custom_provider"
     assert dag["manifest"] == str(manifest_path)
     assert not (tmp_path / "briefs" / "discover-manifest.yml").exists()
@@ -174,7 +220,7 @@ def test_state_commands_persist_next_verify_and_advance(tmp_path: Path) -> None:
 
     next_result = run_cli("next", "--provider", "mdpi", "--state", str(state_path))
     next_payload = json.loads(next_result.stdout)
-    assert next_payload["current_step"] == "discover-manifest"
+    assert next_payload["current_step"] == "operator-access-preflight"
 
     verify_result = run_cli(
         "verify",
@@ -195,19 +241,19 @@ def test_state_commands_persist_next_verify_and_advance(tmp_path: Path) -> None:
         "--provider",
         "mdpi",
         "--task",
-        "discover-manifest",
+        "operator-access-preflight",
         "--state",
         str(state_path),
     )
     advance_payload = json.loads(advance_result.stdout)
-    assert advance_payload["advanced"] == "discover-manifest"
-    assert advance_payload["next_step"] == "validate-manifest"
+    assert advance_payload["advanced"] == "operator-access-preflight"
+    assert advance_payload["next_step"] == "discover-manifest"
 
     state = json.loads(state_path.read_text(encoding="utf-8"))
     provider_state = state["providers"]["mdpi"]
     assert state["active_provider"] == "mdpi"
-    assert provider_state["completed_steps"] == ["discover-manifest"]
-    assert provider_state["task_statuses"]["validate-manifest"] == "in_progress"
+    assert provider_state["completed_steps"] == ["operator-access-preflight"]
+    assert provider_state["task_statuses"]["discover-manifest"] == "in_progress"
     assert provider_state["verifications"]["provider-local-acceptance"]["dry_run"] is True
 
 
@@ -231,6 +277,7 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         "mdpi",
         "--manifest",
         "docs/ai-onboarding/manifests/mdpi.yml",
+        "--sync-docs",
     ] in sync_back_commands
 
     capture = run_cli(
@@ -243,7 +290,16 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         str(state_path),
     )
     capture_commands = json.loads(capture.stdout)["commands"]
-    assert not any("--from-manifest" in command for command in capture_commands)
+    assert [
+        "python3",
+        "scripts/capture_fixture.py",
+        "--from-manifest",
+        "docs/ai-onboarding/manifests/mdpi.yml",
+        "--all",
+        "--auto-via",
+        "--fail-fast",
+        "--dry-run",
+    ] in capture_commands
 
     snapshot = run_cli(
         "verify",
@@ -255,7 +311,32 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         str(state_path),
     )
     snapshot_commands = json.loads(snapshot.stdout)["commands"]
-    assert ["python3", "scripts/snapshot_expected.py", "--help"] in snapshot_commands
+    assert [
+        "PYTHONPATH=src",
+        "python3",
+        "scripts/snapshot_expected.py",
+        "--doi",
+        "10.3390/membranes15030093",
+        "--review",
+    ] in snapshot_commands
+    assert [
+        "PYTHONPATH=src",
+        "python3",
+        "scripts/snapshot_expected.py",
+        "--doi",
+        "10.3390/membranes15030093",
+    ] in snapshot_commands
+    assert [
+        "PYTHONPATH=src",
+        "python3",
+        "scripts/onboard_from_manifests.py",
+        "check-snapshot",
+        "--provider",
+        "mdpi",
+        "--doi",
+        "10.3390/membranes15030093",
+    ] in snapshot_commands
+    assert ["python3", "scripts/snapshot_expected.py", "--help"] not in snapshot_commands
 
     implement = run_cli(
         "verify",
@@ -276,6 +357,37 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         "-q",
     ]
     assert markdown_contract_command in implement_commands
+    route_contract_command = [
+        "PYTHONPATH=src",
+        "python3",
+        "-m",
+        "pytest",
+        "tests/unit/test_provider_route_contract.py",
+        "-q",
+    ]
+    assert route_contract_command in implement_commands
+
+    shared_integration = run_cli(
+        "verify",
+        "--provider",
+        "mdpi",
+        "--task",
+        "shared-integration",
+        "--state",
+        str(state_path),
+    )
+    shared_commands = json.loads(shared_integration.stdout)["commands"]
+    assert [
+        "PYTHONPATH=src",
+        "python3",
+        "-m",
+        "pytest",
+        "tests/unit/test_manifest_bundle_sync.py",
+        "tests/unit/test_golden_corpus_adapters.py",
+        "tests/unit/test_provider_benchmark_samples.py",
+        "tests/devtools/test_golden_criteria_live.py",
+        "-q",
+    ] in shared_commands
 
     local_acceptance = run_cli(
         "verify",
@@ -288,6 +400,14 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
     )
     local_acceptance_commands = json.loads(local_acceptance.stdout)["commands"]
     assert markdown_contract_command in local_acceptance_commands
+    assert route_contract_command in local_acceptance_commands
+    assert [
+        "PAPER_FETCH_RUN_LIVE=1",
+        "python3",
+        "scripts/run_golden_criteria_live_review.py",
+        "--providers",
+        "mdpi",
+    ] in local_acceptance_commands
 
 
 def test_written_state_matches_schema(tmp_path: Path) -> None:
@@ -303,6 +423,54 @@ def test_written_state_matches_schema(tmp_path: Path) -> None:
         key=lambda error: error.json_path,
     )
     assert not errors
+
+
+def test_access_review_schema_accepts_required_operator_fields() -> None:
+    schema = json.loads(ACCESS_REVIEW_SCHEMA_PATH.read_text(encoding="utf-8"))
+    review = yaml.safe_load(
+        (
+            REPO_ROOT
+            / "docs"
+            / "ai-onboarding"
+            / "access-reviews"
+            / "mdpi.yml"
+        ).read_text(encoding="utf-8")
+    )
+
+    Draft202012Validator.check_schema(schema)
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(review),
+        key=lambda error: error.json_path,
+    )
+    assert not errors
+    assert review["status"] == "approved"
+    assert review["may_continue"] is True
+    assert {"http", "browser"} <= set(review["allowed_runtimes"])
+
+
+def test_missing_access_review_blocks_discovery_verify(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "verify",
+            "--provider",
+            "newpub",
+            "--task",
+            "discover-manifest",
+            "--state",
+            str(state_path),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    assert "ACCESS_REVIEW_NOT_FOUND" in result.stderr
 
 
 def test_state_rejects_two_in_progress_providers(tmp_path: Path) -> None:
@@ -327,6 +495,130 @@ def test_state_rejects_two_in_progress_providers(tmp_path: Path) -> None:
 
     assert result.returncode != 0
     assert "another provider is already in_progress" in result.stderr
+
+
+def test_run_checks_executes_single_task_and_records_state(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+
+    result = run_cli(
+        "run-checks",
+        "--provider",
+        "mdpi",
+        "--task",
+        "operator-access-preflight",
+        "--state",
+        str(state_path),
+    )
+    payload = json.loads(result.stdout)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    run = state["providers"]["mdpi"]["runs"]["operator-access-preflight"]
+
+    assert payload["result"] == "passed"
+    assert run["dry_run"] is False
+    assert run["result"] == "passed"
+    assert ["test", "-f", "docs/ai-onboarding/access-reviews/mdpi.yml"] in run["commands"]
+
+    schema = json.loads(STATE_SCHEMA_PATH.read_text(encoding="utf-8"))
+    errors = sorted(
+        Draft202012Validator(schema).iter_errors(state),
+        key=lambda error: error.json_path,
+    )
+    assert not errors
+
+
+def test_run_until_access_preflight_executes_serial_prefix(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    output_dir = tmp_path / "run"
+
+    result = run_cli(
+        "run",
+        "--manifest",
+        "docs/ai-onboarding/manifests/mdpi.yml",
+        "--until",
+        "operator-access-preflight",
+        "--state",
+        str(state_path),
+        "--output-dir",
+        str(output_dir),
+    )
+    payload = json.loads(result.stdout)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert payload["executed"] == ["operator-access-preflight"]
+    assert payload["current_step"] == "validate-manifest"
+    assert (output_dir / "task-dag.json").is_file()
+    assert (output_dir / "briefs" / "implement-provider.yml").is_file()
+    provider_state = state["providers"]["mdpi"]
+    assert provider_state["completed_steps"] == ["operator-access-preflight"]
+    assert provider_state["task_statuses"]["validate-manifest"] == "in_progress"
+
+
+def test_run_dispatches_worker_through_agent_cli(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    fake_agent = tmp_path / "fake_agent.py"
+    fake_agent.write_text(
+        """
+from __future__ import annotations
+
+import sys
+
+prompt = sys.stdin.read()
+assert "mdpi-discover-manifest" in prompt
+print("worker ok")
+""",
+        encoding="utf-8",
+    )
+    state_path = tmp_path / "state.json"
+    output_dir = tmp_path / "run"
+    monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
+
+    result = run_cli(
+        "run",
+        "--provider",
+        "mdpi",
+        "--domain",
+        "mdpi.com",
+        "--until",
+        "discover-manifest",
+        "--state",
+        str(state_path),
+        "--output-dir",
+        str(output_dir),
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["executed"] == ["operator-access-preflight", "discover-manifest"]
+    assert (output_dir / "workers" / "discover-manifest-attempt-1.prompt.md").is_file()
+    assert (
+        output_dir / "workers" / "discover-manifest-attempt-1.stdout.log"
+    ).read_text(encoding="utf-8") == "worker ok\n"
+
+
+def test_run_checks_emits_structured_failure_for_missing_access_review(tmp_path: Path) -> None:
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "run-checks",
+            "--provider",
+            "newpub",
+            "--task",
+            "operator-access-preflight",
+            "--state",
+            str(tmp_path / "state.json"),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    payload = json.loads(result.stderr)
+    assert payload["code"] == "ACCESS_REVIEW_NOT_FOUND"
+    assert payload["retryable"] is False
 
 
 def test_onboard_script_does_not_import_llm_sdks() -> None:

@@ -14,10 +14,13 @@ import time
 import urllib.parse
 from typing import Any, Callable, Mapping, Sequence
 
+import yaml
+
 from paper_fetch.config import build_runtime_env, resolve_repo_root
 from paper_fetch.http import HttpTransport
 from paper_fetch.logging_utils import emit_structured_log
 from paper_fetch.models import Asset, FetchEnvelope, RenderOptions
+from paper_fetch.provider_catalog import official_provider_names
 from paper_fetch.providers.registry import build_clients
 from paper_fetch.quality.issues import is_authorless_briefing_like
 from paper_fetch.quality.reason_codes import FULLTEXT, INSUFFICIENT_BODY
@@ -37,17 +40,7 @@ from paper_fetch.workflow.rendering import rewrite_markdown_asset_links
 
 logger = logging.getLogger("paper_fetch_devtools.golden_criteria.live")
 
-SUPPORTED_PROVIDERS = (
-    "elsevier",
-    "springer",
-    "wiley",
-    "science",
-    "pnas",
-    "ieee",
-    "arxiv",
-    "ams",
-    "copernicus",
-)
+SUPPORTED_PROVIDERS = official_provider_names()
 UNSUPPORTED_PROVIDER_STATUS = "skipped_unsupported_provider"
 DEFAULT_REVIEW_ROOT_NAME = "golden-criteria-review"
 RUN_LIVE_ENV_VAR = "PAPER_FETCH_RUN_LIVE"
@@ -61,6 +54,7 @@ ISSUE_CATEGORIES = (
     "asset_download_failure",
     "math_loss",
     "metadata_loss",
+    "route_source_mismatch",
     "live_fetch_blocked",
     "unsupported_provider",
 )
@@ -116,6 +110,10 @@ SOLUTION_BY_CATEGORY = {
         "Recover missing title, author, DOI, or publication metadata.",
         "Compare provider metadata extraction against fixture metadata and Crossref fallback merge behavior.",
     ),
+    "route_source_mismatch": (
+        "Keep live provider results on the expected route source.",
+        "Compare the sample purpose with provider_manifest.route_sources and fix silent fallback to the wrong fulltext source.",
+    ),
     "noise_leak": (
         "Tighten provider noise filtering.",
         "Add negative assertions for leaked navigation, access prompts, related articles, and publisher chrome.",
@@ -135,6 +133,9 @@ class GoldenCriteriaLiveSample:
     expected_live_status: str | None = None
     expected_review_status: str | None = None
     out_of_scope_reason: str | None = None
+    purpose: str | None = None
+    route_kind: str | None = None
+    fixture_purposes: tuple[str, ...] = ()
 
     @property
     def supported(self) -> bool:
@@ -356,6 +357,10 @@ def default_manifest_path() -> Path:
     return resolve_repo_root() / "tests" / "fixtures" / "golden_criteria" / "manifest.json"
 
 
+def provider_manifest_path(provider: str) -> Path:
+    return resolve_repo_root() / "docs" / "ai-onboarding" / "manifests" / f"{provider}.yml"
+
+
 def timestamped_review_output_dir(*, now: datetime | None = None) -> Path:
     active_now = now or datetime.now(timezone.utc)
     timestamp = active_now.strftime("%Y%m%d-%H%M%S")
@@ -370,6 +375,14 @@ def ensure_live_opt_in(env: Mapping[str, str]) -> None:
 def load_manifest(manifest_path: Path | None = None) -> dict[str, Any]:
     path = manifest_path or default_manifest_path()
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def load_provider_manifest(provider: str) -> dict[str, Any] | None:
+    path = provider_manifest_path(provider)
+    if not path.exists():
+        return None
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else None
 
 
 def iter_golden_criteria_samples(manifest: Mapping[str, Any]) -> list[GoldenCriteriaLiveSample]:
@@ -401,6 +414,13 @@ def iter_golden_criteria_samples(manifest: Mapping[str, Any]) -> list[GoldenCrit
                 expected_live_status=normalize_text(raw_sample.get("expected_live_status")) or None,
                 expected_review_status=normalize_text(raw_sample.get("expected_review_status")).lower() or None,
                 out_of_scope_reason=normalize_text(raw_sample.get("out_of_scope_reason")) or None,
+                purpose=normalize_text(raw_sample.get("purpose")) or None,
+                route_kind=normalize_text(raw_sample.get("route_kind")) or None,
+                fixture_purposes=tuple(
+                    normalize_text(item)
+                    for item in (raw_sample.get("fixture_purposes") or [])
+                    if normalize_text(item)
+                ),
             )
         )
     return samples
@@ -561,6 +581,117 @@ def issue_categories_for_result(
         ):
             categories.append("metadata_loss")
     return [category for category in ISSUE_CATEGORIES if category in set(categories)]
+
+
+def _sample_purposes(sample: GoldenCriteriaLiveSample) -> tuple[str, ...]:
+    purposes = [purpose for purpose in (sample.purpose, *sample.fixture_purposes) if purpose]
+    return tuple(dict.fromkeys(purposes))
+
+
+def _expected_source_for_sample(
+    sample: GoldenCriteriaLiveSample,
+    provider_manifest: Mapping[str, Any] | None,
+) -> str | None:
+    if not provider_manifest:
+        return None
+    route_sources = provider_manifest.get("route_sources")
+    if not isinstance(route_sources, Mapping):
+        return None
+    route_kind = normalize_text(sample.route_kind).lower()
+    purposes = set(_sample_purposes(sample))
+    if "pdf_fallback" in purposes or route_kind == "pdf_fallback":
+        return normalize_text(route_sources.get("pdf_fallback")) or None
+    main_path = provider_manifest.get("main_path")
+    if isinstance(main_path, Sequence) and not isinstance(main_path, (str, bytes)):
+        for step in main_path:
+            step_name = normalize_text(step)
+            if step_name in {"landing_html", "article_html", "xml"}:
+                expected = normalize_text(route_sources.get(step_name))
+                if expected:
+                    return expected
+    return None
+
+
+def route_source_issue_categories(
+    sample: GoldenCriteriaLiveSample,
+    *,
+    source: str | None,
+    status: str,
+    provider_manifest: Mapping[str, Any] | None,
+) -> list[str]:
+    if status != FULLTEXT:
+        return []
+    expected_source = _expected_source_for_sample(sample, provider_manifest)
+    if not expected_source:
+        return []
+    if normalize_text(source) == expected_source:
+        return []
+    return ["route_source_mismatch"]
+
+
+def _markdown_contract_for_sample(
+    sample: GoldenCriteriaLiveSample,
+    provider_manifest: Mapping[str, Any] | None,
+) -> Mapping[str, Any] | None:
+    if not provider_manifest:
+        return None
+    purposes = _sample_purposes(sample)
+    markdown_contract = provider_manifest.get("markdown_contract")
+    if isinstance(markdown_contract, Mapping):
+        for purpose in purposes:
+            contract = markdown_contract.get(purpose)
+            if isinstance(contract, Mapping) and normalize_text(contract.get("doi")) == sample.doi:
+                return contract
+    for extra_fixture in provider_manifest.get("extra_fixtures") or []:
+        if not isinstance(extra_fixture, Mapping):
+            continue
+        if normalize_text(extra_fixture.get("doi")) != sample.doi:
+            continue
+        contract = extra_fixture.get("markdown_contract")
+        if isinstance(contract, Mapping):
+            return contract
+    return None
+
+
+def markdown_contract_issue_categories(
+    sample: GoldenCriteriaLiveSample,
+    *,
+    markdown: str | None,
+    provider_manifest: Mapping[str, Any] | None,
+) -> list[str]:
+    contract = _markdown_contract_for_sample(sample, provider_manifest)
+    if not contract:
+        return []
+    text = markdown or ""
+    categories: set[str] = set()
+    for value in contract.get("must_include") or []:
+        if str(value) not in text:
+            categories.add("content_missing")
+    for value in contract.get("must_not_include") or []:
+        if str(value) in text:
+            categories.add("noise_leak")
+    for pattern in contract.get("must_match") or []:
+        try:
+            matched = re.search(str(pattern), text) is not None
+        except re.error:
+            matched = False
+        if not matched:
+            categories.add("content_missing")
+    count_equals = contract.get("count_equals")
+    if isinstance(count_equals, Mapping):
+        for value, expected_count in count_equals.items():
+            try:
+                expected_int = int(expected_count)
+            except (TypeError, ValueError):
+                continue
+            if text.count(str(value)) != expected_int:
+                categories.add("content_missing")
+    return [category for category in ISSUE_CATEGORIES if category in categories]
+
+
+def _dedupe_issue_categories(categories: Sequence[str]) -> list[str]:
+    category_set = set(categories)
+    return [category for category in ISSUE_CATEGORIES if category in category_set]
 
 
 def _markdown_image_urls(markdown: str | None) -> list[str]:
@@ -1114,6 +1245,7 @@ def fetch_sample_result(
     env: Mapping[str, str],
     transport: HttpTransport,
     clients: Mapping[str, Any],
+    provider_manifest: Mapping[str, Any] | None = None,
 ) -> GoldenCriteriaLiveResult:
     _emit_sample_start_log(sample)
     started_at = time.monotonic()
@@ -1152,6 +1284,22 @@ def fetch_sample_result(
         asset_diagnostics = collect_asset_diagnostics(envelope.article)
         status, error_code, error_message = classify_envelope_status(sample, envelope)
         categories = issue_categories_for_result(status=status, envelope=envelope)
+        categories = _dedupe_issue_categories(
+            [
+                *categories,
+                *route_source_issue_categories(
+                    sample,
+                    source=envelope.source,
+                    status=status,
+                    provider_manifest=provider_manifest,
+                ),
+                *markdown_contract_issue_categories(
+                    sample,
+                    markdown=envelope.markdown,
+                    provider_manifest=provider_manifest,
+                ),
+            ]
+        )
         http_cache_stats = _cache_stats_delta(cache_stats_before, _transport_cache_stats(transport))
         result = GoldenCriteriaLiveResult(
             sample_id=sample.sample_id,
@@ -1362,6 +1510,11 @@ def run_golden_criteria_live_review(
         for entry in (status_payload.get("providers") or [])
         if isinstance(entry, Mapping) and normalize_text(entry.get("provider"))
     }
+    ai_provider_manifests = {
+        provider: manifest
+        for provider in {sample.provider for sample in selected_samples}
+        if (manifest := load_provider_manifest(provider)) is not None
+    }
 
     (output_root / "manifest-snapshot.json").write_text(
         json.dumps(manifest, ensure_ascii=False, indent=2) + "\n",
@@ -1410,6 +1563,7 @@ def run_golden_criteria_live_review(
             env=runtime_env,
             transport=active_transport,
             clients=clients,
+            provider_manifest=ai_provider_manifests.get(sample.provider),
         )
         result = apply_expected_outcome(sample, result)
         review = ensure_review_file(result, sample_dir)

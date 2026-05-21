@@ -17,11 +17,14 @@ from paper_fetch_devtools.golden_criteria.live import (
     issue_categories_for_result,
     load_manifest,
     materialize_fetch_artifacts,
+    markdown_contract_issue_categories,
     parse_review_summary,
     render_review_template,
+    route_source_issue_categories,
     run_golden_criteria_live_review,
 )
 from paper_fetch.models import Asset, FetchEnvelope, Metadata, Quality, RenderOptions, Section
+from paper_fetch.provider_catalog import official_provider_names
 from paper_fetch.service import PaperFetchFailure
 
 from tests.unit._paper_fetch_support import build_envelope, sample_article
@@ -111,6 +114,15 @@ def _provider_status_payload(**kwargs):
                 "checks": [],
             },
             {
+                "provider": "mdpi",
+                "status": "ready",
+                "available": True,
+                "official_provider": True,
+                "missing_env": [],
+                "notes": [],
+                "checks": [],
+            },
+            {
                 "provider": "copernicus",
                 "status": "ready",
                 "available": True,
@@ -171,6 +183,13 @@ def _mini_manifest(tmpdir: Path) -> Path:
                 "fixture_family": "golden",
                 "assets": {"original.html": "fixtures/pnas.html"},
             },
+            "mdpi_fulltext": {
+                "doi": "10.3390/fulltext",
+                "publisher": "mdpi",
+                "source_url": "https://example.test/mdpi",
+                "fixture_family": "golden",
+                "assets": {"original.html": "fixtures/mdpi.html"},
+            },
             "tandf_skip": {
                 "doi": "10.1080/skip",
                 "publisher": "tandf",
@@ -213,20 +232,7 @@ def _metadata_only_envelope(doi: str) -> FetchEnvelope:
 
 class GoldenCriteriaLiveTests(unittest.TestCase):
     def test_supported_providers_cover_html_xml_live_paths(self) -> None:
-        self.assertEqual(
-            SUPPORTED_PROVIDERS,
-            (
-                "elsevier",
-                "springer",
-                "wiley",
-                "science",
-                "pnas",
-                "ieee",
-                "arxiv",
-                "ams",
-                "copernicus",
-            ),
-        )
+        self.assertEqual(SUPPORTED_PROVIDERS, official_provider_names())
 
     def test_manifest_loader_selects_golden_samples_and_classifies_provider_support(self) -> None:
         manifest = load_manifest()
@@ -292,6 +298,11 @@ class GoldenCriteriaLiveTests(unittest.TestCase):
                     raise PaperFetchFailure("rate_limited", "Science rate limit is active.")
                 if query == "10.1073/error":
                     raise RuntimeError("PNAS exploded")
+                if query == "10.3390/fulltext":
+                    article = sample_article()
+                    article.doi = query
+                    article.source = "mdpi_html"
+                    return build_envelope(article)
                 raise AssertionError(f"unexpected query {query}")
 
             report = run_golden_criteria_live_review(
@@ -310,6 +321,7 @@ class GoldenCriteriaLiveTests(unittest.TestCase):
             self.assertEqual(statuses["wiley_not_configured"], "not_configured")
             self.assertEqual(statuses["science_rate_limited"], "rate_limited")
             self.assertEqual(statuses["pnas_error"], "error")
+            self.assertEqual(statuses["mdpi_fulltext"], "fulltext")
             self.assertEqual(statuses["tandf_skip"], "skipped_unsupported_provider")
 
             output_root = Path(report.output_dir)
@@ -450,7 +462,7 @@ class GoldenCriteriaLiveTests(unittest.TestCase):
             self.assertEqual(count, 1)
             self.assertTrue((sample_dir / "body_assets" / "garg7-0932570-small.gif").exists())
             rendered = (sample_dir / "extracted.md").read_text(encoding="utf-8")
-            self.assertIn("![Fig. 7](body_assets/garg7-0932570-small.gif)", rendered)
+            self.assertIn("![Figure 7](body_assets/garg7-0932570-small.gif)", rendered)
             self.assertNotIn(large_url, rendered)
 
     def test_review_template_and_parser_cover_all_review_statuses(self) -> None:
@@ -722,6 +734,62 @@ class GoldenCriteriaLiveTests(unittest.TestCase):
         self.assertTrue(applied.expected_outcome)
         self.assertEqual(applied.review_status, "skipped")
         self.assertEqual(applied.issue_categories, [])
+
+    def test_route_source_mismatch_flags_silent_live_fallback(self) -> None:
+        sample = GoldenCriteriaLiveSample(
+            sample_id="10.3390_membranes15030093",
+            doi="10.3390/membranes15030093",
+            provider="mdpi",
+            title="MDPI sample",
+            source_url="https://example.test/mdpi",
+            landing_url="https://example.test/mdpi",
+            purpose="structure",
+            route_kind="html",
+        )
+        provider_manifest = {
+            "main_path": ["article_html", "pdf_fallback", "metadata_only"],
+            "route_sources": {
+                "article_html": "mdpi_html",
+                "pdf_fallback": "mdpi_pdf",
+            },
+        }
+
+        categories = route_source_issue_categories(
+            sample,
+            source="mdpi_pdf",
+            status="fulltext",
+            provider_manifest=provider_manifest,
+        )
+
+        self.assertEqual(categories, ["route_source_mismatch"])
+
+    def test_markdown_contract_issues_reuse_manifest_assertions(self) -> None:
+        sample = GoldenCriteriaLiveSample(
+            sample_id="10.3390_membranes15030093",
+            doi="10.3390/membranes15030093",
+            provider="mdpi",
+            title="MDPI sample",
+            source_url="https://example.test/mdpi",
+            landing_url="https://example.test/mdpi",
+            purpose="structure",
+        )
+        provider_manifest = {
+            "markdown_contract": {
+                "structure": {
+                    "doi": "10.3390/membranes15030093",
+                    "must_include": ["## Abstract"],
+                    "must_not_include": ["Download PDF"],
+                }
+            }
+        }
+
+        categories = markdown_contract_issue_categories(
+            sample,
+            markdown="# Title\n\nDownload PDF\n",
+            provider_manifest=provider_manifest,
+        )
+
+        self.assertEqual(categories, ["content_missing", "noise_leak"])
 
     def test_script_main_invokes_runner(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

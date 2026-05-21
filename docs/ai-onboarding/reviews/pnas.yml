@@ -1,0 +1,84 @@
+schema_version: 1
+provider: pnas
+reviewed_at: '2026-05-20T00:00:00Z'
+reviewed_by: operator
+fixtures:
+- fixture: tests/fixtures/golden_criteria/10.1073_pnas.2309123120
+  purpose: structure
+  doi: 10.1073/pnas.2309123120
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must not include Download PDF
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1073_pnas.2309123120/extracted.md
+  baseline_markdown_sha256: 914e1c32a2023fe6a3e4fd241fc21903a00c63451228abd16e3abf77c08fc6d4
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1073_pnas.2309123120
+  purpose: figure
+  doi: 10.1073/pnas.2309123120
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Figure
+  - must not include Article Metrics
+  - must match (?:!\[Figure|\*\*Figure)
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1073_pnas.2309123120/extracted.md
+  baseline_markdown_sha256: 914e1c32a2023fe6a3e4fd241fc21903a00c63451228abd16e3abf77c08fc6d4
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1073_pnas.2309123120
+  purpose: references
+  doi: 10.1073/pnas.2309123120
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Reference
+  - must not include Google Scholar
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1073_pnas.2309123120/extracted.md
+  baseline_markdown_sha256: 914e1c32a2023fe6a3e4fd241fc21903a00c63451228abd16e3abf77c08fc6d4
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1073_pnas.2406303121
+  purpose: pdf_fallback
+  doi: 10.1073/pnas.2406303121
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include #'
+  - must not include Access Denied
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1073_pnas.2406303121/extracted.md
+  baseline_markdown_sha256: 95c98f4143e9825f9d70bd80aa50fe3938bb1384407795615f85de94b56bba4e
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/block/10.1073_pnas.2509692123
+  purpose: abstract_only
+  doi: 10.1073/pnas.2509692123
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must not include Download PDF
+  fixes: []
+  baseline_markdown_path: tests/fixtures/block/10.1073_pnas.2509692123/extracted.md
+  baseline_markdown_sha256: 1d64a662eacf6cd40a527693e5258b4709f2564157211a4e2991c891c70977c3
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/block/10.1073_pnas.2509692123
+  purpose: access_gate
+  doi: 10.1073/pnas.2509692123
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must not include Subscribe
+  fixes: []
+  baseline_markdown_path: tests/fixtures/block/10.1073_pnas.2509692123/extracted.md
+  baseline_markdown_sha256: 1d64a662eacf6cd40a527693e5258b4709f2564157211a4e2991c891c70977c3
+  review_notes: Semantic review completed against committed fixture evidence.

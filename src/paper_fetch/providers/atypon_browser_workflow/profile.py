@@ -30,6 +30,10 @@ from ...extraction.html.provider_rules import (
 from ...extraction.html._runtime import (
     FRONT_MATTER_PUBLICATION_KEYWORDS,
     _publication_watermark_label_tokens,
+    body_metrics,
+    clean_markdown,
+    extract_article_markdown,
+    has_sufficient_article_body,
 )
 from ...extraction.html.front_matter import COMMON_FRONT_MATTER_LINE_PATTERNS
 from ...extraction.html.signals import contains_access_gate_text
@@ -50,21 +54,8 @@ from .._atypon_browser_workflow_profiles import (
     noise_profile_for_publisher as _profile_noise_profile_for_publisher,
     publisher_profile as _publisher_profile,
 )
-from .. import html_noise as _html_noise
 
 from bs4 import BeautifulSoup, Tag
-
-clean_markdown = _html_noise.clean_markdown
-
-
-extract_article_markdown = _html_noise.extract_article_markdown
-
-
-body_metrics = _html_noise.body_metrics
-
-
-has_sufficient_article_body = _html_noise.has_sufficient_article_body
-
 
 BODY_PARAGRAPH_MIN_CHARS = 80
 

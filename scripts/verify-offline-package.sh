@@ -44,6 +44,7 @@ case "$PACKAGE_PATH" in
 esac
 
 INSTALL_ROOT="$TMP_ROOT/install-root"
+RUNTIME_PYTHON="$INSTALL_ROOT/runtime/paper-fetch-python"
 mkdir -p "$INSTALL_ROOT/src" "$INSTALL_ROOT/tests" "$INSTALL_ROOT/wheelhouse" "$INSTALL_ROOT/dist"
 printf 'ELSEVIER_API_KEY="secret"\nUSER_NOTE="keep"\n' > "$INSTALL_ROOT/offline.env"
 
@@ -82,7 +83,8 @@ PATH="$GUARD_DIR:$PATH" "$INSTALLER_PATH" --install-dir "$INSTALL_ROOT" --preset
 
 log "Verifying installed runtime package layout"
 [ -d "$INSTALL_ROOT/runtime/site-packages/paper_fetch" ] || die "Offline install is missing installed paper_fetch runtime."
-[ -x "$INSTALL_ROOT/bin/python" ] || die "Offline install is missing Python wrapper."
+[ -x "$RUNTIME_PYTHON" ] || die "Offline install is missing private Python launcher."
+[ ! -e "$INSTALL_ROOT/bin/python" ] || die "Offline install should not expose a generic Python wrapper."
 [ -x "$INSTALL_ROOT/install-offline.sh" ] || die "Offline install is missing installed installer."
 [ ! -d "$INSTALL_ROOT/src" ] || die "Offline install should not include the source tree."
 [ ! -d "$INSTALL_ROOT/tests" ] || die "Offline install should not include tests."
@@ -122,7 +124,7 @@ paper-fetch --help >/dev/null
 texmath --help >/dev/null
 
 log "Verifying CloakBrowser package entrypoint"
-python - <<'PY'
+"$RUNTIME_PYTHON" - <<'PY'
 import os
 from pathlib import Path
 
@@ -136,7 +138,7 @@ if binary_path:
 PY
 
 log "Verifying provider_status payload entrypoint"
-python - <<'PY'
+"$RUNTIME_PYTHON" - <<'PY'
 from paper_fetch.mcp.fetch_tool import provider_status_payload
 
 payload = provider_status_payload()
@@ -147,7 +149,7 @@ PY
 if [ "$SKIP_FETCH_SMOKE" != "1" ]; then
   log "Running paper-fetch DOI smoke"
   paper-fetch --query "10.1186/1471-2105-11-421" --format json --output "$TMP_ROOT/fetch-smoke.json"
-  python - "$TMP_ROOT/fetch-smoke.json" <<'PY'
+  "$RUNTIME_PYTHON" - "$TMP_ROOT/fetch-smoke.json" <<'PY'
 import json
 import sys
 from pathlib import Path
@@ -171,7 +173,8 @@ grep -F -q "codex mcp remove paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "claude mcp remove -s user paper-fetch" "$FAKE_CLI_LOG"
 grep -F -q "gemini mcp remove -s user paper-fetch" "$FAKE_CLI_LOG"
 [ -f "$INSTALL_ROOT/offline.env" ] || die "Uninstall removed offline.env."
-[ -x "$INSTALL_ROOT/bin/python" ] || die "Uninstall removed Python wrapper."
+[ -x "$RUNTIME_PYTHON" ] || die "Uninstall removed private Python launcher."
+[ ! -e "$INSTALL_ROOT/bin/python" ] || die "Uninstall should not restore a generic Python wrapper."
 [ -d "$INSTALL_ROOT/runtime/site-packages" ] || die "Uninstall removed package runtime."
 
 log "Verifying purge removes the install directory"

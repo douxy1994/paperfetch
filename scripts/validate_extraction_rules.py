@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import ast
 from dataclasses import dataclass
 import importlib
@@ -29,6 +30,7 @@ PROVIDER_SECTIONS = (
     "Science",
     "PNAS",
     "AMS",
+    "MDPI",
     "IEEE",
     "Copernicus",
 )
@@ -63,6 +65,13 @@ PROVIDER_RULE_REQUIREMENTS = {
     },
     "ams": {
         "cleanup.dom_postprocess_cleanup_selectors",
+    },
+    "mdpi": {
+        "availability.site_rule_overrides",
+        "cleanup.extraction_cleanup_selectors",
+        "cleanup.markdown_promo_tokens",
+        "cleanup.post_content_break_tokens",
+        "assets.supplementary_text_tokens",
     },
 }
 
@@ -104,6 +113,7 @@ PROVIDER_INFERENCE_PATTERNS = {
     ),
     "PNAS": re.compile(r"(?<![A-Za-z])pnas(?![A-Za-z])", flags=re.IGNORECASE),
     "IEEE": re.compile(r"(?<![A-Za-z])ieee(?![A-Za-z])", flags=re.IGNORECASE),
+    "MDPI": re.compile(r"(?<![A-Za-z])mdpi(?![A-Za-z])", flags=re.IGNORECASE),
     "Copernicus": re.compile(
         r"(?<![A-Za-z])copernicus(?![A-Za-z])", flags=re.IGNORECASE
     ),
@@ -114,6 +124,14 @@ PROVIDER_INFERENCE_PATTERNS = {
 class TestDefinition:
     path: Path
     rule_markers: frozenset[str]
+
+
+@dataclass(frozen=True)
+class RuleCoverageReport:
+    anchor: str
+    stable_samples: int
+    unstable_samples: int
+    low_coverage: bool
 
 
 def _line_number(text: str, offset: int) -> int:
@@ -522,11 +540,37 @@ def validate_manifest_anchors(anchors: set[str]) -> list[str]:
 
 def validate_provider_rule_registry() -> list[str]:
     from paper_fetch.extraction.html.provider_rules import (
+        DEFAULT_NOISE_PROFILE,
         PROVIDER_HTML_RULES,
-        provider_html_rules,
+        REGISTERED_NOISE_PROFILES,
+        require_provider_html_rules,
     )
 
     errors: list[str] = []
+    expected_profiles = frozenset(
+        {
+            DEFAULT_NOISE_PROFILE,
+            *(
+                rules.noise_profile
+                for rules in PROVIDER_HTML_RULES.values()
+                if rules.noise_profile
+            ),
+        }
+    )
+    registered_profiles = frozenset(REGISTERED_NOISE_PROFILES)
+    missing_profiles = expected_profiles - registered_profiles
+    extra_profiles = registered_profiles - expected_profiles
+    if missing_profiles:
+        errors.append(
+            "REGISTERED_NOISE_PROFILES stale/missing profile(s): "
+            + ", ".join(sorted(missing_profiles))
+        )
+    if extra_profiles:
+        errors.append(
+            "REGISTERED_NOISE_PROFILES stale/extra profile(s): "
+            + ", ".join(sorted(extra_profiles))
+        )
+
     for provider, required_fields in PROVIDER_RULE_REQUIREMENTS.items():
         rules = PROVIDER_HTML_RULES.get(provider)
         if rules is None:
@@ -534,16 +578,35 @@ def validate_provider_rule_registry() -> list[str]:
                 f"provider HTML rules registry is missing provider: {provider}"
             )
             continue
-        if provider_html_rules(provider).name != provider:
+        try:
+            resolved = require_provider_html_rules(provider)
+        except KeyError:
             errors.append(
                 f"provider HTML rules registry does not resolve canonical provider: {provider}"
+            )
+        else:
+            if resolved.name != provider:
+                errors.append(
+                    f"provider HTML rules registry does not resolve canonical provider: {provider}"
+                )
+        if rules.noise_profile and rules.noise_profile not in expected_profiles:
+            errors.append(
+                f"provider HTML rules registry provider `{provider}` has unregistered "
+                f"noise profile `{rules.noise_profile}`"
             )
         if not rules.noise_profile:
             errors.append(
                 f"provider HTML rules registry has empty noise profile for provider: {provider}"
             )
         for alias in rules.aliases:
-            if provider_html_rules(alias).name != provider:
+            try:
+                alias_rules = require_provider_html_rules(alias)
+            except KeyError:
+                errors.append(
+                    f"provider HTML rules registry alias `{alias}` does not resolve to provider: {provider}"
+                )
+                continue
+            if alias_rules.name != provider:
                 errors.append(
                     f"provider HTML rules registry alias `{alias}` does not resolve to provider: {provider}"
                 )
@@ -701,16 +764,46 @@ def validate_provider_shared_applicability(markdown: str) -> list[str]:
     return errors
 
 
-def _infer_providers(text: str) -> set[str]:
-    return {
-        provider
-        for provider, pattern in PROVIDER_INFERENCE_PATTERNS.items()
-        if pattern.search(text)
-    }
+def build_rule_coverage_report(markdown: str) -> list[RuleCoverageReport]:
+    rows: list[RuleCoverageReport] = []
+    for anchor, _title, block, _line in _iter_rule_blocks(markdown):
+        if _is_redirect_rule(_title, block):
+            continue
+        fixture_links = {
+            _normalize_fixture_link(link)
+            for link, _line_no in _extract_fixture_links(block)
+        }
+        stable_samples = len(
+            {
+                "/".join(link.split("/")[:4])
+                for link in fixture_links
+            }
+        )
+        no_stable_marker = "当前无稳定 DOI 样本" in block
+        low_coverage = any(marker in block for marker in LOW_COVERAGE_MARKERS)
+        rows.append(
+            RuleCoverageReport(
+                anchor=anchor,
+                stable_samples=stable_samples,
+                unstable_samples=1 if no_stable_marker else 0,
+                low_coverage=low_coverage,
+            )
+        )
+    return rows
 
 
-def main() -> int:
-    markdown = DOC_PATH.read_text(encoding="utf-8")
+def format_rule_coverage_report(rows: list[RuleCoverageReport]) -> str:
+    lines = ["rule coverage report:"]
+    for row in rows:
+        low_coverage = "yes" if row.low_coverage else "no"
+        lines.append(
+            f"- {row.anchor}: stable={row.stable_samples} "
+            f"unstable={row.unstable_samples} low_coverage={low_coverage}"
+        )
+    return "\n".join(lines)
+
+
+def validate_markdown(markdown: str) -> list[str]:
     anchors = set(ANCHOR_RE.findall(markdown))
     errors: list[str] = []
     errors.extend(validate_anchors(markdown))
@@ -728,6 +821,44 @@ def main() -> int:
     errors.extend(validate_site_ui_copy_markers())
     errors.extend(validate_provider_shared_lists(markdown, anchors))
     errors.extend(validate_provider_shared_applicability(markdown))
+    return errors
+
+
+def _infer_providers(text: str) -> set[str]:
+    return {
+        provider
+        for provider, pattern in PROVIDER_INFERENCE_PATTERNS.items()
+        if pattern.search(text)
+    }
+
+
+def _parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description="Validate docs/extraction-rules.md and related rule registries."
+    )
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
+        "--ci",
+        action="store_true",
+        help="run merge-blocking extraction-rule checks",
+    )
+    mode.add_argument(
+        "--lint",
+        action="store_true",
+        help="run strict checks and print low-coverage report hints",
+    )
+    mode.add_argument(
+        "--report",
+        action="store_true",
+        help="print stable/unstable fixture coverage by rule anchor",
+    )
+    return parser
+
+
+def main(argv: list[str] | None = None) -> int:
+    args = _parser().parse_args(argv)
+    markdown = DOC_PATH.read_text(encoding="utf-8")
+    errors = validate_markdown(markdown)
 
     if errors:
         print("docs/extraction-rules.md validation failed:", file=sys.stderr)
@@ -736,6 +867,8 @@ def main() -> int:
         return 1
 
     print("docs/extraction-rules.md validation passed")
+    if args.lint or args.report:
+        print(format_rule_coverage_report(build_rule_coverage_report(markdown)))
     return 0
 
 

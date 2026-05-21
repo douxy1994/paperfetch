@@ -219,12 +219,12 @@ def probe_official_provider(
         except ProviderFailure as exc:
             return RouteProbeResult(provider=provider_name, state=classify_probe_state(exc))
         if metadata:
-            return RouteProbeResult(provider=provider_name, state="positive", metadata=dict(metadata))
+            return RouteProbeResult(provider=provider_name, state="positive", metadata=cast(ProviderMetadata, dict(metadata)))
         return RouteProbeResult(provider=provider_name, state="negative")
     if not isinstance(clients.get(provider_name), MetadataProvider):
         return RouteProbeResult(provider=provider_name, state="unknown")
     try:
-        metadata = fetch_provider_metadata_probe_with_session_cache(
+        probe_metadata = fetch_provider_metadata_probe_with_session_cache(
             provider_name,
             doi,
             clients=clients,
@@ -232,8 +232,12 @@ def probe_official_provider(
         )
     except ProviderFailure as exc:
         return RouteProbeResult(provider=provider_name, state=classify_probe_state(exc))
-    if metadata:
-        return RouteProbeResult(provider=provider_name, state="positive", metadata=dict(metadata))
+    if probe_metadata:
+        return RouteProbeResult(
+            provider=provider_name,
+            state="positive",
+            metadata=cast(ProviderMetadata, dict(probe_metadata)),
+        )
     return RouteProbeResult(provider=provider_name, state="negative")
 
 

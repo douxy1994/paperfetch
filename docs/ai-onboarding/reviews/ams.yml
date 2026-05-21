@@ -1,0 +1,86 @@
+schema_version: 1
+provider: ams
+reviewed_at: '2026-05-20T00:00:00Z'
+reviewed_by: operator
+fixtures:
+- fixture: tests/fixtures/golden_criteria/10.1175_bams-d-24-0223.1
+  purpose: structure
+  doi: 10.1175/bams-d-24-0223.1
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must not include Download PDF
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1175_bams-d-24-0223.1/expected.json
+  baseline_markdown_sha256: bdcd963866215562e116c0b8916436ecc921587370c63bec6bd691314b892122
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1175_jamc-d-24-0048.1
+  purpose: table
+  doi: 10.1175/jamc-d-24-0048.1
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Table
+  - must not include Google Scholar
+  - must match (?m)^\|.+\|$
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1175_jamc-d-24-0048.1/expected.json
+  baseline_markdown_sha256: b2f040b3b85440b96b3d5794baae8002ad332a4121f448bcd5d7b604015be7d1
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1175_aies-d-23-0093.1
+  purpose: formula
+  doi: 10.1175/aies-d-23-0093.1
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Equation
+  - must not include [Formula unavailable]
+  - must match (?:\$\$|!\[Formula\]|Equation)
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1175_aies-d-23-0093.1/expected.json
+  baseline_markdown_sha256: c1ee89667231b3cb347c43480aea08513f4b1a748f6350713be1566972778b65
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1175_jamc-d-24-0048.1
+  purpose: figure
+  doi: 10.1175/jamc-d-24-0048.1
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Figure
+  - must not include Article Metrics
+  - must match (?:!\[Figure|\*\*Figure)
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1175_jamc-d-24-0048.1/expected.json
+  baseline_markdown_sha256: b2f040b3b85440b96b3d5794baae8002ad332a4121f448bcd5d7b604015be7d1
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1175_jcli-d-23-0738.1
+  purpose: references
+  doi: 10.1175/jcli-d-23-0738.1
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Reference
+  - must not include Google Scholar
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1175_jcli-d-23-0738.1/expected.json
+  baseline_markdown_sha256: 86cdad244db63a612d74fffa216579e43a023739205b05aa1aa9f4ef2df21b63
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1175_bams-d-24-0270.1
+  purpose: pdf_fallback
+  doi: 10.1175/bams-d-24-0270.1
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include #'
+  - must not include Access Denied
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1175_bams-d-24-0270.1/expected.json
+  baseline_markdown_sha256: e86d583d2c191cc9baa066a802a852e4b117e775cb2330c3301b734e4bf20597
+  review_notes: Semantic review completed against committed fixture evidence.

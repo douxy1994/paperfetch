@@ -367,11 +367,11 @@ cloakbrowser_headless_value() {
 check_bundle_assets() {
   require_dir "$BUNDLE_ROOT/runtime/site-packages"
   require_file "$BUNDLE_ROOT/runtime/site-packages/paper_fetch/__init__.py"
-  require_file "$BUNDLE_ROOT/bin/python"
+  require_file "$BUNDLE_ROOT/runtime/paper-fetch-python"
   require_file "$BUNDLE_ROOT/bin/paper-fetch"
   require_file "$BUNDLE_ROOT/bin/paper-fetch-mcp"
   require_file "$BUNDLE_ROOT/bin/paper-fetch-install-formula-tools"
-  [ -x "$BUNDLE_ROOT/bin/python" ] || die "Bundled Python wrapper is not executable: $BUNDLE_ROOT/bin/python"
+  [ -x "$BUNDLE_ROOT/runtime/paper-fetch-python" ] || die "Bundled private Python launcher is not executable: $BUNDLE_ROOT/runtime/paper-fetch-python"
   [ -x "$BUNDLE_ROOT/bin/paper-fetch" ] || die "Bundled CLI wrapper is not executable: $BUNDLE_ROOT/bin/paper-fetch"
   [ -x "$BUNDLE_ROOT/bin/paper-fetch-mcp" ] || die "Bundled MCP wrapper is not executable: $BUNDLE_ROOT/bin/paper-fetch-mcp"
   [ -x "$BUNDLE_ROOT/bin/paper-fetch-install-formula-tools" ] || die "Bundled formula installer wrapper is not executable: $BUNDLE_ROOT/bin/paper-fetch-install-formula-tools"
@@ -382,7 +382,7 @@ check_bundle_assets() {
 }
 
 mcp_python_bin() {
-  printf '%s\n' "$INSTALL_ROOT/bin/python"
+  printf '%s\n' "$INSTALL_ROOT/runtime/paper-fetch-python"
 }
 
 mathml_node_bin() {

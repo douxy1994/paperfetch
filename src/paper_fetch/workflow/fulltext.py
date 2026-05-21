@@ -148,7 +148,7 @@ def _try_official_provider(
     warnings: list[str],
     source_trail: list[str],
 ) -> ArticleModel | None:
-    if not doi or not is_official_provider(provider_name):
+    if not doi or not provider_name or not is_official_provider(provider_name):
         return None
     if not provider_allowed(provider_name, strategy):
         extend_unique(source_trail, [fulltext_marker(provider_name, "skipped")])

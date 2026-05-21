@@ -28,6 +28,78 @@ main_path:
   - pdf_fallback
   - metadata_only
 success_criteria: {}
+route_contract:
+  xml:
+    success_requires:
+    - article XML root is present
+    - title or DOI metadata is present
+    - body sections or body paragraphs are present
+    reject_if_any:
+    - metadata-only XML
+    - empty body
+    min_body_chars: 1200
+    min_body_sections: 1
+  pdf_fallback:
+    success_requires:
+    - PDF response has application/pdf content type or PDF magic bytes
+    - PDF text extraction produces body text
+    reject_if_any:
+    - HTML wrapper
+    - challenge page
+    - access gate page
+    - error page
+    require_pdf_magic: true
+    reject_html_wrapper: true
+  metadata_only:
+    success_requires:
+    - metadata contains DOI or title
+    - source trail marks metadata-only fallback
+    reject_if_any:
+    - fabricated body text
+    - provider-specific fulltext source without fulltext
+markdown_contract:
+  structure:
+    doi: 10.1016/j.rse.2025.114648
+    must_include:
+    - '## Abstract'
+    must_not_include:
+    - Download PDF
+  table:
+    doi: 10.1016/j.jhydrol.2021.126210
+    must_include:
+    - Table
+    must_not_include:
+    - Google Scholar
+    must_match:
+    - (?m)^\|.+\|$
+  formula:
+    doi: 10.1016/j.agrformet.2024.109975
+    must_include:
+    - Equation
+    must_not_include:
+    - '[Formula unavailable]'
+    must_match:
+    - (?:\$\$|!\[Formula\]|Equation)
+  figure:
+    doi: 10.1016/j.rse.2026.115369
+    must_include:
+    - Figure
+    must_not_include:
+    - Article Metrics
+    must_match:
+    - (?:!\[Figure|\*\*Figure)
+  supplementary:
+    doi: 10.1016/j.ecolind.2024.112140
+    must_include:
+    - Supplementary
+    must_not_include:
+    - Download Citation
+  references:
+    doi: 10.1016/j.agrformet.2024.109975
+    must_include:
+    - Reference
+    must_not_include:
+    - Google Scholar
 asset_profile:
   none: []
   body: []

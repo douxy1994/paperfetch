@@ -9,15 +9,19 @@
 | `schema_version` | integer | 是 | `1` | 让后续 schema 版本可以并存。 |
 | `name` | string | 是 | regex `^[a-z][a-z0-9_]*$`；等于文件名 stem | provider 模块名、bundle name、manifest 文件名使用同一稳定 key。 |
 | `display_source` | string | 是 | regex `^[a-z][a-z0-9_]*$` | 映射到运行时公开 source，例如 `wiley_browser`、`copernicus_xml`。 |
+| `route_sources` | object | 否 | key 必须来自 `main_path`，value 必须是当前 provider 注册 source；若存在，`display_source` 必须出现在 values 中 | 多 route provider 用它表达 `article_html` / `pdf_fallback` 等路线实际公开 source。 |
 | `generation` | object | 是 | 见下表 | 记录 manifest 由 discovery 生成还是由现有 provider 回放生成。 |
 | `routing` | object | 是 | 见下表 | scaffold 和路由同步检查的输入。 |
 | `main_path` | array[string] | 是 | item enum `landing_html` / `article_html` / `xml` / `pdf_fallback` / `abstract_only` / `metadata_only`；`minItems: 1` | implementation worker 用它按顺序生成 provider 主链骨架。 |
+| `route_contract` | object | 是 | 每个 `main_path` step 都必须有同名 key | 实现前固定抓取成功 / 拒绝判定，避免只按 HTTP 200 判成功。 |
+| `markdown_contract` | object | 是 | 每个 non-null fixture purpose 都必须有同名 key | 实现前固定 Markdown 质量断言，供 scaffold 和 review loop 转成 provider-local tests。 |
 | `success_criteria` | object | 是 | step key 到 object / array / `null`；每个 step value 标注 `x-sync-back: true` | 实现完成后由代码侧实际阈值回写。 |
 | `asset_profile` | object | 是 | `none` / `body` / `all` 三组数组，item enum `figures` / `body_tables` / `formula_images` / `supplementary` / `multimedia` | 对齐运行时 asset profile 语义。 |
 | `supplementary_scope` | object | 是 | `selector` / `url_pattern` 可为 string 或 `null` | 描述补充材料的 DOM 或 URL 边界。 |
 | `abstract_only_strategy` | string | 是 | enum `provider_managed` / `metadata_only` / `not_supported` | 对齐 provider-managed fallback 行为。 |
 | `probe` | object | 是 | 见下表 | provider status 和 live 运行依赖的输入。 |
 | `fixtures` | object | 是 | 见下表 | 固定 DOI purpose 到 evidence object 的映射。 |
+| `extra_fixtures` | array | 否 | item 见下表；用于固定 purpose 以外的补充 replay 样本 | 让结构广度样本进入 capture/review 流程，但不强迫新增固定 purpose。 |
 | `extraction_hints` | object | 是 | 各子字段允许 `null` / `[]` 起步；标注 `x-sync-back: true` | 实现完成后由 bundle/rules 反向序列化。 |
 | `owner_reuse_exceptions` | array | 是 | item 需要 `owner` 和 `reason` | 只有通用 owner 无法复用时才记录例外。 |
 | `docs` | object | 是 | 需要 `providers_md_capability_row` 和 `changelog_summary`，`extraction_rules_summary` 可为 string/null | scaffold 和 reviewer 使用的用户可见 docs 事实底稿。 |
@@ -50,6 +54,50 @@
 |---|---|---:|---|---|
 | `<step>` | object/array/null | 否 | step key 可为空；value 是 sync-back 占位或实现后阈值对象 | 主路径正文质量阈值、success marker、figure/table/reference 数量等实现事实。 |
 
+## `route_contract`
+
+`route_contract` 是实现前的抓取判定合同，不是 sync-back 字段。每个 `main_path` step 必须有同名 key。Worker 必须先按它写 provider-local waterfall / rejection 测试，再实现 provider route。
+
+| 字段 | Type | Required | 决策依据 |
+|---|---|---:|---|
+| `<step>.success_requires` | array[string] | 是 | 该 route 被视为成功时必须同时满足的结构或 payload 条件。 |
+| `<step>.reject_if_any` | array[string] | 否 | 命中任一条件时不得把该 route 当 fulltext success。 |
+| `<step>.min_body_chars` | integer | 否 | HTML/XML/PDF text 路线的最小正文长度门槛。 |
+| `<step>.min_body_sections` | integer | 否 | HTML/XML 路线的最小正文 section 门槛。 |
+| `<step>.require_pdf_magic` | boolean | 否 | PDF fallback 必须校验 `%PDF` magic bytes 或等价 PDF payload 信号。 |
+| `<step>.reject_html_wrapper` | boolean | 否 | PDF fallback 必须拒绝 HTML wrapper、challenge page 或错误页。 |
+| `<step>.notes` | string | 否 | 只写对实现有约束力的补充说明。 |
+
+## `route_sources`
+
+`route_sources` 是可选的 route step 到 runtime source 映射。key 必须是 `main_path` 中已有 step，value 必须能通过 `ProviderBundle.sources` 或 runtime source map 解析到当前 provider。`display_source` 仍是主要公开 source；只要 `route_sources` 存在，`display_source` 必须出现在 `route_sources` values 中。
+
+示例：
+
+```yaml
+main_path:
+  - article_html
+  - pdf_fallback
+  - metadata_only
+display_source: mdpi_html
+route_sources:
+  article_html: mdpi_html
+  pdf_fallback: mdpi_pdf
+```
+
+## `markdown_contract`
+
+`markdown_contract` 是每个真实 fixture purpose 的 Markdown oracle。每个 non-null `fixtures.doi_samples.<purpose>.doi` 必须在 `markdown_contract.<purpose>` 中重复同一 DOI，并至少提供一条正向和一条负向断言输入。
+
+| 字段 | Type | Required | 决策依据 |
+|---|---|---:|---|
+| `<purpose>.doi` | string | 是 | 必须等于对应 `fixtures.doi_samples.<purpose>.doi`。 |
+| `<purpose>.must_include` | array[string] | 是 | scaffold 生成 `assert ... in markdown`，worker 可改成更强 provider-local 断言。 |
+| `<purpose>.must_not_include` | array[string] | 是 | scaffold 生成站点 chrome / access noise / boilerplate 负断言。 |
+| `<purpose>.must_match` | array[string] | 否 | 需要正则表达的表格、公式、图片或引用格式断言。 |
+| `<purpose>.count_equals` | object | 否 | 文本去重、caption 去重、重复 chrome 清理的计数断言。 |
+| `<purpose>.notes` | string | 否 | 只写会改变断言选择的 fixture 观察。 |
+
 ## `probe`
 
 | 字段 | Type | Required | 约束 | 决策依据 |
@@ -72,6 +120,20 @@
 | `evidence_reason` | string | 是 | 非空 | 解释此 DOI 覆盖该 purpose 的原因。 |
 | `observed_signals` | array[string] | 是 | 可为空数组 | 页面或 fixture 中可观察的信号。 |
 | `confidence` | string | 是 | enum `high` / `medium` / `low` | 标识该样本证据强度。 |
+
+## `extra_fixtures`
+
+`extra_fixtures` 记录固定 DOI purpose 之外的补充 replay 样本。每个 item 都必须有非空 DOI、evidence 字段、observed signals 和 confidence；`purpose` 可以复用固定 purpose，例如 `structure`，用于追加同类结构广度样本。
+
+| 字段 | Type | Required | 约束 | 决策依据 |
+|---|---|---:|---|---|
+| `purpose` | string | 是 | 非空 | capture/review 输出中保留的样本用途标签。 |
+| `doi` | string | 是 | DOI string | capture fixture 的主输入。 |
+| `evidence_url` | string | 是 | URI | 指向 DOI landing page 或可审计页面。 |
+| `evidence_reason` | string | 是 | 非空 | 解释此 DOI 为什么作为补充 replay 样本。 |
+| `observed_signals` | array[string] | 是 | `minItems: 1` | 页面或 fixture 中可观察的信号。 |
+| `confidence` | string | 是 | enum `high` / `medium` / `low` | 标识该样本证据强度。 |
+| `markdown_contract` | object | 否 | 同 `markdown_contract.<purpose>`，且 `doi` 必须等于本 item DOI | 需要补充 Markdown oracle 时就地记录，不覆盖固定 purpose contract。 |
 
 ## `extraction_hints`
 

@@ -253,7 +253,7 @@ class ElsevierMarkdownTests(unittest.TestCase):
         )
         rendered = article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
 
-        self.assertEqual(rendered.count("![Fig. 1](body_assets/figure-preserve-fig1.jpeg)"), 1)
+        self.assertEqual(rendered.count("![Figure 1](body_assets/figure-preserve-fig1.jpeg)"), 1)
         self.assertIn("Observed response figure.", rendered)
         self.assertNotIn("## Additional Figures", rendered)
     def test_article_from_structure_preserves_remote_elsevier_figure_links_without_local_assets(self) -> None:
@@ -311,7 +311,7 @@ class ElsevierMarkdownTests(unittest.TestCase):
         )
         rendered = article.to_ai_markdown(asset_profile="none", max_tokens="full_text")
 
-        self.assertEqual(rendered.count(f"![Fig. 1]({remote_url})"), 1)
+        self.assertEqual(rendered.count(f"![Figure 1]({remote_url})"), 1)
         self.assertEqual(article.assets[0].original_url, remote_url)
 
     def test_mathml_nested_subscripts_are_grouped_for_katex(self) -> None:
@@ -469,7 +469,7 @@ class ElsevierMarkdownTests(unittest.TestCase):
         markdown = self._render_real_elsevier_appendix_markdown()
         appendix_section = markdown[markdown.index("### Appendix") :]
 
-        self.assertIn("![Fig. A.1](figure-a1.jpg)", appendix_section)
+        self.assertIn("![Figure A.1](figure-a1.jpg)", appendix_section)
         self.assertIn(
             "Map of the locations of the offshore wind farms Vindeby, Horns Rev. 1, and Alpha Ventus, and three FINO meteorological masts.",
             appendix_section,
@@ -479,7 +479,7 @@ class ElsevierMarkdownTests(unittest.TestCase):
         markdown = self._render_real_elsevier_appendix_markdown()
         body_reference_idx = markdown.index("Fig. A.1 indicates locations.")
         appendix_idx = markdown.index("### Appendix")
-        figure_idx = markdown.index("![Fig. A.1](figure-a1.jpg)")
+        figure_idx = markdown.index("![Figure A.1](figure-a1.jpg)")
 
         self.assertLess(body_reference_idx, appendix_idx)
         self.assertLess(appendix_idx, figure_idx)

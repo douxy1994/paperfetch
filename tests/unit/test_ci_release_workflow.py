@@ -8,12 +8,27 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
 LINUX_OFFLINE_VERIFY = REPO_ROOT / "scripts" / "verify-offline-package.sh"
+DEV_PREFLIGHT = REPO_ROOT / "scripts" / "dev-preflight.sh"
 
 
 class CiReleaseWorkflowTests(unittest.TestCase):
     def test_phase8_release_workflow_input_is_absent_in_this_repository(self) -> None:
         self.assertFalse(RELEASE_WORKFLOW.exists())
         self.assertTrue(CI_WORKFLOW.exists())
+
+    def test_ci_and_local_preflight_share_core_quality_gates(self) -> None:
+        workflow = CI_WORKFLOW.read_text(encoding="utf-8")
+        preflight = DEV_PREFLIGHT.read_text(encoding="utf-8")
+
+        self.assertIn("python -m mypy", workflow)
+        self.assertIn("bash scripts/dev-preflight.sh --help", workflow)
+        self.assertIn("python3 -m mypy", preflight)
+        self.assertIn("python3 -m ruff check .", preflight)
+        self.assertIn("tests/unit -q", preflight)
+        self.assertIn("tests/devtools -q", preflight)
+        self.assertIn("scripts/validate_extraction_rules.py", preflight)
+        self.assertIn("tests/integration -q", preflight)
+        self.assertIn("--durations=30", workflow)
 
     def test_windows_offline_ci_uses_current_provider_status_entrypoint(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")

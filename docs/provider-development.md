@@ -240,6 +240,7 @@ provider 内部多步骤 fallback 应声明 `paper_fetch.providers._waterfall.Wa
 - HTML table：`paper_fetch.extraction.html.tables`
 - Markdown block rendering：`paper_fetch.extraction.markdown_render`，统一 table / figure / formula / caption / list 的 IR 和最终行渲染；provider 只保留 HTML/XML/DOM -> IR 或 legacy entry 的转换层。
 - Citation cleanup：`paper_fetch.markdown.citations`，只负责 numeric payload / Markdown cleanup；reference href 判定委托 `citation_anchors`
+- Markdown image alt / image line rendering：`paper_fetch.markdown.images`，统一生成 `Figure N` / `Table N` / `Listing N` / `Formula` / `Image` 短 alt，caption 不进入 `![alt]`
 - Formula rules：`paper_fetch.extraction.html.formula_rules`、`paper_fetch.providers._article_markdown_math`
 - Image MIME / dimensions：`paper_fetch.extraction.image_payloads`
 - Asset discovery / download：`paper_fetch.extraction.html.assets`
@@ -386,6 +387,8 @@ python3 scripts/validate_extraction_rules.py
   - 只有新增用户必须配置的环境变量时更新
 - `tests/provider_benchmark_samples.py` 或 live samples
   - 有稳定 live smoke 样本时更新
+- golden corpus / integration 同步点
+  - 新增 provider 的真实 replay 进入 golden corpus 后，必须注册 `tests.golden_corpus_adapters.GoldenCorpusAdapter`，并确认 MCP provider status、benchmark sample、live review support 均从 `ProviderBundle + manifest` 派生或显式登记。
 - `CHANGELOG.md`
   - 对用户可见的新 provider 能力和限制做简短记录
 
@@ -417,6 +420,8 @@ python3 scripts/validate_extraction_rules.py
 - [ ] 每个 non-null manifest fixture purpose 已完成 Markdown Review Loop 并写入 provider-local 断言
 - [ ] 主成功路径同时包含 Markdown 正断言和站点 chrome / access noise / boilerplate 负断言
 - [ ] `manifest.json` 条目已填充（`expected_outcome` 不再是 `pending`）
+- [ ] `tests.golden_corpus_adapters.GoldenCorpusAdapter` 已注册，代表 fixture 覆盖主路径
+- [ ] MCP provider status、benchmark sample、live review support 已随 `ProviderBundle + manifest` 同步
 - [ ] `tests/unit/test_newpub_provider.py` 覆盖 fulltext / abstract-only / blocked
 - [ ] `tests/unit/test_provider_bundle_completeness.py` 通过
 - [ ] `docs/providers.md` 能力矩阵已同步

@@ -248,6 +248,22 @@ class ExtractionRulesValidatorUnitTests(unittest.TestCase):
     def test_provider_rule_registry_contains_required_provider_rules(self) -> None:
         self.assertEqual(validator.validate_provider_rule_registry(), [])
 
+    def test_provider_rule_registry_reports_stale_noise_profiles(self) -> None:
+        with mock.patch(
+            "paper_fetch.extraction.html.provider_rules.REGISTERED_NOISE_PROFILES",
+            frozenset({"generic", "stale_profile"}),
+        ):
+            errors = validator.validate_provider_rule_registry()
+
+        self.assertIn(
+            "REGISTERED_NOISE_PROFILES stale/missing profile(s): ieee, mdpi, pnas, springer_nature",
+            errors,
+        )
+        self.assertIn(
+            "REGISTERED_NOISE_PROFILES stale/extra profile(s): stale_profile",
+            errors,
+        )
+
     def test_provider_rule_registry_reports_missing_required_rule_field(self) -> None:
         with mock.patch.dict(
             validator.PROVIDER_RULE_REQUIREMENTS,
@@ -261,6 +277,42 @@ class ExtractionRulesValidatorUnitTests(unittest.TestCase):
             [
                 "provider HTML rules registry provider `science` is missing required "
                 "`cleanup.markdown_promo_tokens`"
+            ],
+        )
+
+    def test_mdpi_provider_section_requires_shared_rule_list(self) -> None:
+        markdown = """
+## MDPI
+
+<a id="rule-mdpi"></a>
+### MDPI rule
+
+- Owner：`paper_fetch.providers._mdpi_html`。
+"""
+
+        with mock.patch.object(validator, "PROVIDER_SECTIONS", ("MDPI",)):
+            errors = validator.validate_provider_shared_lists(markdown, {"rule-mdpi"})
+
+        self.assertEqual(
+            errors,
+            ["provider section MDPI is missing shared-rule list"],
+        )
+
+    def test_mdpi_provider_rule_registry_reports_missing_required_rule_field(
+        self,
+    ) -> None:
+        with mock.patch.dict(
+            validator.PROVIDER_RULE_REQUIREMENTS,
+            {"mdpi": {"cleanup.access_block_text_tokens"}},
+            clear=True,
+        ):
+            errors = validator.validate_provider_rule_registry()
+
+        self.assertEqual(
+            errors,
+            [
+                "provider HTML rules registry provider `mdpi` is missing required "
+                "`cleanup.access_block_text_tokens`"
             ],
         )
 
@@ -382,6 +434,63 @@ class ExtractionRulesValidatorUnitTests(unittest.TestCase):
             mock.patch.object(Path, "read_text", fake_read_text),
         ):
             self.assertEqual(validator.validate_site_ui_copy_markers(), [])
+
+    def test_rule_coverage_report_counts_stable_and_unstable_samples(self) -> None:
+        markdown = """
+## Generic
+
+<a id="rule-stable"></a>
+### Stable rule
+
+- 代表性 HTML / XML：
+  - [`../tests/fixtures/golden_criteria/10.1000_demo/original.html`](../tests/fixtures/golden_criteria/10.1000_demo/original.html)
+
+<a id="rule-unstable"></a>
+### Unstable rule
+
+- 代表性 HTML / XML：
+  - 当前无稳定 DOI 样本，直接见对应测试。
+- 边界说明：
+  - 测试覆盖度低：需要后续补样本。
+"""
+
+        report = validator.build_rule_coverage_report(markdown)
+
+        self.assertEqual(
+            report,
+            [
+                validator.RuleCoverageReport(
+                    anchor="rule-stable",
+                    stable_samples=1,
+                    unstable_samples=0,
+                    low_coverage=False,
+                ),
+                validator.RuleCoverageReport(
+                    anchor="rule-unstable",
+                    stable_samples=0,
+                    unstable_samples=1,
+                    low_coverage=True,
+                ),
+            ],
+        )
+
+    def test_validator_cli_report_mode_prints_coverage_report(self) -> None:
+        with mock.patch.object(validator, "validate_markdown", return_value=[]), mock.patch.object(
+            Path,
+            "read_text",
+            return_value="""
+## Generic
+
+<a id="rule-demo"></a>
+### Demo
+
+- 代表性 HTML / XML：
+  - 当前无稳定 DOI 样本，直接见对应测试。
+""",
+        ):
+            result = validator.main(["--report"])
+
+        self.assertEqual(result, 0)
 
 
 if __name__ == "__main__":

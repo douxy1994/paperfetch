@@ -7,6 +7,7 @@ import re
 import urllib.parse
 from typing import Any, Callable, Mapping
 
+from ...markdown.images import render_markdown_image
 from ...common_patterns import FIGURE_LABEL_PATTERN
 from ...models import normalize_markdown_text
 from ...utils import normalize_text
@@ -180,7 +181,7 @@ def inject_inline_figure_links(
             entry = take_entry_for_image(alt_text, current_url)
             if entry is not None:
                 heading = alt_text or normalize_text(entry.get("heading") or "Figure") or "Figure"
-                injected.append(f"![{heading}]({entry['url']})")
+                injected.append(render_markdown_image("figure", heading, entry["url"]))
             else:
                 injected.append(block)
             continue
@@ -189,7 +190,7 @@ def inject_inline_figure_links(
             label = match.group(1).rstrip(".")
             entry = take_entry_for_label(canonical_figure_label(label))
             if entry is not None:
-                image_block = f"![{label}]({entry['url']})"
+                image_block = render_markdown_image("figure", label, entry["url"])
                 if not injected or normalize_text(injected[-1]) != image_block:
                     injected.append(image_block)
                 injected.append(block)

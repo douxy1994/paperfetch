@@ -164,7 +164,7 @@ def browser_workflow_article_from_payload(
             warnings=warnings,
             trace=[*trace, *trace_from_markers([fulltext_marker(client.name, "fail", route="parse")])],
         )
-    if asset_failures:
+    if asset_failures and getattr(client, "article_asset_failure_warning", True):
         warnings.append(
             f"{client.name} related assets were only partially downloaded ({len(asset_failures)} failed)."
         )
@@ -194,6 +194,11 @@ def browser_workflow_article_from_payload(
         if isinstance(extraction_payload, Mapping)
         else []
     )
+    extracted_keywords = (
+        list(extraction_payload.get("keywords") or [])
+        if isinstance(extraction_payload, Mapping)
+        else []
+    )
     section_hints = (
         list(extraction_payload.get("section_hints") or [])
         if isinstance(extraction_payload, Mapping)
@@ -207,6 +212,17 @@ def browser_workflow_article_from_payload(
         )
         article_metadata["abstract"] = extracted_abstract
         markdown_text = _prepend_leading_body_markdown(markdown_text, lead_body)
+    if extracted_keywords:
+        keywords = [
+            normalize_text(str(item))
+            for item in (article_metadata.get("keywords") or [])
+            if normalize_text(str(item))
+        ]
+        extend_unique(
+            keywords,
+            [normalize_text(str(item)) for item in extracted_keywords if normalize_text(str(item))],
+        )
+        article_metadata["keywords"] = keywords
     availability_diagnostics = (
         dict(content.diagnostics.get("availability_diagnostics") or {})
         if content is not None

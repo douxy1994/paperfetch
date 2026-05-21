@@ -50,6 +50,7 @@
 3. [`provider-development.md`](provider-development.md)
 4. [`extraction-rules.md`](extraction-rules.md)
 5. [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
+6. [`ai-onboarding/README.md`](ai-onboarding/README.md)
 
 ## 文档分工
 
@@ -67,12 +68,14 @@
   - 讲 provider 能力矩阵、路由规则、默认输出、环境变量、缓存和限速。
 - [`provider-development.md`](provider-development.md)
   - 讲新增出版社 provider 的标准开发流程、typed contract、waterfall、资产语义、测试和文档验收标准。
+- [`ai-onboarding/README.md`](ai-onboarding/README.md)
+  - 讲 AI/coordinator provider onboarding 的权威输入、runner、manifest、review artifact 和自动化边界。
 - [`extraction-rules.md`](extraction-rules.md)
   - 讲当前提取 / 组装 / 渲染规则、真实样本证据和对应测试，不负责运行时路由和部署说明。
   - 修改后运行 `python3 scripts/validate_extraction_rules.py` 校验 anchor、Owner、fixture、测试名、manifest 引用和未挂规则 fixture 清单。
 - [`deployment.md`](deployment.md)
   - 讲安装、配置入口、MCP 注册、更新和最小验证。
-  - 讲 Wiley / Science / PNAS / AMS 的 repo-local 浏览器工作流。
+  - 讲 Wiley / Science / PNAS / AMS 的 repo-local 浏览器工作流、本地 `scripts/dev-preflight.sh` 门禁和 CI 测试耗时信号。
 - [`architecture/target-architecture.md`](architecture/target-architecture.md)
   - 讲当前系统分层、端到端业务流程、数据契约和扩展点。
 - [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
@@ -176,7 +179,7 @@
 
 - golden criteria live review 的 `stage_timings` 包含 `fetch_seconds`、`materialize_seconds`、`total_seconds`、`resolve_seconds`、`metadata_seconds`、`fulltext_seconds`、`asset_seconds`、`formula_seconds`、`render_seconds`。
 - 每个 sample 的 `http_cache_stats` 表示该 sample 执行前后差值；最终汇总日志仍可查看 `HttpTransport.cache_stats_snapshot()` 的累计快照。
-- live runner supported provider 包含 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee`、`arxiv`、`ams`、`copernicus`；arXiv 与 Copernicus 路径和资产语义见 [`providers.md`](providers.md)。
+- live runner supported provider 包含 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee`、`arxiv`、`ams`、`mdpi`、`copernicus`；arXiv、MDPI 与 Copernicus 路径和资产语义见 [`providers.md`](providers.md)。
 
 ## 一句话阅读建议
 

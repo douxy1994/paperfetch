@@ -198,7 +198,7 @@ class OfflineInstallTests(unittest.TestCase):
         _write_file(bundle / "runtime" / "site-packages" / "paper_fetch" / "__init__.py", "\n")
         _write_file(bundle / "runtime" / "site-packages" / "cloakbrowser" / "__init__.py", "\n")
         _write_executable(bundle / "runtime" / "site-packages" / "playwright" / "driver" / "node", "#!/usr/bin/env bash\nexit 0\n")
-        _write_executable(bundle / "bin" / "python", _fake_python_script(python_version))
+        _write_executable(bundle / "runtime" / "paper-fetch-python", _fake_python_script(python_version))
         _write_executable(
             bundle / "bin" / "paper-fetch",
             "#!/usr/bin/env bash\nif [[ \"${1:-}\" == \"--help\" ]]; then exit 0; fi\nexit 0\n",
@@ -285,6 +285,8 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue((install_root / "runtime" / "site-packages" / "paper_fetch" / "__init__.py").exists())
             self.assertTrue((install_root / "bin" / "paper-fetch").exists())
+            self.assertTrue((install_root / "runtime" / "paper-fetch-python").exists())
+            self.assertFalse((install_root / "bin" / "python").exists())
             self.assertTrue((install_root / "install-offline.sh").exists())
             self.assertTrue((install_root / "activate-offline.sh").exists())
             self.assertTrue((install_root / "offline.env").exists())
@@ -424,7 +426,7 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertIn("user", gemini_add)
             self.assertNotIn("--", gemini_add)
             self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", gemini_add)
-            self.assertEqual(gemini_add[gemini_add.index("paper-fetch") + 1], str(bundle / "bin" / "python"))
+            self.assertEqual(gemini_add[gemini_add.index("paper-fetch") + 1], str(bundle / "runtime" / "paper-fetch-python"))
 
     def test_missing_codex_cli_writes_config_toml_without_playwright_runtime_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:

@@ -91,6 +91,33 @@ def test_manifest_routing_probe_asset_and_source_match_provider_bundle(
             ),
         },
     )
+    route_sources = manifest.get("route_sources") or {}
+    assert set(route_sources) <= set(manifest["main_path"]), drift_message(
+        provider=case.provider,
+        manifest_path=case.manifest_path,
+        field_path="route_sources",
+        manifest_value=route_sources,
+        code_value={"main_path": manifest["main_path"]},
+    )
+    if route_sources:
+        assert display_source in set(route_sources.values()), drift_message(
+            provider=case.provider,
+            manifest_path=case.manifest_path,
+            field_path="route_sources",
+            manifest_value=route_sources,
+            code_value={"display_source": display_source},
+        )
+    for step, source in route_sources.items():
+        assert source_is_registered_or_placeholder(str(source), case.bundle), drift_message(
+            provider=case.provider,
+            manifest_path=case.manifest_path,
+            field_path=f"route_sources.{step}",
+            manifest_value=source,
+            code_value={
+                "bundle.sources": case.bundle.sources,
+                "SOURCE_PROVIDER_MAP[source]": SOURCE_PROVIDER_MAP.get(str(source)),
+            },
+        )
 
 
 def test_known_providers_manifest_paths_and_statuses_do_not_conflict() -> None:

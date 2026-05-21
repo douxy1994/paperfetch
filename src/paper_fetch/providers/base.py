@@ -332,20 +332,21 @@ def map_request_failure(
     no_result_status_codes: set[int] | frozenset[int] | None = None,
     no_result_messages: Mapping[int, str] | None = None,
 ) -> ProviderFailure:
-    if exc.status_code in (no_result_status_codes or set()):
-        message = normalize_text(str((no_result_messages or {}).get(exc.status_code) or "")) or str(exc)
+    status_code = exc.status_code
+    if status_code is not None and status_code in (no_result_status_codes or set()):
+        message = normalize_text(str((no_result_messages or {}).get(status_code) or "")) or str(exc)
         return ProviderFailure(NO_RESULT, message)
-    if exc.status_code in {401, 403}:
+    if status_code in {401, 403}:
         return ProviderFailure(NO_ACCESS, str(exc))
-    if exc.status_code == 404:
+    if status_code == 404:
         return ProviderFailure(NO_RESULT, str(exc))
-    if exc.status_code == 429:
+    if status_code == 429:
         return ProviderFailure(RATE_LIMITED, str(exc), retry_after_seconds=exc.retry_after_seconds)
-    if exc.status_code in {400, 406, 422}:
+    if status_code in {400, 406, 422}:
         return ProviderFailure(ERROR, str(exc))
-    if exc.status_code is None:
+    if status_code is None:
         return ProviderFailure(ERROR, str(exc))
-    if exc.status_code >= 500:
+    if status_code >= 500:
         return ProviderFailure(ERROR, str(exc))
     return ProviderFailure(ERROR, str(exc))
 
@@ -808,7 +809,7 @@ class ProviderClient:
         )
 
     def status(self, env: Mapping[str, str] | None = None) -> ProviderStatusResult:
-        previous_env = getattr(self, "env", None)
+        previous_env: Any = getattr(self, "env", None)
         had_env = hasattr(self, "env")
         if env is not None:
             self.env = dict(env)

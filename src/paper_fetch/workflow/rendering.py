@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, Mapping
 
 from ..artifacts import ArtifactStore
+from ..markdown.images import render_markdown_image
 from ..models import ArticleModel, FetchEnvelope, OutputMode, RenderOptions
 from ..models.markdown import image_reference_basename, image_reference_candidates, replace_markdown_images
 from ..provider_catalog import known_article_source_names
@@ -58,11 +59,11 @@ def _local_asset_lookup_by_basename(
     article: ArticleModel | None,
     *,
     target_path: Path,
-) -> dict[str, str]:
+) -> dict[str, tuple[str, Any]]:
     if article is None:
         return {}
 
-    candidates: dict[str, str] = {}
+    candidates: dict[str, tuple[str, Any]] = {}
     ambiguous: set[str] = set()
     for asset in article.assets:
         relative_path = relative_asset_link(asset.path, target_path=target_path)
@@ -75,10 +76,11 @@ def _local_asset_lookup_by_basename(
         for basename in basenames:
             if not basename:
                 continue
+            value = (relative_path, asset)
             existing = candidates.get(basename)
             if existing is None:
-                candidates[basename] = relative_path
-            elif existing != relative_path:
+                candidates[basename] = value
+            elif existing[0] != relative_path:
                 ambiguous.add(basename)
 
     return {basename: path for basename, path in candidates.items() if basename not in ambiguous}
@@ -94,13 +96,13 @@ def _local_asset_lookups(
     article: ArticleModel | None,
     *,
     target_path: Path,
-) -> tuple[dict[str, str], dict[str, str]]:
+) -> tuple[dict[str, tuple[str, Any]], dict[str, tuple[str, Any]]]:
     if article is None:
         return {}, {}
 
-    exact: dict[str, str] = {}
+    exact: dict[str, tuple[str, Any]] = {}
     exact_ambiguous: set[str] = set()
-    basenames: dict[str, str] = {}
+    basenames: dict[str, tuple[str, Any]] = {}
     basename_ambiguous: set[str] = set()
     for asset in article.assets:
         relative_path = relative_asset_link(_asset_field(asset, "path"), target_path=target_path)
@@ -121,10 +123,11 @@ def _local_asset_lookups(
         ):
             candidates |= image_reference_candidates(_asset_field(asset, field))
         for candidate in candidates:
+            value = (relative_path, asset)
             existing = exact.get(candidate)
             if existing is None:
-                exact[candidate] = relative_path
-            elif existing != relative_path:
+                exact[candidate] = value
+            elif existing[0] != relative_path:
                 exact_ambiguous.add(candidate)
 
             basename = image_reference_basename(candidate)
@@ -132,8 +135,8 @@ def _local_asset_lookups(
                 continue
             existing_basename = basenames.get(basename)
             if existing_basename is None:
-                basenames[basename] = relative_path
-            elif existing_basename != relative_path:
+                basenames[basename] = value
+            elif existing_basename[0] != relative_path:
                 basename_ambiguous.add(basename)
 
     return (
@@ -148,6 +151,19 @@ def _remote_asset_basename(destination: str) -> str | None:
     parsed = urllib.parse.urlparse(destination if not destination.startswith("//") else f"https:{destination}")
     basename = Path(urllib.parse.unquote(parsed.path)).name
     return basename or None
+
+
+def _render_asset_markdown_image(
+    asset: Any,
+    *,
+    fallback_alt: str,
+    relative_path: str,
+    title: str = "",
+) -> str:
+    kind = _asset_field(asset, "kind") or ""
+    heading = _asset_field(asset, "heading") or fallback_alt
+    destination = f'{relative_path} "{title}"' if title else relative_path
+    return render_markdown_image(kind, heading, destination)
 
 
 def rewrite_markdown_asset_links(
@@ -173,40 +189,56 @@ def rewrite_markdown_asset_links(
         if relative_path is None and prefix.startswith("!["):
             destination_candidates = image_reference_candidates(destination)
             for candidate in destination_candidates:
-                relative_path = local_assets_by_reference.get(candidate)
-                if relative_path is not None:
+                match_value = local_assets_by_reference.get(candidate)
+                if match_value is not None:
+                    relative_path = match_value[0]
                     break
             if relative_path is None:
                 for candidate in destination_candidates:
-                    relative_path = local_assets_by_candidate_basename.get(image_reference_basename(candidate))
-                    if relative_path is not None:
+                    match_value = local_assets_by_candidate_basename.get(image_reference_basename(candidate))
+                    if match_value is not None:
+                        relative_path = match_value[0]
                         break
             if relative_path is None:
-                relative_path = local_assets_by_basename.get(_remote_asset_basename(destination) or "")
+                match_value = local_assets_by_basename.get(_remote_asset_basename(destination) or "")
+                if match_value is not None:
+                    relative_path = match_value[0]
         if relative_path is None:
             return match.group(0)
         return f"{prefix}{relative_path}{match.group(3)}"
 
     def rewrite_image(image: Any) -> str:
         destination = normalize_text(image.url).strip("<>")
-        relative_path = relative_asset_link(destination, target_path=target_path)
+        destination_candidates = image_reference_candidates(destination)
+        relative_path: str | None = None
+        matched_asset: Any | None = None
+        for candidate in destination_candidates:
+            match_value = local_assets_by_reference.get(candidate)
+            if match_value is not None:
+                relative_path, matched_asset = match_value
+                break
         if relative_path is None:
-            destination_candidates = image_reference_candidates(destination)
             for candidate in destination_candidates:
-                relative_path = local_assets_by_reference.get(candidate)
-                if relative_path is not None:
+                match_value = local_assets_by_candidate_basename.get(image_reference_basename(candidate))
+                if match_value is not None:
+                    relative_path, matched_asset = match_value
                     break
-            if relative_path is None:
-                for candidate in destination_candidates:
-                    relative_path = local_assets_by_candidate_basename.get(image_reference_basename(candidate))
-                    if relative_path is not None:
-                        break
-            if relative_path is None:
-                relative_path = local_assets_by_basename.get(_remote_asset_basename(destination) or "")
+        if relative_path is None:
+            match_value = local_assets_by_basename.get(_remote_asset_basename(destination) or "")
+            if match_value is not None:
+                relative_path, matched_asset = match_value
+        if relative_path is None:
+            relative_path = relative_asset_link(destination, target_path=target_path)
         if relative_path is None:
             return image.text
-        title = f' "{image.title}"' if image.title else ""
-        return f"![{image.alt}]({relative_path}{title})"
+        if matched_asset is None:
+            return image.text.replace(destination, relative_path, 1)
+        return _render_asset_markdown_image(
+            matched_asset,
+            fallback_alt=image.alt,
+            relative_path=relative_path,
+            title=image.title,
+        )
 
     markdown = replace_markdown_images(markdown, rewrite_image)
     return re.sub(

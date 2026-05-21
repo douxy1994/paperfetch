@@ -32,11 +32,13 @@
     },
     "task_id": {
       "enum": [
+        "operator-access-preflight",
         "discover-manifest",
         "validate-manifest",
         "capture-fixtures",
         "scaffold",
         "implement-provider",
+        "shared-integration",
         "snapshot-expected",
         "manifest-sync-back",
         "provider-local-acceptance",
@@ -132,6 +134,37 @@
               },
               "result": {
                 "enum": ["planned"]
+              }
+            }
+          }
+        },
+        "runs": {
+          "type": "object",
+          "propertyNames": {
+            "$ref": "#/$defs/task_id"
+          },
+          "additionalProperties": {
+            "type": "object",
+            "additionalProperties": true,
+            "required": ["dry_run", "commands", "result"],
+            "properties": {
+              "dry_run": {
+                "const": false
+              },
+              "commands": {
+                "type": "array",
+                "items": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "result": {
+                "enum": ["passed", "failed"]
+              },
+              "failure": {
+                "type": "object"
               }
             }
           }

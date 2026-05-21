@@ -11,6 +11,7 @@ Worker 和 coordinator 必须满足下列机器可判约束。
 - Worker must not edit `docs/ai-onboarding/known-providers.yml`.
 - Worker must not edit shared docs: `docs/providers.md`, `docs/extraction-rules.md`, `CHANGELOG.md`.
 - Worker must not write API keys, tokens, browser endpoint URLs, or local secret file paths into manifest, docs, tests, or task brief output.
+- Worker must follow the approved access review. It must not automatically log in, solve CAPTCHA, bypass challenge/paywall controls, or invent temporary site policy.
 
 ## Provider Logic
 
@@ -18,21 +19,29 @@ Worker 和 coordinator 必须满足下列机器可判约束。
 - Provider-specific tests belong under `tests/unit/test_<provider>_provider.py`.
 - Provider tests must not keep scaffold skipped placeholders or Markdown review-loop placeholders.
 - Every non-null `fixtures.doi_samples.<purpose>` from the provider manifest must be named or asserted in `tests/unit/test_<provider>_provider.py`.
+- Every non-null fixture and `extra_fixtures` item must be recorded in `docs/ai-onboarding/reviews/<provider>.yml` with `sample_representative: true` and `markdown_semantic_reviewed: true`.
+- Every non-null `markdown_contract.<purpose>` from the provider manifest must be represented by provider-local Markdown assertions before extraction cleanup is changed.
+- Every `main_path` step must have `route_contract.<step>` and provider-local success / rejection coverage before that route is accepted as implemented.
+- Provider-local route coverage is checked by `tests/unit/test_provider_route_contract.py`; exact markers should use `route-contract: step=<step> condition=<condition>` when a route condition cannot be proven by an existing step/source/DOI assertion.
 - The main success path must include both positive Markdown assertions and negative assertions for site chrome, access noise, or duplicate boilerplate.
 - Markdown cleanup fixes discovered during review must land only in provider-owned implementation files and provider-local tests.
 - Provider-specific functions must not be added to `src/paper_fetch/extraction/html/provider_rules.py`.
 - Provider-specific functions must not be added to `src/paper_fetch/quality/html_signals.py`.
 - Provider-specific functions must not be added to `src/paper_fetch/quality/html_availability.py`.
 - Provider routing, asset profile, probe requirements, fixture purposes, and docs source name must come from the provider manifest.
+- Golden corpus adapters, MCP provider status order, benchmark coverage, and live review support must stay synchronized with `ProviderBundle + manifest`; workers must not add a second provider constant table.
 - Worker must not infer provider behavior from `docs/provider-development.md`, `docs/adding-a-provider.md`, README files, audit files, or chat history.
 
 ## Acceptance
 
 - Provider-local pytest listed in the task brief must pass.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contract.py -q` must pass.
+- `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_route_contract.py -q` must pass.
+- `docs/ai-onboarding/access-reviews/<provider>.yml` and `docs/ai-onboarding/reviews/<provider>.yml` must pass their schemas.
 - `python3 scripts/validate_extraction_rules.py` must pass before merge-ready.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_manifest_bundle_sync.py -q` must pass before merge-ready.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_bundle_completeness.py tests/unit/test_provider_owner_reuse.py -q` must pass before merge-ready.
+- `PYTHONPATH=src python3 -m pytest tests/unit/test_golden_corpus_adapters.py tests/unit/test_provider_benchmark_samples.py tests/devtools/test_golden_criteria_live.py -q` must pass before merge-ready.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_human_docs_drift.py -q` must pass before merge-ready.
 - `manifest_sync_back.py` is the only allowed writer for sync-back fields in `extraction_hints` and `success_criteria`.
 

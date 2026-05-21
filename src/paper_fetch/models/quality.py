@@ -166,10 +166,10 @@ def coerce_semantic_losses(value: SemanticLosses | Mapping[str, Any] | None) -> 
 
 def classify_content(*, sections: Sequence["Section"], abstract_text: str | None) -> ContentKind:
     if filtered_body_sections(sections):
-        return FULLTEXT
+        return "fulltext"
     if normalize_text(abstract_text) or abstract_sections(sections):
-        return ABSTRACT_ONLY
-    return METADATA_ONLY
+        return "abstract_only"
+    return "metadata_only"
 
 
 def classify_article_content(article: "ArticleModel") -> ContentKind:
@@ -387,7 +387,10 @@ def _refresh_article_quality(
     token_estimate_breakdown = article.quality.token_estimate_breakdown
     if recompute_tokens or article.quality.token_estimate <= 0:
         article.quality.token_estimate = token_estimate_breakdown.abstract + token_estimate_breakdown.body
-    content_kind = explicit_content_kind or classify_content(sections=article.sections, abstract_text=article.metadata.abstract)
+    content_kind: ContentKind = explicit_content_kind or classify_content(
+        sections=article.sections,
+        abstract_text=article.metadata.abstract,
+    )
     article.quality.content_kind = content_kind
     article.quality.has_abstract = bool(first_abstract_text(abstract_text=article.metadata.abstract, sections=article.sections))
     article.quality.has_fulltext = content_kind == FULLTEXT
@@ -397,7 +400,7 @@ def _downgrade_article(article: "ArticleModel", *, target_kind: ContentKind) -> 
     if target_kind == METADATA_ONLY:
         article.sections = []
         article.assets = []
-        _refresh_article_quality(article, explicit_content_kind=METADATA_ONLY)
+        _refresh_article_quality(article, explicit_content_kind="metadata_only")
         return
     article.sections = [
         section
@@ -407,9 +410,9 @@ def _downgrade_article(article: "ArticleModel", *, target_kind: ContentKind) -> 
     article.assets = []
     if not first_abstract_text(abstract_text=article.metadata.abstract, sections=article.sections):
         article.sections = []
-        _refresh_article_quality(article, explicit_content_kind=METADATA_ONLY)
+        _refresh_article_quality(article, explicit_content_kind="metadata_only")
         return
-    _refresh_article_quality(article, explicit_content_kind=ABSTRACT_ONLY)
+    _refresh_article_quality(article, explicit_content_kind="abstract_only")
 
 
 def _semantic_loss_warning_messages(losses: SemanticLosses) -> list[str]:
@@ -498,9 +501,21 @@ def apply_quality_assessment(
         availability_diagnostics,
         body_metrics=body_metrics,
     ):
-        target_kind = normalize_text((availability_diagnostics or {}).get("content_kind") if isinstance(availability_diagnostics, Mapping) else "").lower()
-        if target_kind not in {ABSTRACT_ONLY, METADATA_ONLY}:
-            target_kind = ABSTRACT_ONLY if first_abstract_text(abstract_text=article.metadata.abstract, sections=article.sections) else METADATA_ONLY
+        raw_target_kind = normalize_text(
+            (availability_diagnostics or {}).get("content_kind")
+            if isinstance(availability_diagnostics, Mapping)
+            else ""
+        ).lower()
+        if raw_target_kind == METADATA_ONLY:
+            target_kind: ContentKind = "metadata_only"
+        elif raw_target_kind == ABSTRACT_ONLY:
+            target_kind = "abstract_only"
+        else:
+            target_kind = (
+                "abstract_only"
+                if first_abstract_text(abstract_text=article.metadata.abstract, sections=article.sections)
+                else "metadata_only"
+            )
         _downgrade_article(article, target_kind=target_kind)
     else:
         _refresh_article_quality(article, recompute_tokens=recompute_tokens)

@@ -481,23 +481,23 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
                     any(full_size_path in str(asset.get("url") or "") for asset in table_assets)
                 )
                 self.assertIn("**Table 1.**", markdown)
-                self.assertIn(f"![Table 1.]({full_size_path})", markdown)
+                self.assertIn(f"![Table 1]({full_size_path})", markdown)
                 self.assertLess(
                     markdown.index("**Table 1.**"),
-                    markdown.index(f"![Table 1.]({full_size_path})"),
+                    markdown.index(f"![Table 1]({full_size_path})"),
                 )
 
     def test_ams_aies_table_image_is_not_rewritten_to_next_figure(self) -> None:
         """rule: rule-ams-html-body-assets-formulas"""
         markdown, _ = _extract_fixture_markdown("10.1175/aies-d-23-0093.1")
-        table_image = "![Table 1.](/view/journals/aies/3/4/full-AIES-D-23-0093.1-t1.jpg)"
+        table_image = "![Table 1](/view/journals/aies/3/4/full-AIES-D-23-0093.1-t1.jpg)"
         figure2_image = (
             "![Figure 2](https://journals.ametsoc.org/view/journals/aies/3/4/"
             "full-AIES-D-23-0093.1-f2.jpg)"
         )
 
         table_image_blocks = [
-            block for block in markdown.split("\n\n") if block.startswith("![Table 1.](")
+            block for block in markdown.split("\n\n") if block.startswith("![Table 1](")
         ]
         figure2_image_blocks = [
             block for block in markdown.split("\n\n") if "full-AIES-D-23-0093.1-f2.jpg" in block
@@ -845,7 +845,7 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
         rendered = article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
 
         self.assertIn("![Figure 2](/tmp/full-JAMC-D-24-0048.1-f2.jpg)", rendered)
-        self.assertIn("![Table 1.](/tmp/full-JAMC-D-24-0048.1-t1.jpg)", rendered)
+        self.assertIn("![Table 1](/tmp/full-JAMC-D-24-0048.1-t1.jpg)", rendered)
         self.assertEqual(rendered.count("full-JAMC-D-24-0048.1-f2.jpg"), 1)
         self.assertEqual(rendered.count("full-JAMC-D-24-0048.1-t1.jpg"), 1)
         self.assertNotIn("\n## Figures\n", rendered)

@@ -69,7 +69,7 @@ Pursuing these goals in combination unlocks powerful synergies. Enhancing final 
 
 ## Figures
 
-![Inequalities in final energy consumption This area chart reflects the distributi](body_assets/science.adz3492-f1.svg)
+![Figure](body_assets/science.adz3492-f1.svg)
 
 Inequalities in final energy consumption This area chart reflects the distribution of final energy consumption across the global population. Each segment corresponds to a group sharing the same level of per-capita consumption, with segment width proportional to group size. The area of each segment (size of population × per-capita energy consumption) reflects total energy consumed by that group. Segments are sorted by decreasing per-capita consumption. Estimates of consumption from ( 13 ) were augmented by data from ( 14 ) to adjust for sample omission bias, particularly at the highest consumption levels, for five Annex 1 and four non–Annex 1 countries. “Unclassified” reflects similar estimates to account for omission bias among the highest consumption levels in all other countries except the nine mentioned above. This combination of data from ( 13 ) and ( 14 ) yields a dataset representing 6.1 billion people (~78% of the world population in 2019) and 309 EJ (~74% of the global final energy in 2019). See supplementary materials for details.
 

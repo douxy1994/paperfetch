@@ -15,6 +15,7 @@ from ..extraction.html.provider_rules import (
     cleanup_policy_for_profile,
     normalize_provider_heading,
 )
+from ..extraction.html._runtime import clean_markdown, count_words
 from ..models import normalize_text
 from ..provider_catalog import matching_provider_domain, provider_domain_matches
 from ..extraction.html.semantics import (
@@ -38,7 +39,6 @@ from ._html_section_markdown import (
     render_section_markdown,
     section_has_direct_renderable_content,
 )
-from .html_noise import clean_markdown, count_words
 
 from bs4 import BeautifulSoup, Tag
 

@@ -1,0 +1,86 @@
+schema_version: 1
+provider: elsevier
+reviewed_at: '2026-05-20T00:00:00Z'
+reviewed_by: operator
+fixtures:
+- fixture: tests/fixtures/golden_criteria/10.1016_j.rse.2025.114648
+  purpose: structure
+  doi: 10.1016/j.rse.2025.114648
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must not include Download PDF
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1016_j.rse.2025.114648/expected.json
+  baseline_markdown_sha256: 80fb161a5de44b36dc2116b3d68f92b29226853540dcaf361e00b8c6096e49b0
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1016_j.jhydrol.2021.126210
+  purpose: table
+  doi: 10.1016/j.jhydrol.2021.126210
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Table
+  - must not include Google Scholar
+  - must match (?m)^\|.+\|$
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1016_j.jhydrol.2021.126210/expected.json
+  baseline_markdown_sha256: bafb770bbf83bc8c5c686829db2f60cae2fb17892e524c5d037aff8f2950f303
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1016_j.agrformet.2024.109975
+  purpose: formula
+  doi: 10.1016/j.agrformet.2024.109975
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Equation
+  - must not include [Formula unavailable]
+  - must match (?:\$\$|!\[Formula\]|Equation)
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1016_j.agrformet.2024.109975/expected.json
+  baseline_markdown_sha256: 6f6394ad6183510cf21aabbec15f9edb67802ce7521d793c3c4ccac3acc49302
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1016_j.rse.2026.115369
+  purpose: figure
+  doi: 10.1016/j.rse.2026.115369
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Figure
+  - must not include Article Metrics
+  - must match (?:!\[Figure|\*\*Figure)
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1016_j.rse.2026.115369/original.xml
+  baseline_markdown_sha256: 6a025e7158a30b219e76f318a3613fa593fd334851b12c4c6ff7610df250f480
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1016_j.ecolind.2024.112140
+  purpose: supplementary
+  doi: 10.1016/j.ecolind.2024.112140
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Supplementary
+  - must not include Download Citation
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1016_j.ecolind.2024.112140/expected.json
+  baseline_markdown_sha256: d82889cf549f80dfbfd22b278510c0b25c39caf9aa5565e35cad3c58fba89cd9
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1016_j.agrformet.2024.109975
+  purpose: references
+  doi: 10.1016/j.agrformet.2024.109975
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Reference
+  - must not include Google Scholar
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1016_j.agrformet.2024.109975/expected.json
+  baseline_markdown_sha256: 6f6394ad6183510cf21aabbec15f9edb67802ce7521d793c3c4ccac3acc49302
+  review_notes: Semantic review completed against committed fixture evidence.

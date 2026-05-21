@@ -18,6 +18,7 @@ from paper_fetch.extraction.html import assets as html_assets
 from paper_fetch.extraction.html import _metadata as html_metadata
 from paper_fetch.extraction.html import _runtime as html_runtime
 from paper_fetch.extraction.html import shared as html_shared
+from paper_fetch.extraction.html.cleanup_policy import classify_markdown_cleanup_line
 from paper_fetch.extraction.html.formula_rules import (
     GENERIC_FORMULA_CONTAINER_TOKENS,
     GENERIC_DISPLAY_FORMULA_SELECTORS,
@@ -1094,6 +1095,44 @@ Important body text.
         self.assertIn("Sign up for PNAS alerts.", generic_cleaned)
         self.assertNotIn("Sign up for PNAS alerts.", pnas_cleaned)
 
+    def test_clean_markdown_learn_more_preserves_body_sentences(self) -> None:
+        policy = cleanup_policy_for_profile(None)
+        body_sentences = (
+            "We aim to learn more efficient representations of the input distribution.",
+            "Readers who want to learn more about this dataset can consult the appendix.",
+        )
+        for sentence in body_sentences:
+            with self.subTest(sentence=sentence):
+                decision = classify_markdown_cleanup_line(sentence, policy=policy)
+                self.assertEqual("keep", decision.action)
+
+        markdown = f"""
+# Article
+
+## Results
+
+{body_sentences[1]}
+
+Learn more
+"""
+
+        cleaned = html_runtime.clean_markdown(markdown)
+
+        self.assertIn(body_sentences[1], cleaned)
+        self.assertNotIn("Learn more", cleaned.splitlines())
+
+    def test_body_metrics_learn_more_preserves_body_sentence(self) -> None:
+        body_sentence = (
+            "Readers who want to learn more about this dataset can consult the appendix."
+        )
+        metrics = html_runtime.body_metrics(
+            f"# Example\n\n## Results\n\n{body_sentence}\n\nLearn more",
+            {"title": "Example", "abstract": ""},
+        )
+
+        self.assertIn(body_sentence, metrics["text"])
+        self.assertNotIn("Learn more", metrics["text"])
+
     def test_html_cleanup_rules_merge_generic_and_provider_tokens(self) -> None:
         generic_cleanup = html_runtime.html_cleanup_rules()
         pnas_cleanup = html_runtime.html_cleanup_rules("pnas")
@@ -1283,6 +1322,48 @@ Important body text.
                         publisher=profile,
                     )
                 )
+
+    def test_front_matter_byline_is_removed_only_before_body_starts(self) -> None:
+        metrics = html_runtime.body_metrics(
+            "# Example\n\nBy Alice Example\n\n## Results\n\nMeasured body text.",
+            {"title": "Example", "abstract": ""},
+        )
+
+        self.assertNotIn("By Alice Example", metrics["text"])
+        self.assertIn("Measured body text.", metrics["text"])
+
+    def test_body_paragraph_starting_with_by_is_preserved(self) -> None:
+        long_sentence = (
+            "By measuring isotope changes across many basins, the study isolates "
+            "hydrologic responses that vary with land cover and climate forcing."
+        )
+        metrics = html_runtime.body_metrics(
+            f"# Example\n\n## Results\n\n{long_sentence}",
+            {"title": "Example", "abstract": ""},
+        )
+
+        self.assertIn(long_sentence, metrics["text"])
+
+    def test_multi_sentence_by_paragraph_is_preserved(self) -> None:
+        paragraph = (
+            "By Alice Example. This paragraph introduces the article rather than "
+            "serving as a standalone author byline."
+        )
+        metrics = html_runtime.body_metrics(
+            f"# Example\n\n## Results\n\n{paragraph}",
+            {"title": "Example", "abstract": ""},
+        )
+
+        self.assertIn(paragraph, metrics["text"])
+
+    def test_late_byline_shaped_body_text_is_preserved(self) -> None:
+        metrics = html_runtime.body_metrics(
+            "# Example\n\n## Results\n\nFirst body paragraph.\n\nBy Alice Example",
+            {"title": "Example", "abstract": ""},
+        )
+
+        self.assertIn("First body paragraph.", metrics["text"])
+        self.assertIn("By Alice Example", metrics["text"])
 
     def test_real_nature_fixture_keeps_source_data_without_chrome_sections(
         self,

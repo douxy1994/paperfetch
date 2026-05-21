@@ -8,6 +8,7 @@ from typing import Any
 
 from ...common_patterns import FIGURE_LABEL_CORE_PATTERN
 from ...extraction.html.ui_tokens import FIGURE_FULL_SIZE_IMAGE_LABEL, FIGURE_POWERPOINT_SLIDE_LABEL
+from ...markdown.images import render_markdown_image
 from ...utils import normalize_text
 from ._ir import MarkdownFigure
 
@@ -33,7 +34,7 @@ INLINE_FIGURE_ALT_ATTR = "data-paper-fetch-inline-alt"
 
 def render_figure(figure: MarkdownFigure) -> list[str]:
     alt = normalize_text(figure.alt or figure.label or "Figure") or "Figure"
-    lines = [f"![{alt}]({figure.asset_url})", ""]
+    lines = [render_markdown_image("figure", alt, figure.asset_url), ""]
     caption = normalize_text(figure.caption)
     if caption:
         lines.extend([caption, ""])
@@ -181,7 +182,7 @@ def iter_inline_html_figure_images(node: Any) -> list[tuple[str, str]]:
 
 
 def append_inline_html_figure_image(lines: list[str], src: str, alt: str) -> None:
-    lines.extend([f"![{alt or 'Figure'}]({src})", ""])
+    lines.extend([render_markdown_image("figure", alt or "Figure", src), ""])
 
 
 def render_html_figure_markdown(node: Any, lines: list[str], *, render_clean_text: Callable[[Any], str]) -> None:

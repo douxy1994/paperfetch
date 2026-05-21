@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import unittest
+from unittest import mock
 from types import SimpleNamespace
 
 from paper_fetch import service as paper_fetch
@@ -25,6 +26,7 @@ from paper_fetch.models import (
     normalize_markdown_text,
 )
 from paper_fetch.models.render import is_table_like_figure_asset
+from paper_fetch.markdown.images import render_markdown_image, short_image_alt
 from paper_fetch.providers import _springer_html as springer_html
 from tests.golden_criteria import golden_criteria_asset, golden_criteria_scenario_asset
 
@@ -32,6 +34,32 @@ from ._paper_fetch_support import sample_article
 
 
 class ModelsRenderTests(unittest.TestCase):
+    def test_short_image_alt_omits_caption_text_and_unbalanced_brackets(self) -> None:
+        """rule: rule-short-markdown-image-alt-labels"""
+
+        caption = "Figure 4. Effect of the [IO 4 -] concentration on [EMIM][Ac] membranes."
+        listing_caption = "Listing 1. Partial script using [ndaccAlloc] in a simulation."
+
+        self.assertEqual(short_image_alt("figure", caption), "Figure 4")
+        self.assertEqual(render_markdown_image("figure", caption, "fig4.png"), "![Figure 4](fig4.png)")
+        self.assertEqual(short_image_alt("figure", listing_caption), "Listing 1")
+        self.assertEqual(render_markdown_image("figure", listing_caption, "listing1.png"), "![Listing 1](listing1.png)")
+        self.assertEqual(short_image_alt("listing", "Listing A.1 caption"), "Listing A.1")
+        self.assertEqual(short_image_alt("table", "Table 2. [AO10] removal results"), "Table 2")
+        self.assertEqual(short_image_alt("formula", "Equation (1)"), "Formula")
+        self.assertEqual(short_image_alt("unknown", "A caption with [brackets]"), "Image")
+
+        for alt in (
+            short_image_alt("figure", caption),
+            short_image_alt("figure", listing_caption),
+            short_image_alt("listing", "Listing A.1 caption"),
+            short_image_alt("table", "Table 2. [AO10] removal results"),
+            short_image_alt("formula", "Equation (1)"),
+            short_image_alt("unknown", "A caption with [brackets]"),
+        ):
+            self.assertNotIn("[", alt)
+            self.assertNotIn("]", alt)
+
     def test_token_budget_truncates_lower_priority_sections(self) -> None:
         article = sample_article()
         article.metadata.abstract = "Abstract text " * 20
@@ -90,9 +118,9 @@ class ModelsRenderTests(unittest.TestCase):
     def test_to_ai_markdown_body_profile_renders_body_assets_only(self) -> None:
         article = sample_article()
         article.assets = [
-            Asset(kind="figure", heading="Figure 1", caption="Body figure.", path="downloads/figure-1.png", section="body"),
+            Asset(kind="figure", heading="Figure 1. Body figure.", caption="Body figure.", path="downloads/figure-1.png", section="body"),
             Asset(kind="figure", heading="Figure A1", caption="Appendix figure.", path="downloads/figure-a1.png", section="appendix"),
-            Asset(kind="table", heading="Table 1", caption="Body table.", path="downloads/table-1.png", section="body"),
+            Asset(kind="table", heading="Table 1. Body table.", caption="Body table.", path="downloads/table-1.png", section="body"),
             Asset(kind="supplementary", heading="Supplementary Data", caption="Raw measurements.", path="downloads/supplement.csv"),
         ]
 
@@ -501,6 +529,29 @@ class ModelsRenderTests(unittest.TestCase):
         self.assertIn("![Formula](/tmp/downloads/IEq1_HTML.jpg)", article.sections[0].text)
         self.assertNotIn("https://media.example.test/math/IEq1_HTML.jpg", article.sections[0].text)
 
+    def test_article_from_markdown_rewrites_inline_asset_urls_with_short_alt(self) -> None:
+        article = article_from_markdown(
+            source="springer_html",
+            metadata={"title": "Structured Article"},
+            doi="10.1000/asset-rewrite-short-alt",
+            markdown_text=(
+                "## Results\n\n"
+                "![Figure 4. Effect of [IO 4 -] concentration on [EMIM][Ac]]"
+                "(https://media.example.test/Fig4_HTML.png)"
+            ),
+            assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 4. Effect of [IO 4 -] concentration on [EMIM][Ac]",
+                    "url": "https://media.example.test/Fig4_HTML.png",
+                    "path": "/tmp/downloads/Fig4_HTML.png",
+                }
+            ],
+        )
+
+        self.assertIn("![Figure 4](/tmp/downloads/Fig4_HTML.png)", article.sections[0].text)
+        self.assertNotIn("[EMIM][Ac]", article.sections[0].text.split("](", 1)[0])
+
     def test_article_from_markdown_normalizes_after_inline_asset_url_rewrite(self) -> None:
         article = article_from_markdown(
             source="springer_html",
@@ -525,6 +576,47 @@ class ModelsRenderTests(unittest.TestCase):
         )
         self.assertIn("Vocabulary Development\n![Figure 1](/tmp/downloads/Fig1_HTML.png)", rendered_sections)
         self.assertNotIn("Development![Figure", rendered_sections)
+
+    def test_article_from_markdown_applies_provider_render_policy_by_source(self) -> None:
+        seen: dict[str, object] = {}
+
+        def mark_inline_assets(markdown_text, assets, source):
+            seen["markdown_text"] = markdown_text
+            seen["source"] = source
+            assets[0].render_state = "inline"
+
+        bundle = SimpleNamespace(
+            render_policy=SimpleNamespace(mark_inline_assets=mark_inline_assets)
+        )
+        with (
+            mock.patch(
+                "paper_fetch.provider_catalog.provider_render_policy_for_source",
+                return_value=bundle.render_policy,
+            ),
+        ):
+            article = article_from_markdown(
+                source="springer_html",
+                metadata={"title": "Hooked Article"},
+                doi="10.1000/render-hook",
+                markdown_text=(
+                    "## Results\n\n"
+                    "Body text lives here.\n\n"
+                    "![Figure 1](https://media.example.test/Fig1_HTML.png)"
+                ),
+                assets=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "url": "https://media.example.test/Fig1_HTML.png",
+                        "path": "/tmp/downloads/Fig1_HTML.png",
+                        "section": "body",
+                    }
+                ],
+            )
+
+        self.assertEqual(seen["source"], "springer_html")
+        self.assertIn("![Figure 1](/tmp/downloads/Fig1_HTML.png)", seen["markdown_text"])
+        self.assertEqual(article.assets[0].render_state, "inline")
 
     def test_metadata_only_article_populates_token_breakdown(self) -> None:
         article = metadata_only_article(

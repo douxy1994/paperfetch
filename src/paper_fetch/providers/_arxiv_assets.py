@@ -19,6 +19,7 @@ from ..extraction.image_payloads import (
 )
 from ..extraction.html import assets as html_assets
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
+from ..markdown.images import render_markdown_image
 from ..utils import empty_asset_results, normalize_text, sanitize_filename, save_payload
 from ._asset_retry import AssetRetryPolicy, is_retryable_asset_failure
 from ._arxiv_html import Tag, BeautifulSoup
@@ -744,7 +745,7 @@ def inline_arxiv_source_assets_in_markdown(
             inline_url = normalize_text(str(asset.get("url") or ""))
             alt = normalize_text(str(asset.get("heading") or heading)) or "Figure"
             if inline_url:
-                image_lines.append(f"![{alt}]({inline_url})")
+                image_lines.append(render_markdown_image("figure", alt, inline_url))
         if not image_lines:
             continue
         caption_pattern = re.compile(

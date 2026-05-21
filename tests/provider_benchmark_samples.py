@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import paper_fetch.providers  # noqa: F401
+from paper_fetch.provider_catalog import official_provider_names
 from tests.golden_criteria import doi_to_fixture_slug
 
 
@@ -91,6 +93,18 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         fixture_name=golden_criteria_fixture("10.1073/pnas.2406303121", "original.html"),
         fixture_kind="html",
     ),
+    "mdpi": ProviderBenchmarkSample(
+        provider="mdpi",
+        doi="10.3390/membranes15030093",
+        year=2025,
+        title="Simulation of Carbon Dioxide Absorption in a Hollow Fiber Membrane Contactor Under Non-Isothermal Conditions",
+        landing_url="https://www.mdpi.com/2077-0375/15/3/93",
+        expected_source="mdpi_html",
+        accepted_live_source_trail_groups=(("fulltext:mdpi_html_ok",),),
+        required_env=("CROSSREF_MAILTO",),
+        fixture_name=golden_criteria_fixture("10.3390/membranes15030093", "original.html"),
+        fixture_kind="html",
+    ),
     "ieee": ProviderBenchmarkSample(
         provider="ieee",
         doi="10.1109/TIM.2024.3509573",
@@ -161,7 +175,7 @@ def provider_benchmark_sample(provider: str) -> ProviderBenchmarkSample:
 
 
 def iter_provider_benchmark_samples() -> tuple[ProviderBenchmarkSample, ...]:
-    return tuple(PROVIDER_BENCHMARK_SAMPLES.values())
+    return tuple(PROVIDER_BENCHMARK_SAMPLES[provider] for provider in official_provider_names())
 
 
 def source_trail_matches(

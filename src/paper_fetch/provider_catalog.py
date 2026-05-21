@@ -4,7 +4,7 @@ from collections.abc import Iterator, Mapping as MappingABC
 from dataclasses import asdict, dataclass
 import importlib
 from types import MappingProxyType
-from typing import Callable, Literal
+from typing import Any, Callable, Literal
 AssetDefault = Literal["none", "body", "all"]
 MetadataProbeShortCircuit = Callable[[str], dict | None]
 _BROWSER_RUNTIME_PROVIDER_NAMES = frozenset({"wiley", "science", "pnas", "ams"})
@@ -267,6 +267,14 @@ def default_asset_profile_for_provider(provider_name: str | None) -> AssetDefaul
 def provider_for_source(source_name: str | None) -> str | None:
     normalized = str(source_name or "").strip().lower()
     return SOURCE_PROVIDER_MAP.get(normalized)
+def provider_render_policy_for_source(source_name: str | None) -> Any | None:
+    provider_name = provider_for_source(source_name)
+    if not provider_name:
+        return None
+    for bundle in _registered_provider_bundles():
+        if bundle.catalog.name == provider_name:
+            return bundle.render_policy
+    return None
 def known_article_source_names() -> frozenset[str]:
     return frozenset(SOURCE_PROVIDER_MAP)
 def default_asset_profile_for_source(source_name: str | None) -> AssetDefault:

@@ -6,9 +6,17 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+### 新增
+
+- 新增 AI provider onboarding 的 operator access review 和 Markdown review artifact，并用 schema gate 在 discovery 前和 acceptance 阶段校验。
+- 新增本地 `scripts/dev-preflight.sh` 门禁、低强度 contract 层 `mypy` 检查、公式 Node 包版本同步测试，以及 golden corpus provider adapter，方便后续 provider 接入。
+
 ### 变更
 
+- manifest 驱动的 fixture 捕获新增 `--all` 批量模式；provider scaffold replay 在目标文件已存在时返回 merge plan JSON。
+- live review 现在会对照 manifest `route_sources` 校验 provider source，并复用 manifest Markdown contract 做自动 issue 分类。
 - 离线安装器生成和刷新 `offline.env` managed block 时默认启用普通 Chrome browser User-Agent，降低 CloakBrowser 抓取 AGU/Wiley 时停在 Cloudflare challenge 页的概率。
+- MCP status、live review 支持和 golden corpus 代表样本覆盖尽量从 provider 事实源派生，减少新增 provider 时的硬编码同步点。
 
 ## 1.5.6 - 2026-05-18
 

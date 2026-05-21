@@ -60,8 +60,7 @@ def merge_primary_secondary_metadata(
         return "" if preserve_blank else None
 
     for key in scalar_keys:
-        primary_has_value = primary is not None and key in primary and primary.get(key) is not None
-        if primary_has_value:
+        if primary is not None and key in primary and primary.get(key) is not None:
             merged[key] = scalarize(primary.get(key), preserve_blank=True)
         else:
             merged[key] = scalarize((secondary or {}).get(key))
@@ -137,7 +136,7 @@ def _merge_cached_landing_probe_links(
         return metadata
 
     merged = dict(metadata)
-    fulltext_links = list(merged.get("fulltext_links") or [])
+    fulltext_links = list(cast(list[Any], merged.get("fulltext_links") or []))
     seen_urls = {
         normalize_text(item.get("url"))
         for item in fulltext_links
@@ -247,7 +246,7 @@ def fetch_metadata_for_resolved_query(
     selected_probe = select_route_probe(probes)
     if selected_probe is not None:
         provider_name = selected_probe.provider
-        official_metadata = selected_probe.metadata
+        official_metadata = cast(ProviderMetadata | None, selected_probe.metadata)
         source_trail.append(route_marker(f"provider_selected_{provider_name}"))
     elif crossref_metadata:
         provider_name = "crossref"
@@ -259,8 +258,13 @@ def fetch_metadata_for_resolved_query(
         if official_metadata:
             source_trail.append(metadata_marker(provider_name or "provider", "ok"))
         metadata = merge_primary_secondary_metadata(official_metadata, crossref_metadata)
-        metadata["provider"] = (official_metadata or crossref_metadata or {}).get("provider")
-        metadata["official_provider"] = (official_metadata or crossref_metadata or {}).get("official_provider")
+        source_metadata = official_metadata or crossref_metadata or {}
+        provider_value = source_metadata.get("provider")
+        official_provider_value = source_metadata.get("official_provider")
+        if isinstance(provider_value, str):
+            metadata["provider"] = provider_value
+        if isinstance(official_provider_value, bool):
+            metadata["official_provider"] = official_provider_value
         if not metadata.get("landing_page_url"):
             metadata["landing_page_url"] = resolved.landing_url
         metadata = _merge_cached_landing_probe_links(metadata, resolved, context=context)

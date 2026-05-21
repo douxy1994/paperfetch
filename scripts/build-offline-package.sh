@@ -21,6 +21,7 @@ Usage:
 Builds a CPython 3.11-3.14 offline runtime package containing:
   - preinstalled Python runtime under runtime/site-packages
   - command wrappers under bin/
+  - private Python launcher under runtime/paper-fetch-python
   - texmath under formula-tools/
   - cloakbrowser Python package; the CloakBrowser browser binary is not bundled
 Linux builds produce a self-extracting .sh installer. macOS builds produce a .tar.gz bundle.
@@ -192,10 +193,11 @@ PY
 write_cmd_wrappers() {
   local staging="$1"
   local bin="$staging/bin"
+  local runtime="$staging/runtime"
   log "Writing command wrappers"
-  mkdir -p "$bin"
+  mkdir -p "$bin" "$runtime"
 
-  cat > "$bin/python" <<'EOF'
+  cat > "$runtime/paper-fetch-python" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
@@ -221,7 +223,7 @@ INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -z "${PAPER_FETCH_ENV_FILE:-}" ]; then
   export PAPER_FETCH_ENV_FILE="$INSTALL_ROOT/offline.env"
 fi
-exec "$INSTALL_ROOT/bin/python" -X utf8 -m paper_fetch.cli "$@"
+exec "$INSTALL_ROOT/runtime/paper-fetch-python" -X utf8 -m paper_fetch.cli "$@"
 EOF
 
   cat > "$bin/paper-fetch-mcp" <<'EOF'
@@ -232,7 +234,7 @@ INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [ -z "${PAPER_FETCH_ENV_FILE:-}" ]; then
   export PAPER_FETCH_ENV_FILE="$INSTALL_ROOT/offline.env"
 fi
-exec "$INSTALL_ROOT/bin/python" -X utf8 -m paper_fetch.mcp.server "$@"
+exec "$INSTALL_ROOT/runtime/paper-fetch-python" -X utf8 -m paper_fetch.mcp.server "$@"
 EOF
 
   cat > "$bin/paper-fetch-install-formula-tools" <<'EOF'
@@ -240,10 +242,10 @@ EOF
 set -euo pipefail
 
 INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-exec "$INSTALL_ROOT/bin/python" -X utf8 -m paper_fetch.formula.install "$@"
+exec "$INSTALL_ROOT/runtime/paper-fetch-python" -X utf8 -m paper_fetch.formula.install "$@"
 EOF
 
-  chmod +x "$bin/python" "$bin/paper-fetch" "$bin/paper-fetch-mcp" "$bin/paper-fetch-install-formula-tools"
+  chmod +x "$runtime/paper-fetch-python" "$bin/paper-fetch" "$bin/paper-fetch-mcp" "$bin/paper-fetch-install-formula-tools"
 }
 
 write_offline_readme() {
@@ -258,7 +260,8 @@ write_offline_readme() {
   cat > "$staging/README.offline.md" <<'EOF'
 # Paper Fetch Offline Package
 
-This package includes an installed Python runtime under `runtime/site-packages`, command wrappers under `bin/`, and formula tools.
+This package includes an installed Python runtime under `runtime/site-packages`, a private Python launcher at `runtime/paper-fetch-python`, command wrappers under `bin/`, and formula tools.
+The `bin/` directory exposes paper-fetch commands only; it does not include a generic `python` wrapper.
 It does not redistribute the CloakBrowser browser binary.
 EOF
 

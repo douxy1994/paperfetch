@@ -18,6 +18,7 @@ from ...extraction.html.shared import (
     short_text as _short_text,
     soup_root as _soup_root,
 )
+from ...markdown.images import render_markdown_image
 from ...utils import normalize_text
 from .._article_markdown_math import render_external_mathml_expression
 from .profile import _dedupe_top_level_nodes
@@ -59,7 +60,7 @@ def _looks_like_formula_image_node(node: Tag) -> bool:
 
 def _formula_image_markdown(node: Tag) -> str:
     url = _formula_image_url_from_node(node)
-    return f"![Formula]({url})" if url else ""
+    return render_markdown_image("formula", "", url)
 
 
 def _display_formula_nodes(container: Tag) -> list[Tag]:

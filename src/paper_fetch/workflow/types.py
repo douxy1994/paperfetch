@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from ..metadata.types import ProviderMetadata
 from ..models import AssetProfile
 from ..provider_catalog import (
     default_asset_profile_for_provider,
@@ -51,7 +52,7 @@ class PaperFetchFailure(Exception):
 class RouteProbeResult:
     provider: str
     state: str
-    metadata: dict[str, Any] | None = None
+    metadata: ProviderMetadata | None = None
 
 
 @dataclass(frozen=True)

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import difflib
 import json
 import re
 import sys
@@ -48,6 +49,16 @@ class FixtureSample:
 
 
 @dataclass(frozen=True)
+class MarkdownContract:
+    purpose: str
+    doi: str
+    must_include: tuple[str, ...]
+    must_not_include: tuple[str, ...]
+    must_match: tuple[str, ...] = ()
+    count_equals: tuple[tuple[str, int], ...] = ()
+
+
+@dataclass(frozen=True)
 class ScaffoldInput:
     name: str
     doi: str
@@ -70,6 +81,7 @@ class ScaffoldInput:
     waterfall_steps: tuple[str, ...] = ("landing", "html", "xml", "pdf")
     fixture_samples: tuple[FixtureSample, ...] = ()
     skipped_fixture_purposes: tuple[str, ...] = ()
+    markdown_contracts: tuple[MarkdownContract, ...] = ()
     docs_providers_md_capability_row: str | None = None
     docs_changelog_summary: str | None = None
     docs_extraction_rules_summary: str | None = None
@@ -80,6 +92,12 @@ class ManifestSchemaError(ValueError):
     def __init__(self, message: str, *, details: dict[str, Any] | None = None) -> None:
         super().__init__(message)
         self.details = details or {}
+
+
+class ScaffoldMergePlan(Exception):
+    def __init__(self, summary: dict[str, Any]) -> None:
+        super().__init__("scaffold merge plan generated")
+        self.summary = summary
 
 
 def _repo_root() -> Path:
@@ -289,6 +307,7 @@ def _asset_default_from_manifest(asset_profile: dict[str, Any]) -> str:
 
 def _fixture_samples_from_manifest(
     fixtures: dict[str, Any],
+    extra_fixtures: list[Any] | None = None,
 ) -> tuple[tuple[FixtureSample, ...], tuple[str, ...]]:
     samples: list[FixtureSample] = []
     skipped: list[str] = []
@@ -301,7 +320,41 @@ def _fixture_samples_from_manifest(
             samples.append(FixtureSample(purpose=str(purpose), doi=str(doi)))
         else:
             skipped.append(str(purpose))
+    for extra_fixture in extra_fixtures or ():
+        if not isinstance(extra_fixture, dict):
+            continue
+        doi = extra_fixture.get("doi")
+        purpose = extra_fixture.get("purpose")
+        if doi and purpose:
+            samples.append(FixtureSample(purpose=str(purpose), doi=str(doi)))
     return tuple(samples), tuple(skipped)
+
+
+def _markdown_contracts_from_manifest(
+    markdown_contract: dict[str, Any],
+) -> tuple[MarkdownContract, ...]:
+    contracts: list[MarkdownContract] = []
+    for purpose, contract in markdown_contract.items():
+        if not isinstance(contract, dict):
+            continue
+        count_equals = contract.get("count_equals")
+        count_items: tuple[tuple[str, int], ...] = ()
+        if isinstance(count_equals, dict):
+            count_items = tuple(
+                (str(key), int(value))
+                for key, value in sorted(count_equals.items())
+            )
+        contracts.append(
+            MarkdownContract(
+                purpose=str(purpose),
+                doi=str(contract["doi"]),
+                must_include=tuple(str(value) for value in contract["must_include"]),
+                must_not_include=tuple(str(value) for value in contract["must_not_include"]),
+                must_match=tuple(str(value) for value in contract.get("must_match") or ()),
+                count_equals=count_items,
+            )
+        )
+    return tuple(contracts)
 
 
 def _scaffold_input_from_manifest(manifest_path: Path) -> ScaffoldInput:
@@ -323,7 +376,12 @@ def _scaffold_input_from_manifest(manifest_path: Path) -> ScaffoldInput:
     docs = manifest["docs"]
     main_path = tuple(str(step) for step in manifest["main_path"])
     fixture_samples, skipped_purposes = _fixture_samples_from_manifest(
-        manifest["fixtures"]
+        manifest["fixtures"],
+        (
+            manifest.get("extra_fixtures")
+            if isinstance(manifest.get("extra_fixtures"), list)
+            else None
+        ),
     )
     placeholder_doi = next((sample.doi for sample in fixture_samples), None)
     if placeholder_doi is None:
@@ -353,6 +411,9 @@ def _scaffold_input_from_manifest(manifest_path: Path) -> ScaffoldInput:
         waterfall_steps=main_path,
         fixture_samples=fixture_samples,
         skipped_fixture_purposes=skipped_purposes,
+        markdown_contracts=_markdown_contracts_from_manifest(
+            manifest["markdown_contract"]
+        ),
         docs_providers_md_capability_row=str(docs["providers_md_capability_row"]),
         docs_changelog_summary=str(docs["changelog_summary"]),
         docs_extraction_rules_summary=(
@@ -540,8 +601,64 @@ def _client_module_content(name: str, waterfall_steps: tuple[str, ...]) -> str:
     )
 
 
-def _test_module_content(name: str, doi: str, *, html_capable: bool) -> str:
-    slug = _doi_slug(doi)
+def _markdown_contract_test_content(
+    name: str,
+    contracts: tuple[MarkdownContract, ...],
+) -> list[str]:
+    if not contracts:
+        slug = _doi_slug(contracts[0].doi) if contracts else ""
+        return [
+            "",
+            "",
+            "def test_markdown_review_loop_contract_placeholder() -> None:",
+            "    assert False, (",
+            '        "Replace this scaffold placeholder with real fixture Markdown review "',
+            '        "assertions for every non-null manifest purpose, including positive "',
+            '        "Markdown assertions and negative site chrome assertions. "',
+            f'        "First fixture slug: {slug}"',
+            "    )",
+        ]
+
+    lines = [
+        "",
+        "",
+        "def _render_markdown_for_fixture(doi: str) -> str:",
+        "    raise AssertionError(",
+        f'        "Implement {name} fixture replay Markdown rendering before enabling "',
+        '        f"provider acceptance for {doi}."',
+        "    )",
+    ]
+    for contract in contracts:
+        function_suffix = re.sub(r"[^a-z0-9_]+", "_", contract.purpose.lower())
+        lines.extend(
+            [
+                "",
+                "",
+                f"def test_markdown_contract_{function_suffix}_fixture() -> None:",
+                f"    # markdown-review: purpose={contract.purpose} doi={contract.doi}",
+                f'    markdown = _render_markdown_for_fixture("{contract.doi}")',
+            ]
+        )
+        for value in contract.must_include:
+            lines.append(f"    assert {_format_py_string(value)} in markdown")
+        for value in contract.must_not_include:
+            lines.append(f"    assert {_format_py_string(value)} not in markdown")
+        for pattern in contract.must_match:
+            lines.append(f"    assert re.search({_format_py_string(pattern)}, markdown)")
+        for value, expected_count in contract.count_equals:
+            lines.append(
+                f"    assert markdown.count({_format_py_string(value)}) == {expected_count}"
+            )
+    return lines
+
+
+def _test_module_content(
+    name: str,
+    doi: str,
+    *,
+    html_capable: bool,
+    markdown_contracts: tuple[MarkdownContract, ...] = (),
+) -> str:
     html_rule_assertions = [
         "    assert bundle.html_rules is not None",
         f'    assert bundle.html_rules.name == "{name}"',
@@ -554,6 +671,8 @@ def _test_module_content(name: str, doi: str, *, html_capable: bool) -> str:
     return "\n".join(
         [
             "from __future__ import annotations",
+            "",
+            "import re",
             "",
             "from paper_fetch.provider_catalog import PROVIDER_CATALOG",
             "from paper_fetch.providers._registry import provider_bundle",
@@ -569,14 +688,7 @@ def _test_module_content(name: str, doi: str, *, html_capable: bool) -> str:
             "def test_provider_catalog_is_readable() -> None:",
             f'    assert PROVIDER_CATALOG["{name}"].name == "{name}"',
             "",
-            "",
-            "def test_markdown_review_loop_contract_placeholder() -> None:",
-            "    assert False, (",
-            '        "Replace this scaffold placeholder with real fixture Markdown review "',
-            '        "assertions for every non-null manifest purpose, including positive "',
-            '        "Markdown assertions and negative site chrome assertions. "',
-            f'        "First fixture slug: {slug}"',
-            "    )",
+            *_markdown_contract_test_content(name, markdown_contracts),
             "",
         ]
     )
@@ -598,6 +710,98 @@ def _manifest_entry(*, name: str, doi: str, html_capable: bool) -> dict[str, obj
         "fixture_family": "golden",
         "expected_outcome": "pending",
         "assets": {},
+    }
+
+
+def _capture_commands_content(spec: ScaffoldInput) -> str:
+    name = spec.name
+    if spec.manifest_path is not None:
+        lines = [
+            f"# Capture commands for {name}",
+            "",
+            "python3 scripts/capture_fixture.py "
+            f"--from-manifest {spec.manifest_path.as_posix()} "
+            "--all",
+            "",
+            "# Null DOI purposes are skipped automatically by --all.",
+        ]
+        return "\n".join(lines) + "\n"
+
+    lines = [
+        f"# Capture commands for {name}",
+        "",
+    ]
+    for sample in spec.fixture_samples:
+        lines.extend(
+            [
+                f"# purpose: {sample.purpose}",
+                "python3 scripts/capture_fixture.py "
+                f"--doi {sample.doi} "
+                f"--provider {name} "
+                f"--purpose {sample.purpose}",
+            ]
+        )
+    for purpose in spec.skipped_fixture_purposes:
+        lines.append(f"# skipped: {purpose} has null DOI in manifest")
+    return "\n".join(lines) + "\n"
+
+
+def _diff_preview(path: Path, planned_content: str, *, max_lines: int = 80) -> list[str]:
+    existing = path.read_text(encoding="utf-8") if path.exists() else ""
+    diff = list(
+        difflib.unified_diff(
+            existing.splitlines(),
+            planned_content.splitlines(),
+            fromfile=f"existing/{path.name}",
+            tofile=f"planned/{path.name}",
+            lineterm="",
+        )
+    )
+    return diff[:max_lines]
+
+
+def _rel(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _merge_plan_summary(
+    *,
+    root: Path,
+    spec: ScaffoldInput,
+    planned_content: dict[Path, str],
+    existing_paths: list[Path],
+    manifest_sample_conflicts: list[str],
+    reused_fixture_samples: list[str] | None = None,
+) -> dict[str, Any]:
+    actions: list[dict[str, Any]] = []
+    for path in existing_paths:
+        actions.append(
+            {
+                "path": _rel(path, root),
+                "action": "manual_merge",
+                "diff_preview": _diff_preview(path, planned_content.get(path, "")),
+            }
+        )
+    for slug in manifest_sample_conflicts:
+        actions.append(
+            {
+                "path": "tests/fixtures/golden_criteria/manifest.json",
+                "sample_id": slug,
+                "action": "merge_or_reuse_existing_fixture_sample",
+            }
+        )
+    return {
+        "status": "MERGE_PLAN",
+        "provider": spec.name,
+        "reason": "scaffold outputs already exist",
+        "generated_files": [],
+        "existing_files": [_rel(path, root) for path in existing_paths],
+        "manifest_sample_conflicts": manifest_sample_conflicts,
+        "reused_fixture_samples": sorted(set(reused_fixture_samples or ())),
+        "merge_plan": actions,
     }
 
 
@@ -694,7 +898,9 @@ def _sync_docs_placeholders(root: Path, *, spec: ScaffoldInput) -> list[Path]:
     return docs_paths
 
 
-def scaffold(args: argparse.Namespace) -> tuple[list[Path], list[Path], ScaffoldInput]:
+def scaffold(
+    args: argparse.Namespace,
+) -> tuple[list[Path], list[Path], ScaffoldInput, list[str], list[Path]]:
     root = Path(args.output_dir).resolve()
     spec = (
         _scaffold_input_from_manifest(Path(args.from_manifest))
@@ -732,45 +938,111 @@ def scaffold(args: argparse.Namespace) -> tuple[list[Path], list[Path], Scaffold
         else None
     )
 
-    planned = [html_module, test_module, *fixture_keeps]
+    html_module_text = _html_module_content(spec=spec)
+    client_module_text = _client_module_content(name, spec.waterfall_steps)
+    test_module_text = _test_module_content(
+        name,
+        spec.doi,
+        html_capable=spec.html_capable,
+        markdown_contracts=spec.markdown_contracts,
+    )
+    planned_content: dict[Path, str] = {
+        html_module: html_module_text,
+        test_module: test_module_text,
+        **{fixture_keep: "" for fixture_keep in fixture_keeps},
+    }
     if capture_commands_path is not None:
-        planned.append(capture_commands_path)
+        planned_content[capture_commands_path] = _capture_commands_content(spec)
     if spec.fulltext_client:
-        planned.append(client_module)
-    for path in planned:
-        if path.exists():
-            raise FileExistsError(f"refusing to overwrite existing path: {path}")
+        planned_content[client_module] = client_module_text
+    required_provider_paths = [html_module, test_module]
+    provider_output_paths = [html_module, test_module]
+    if spec.fulltext_client:
+        required_provider_paths.append(client_module)
+        provider_output_paths.append(client_module)
+    if capture_commands_path is not None:
+        provider_output_paths.append(capture_commands_path)
 
     manifest = _load_manifest(manifest_path)
     samples = manifest["samples"]
+    manifest_sample_conflicts: list[str] = []
     for sample in spec.fixture_samples:
         slug = _doi_slug(sample.doi)
         if slug in samples:
-            raise FileExistsError(f"manifest sample already exists: {slug}")
+            manifest_sample_conflicts.append(slug)
+    existing_provider_paths = [path for path in provider_output_paths if path.exists()]
+    identical_existing_paths = [
+        path
+        for path in existing_provider_paths
+        if path.read_text(encoding="utf-8") == planned_content.get(path, "")
+    ]
+    divergent_existing_paths = [
+        path for path in existing_provider_paths if path not in identical_existing_paths
+    ]
+    reused_fixture_samples = sorted(
+        {
+            _doi_slug(sample.doi)
+            for sample in spec.fixture_samples
+            if (
+                (
+                    root
+                    / "tests"
+                    / "fixtures"
+                    / "golden_criteria"
+                    / _doi_slug(sample.doi)
+                ).exists()
+                or _doi_slug(sample.doi) in manifest_sample_conflicts
+            )
+        }
+    )
+    if existing_provider_paths and spec.manifest_path is not None:
+        merge_existing = getattr(args, "merge_existing", "plan")
+        provider_required_outputs_exist = all(path.exists() for path in required_provider_paths)
+        if merge_existing != "safe" or (
+            divergent_existing_paths and not provider_required_outputs_exist
+        ):
+            raise ScaffoldMergePlan(
+                _merge_plan_summary(
+                    root=root,
+                    spec=spec,
+                    planned_content=planned_content,
+                    existing_paths=existing_provider_paths,
+                    manifest_sample_conflicts=manifest_sample_conflicts,
+                    reused_fixture_samples=reused_fixture_samples,
+                )
+            )
+    for path in existing_provider_paths:
+        if spec.manifest_path is None:
+            raise FileExistsError(f"refusing to overwrite existing path: {path}")
+    if manifest_sample_conflicts and spec.manifest_path is None:
+        raise FileExistsError(
+            f"manifest sample already exists: {manifest_sample_conflicts[0]}"
+        )
 
     written: list[Path] = []
-    _write_new(
-        html_module,
-        _html_module_content(
-            spec=spec,
-        ),
-    )
-    written.append(html_module)
+    reused_existing_paths = sorted(existing_provider_paths)
+    if not html_module.exists():
+        _write_new(html_module, html_module_text)
+        written.append(html_module)
     if spec.fulltext_client:
-        _write_new(client_module, _client_module_content(name, spec.waterfall_steps))
-        written.append(client_module)
+        if not client_module.exists():
+            _write_new(client_module, client_module_text)
+            written.append(client_module)
     seen_fixture_keeps: set[Path] = set()
     for fixture_keep in fixture_keeps:
         if fixture_keep in seen_fixture_keeps:
             continue
         seen_fixture_keeps.add(fixture_keep)
+        if fixture_keep.exists():
+            continue
         _write_new(fixture_keep)
         written.append(fixture_keep)
-    _write_new(
-        test_module,
-        _test_module_content(name, spec.doi, html_capable=spec.html_capable),
-    )
-    written.append(test_module)
+    if not test_module.exists():
+        _write_new(
+            test_module,
+            test_module_text,
+        )
+        written.append(test_module)
 
     purposes_by_slug: dict[str, list[str]] = {}
     for sample in spec.fixture_samples:
@@ -794,26 +1066,11 @@ def scaffold(args: argparse.Namespace) -> tuple[list[Path], list[Path], Scaffold
     )
     written.append(manifest_path)
     if capture_commands_path is not None:
-        capture_lines = [
-            f"# Capture commands for {name}",
-            "",
-        ]
-        for sample in spec.fixture_samples:
-            capture_lines.extend(
-                [
-                    f"# purpose: {sample.purpose}",
-                    "python3 scripts/capture_fixture.py "
-                    f"--doi {sample.doi} "
-                    f"--provider {name} "
-                    f"--purpose {sample.purpose}",
-                ]
-            )
-        for purpose in spec.skipped_fixture_purposes:
-            capture_lines.append(f"# skipped: {purpose} has null DOI in manifest")
-        _write_new(capture_commands_path, "\n".join(capture_lines) + "\n")
-        written.append(capture_commands_path)
+        if not capture_commands_path.exists():
+            _write_new(capture_commands_path, planned_content[capture_commands_path])
+            written.append(capture_commands_path)
     docs_paths = _sync_docs_placeholders(root, spec=spec) if args.sync_docs else []
-    return written, docs_paths, spec
+    return written, docs_paths, spec, reused_fixture_samples, reused_existing_paths
 
 
 def _json_summary(
@@ -822,6 +1079,8 @@ def _json_summary(
     *,
     docs_paths: list[Path],
     provider: str,
+    reused_fixture_samples: list[str] | None = None,
+    reused_existing_paths: list[Path] | None = None,
 ) -> dict[str, object]:
     def rel(path: Path) -> str:
         try:
@@ -834,7 +1093,19 @@ def _json_summary(
         "provider": provider,
         "generated_files": [rel(path) for path in paths],
         "docs_files": [rel(path) for path in docs_paths],
+        "reused_fixture_samples": sorted(set(reused_fixture_samples or ())),
+        "reused_existing_files": [rel(path) for path in sorted(reused_existing_paths or [])],
     }
+
+
+def _write_scaffold_summary(root: Path, provider: str, summary: dict[str, object]) -> None:
+    path = root / "docs" / "ai-onboarding" / "scaffold" / f"{provider}.json"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    summary["summary_path"] = _rel(path, root)
+    path.write_text(
+        json.dumps(summary, ensure_ascii=False, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _print_checklist(paths: list[Path], root: Path, *, docs_paths: list[Path]) -> None:
@@ -905,6 +1176,15 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_false",
         help="skip docs and changelog scaffold placeholders",
     )
+    parser.add_argument(
+        "--merge-existing",
+        choices=("plan", "safe"),
+        default="plan",
+        help=(
+            "for --from-manifest, return a merge plan for existing outputs by default; "
+            "safe reuses identical files and keeps complete existing provider files"
+        ),
+    )
     parser.set_defaults(sync_docs=True)
     return parser
 
@@ -969,7 +1249,10 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     try:
         _validate_input_mode(parser, args)
-        paths, docs_paths, spec = scaffold(args)
+        paths, docs_paths, spec, reused_fixture_samples, reused_existing_paths = scaffold(args)
+    except ScaffoldMergePlan as exc:
+        print(json.dumps(exc.summary, ensure_ascii=False, sort_keys=True))
+        return 0
     except ToolError as exc:
         emit_error(
             error_payload(
@@ -1024,9 +1307,18 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     root = Path(args.output_dir).resolve()
     if args.from_manifest:
+        summary = _json_summary(
+            paths,
+            root,
+            docs_paths=docs_paths,
+            provider=spec.name,
+            reused_fixture_samples=reused_fixture_samples,
+            reused_existing_paths=reused_existing_paths,
+        )
+        _write_scaffold_summary(root, spec.name, summary)
         print(
             json.dumps(
-                _json_summary(paths, root, docs_paths=docs_paths, provider=spec.name),
+                summary,
                 ensure_ascii=False,
                 sort_keys=True,
             )

@@ -4,12 +4,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, get_args
+from typing import Any, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from ..artifacts import ArtifactMode
-from ..models import AssetProfile, OutputMode, RenderOptions, normalize_text
+from ..models import AssetProfile, MaxTokensMode, OutputMode, RenderOptions, normalize_text
 from ..service import FetchStrategy
 from ..workflow.types import ALLOWED_PREFERRED_PROVIDERS
 from ..utils import dedupe_authors
@@ -222,7 +222,7 @@ class FetchStrategyInput(BaseModel):
         return FetchStrategy(
             allow_metadata_only_fallback=self.allow_metadata_only_fallback,
             preferred_providers=list(self.preferred_providers) if self.preferred_providers is not None else None,
-            asset_profile=self.asset_profile,
+            asset_profile=cast(AssetProfile | None, self.asset_profile),
         )
 
     def resolved_inline_image_budget(self) -> InlineImageBudget:
@@ -338,8 +338,8 @@ class FetchPaperRequest(_RequiredQueryRequest):
     def to_render_options(self) -> RenderOptions:
         return RenderOptions(
             include_refs=self.include_refs,
-            asset_profile=self.strategy.asset_profile,
-            max_tokens=self.max_tokens,
+            asset_profile=cast(AssetProfile | None, self.strategy.asset_profile),
+            max_tokens=cast(MaxTokensMode, self.max_tokens),
         )
 
 

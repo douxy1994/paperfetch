@@ -114,6 +114,22 @@ def _asset_from_entry(
     )
 
 
+def _apply_provider_render_policy(
+    markdown_text: str,
+    assets: list[Asset],
+    *,
+    source: SourceKind,
+) -> None:
+    if not markdown_text or not assets:
+        return
+    from ..provider_catalog import provider_render_policy_for_source
+
+    render_policy = provider_render_policy_for_source(source)
+    if render_policy is None or render_policy.mark_inline_assets is None:
+        return
+    render_policy.mark_inline_assets(markdown_text, assets, source)
+
+
 def build_metadata(metadata: Mapping[str, Any]) -> Metadata:
     return Metadata(
         title=normalize_inline_html_text(metadata.get("title")) or None,
@@ -350,6 +366,7 @@ def article_from_markdown(
         strip_leading_markdown_title_heading(markdown_text, title=article_metadata.title)
     )
     normalized = rewrite_markdown_asset_links(normalized, normalized_assets)
+    _apply_provider_render_policy(normalized, normalized_assets, source=source)
     normalized = normalize_markdown_text(normalized)
     parsed_sections = lines_to_sections(
         normalized.splitlines(),
@@ -371,22 +388,22 @@ def article_from_markdown(
         if _section_matches_explicit_abstract(section, explicit_abstract_sections):
             continue
         original_section = section
-        section = _strip_leading_explicit_abstract_paragraphs(section, explicit_abstract_sections)
-        section = _promote_stripped_methods_summary_section(
+        stripped_section = _strip_leading_explicit_abstract_paragraphs(section, explicit_abstract_sections)
+        promoted_section = _promote_stripped_methods_summary_section(
             original_section,
-            section,
+            stripped_section,
             normalize_methods_summary=normalize_methods_summary,
         )
-        if section is None:
+        if promoted_section is None:
             continue
-        section = _normalize_inline_citations_in_section(section)
+        section = _normalize_inline_citations_in_section(promoted_section)
         if section.kind == "abstract" and not extracted_abstract:
             extracted_abstract = strip_markdown_images(section.text)
         sections.append(section)
     inline_abstract, sections = split_leading_inline_abstract(sections)
     if inline_abstract:
         extracted_abstract = normalize_inline_citation_markdown(inline_abstract)
-    article_metadata.abstract = normalize_inline_citation_markdown(extracted_abstract or article_metadata.abstract) or None
+    article_metadata.abstract = normalize_inline_citation_markdown(extracted_abstract or article_metadata.abstract or "") or None
     references = build_references(metadata.get("references"))
     token_estimate_breakdown = build_token_estimate_breakdown(
         abstract_text=article_metadata.abstract,

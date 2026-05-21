@@ -12,6 +12,7 @@ from ...extraction.html.formula_rules import (
     mathml_element_from_html_node,
 )
 from ...formula.convert import normalize_latex
+from ...markdown.images import render_markdown_image
 from ...providers._article_markdown_math import render_external_mathml_expression, render_mathml_expression
 from ...utils import normalize_text
 from ._ir import MarkdownFormula
@@ -28,7 +29,7 @@ def render_formula(formula: MarkdownFormula) -> list[str]:
     if latex:
         lines.extend(["$$", latex, "$$", ""] if formula.display_mode else [f"${latex}$", ""])
     elif formula.fallback_image_url:
-        lines.extend([f"![Formula]({formula.fallback_image_url})", ""])
+        lines.extend([render_markdown_image("formula", formula.label, formula.fallback_image_url), ""])
     else:
         lines.extend(["[Formula unavailable]", ""])
     return lines
@@ -109,7 +110,7 @@ def render_html_formula_image_node(node: Any) -> str:
     url = first_html_formula_image_url(node)
     if not url:
         return ""
-    return f"![Formula]({url})"
+    return render_markdown_image("formula", "", url)
 
 
 def render_html_mathml_node(node: Any) -> str:
@@ -134,7 +135,7 @@ def render_html_formula_container(node: Any) -> str:
         return f"\n\n$$\n{latex}\n$$\n\n" if is_html_display_formula_node(node) else latex
     image_url = first_html_formula_image_url(node)
     if image_url:
-        rendered = f"![Formula]({image_url})"
+        rendered = render_markdown_image("formula", "", image_url)
         return f"\n\n{rendered}\n\n" if is_html_display_formula_node(node) else rendered
     if is_html_formula_container(node):
         return "[Formula unavailable]"

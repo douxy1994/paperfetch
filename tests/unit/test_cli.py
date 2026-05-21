@@ -684,10 +684,53 @@ class CliTests(unittest.TestCase):
             )
 
             self.assertIn(
-                "![Functional relation $\\mathcal{F}[R(\\Delta)]$](body_assets/figure-1.png)",
+                "![Figure 1](body_assets/figure-1.png)",
                 rewritten,
             )
+            self.assertNotIn("Functional relation", rewritten)
             self.assertNotIn(str(figure_path), rewritten)
+
+    def test_rewrite_markdown_asset_links_prefers_updated_asset_path_over_existing_old_path(self) -> None:
+        article = sample_article()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "downloads"
+            output_dir.mkdir(parents=True)
+            old_asset_dir = output_dir / "10.3390_test_assets"
+            new_asset_dir = output_dir / "body_assets"
+            old_asset_dir.mkdir()
+            new_asset_dir.mkdir()
+            old_path = old_asset_dir / "figure-1.png"
+            new_path = new_asset_dir / "figure-1.png"
+            old_path.write_bytes(b"old figure")
+            new_path.write_bytes(b"new figure")
+            article.sections[0].text = f"![Figure 1]({old_path})"
+            article.assets = [
+                Asset(
+                    kind="figure",
+                    heading="Figure 1",
+                    caption="Inline caption text.",
+                    path=str(new_path),
+                    section="body",
+                )
+            ]
+            envelope = paper_fetch.build_fetch_envelope(
+                article,
+                modes={"article", "markdown"},
+                render=RenderOptions(asset_profile="body"),
+            )
+            envelope.markdown = f"![Figure 1]({old_path})"
+
+            rewritten = paper_fetch_cli.rewrite_markdown_asset_links(
+                envelope.markdown or "",
+                envelope,
+                target_path=output_dir / "article.md",
+                render=RenderOptions(asset_profile="body"),
+            )
+
+            self.assertIn("![Figure 1](body_assets/figure-1.png)", rewritten)
+            self.assertNotIn("10.3390_test_assets", rewritten)
+            self.assertNotIn(str(old_path), rewritten)
 
     def test_rewrite_markdown_asset_links_maps_remote_figure_urls_to_downloaded_local_assets(self) -> None:
         article = sample_article()
@@ -786,8 +829,8 @@ class CliTests(unittest.TestCase):
                 render=RenderOptions(asset_profile="body"),
             )
 
-            self.assertIn("![Fig. 1](10.1109_CICTN64563.2025.10932570_assets/garg1-0932570-large.gif)", rewritten)
-            self.assertIn("![Fig. 2](10.1109_CICTN64563.2025.10932570_assets/garg2-0932570-small.gif)", rewritten)
+            self.assertIn("![Figure 1](10.1109_CICTN64563.2025.10932570_assets/garg1-0932570-large.gif)", rewritten)
+            self.assertIn("![Figure 2](10.1109_CICTN64563.2025.10932570_assets/garg2-0932570-small.gif)", rewritten)
             self.assertNotIn("ieeexplore.ieee.org/mediastore", rewritten)
 
     def test_rewrite_markdown_asset_links_rewrites_repo_relative_local_paths_against_output_file(self) -> None:

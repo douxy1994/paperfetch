@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import copy
-from collections.abc import Iterator, Mapping as MappingABC
+import warnings
+from collections.abc import Iterator, Mapping as MappingABC, Set as SetABC
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
@@ -358,11 +359,38 @@ GENERIC_HTML_RULES = ProviderHtmlRules(name=DEFAULT_NOISE_PROFILE)
 
 
 def provider_html_rules(name: str | None) -> ProviderHtmlRules:
-    return _rule_lookup().get(normalize_provider_key(name), GENERIC_HTML_RULES)
+    normalized = normalize_provider_key(name)
+    if not normalized or normalized == DEFAULT_NOISE_PROFILE:
+        return GENERIC_HTML_RULES
+    rules = _provider_lookup().get(normalized)
+    if rules is None:
+        warnings.warn(
+            f"Unknown provider HTML rules provider {name!r}; falling back to generic.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return GENERIC_HTML_RULES
+    return rules
+
+
+def require_provider_html_rules(name: str | None) -> ProviderHtmlRules:
+    normalized = normalize_provider_key(name)
+    if normalized == DEFAULT_NOISE_PROFILE:
+        return GENERIC_HTML_RULES
+    try:
+        return _provider_lookup()[normalized]
+    except KeyError as exc:
+        raise KeyError(f"Unknown provider HTML rules provider: {name!r}") from exc
 
 
 def cleanup_policy_for_profile(noise_profile: str | None) -> CleanupPolicy:
-    return _cleanup_policy_from_rules(provider_html_rules(noise_profile))
+    normalized = normalize_provider_key(noise_profile)
+    if not normalized or normalized == DEFAULT_NOISE_PROFILE:
+        return _cleanup_policy_from_rules(GENERIC_HTML_RULES)
+    rules = _noise_profile_lookup().get(normalized)
+    if rules is None:
+        rules = _provider_lookup().get(normalized, GENERIC_HTML_RULES)
+    return _cleanup_policy_from_rules(rules)
 
 
 def merged_site_rule(rules: ProviderHtmlRules) -> dict[str, Any]:
@@ -438,32 +466,126 @@ class _ProviderHtmlRulesMapping(MappingABC[str, ProviderHtmlRules]):
 PROVIDER_HTML_RULES: Mapping[str, ProviderHtmlRules] = _ProviderHtmlRulesMapping()
 
 
-def _build_rule_lookup() -> dict[str, ProviderHtmlRules]:
-    lookup: dict[str, ProviderHtmlRules] = {DEFAULT_NOISE_PROFILE: GENERIC_HTML_RULES}
+def _add_lookup_key(
+    lookup: dict[str, ProviderHtmlRules],
+    key: str | None,
+    rules: ProviderHtmlRules,
+    *,
+    lookup_name: str,
+) -> None:
+    normalized = normalize_provider_key(key)
+    if not normalized:
+        return
+    existing = lookup.get(normalized)
+    if existing is None:
+        lookup[normalized] = rules
+        return
+    if existing is rules:
+        return
+    raise ValueError(
+        f"provider HTML rules {lookup_name} key conflict for `{normalized}`: "
+        f"`{existing.name}` and `{rules.name}`"
+    )
+
+
+def _build_provider_lookup() -> dict[str, ProviderHtmlRules]:
+    lookup: dict[str, ProviderHtmlRules] = {}
+    _add_lookup_key(
+        lookup,
+        DEFAULT_NOISE_PROFILE,
+        GENERIC_HTML_RULES,
+        lookup_name="provider lookup",
+    )
     for rules in PROVIDER_HTML_RULES.values():
-        for key in (rules.name, rules.noise_profile, *rules.aliases):
-            normalized = normalize_provider_key(key)
-            if normalized:
-                lookup[normalized] = rules
+        for key in (rules.name, *rules.aliases):
+            _add_lookup_key(
+                lookup,
+                key,
+                rules,
+                lookup_name="provider lookup",
+            )
     return lookup
 
 
-_RULE_LOOKUP_CACHE: Mapping[str, ProviderHtmlRules] | None = None
+def _build_noise_profile_lookup() -> dict[str, ProviderHtmlRules]:
+    lookup: dict[str, ProviderHtmlRules] = {}
+    _add_lookup_key(
+        lookup,
+        DEFAULT_NOISE_PROFILE,
+        GENERIC_HTML_RULES,
+        lookup_name="noise profile lookup",
+    )
+    for rules in PROVIDER_HTML_RULES.values():
+        if normalize_provider_key(rules.noise_profile) == DEFAULT_NOISE_PROFILE:
+            continue
+        _add_lookup_key(
+            lookup,
+            rules.noise_profile,
+            rules,
+            lookup_name="noise profile lookup",
+        )
+    return lookup
 
 
-def _rule_lookup() -> Mapping[str, ProviderHtmlRules]:
-    global _RULE_LOOKUP_CACHE
-    lookup = _RULE_LOOKUP_CACHE
+_PROVIDER_LOOKUP_CACHE: Mapping[str, ProviderHtmlRules] | None = None
+_NOISE_PROFILE_LOOKUP_CACHE: Mapping[str, ProviderHtmlRules] | None = None
+
+
+def _provider_lookup() -> Mapping[str, ProviderHtmlRules]:
+    global _PROVIDER_LOOKUP_CACHE
+    lookup = _PROVIDER_LOOKUP_CACHE
     if lookup is None:
-        lookup = MappingProxyType(_build_rule_lookup())
+        lookup = MappingProxyType(_build_provider_lookup())
         if _provider_entry_imports_complete():
-            _RULE_LOOKUP_CACHE = lookup
+            _PROVIDER_LOOKUP_CACHE = lookup
     return lookup
 
 
-REGISTERED_NOISE_PROFILES = frozenset(
-    {DEFAULT_NOISE_PROFILE, "ieee", "pnas", "springer_nature"}
-)
+def _noise_profile_lookup() -> Mapping[str, ProviderHtmlRules]:
+    global _NOISE_PROFILE_LOOKUP_CACHE
+    lookup = _NOISE_PROFILE_LOOKUP_CACHE
+    if lookup is None:
+        lookup = MappingProxyType(_build_noise_profile_lookup())
+        if _provider_entry_imports_complete():
+            _NOISE_PROFILE_LOOKUP_CACHE = lookup
+    return lookup
+
+
+def _registered_noise_profiles() -> frozenset[str]:
+    return frozenset(
+        {
+            DEFAULT_NOISE_PROFILE,
+            *(
+                normalize_provider_key(rules.noise_profile)
+                for rules in PROVIDER_HTML_RULES.values()
+                if normalize_provider_key(rules.noise_profile)
+            ),
+        }
+    )
+
+
+class _RegisteredNoiseProfiles(SetABC[str]):
+    def __contains__(self, value: object) -> bool:
+        return normalize_provider_key(str(value)) in _registered_noise_profiles()
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(_registered_noise_profiles())
+
+    def __len__(self) -> int:
+        return len(_registered_noise_profiles())
+
+    def __repr__(self) -> str:
+        return repr(_registered_noise_profiles())
+
+
+REGISTERED_NOISE_PROFILES: SetABC[str] = _RegisteredNoiseProfiles()
+
+
+def _reset_provider_html_rules_cache() -> None:
+    global _PROVIDER_HTML_RULES_CACHE, _PROVIDER_LOOKUP_CACHE, _NOISE_PROFILE_LOOKUP_CACHE
+    _PROVIDER_HTML_RULES_CACHE = None
+    _PROVIDER_LOOKUP_CACHE = None
+    _NOISE_PROFILE_LOOKUP_CACHE = None
 
 
 def _availability_container_rules_from_rules(
@@ -600,4 +722,5 @@ __all__ = [
     "front_matter_rules_for_profile", "markdown_promo_tokens_for_profile", "merged_site_rule",
     "normalize_noise_profile", "normalize_provider_heading", "provider_display_formula_selectors",
     "provider_formula_container_tokens", "provider_html_rules", "provider_supplementary_text_tokens",
+    "require_provider_html_rules",
 ]

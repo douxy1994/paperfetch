@@ -1,0 +1,98 @@
+schema_version: 1
+provider: science
+reviewed_at: '2026-05-20T00:00:00Z'
+reviewed_by: operator
+fixtures:
+- fixture: tests/fixtures/golden_criteria/10.1126_science.abp8622
+  purpose: structure
+  doi: 10.1126/science.abp8622
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must not include Download PDF
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.abp8622/expected.json
+  baseline_markdown_sha256: 4c7c695a6ccf03ff7087f2ff8dd767dfc5869932d27b254e9ce6b8034df4f33d
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1126_science.adz3492
+  purpose: formula
+  doi: 10.1126/science.adz3492
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Equation
+  - must not include [Formula unavailable]
+  - must match (?:\$\$|!\[Formula\]|Equation)
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.adz3492/extracted.md
+  baseline_markdown_sha256: 2a40ab9ec8e3368514619d13b2527d3b6d0d6da0adf80bc6249746a35ceebcd6
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1126_sciadv.adl6155
+  purpose: figure
+  doi: 10.1126/sciadv.adl6155
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Figure
+  - must not include Article Metrics
+  - must match (?:!\[Figure|\*\*Figure)
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_sciadv.adl6155/original.html
+  baseline_markdown_sha256: b231828115e0f5d9203e0c5046eaf601075f4d7f19b0e79b6df839bf53d8fa0b
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1126_science.adp0212
+  purpose: references
+  doi: 10.1126/science.adp0212
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Reference
+  - must not include Google Scholar
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.adp0212/extracted.md
+  baseline_markdown_sha256: b100e5652f0e99600c19874788e6b9a89e0c3f4e58fff6e4ecb2dc8bd80e9d3d
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1126_science.aeg3511
+  purpose: pdf_fallback
+  doi: 10.1126/science.aeg3511
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include #'
+  - must not include Access Denied
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.aeg3511/extracted.md
+  baseline_markdown_sha256: 559dd2105da78ece3626563ebb3846c47cfee2aef860f68ed902353b3090c7fb
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1126_science.aeg3511
+  purpose: abstract_only
+  doi: 10.1126/science.aeg3511
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must not include Download PDF
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.aeg3511/extracted.md
+  baseline_markdown_sha256: 559dd2105da78ece3626563ebb3846c47cfee2aef860f68ed902353b3090c7fb
+  review_notes: Semantic review completed against committed fixture evidence.
+- fixture: tests/fixtures/golden_criteria/10.1126_science.aeg3511
+  purpose: access_gate
+  doi: 10.1126/science.aeg3511
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must not include Subscribe
+  fixes: []
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.aeg3511/extracted.md
+  baseline_markdown_sha256: 559dd2105da78ece3626563ebb3846c47cfee2aef860f68ed902353b3090c7fb
+  review_notes: Semantic review completed against committed fixture evidence.

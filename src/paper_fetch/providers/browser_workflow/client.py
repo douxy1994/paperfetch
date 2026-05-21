@@ -390,6 +390,26 @@ class BrowserWorkflowClient(ProviderClient):
         asset_profile: AssetProfile = "all",
         context: RuntimeContext | None = None,
     ) -> dict[str, list[dict[str, Any]]]:
+        return self._download_browser_backed_related_assets(
+            doi,
+            metadata,
+            raw_payload,
+            output_dir,
+            asset_profile=asset_profile,
+            context=context,
+        )
+
+    def _download_browser_backed_related_assets(
+        self,
+        doi: str,
+        metadata: Mapping[str, Any],
+        raw_payload: RawFulltextPayload,
+        output_dir,
+        *,
+        asset_profile: AssetProfile = "all",
+        context: RuntimeContext | None = None,
+        assets: list[Mapping[str, Any]] | None = None,
+    ) -> dict[str, list[dict[str, Any]]]:
         context = self._runtime_context(context, output_dir=output_dir)
         if output_dir is None or asset_profile == "none":
             return empty_asset_results()
@@ -403,17 +423,27 @@ class BrowserWorkflowClient(ProviderClient):
         normalized_doi = normalize_doi(str(metadata.get("doi") or doi or ""))
         if not normalized_doi:
             return empty_asset_results()
+        plan_profile: Mapping[str, Any]
+        if assets is None:
+            plan_profile = {
+                "client": self,
+                "context": context,
+                "asset_profile": asset_profile,
+            }
+            html_text = decode_html(raw_payload.body)
+        else:
+            plan_profile = {
+                "assets": [dict(asset) for asset in assets],
+                "asset_profile": asset_profile,
+            }
+            html_text = ""
         try:
             plan = plan_browser_asset_download(
                 article_id=normalized_doi,
                 output_dir=Path(output_dir),
-                html_text=decode_html(raw_payload.body),
+                html_text=html_text,
                 source_url=raw_payload.source_url,
-                profile={
-                    "client": self,
-                    "context": context,
-                    "asset_profile": asset_profile,
-                },
+                profile=plan_profile,
                 deps=self.deps,
             )
         except HtmlExtractionFailure:

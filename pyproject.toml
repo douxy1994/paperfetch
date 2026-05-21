@@ -37,6 +37,7 @@ dev = [
   "PyYAML>=6,<7",
   "pytest-xdist>=3.6,<4",
   "ruff>=0.8,<1",
+  "mypy>=1.14,<2",
 ]
 
 [project.scripts]
@@ -55,10 +56,25 @@ exclude = ["paper_fetch_devtools*"]
 [tool.setuptools.package-data]
 "paper_fetch.resources.arxiv" = ["*.json"]
 "paper_fetch.resources.formula" = ["*.json", "*.mjs"]
+"paper_fetch.models" = ["*.pyi"]
 
 [tool.ruff]
 target-version = "py311"
 src = ["src", "tests"]
+
+[tool.mypy]
+python_version = "3.11"
+mypy_path = "src"
+files = [
+  "src/paper_fetch/models",
+  "src/paper_fetch/workflow",
+  "src/paper_fetch/providers/base.py",
+  "src/paper_fetch/providers/protocols.py",
+  "src/paper_fetch/mcp/schemas.py",
+]
+check_untyped_defs = true
+ignore_missing_imports = true
+warn_unused_ignores = true
 
 [tool.pytest.ini_options]
 addopts = "-n auto"

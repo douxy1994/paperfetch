@@ -33,9 +33,9 @@ from ..extraction.markdown_render.formulas import (
     render_html_mathml_node as _render_mathml_node,
 )
 from ..extraction.html.semantics import has_explicit_reference_marker, normalize_section_title
+from ..extraction.html._runtime import HTML_BLOCK_TAGS, HTML_DROP_TAGS, should_drop_html_element
 from ..models import normalize_text
 from ..markdown.citations import is_citation_link, numeric_citation_payload
-from .html_noise import HTML_BLOCK_TAGS, HTML_DROP_TAGS, should_drop_html_element
 
 from bs4 import NavigableString, Tag
 

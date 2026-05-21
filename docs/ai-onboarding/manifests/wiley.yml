@@ -29,6 +29,92 @@ main_path:
   - pdf_fallback
   - abstract_only
 success_criteria: {}
+route_contract:
+  article_html:
+    success_requires:
+    - provider article container is present
+    - title or DOI metadata is present
+    - body text or body sections are present
+    reject_if_any:
+    - challenge page
+    - access gate only
+    - site navigation only
+    - empty article shell
+    min_body_chars: 1200
+    min_body_sections: 1
+  pdf_fallback:
+    success_requires:
+    - PDF response has application/pdf content type or PDF magic bytes
+    - PDF text extraction produces body text
+    reject_if_any:
+    - HTML wrapper
+    - challenge page
+    - access gate page
+    - error page
+    require_pdf_magic: true
+    reject_html_wrapper: true
+  abstract_only:
+    success_requires:
+    - provider-managed page or payload exposes abstract text
+    - source trail marks abstract-only degradation
+    reject_if_any:
+    - empty shell
+    - fulltext body misclassified as abstract-only
+markdown_contract:
+  structure:
+    doi: 10.1111/gcb.16414
+    must_include:
+    - '## Abstract'
+    must_not_include:
+    - Download PDF
+  table:
+    doi: 10.1111/cas.16395
+    must_include:
+    - Table
+    must_not_include:
+    - Google Scholar
+    must_match:
+    - (?m)^\|.+\|$
+  formula:
+    doi: 10.1111/gcb.15322
+    must_include:
+    - Equation
+    must_not_include:
+    - '[Formula unavailable]'
+    must_match:
+    - (?:\$\$|!\[Formula\]|Equation)
+  figure:
+    doi: 10.1111/gcb.16414
+    must_include:
+    - Figure
+    must_not_include:
+    - Article Metrics
+    must_match:
+    - (?:!\[Figure|\*\*Figure)
+  supplementary:
+    doi: 10.1111/gcb.16414
+    must_include:
+    - Supplementary
+    must_not_include:
+    - Download Citation
+  references:
+    doi: 10.1111/gcb.16998
+    must_include:
+    - Reference
+    must_not_include:
+    - Google Scholar
+  pdf_fallback:
+    doi: 10.1111/cas.16395
+    must_include:
+    - '#'
+    must_not_include:
+    - Access Denied
+  abstract_only:
+    doi: 10.1111/gcb.16998
+    must_include:
+    - '## Abstract'
+    must_not_include:
+    - Download PDF
 asset_profile:
   none: []
   body:

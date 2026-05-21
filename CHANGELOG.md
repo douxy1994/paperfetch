@@ -6,9 +6,18 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+### Added
+
+- Added operator access-review and provider Markdown-review artifacts for AI provider onboarding, with schema-backed gates before discovery and acceptance.
+- Added the MDPI CloakBrowser HTML provider with browser PDF fallback, recorded replay fixtures, Markdown cleanup coverage, and `mdpi_html` / `mdpi_pdf` sources.
+- Added a local `scripts/dev-preflight.sh` gate plus low-strength contract-layer `mypy` checking, formula Node package sync tests, and golden corpus provider adapters for easier provider onboarding.
+
 ### Changed
 
+- Changed manifest-driven fixture capture to support `--all` batch capture and changed provider scaffold replay to return merge-plan JSON when generated files already exist.
+- Tightened live review to compare provider sources against manifest `route_sources` and reuse manifest Markdown contracts for automatic issue classification.
 - Enabled the normal Chrome browser User-Agent in offline installer-managed `offline.env` blocks by default so CloakBrowser-backed AGU/Wiley fetches are less likely to stop at Cloudflare challenge pages.
+- Derived MCP status, live review support, and golden corpus representative coverage from provider facts instead of hard-coded provider lists where possible.
 
 ## 1.5.6 - 2026-05-18
 

@@ -27,6 +27,7 @@ from paper_fetch.http import (  # noqa: E402
     classify_network_error,
 )  # noqa: E402
 from paper_fetch.publisher_identity import infer_provider_from_doi, normalize_doi  # noqa: E402
+from paper_fetch.utils import normalize_text  # noqa: E402
 
 
 GOLDEN_PURPOSES = {
@@ -48,6 +49,7 @@ PURPOSE_ALIASES = {
 }
 CLI_PURPOSES = sorted(set(PURPOSES) | set(PURPOSE_ALIASES))
 RETRY_VIA_ERROR_CODES = {"HTTP_FORBIDDEN", "HTTP_RATE_LIMITED", "CHALLENGE_DETECTED"}
+ACCESS_REVIEW_DIR = REPO_ROOT / "docs" / "ai-onboarding" / "access-reviews"
 
 
 class CaptureArgumentParser(argparse.ArgumentParser):
@@ -75,12 +77,14 @@ class ManifestContext:
         provider: str | None,
         routing: dict[str, Any],
         sample: dict[str, Any] | None,
+        sample_path: str | None = None,
     ) -> None:
         self.path = path
         self.data = data
         self.provider = provider
         self.routing = routing
         self.sample = sample
+        self.sample_path = sample_path
 
 
 class CaptureFixtureError(Exception):
@@ -219,7 +223,135 @@ def _manifest_context(path_value: str | None, purpose: str | None) -> ManifestCo
         provider=str(provider) if provider else None,
         routing=dict(routing),
         sample=sample if isinstance(sample, dict) else None,
+        sample_path=f"fixtures.doi_samples.{purpose}" if purpose else None,
     )
+
+
+def _manifest_context_for_sample(
+    *,
+    path: Path,
+    data: dict[str, Any],
+    sample: dict[str, Any],
+    sample_path: str,
+) -> ManifestContext:
+    routing = data.get("routing") if isinstance(data.get("routing"), dict) else {}
+    provider = data.get("name")
+    return ManifestContext(
+        path=path,
+        data=data,
+        provider=str(provider) if provider else None,
+        routing=dict(routing),
+        sample=sample,
+        sample_path=sample_path,
+    )
+
+
+def _load_access_review(provider: str | None) -> dict[str, Any] | None:
+    if not provider:
+        return None
+    path = ACCESS_REVIEW_DIR / f"{provider}.yml"
+    if not path.exists():
+        return None
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    return data if isinstance(data, dict) else None
+
+
+def _allowed_runtimes(manifest: ManifestContext | None) -> set[str]:
+    review = _load_access_review(manifest.provider if manifest else None)
+    runtimes = review.get("allowed_runtimes") if isinstance(review, dict) else None
+    if isinstance(runtimes, list):
+        return {str(value) for value in runtimes}
+    return set()
+
+
+def _probe_requires_browser(manifest: ManifestContext | None) -> bool:
+    if manifest is None:
+        return False
+    probe = manifest.data.get("probe") if isinstance(manifest.data.get("probe"), dict) else {}
+    return bool(probe.get("requires_browser_runtime") or probe.get("requires_playwright"))
+
+
+def _select_capture_route(
+    args: argparse.Namespace,
+    *,
+    manifest: ManifestContext | None,
+) -> str:
+    if not getattr(args, "auto_via", False):
+        return str(args.via)
+    allowed = _allowed_runtimes(manifest)
+    requires_browser = _probe_requires_browser(manifest)
+    if requires_browser:
+        if "browser" in allowed:
+            return "browser"
+        raise CaptureFixtureError(
+            "BROWSER_RUNTIME_REQUIRED",
+            "manifest probe requires browser capture, but access review does not allow browser runtime",
+            retryable=False,
+            route="browser",
+        )
+    if allowed and "http" not in allowed and "browser" in allowed:
+        return "browser"
+    return "http"
+
+
+def _auto_retry_via(
+    args: argparse.Namespace,
+    *,
+    manifest: ManifestContext | None,
+    selected_route: str,
+) -> str | None:
+    retry_via = getattr(args, "retry_via", None)
+    if retry_via:
+        return str(retry_via)
+    if not getattr(args, "auto_via", False) or selected_route != "http":
+        return None
+    if "browser" in _allowed_runtimes(manifest):
+        return "browser"
+    return None
+
+
+def _iter_manifest_capture_contexts(path_value: str) -> list[ManifestContext]:
+    path = Path(path_value)
+    data = _load_provider_manifest(path)
+    fixtures = data.get("fixtures") if isinstance(data.get("fixtures"), dict) else {}
+    doi_samples = fixtures.get("doi_samples") if isinstance(fixtures.get("doi_samples"), dict) else {}
+    contexts: list[ManifestContext] = []
+    for purpose in PURPOSES:
+        sample = doi_samples.get(purpose)
+        if sample is None:
+            continue
+        if not isinstance(sample, dict):
+            raise CaptureFixtureError(
+                "UNSUITABLE_DOI_SAMPLE",
+                f"fixtures.doi_samples.{purpose} must be an object",
+                retryable=False,
+            )
+        contexts.append(
+            _manifest_context_for_sample(
+                path=path,
+                data=data,
+                sample=sample,
+                sample_path=f"fixtures.doi_samples.{purpose}",
+            )
+        )
+    extra_fixtures = data.get("extra_fixtures")
+    if isinstance(extra_fixtures, list):
+        for index, sample in enumerate(extra_fixtures):
+            if not isinstance(sample, dict):
+                raise CaptureFixtureError(
+                    "UNSUITABLE_DOI_SAMPLE",
+                    f"extra_fixtures[{index}] must be an object",
+                    retryable=False,
+                )
+            contexts.append(
+                _manifest_context_for_sample(
+                    path=path,
+                    data=data,
+                    sample=sample,
+                    sample_path=f"extra_fixtures[{index}]",
+                )
+            )
+    return contexts
 
 
 def _write_manifest(path: Path, manifest: dict[str, Any]) -> None:
@@ -294,8 +426,7 @@ def _manifest_entry(
     }
 
 
-def _capture_http(doi: str) -> dict[str, Any]:
-    url = f"https://doi.org/{doi}"
+def _capture_http(url: str) -> dict[str, Any]:
     return HttpTransport().request(
         "GET",
         url,
@@ -371,7 +502,8 @@ def _validate_capture_response(
             status_code=status_code,
             route=route,
         )
-    if _is_html_response(content_type, body) and _contains_challenge(body_text):
+    visible_body_text = summarize_html(body_text, limit=1000) if body_text else ""
+    if _is_html_response(content_type, body) and _contains_challenge(visible_body_text):
         raise CaptureFixtureError(
             "CHALLENGE_DETECTED",
             "publisher returned a challenge or CAPTCHA page while capturing fixture",
@@ -452,10 +584,123 @@ def _map_request_failure(exc: RequestFailure, *, route: str) -> CaptureFixtureEr
     )
 
 
-def _capture_route(doi: str, *, route: str) -> dict[str, Any]:
+def _browser_capture_error(
+    exc: Exception,
+    *,
+    route: str,
+) -> CaptureFixtureError:
+    reason = (
+        getattr(exc, "reason", None)
+        or getattr(exc, "kind", None)
+        or getattr(exc, "code", None)
+        or ""
+    )
+    message = getattr(exc, "message", None) or str(exc)
+    normalized_reason = str(reason or "").strip()
+    if normalized_reason in {
+        "browser_runtime_unavailable",
+        "cloakbrowser_launch_failed",
+        "missing_browser_runtime",
+        "not_configured",
+    }:
+        return CaptureFixtureError(
+            "BROWSER_RUNTIME_REQUIRED",
+            message or "browser fixture capture requires a configured browser runtime",
+            retryable=False,
+            route=route,
+        )
+    if normalized_reason in {"cloudflare_challenge", "publisher_access_challenge"}:
+        return CaptureFixtureError(
+            "CHALLENGE_DETECTED",
+            message or "publisher returned a challenge page while capturing fixture",
+            retryable=True,
+            route=route,
+        )
+    if normalized_reason in {
+        "publisher_not_found",
+        "article_container_not_found",
+        "empty_html_attempts",
+        "empty_html_response",
+    }:
+        return CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            message or "browser capture could not resolve a usable publisher article",
+            retryable=False,
+            route=route,
+        )
+    return CaptureFixtureError(
+        "NETWORK_TRANSIENT",
+        message or "browser fixture capture failed",
+        retryable=True,
+        route=route,
+    )
+
+
+def _capture_browser(
+    doi: str,
+    *,
+    url: str,
+    provider: str | None,
+    purpose: str,
+    root: Path,
+    route: str,
+) -> dict[str, Any]:
+    if purpose == "pdf_fallback":
+        from paper_fetch.providers._pdf_fallback import PdfFallbackFailure, fetch_pdf_with_browser
+
+        artifact_dir = root / ".paper-fetch-runs" / "fixture-capture" / doi_slug(doi) / purpose
+        seed_url = url.removesuffix("/pdf") if url.rstrip("/").endswith("/pdf") else ""
+        try:
+            result = fetch_pdf_with_browser(
+                [url],
+                artifact_dir=artifact_dir,
+                seed_urls=[seed_url] if seed_url else None,
+            )
+        except PdfFallbackFailure as exc:
+            raise _browser_capture_error(exc, route=route) from exc
+        return {
+            "headers": {"content-type": "application/pdf"},
+            "body": result.pdf_bytes,
+            "url": result.final_url,
+            "status_code": 200,
+        }
+
+    from paper_fetch.config import build_browser_user_agent
+    from paper_fetch.extraction.html.signals import HtmlExtractionFailure
+    from paper_fetch.providers.browser_workflow.html_extraction import fetch_html_with_fast_browser
+
+    try:
+        result = fetch_html_with_fast_browser(
+            [url],
+            publisher=provider or "unknown",
+            user_agent=build_browser_user_agent({}),
+        )
+    except HtmlExtractionFailure as exc:
+        raise _browser_capture_error(exc, route=route) from exc
+    except Exception as exc:
+        raise _browser_capture_error(exc, route=route) from exc
+    headers = {str(key).lower(): str(value) for key, value in (result.response_headers or {}).items()}
+    headers.setdefault("content-type", "text/html")
+    return {
+        "headers": headers,
+        "body": result.html.encode("utf-8"),
+        "url": result.final_url or url,
+        "status_code": result.response_status or 200,
+    }
+
+
+def _capture_route(
+    doi: str,
+    *,
+    route: str,
+    source_url: str,
+    provider: str | None,
+    purpose: str,
+    root: Path,
+) -> dict[str, Any]:
     if route == "http":
         try:
-            return _capture_http(doi)
+            return _capture_http(source_url)
         except RequestFailure as exc:
             raise _map_request_failure(exc, route=route) from exc
         except Exception as exc:
@@ -471,10 +716,12 @@ def _capture_route(doi: str, *, route: str) -> dict[str, Any]:
                 route=route,
             ) from exc
     if route in {"playwright", "browser"}:
-        raise CaptureFixtureError(
-            "BROWSER_RUNTIME_REQUIRED",
-            "browser fixture capture requires an interactive browser runtime and is not implemented in this script yet",
-            retryable=False,
+        return _capture_browser(
+            doi,
+            url=source_url,
+            provider=provider,
+            purpose=purpose,
+            root=root,
             route=route,
         )
     raise CaptureFixtureError(
@@ -502,45 +749,61 @@ def _manifest_evidence(sample: dict[str, Any] | None) -> dict[str, Any]:
     }
 
 
+def _manifest_evidence_url(sample: dict[str, Any] | None) -> str:
+    if not sample:
+        return ""
+    return normalize_text(str(sample.get("evidence_url") or ""))
+
+
 def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
     root = Path(args.output_dir).resolve()
     purpose = normalize_purpose(args.purpose)
-    manifest = _manifest_context(getattr(args, "from_manifest", None), purpose)
+    manifest = getattr(args, "_manifest_context", None) or _manifest_context(getattr(args, "from_manifest", None), purpose)
     if manifest and manifest.sample is None:
         raise CaptureFixtureError(
             "UNSUITABLE_DOI_SAMPLE",
             f"manifest does not define fixtures.doi_samples.{purpose}",
             retryable=False,
         )
+    if manifest and manifest.sample and manifest.sample.get("purpose"):
+        purpose = normalize_purpose(str(manifest.sample["purpose"]))
     sample_doi = manifest.sample.get("doi") if manifest and manifest.sample else None
     raw_doi = args.doi or sample_doi
     provider = args.provider or (manifest.provider if manifest else None)
     if raw_doi is None:
+        sample_path = manifest.sample_path if manifest and manifest.sample_path else f"fixtures.doi_samples.{purpose}"
         return {
             "status": "SKIPPED",
             "skipped": True,
             "purpose": purpose,
             "provider": provider,
             "manifest": manifest.path.as_posix() if manifest else None,
-            "reason": f"fixtures.doi_samples.{purpose}.doi is null",
+            "reason": f"{sample_path}.doi is null",
             "evidence": _manifest_evidence(manifest.sample if manifest else None),
             "evidence_confidence": (manifest.sample or {}).get("confidence") if manifest else None,
         }
     doi = normalize_doi(str(raw_doi))
     slug = doi_slug(doi)
     provider = provider or infer_provider_from_doi(doi) or "unknown"
-    source_url = f"https://doi.org/{doi}"
+    source_url = _manifest_evidence_url(manifest.sample if manifest else None) or f"https://doi.org/{doi}"
 
     fetched_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if args.dry_run:
         content_type = "text/html"
         body = b""
         final_url = source_url
-        route = args.via
+        route = _select_capture_route(args, manifest=manifest)
     else:
-        route = args.via
+        route = _select_capture_route(args, manifest=manifest)
         try:
-            response = _capture_route(doi, route=route)
+            response = _capture_route(
+                doi,
+                route=route,
+                source_url=source_url,
+                provider=provider,
+                purpose=purpose,
+                root=root,
+            )
             content_type, body, final_url = _validate_capture_response(
                 response=response,
                 purpose=purpose,
@@ -548,11 +811,18 @@ def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
             )
             final_url = final_url or source_url
         except CaptureFixtureError as exc:
-            retry_via = getattr(args, "retry_via", None)
+            retry_via = _auto_retry_via(args, manifest=manifest, selected_route=route)
             if _should_retry_via(exc, retry_via=retry_via, manifest=manifest):
                 route = retry_via
                 try:
-                    response = _capture_route(doi, route=route)
+                    response = _capture_route(
+                        doi,
+                        route=route,
+                        source_url=source_url,
+                        provider=provider,
+                        purpose=purpose,
+                        root=root,
+                    )
                     content_type, body, final_url = _validate_capture_response(
                         response=response,
                         purpose=purpose,
@@ -571,7 +841,7 @@ def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
     manifest = _load_manifest(manifest_path)
     samples = manifest["samples"]
     exists = fixture_path.exists() or slug in samples
-    if exists and not args.force:
+    if exists and not args.force and not args.dry_run:
         raise CaptureFixtureError(
             "UNSUITABLE_DOI_SAMPLE",
             f"refusing to overwrite existing fixture or manifest sample: {slug}",
@@ -604,14 +874,16 @@ def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
         "provider": provider,
     }
     if getattr(args, "from_manifest", None):
-        provider_manifest = _manifest_context(getattr(args, "from_manifest", None), purpose)
+        provider_manifest = getattr(args, "_manifest_context", None) or _manifest_context(getattr(args, "from_manifest", None), purpose)
         summary["manifest"] = str(args.from_manifest)
         summary["manifest_sample"] = _manifest_evidence(provider_manifest.sample if provider_manifest else None)
         summary["evidence_confidence"] = (provider_manifest.sample or {}).get("confidence") if provider_manifest else None
         summary["provider_routing"] = provider_manifest.routing if provider_manifest else {}
+        summary["manifest_sample_path"] = provider_manifest.sample_path if provider_manifest else None
 
     if args.dry_run:
         summary["would_write"] = [summary["fixture_path"], "tests/fixtures/golden_criteria/manifest.json"]
+        summary["would_overwrite"] = bool(exists)
         return summary
 
     fixture_path.parent.mkdir(parents=True, exist_ok=True)
@@ -621,13 +893,69 @@ def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
     return summary
 
 
+def capture_all_from_manifest(args: argparse.Namespace) -> dict[str, Any]:
+    if not getattr(args, "from_manifest", None):
+        raise CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            "--all requires --from-manifest",
+            retryable=False,
+        )
+    contexts = _iter_manifest_capture_contexts(args.from_manifest)
+    results: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    for context in contexts:
+        sample = context.sample or {}
+        purpose = normalize_purpose(str(sample.get("purpose") or (context.sample_path or "").rsplit(".", 1)[-1]))
+        child_values = vars(args).copy()
+        child_values.update(
+            {
+                "doi": None,
+                "provider": None,
+                "purpose": purpose,
+                "_manifest_context": context,
+            }
+        )
+        child_args = argparse.Namespace(**child_values)
+        try:
+            results.append(capture_fixture(child_args))
+        except CaptureFixtureError as exc:
+            if getattr(args, "fail_fast", False):
+                raise
+            failures.append(
+                exc.to_payload(
+                    provider=context.provider,
+                    manifest=context.path.as_posix(),
+                    purpose=purpose,
+                    task_id=f"{context.provider}-step3-capture-fixtures" if context.provider else "capture-fixtures",
+                )
+            )
+    status = "OK" if not failures else "FAILED"
+    return {
+        "status": status,
+        "dry_run": bool(args.dry_run),
+        "manifest": str(args.from_manifest),
+        "target_count": len(contexts),
+        "captured_count": sum(1 for result in results if result.get("status") == "OK"),
+        "skipped_count": sum(1 for result in results if result.get("status") == "SKIPPED"),
+        "failure_count": len(failures),
+        "results": results,
+        "failures": failures,
+    }
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = CaptureArgumentParser(description="Capture a DOI replay fixture and register it in the golden manifest.")
     parser.add_argument("--doi", help="DOI to capture, for example 10.1234/sample")
     parser.add_argument("--provider", help="provider name; defaults to DOI/catalog inference")
     parser.add_argument("--via", choices=("http", "playwright", "browser"), default="http")
-    parser.add_argument("--purpose", choices=CLI_PURPOSES, required=True)
+    parser.add_argument(
+        "--auto-via",
+        action="store_true",
+        help="choose http or browser capture from manifest probe and access review",
+    )
+    parser.add_argument("--purpose", choices=CLI_PURPOSES)
     parser.add_argument("--from-manifest", help="ProviderManifest YAML input; reads DOI, evidence, and routing by purpose")
+    parser.add_argument("--all", action="store_true", help="capture every non-null manifest DOI sample and extra fixture")
     parser.add_argument("--retry-via", choices=("browser", "playwright"), help="retry failed capture through another route")
     parser.add_argument("--fail-fast", action="store_true", help="emit JSON stderr and exit non-zero on the first failure")
     parser.add_argument("--dry-run", action="store_true", help="print planned writes without fetching or writing")
@@ -637,7 +965,7 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def _error_context(args: argparse.Namespace) -> dict[str, str | None]:
-    purpose = normalize_purpose(args.purpose) if args.purpose else None
+    purpose = normalize_purpose(args.purpose) if getattr(args, "purpose", None) else None
     provider = args.provider
     if getattr(args, "from_manifest", None):
         try:
@@ -657,7 +985,25 @@ def _error_context(args: argparse.Namespace) -> dict[str, str | None]:
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
-    if not args.doi and not args.from_manifest:
+    if args.all and not args.from_manifest:
+        error = CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            "--all requires --from-manifest",
+            retryable=False,
+        )
+        context = _error_context(args)
+        emit_error(error.to_payload(**context))
+        return 1
+    if not args.all and not args.purpose:
+        error = CaptureFixtureError(
+            "UNSUITABLE_DOI_SAMPLE",
+            "--purpose is required unless --all is provided",
+            retryable=False,
+        )
+        context = _error_context(args)
+        emit_error(error.to_payload(**context))
+        return 1
+    if not args.all and not args.doi and not args.from_manifest:
         error = CaptureFixtureError(
             "UNSUITABLE_DOI_SAMPLE",
             "--doi is required unless --from-manifest is provided",
@@ -667,7 +1013,7 @@ def main(argv: list[str] | None = None) -> int:
         emit_error(error.to_payload(**context))
         return 1
     try:
-        summary = capture_fixture(args)
+        summary = capture_all_from_manifest(args) if args.all else capture_fixture(args)
     except ToolError as exc:
         context = _error_context(args)
         details = dict(exc.details)
@@ -695,7 +1041,7 @@ def main(argv: list[str] | None = None) -> int:
         emit_error(error.to_payload(**context))
         return 1
     print(json.dumps(summary, indent=2, sort_keys=True))
-    return 0
+    return 1 if summary.get("status") == "FAILED" else 0
 
 
 if __name__ == "__main__":

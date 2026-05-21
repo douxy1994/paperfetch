@@ -9,6 +9,7 @@ from dataclasses import replace
 from typing import Any, Mapping
 
 from ..common_patterns import EXTENDED_DATA_FIGURE_LABEL
+from ..markdown.images import render_markdown_image
 from ..utils import normalize_text, safe_text
 from .markdown import (
     NATURE_TABLE_LIKE_FIGURE_ASSET_PATTERN,
@@ -326,18 +327,29 @@ def _asset_markdown_reference_candidates(asset: Asset | Mapping[str, Any]) -> se
     return candidates
 
 
+def _asset_image_markdown(
+    asset: Asset | Mapping[str, Any],
+    *,
+    image_alt: str,
+    replacement_path: str,
+) -> str:
+    kind = _asset_link_field(asset, "kind") or ""
+    heading = _asset_link_field(asset, "heading") or image_alt
+    return render_markdown_image(kind, heading, replacement_path)
+
+
 def rewrite_markdown_asset_links(markdown_text: str, assets: Sequence[Asset | Mapping[str, Any]] | None) -> str:
     if not markdown_text or not assets:
         return markdown_text
 
-    indexed_assets: list[tuple[str, set[str]]] = []
+    indexed_assets: list[tuple[Asset | Mapping[str, Any], str, set[str]]] = []
     for asset in assets:
         replacement_path = safe_text(_asset_link_field(asset, "path"))
         if not replacement_path:
             continue
         candidates = _asset_markdown_reference_candidates(asset)
         if candidates:
-            indexed_assets.append((replacement_path, candidates))
+            indexed_assets.append((asset, replacement_path, candidates))
 
     if not indexed_assets:
         return markdown_text
@@ -347,9 +359,13 @@ def rewrite_markdown_asset_links(markdown_text: str, assets: Sequence[Asset | Ma
         inline_candidates = image_reference_candidates(inline_url)
         if not inline_candidates:
             return image.text
-        for replacement_path, asset_candidates in indexed_assets:
+        for asset, replacement_path, asset_candidates in indexed_assets:
             if image_references_match(asset_candidates, inline_candidates):
-                return f"![{image.alt}]({replacement_path})"
+                return _asset_image_markdown(
+                    asset,
+                    image_alt=image.alt,
+                    replacement_path=replacement_path,
+                )
         return image.text
 
     return replace_markdown_images(markdown_text, replace_image)
@@ -608,7 +624,7 @@ def render_figure_asset_groups(assets: list[Asset], *, include_figures: str) -> 
         caption = normalize_text(asset.caption)
         link = asset_link(asset)
         if include_figures == "inline" and link:
-            group = [f"![{heading}]({link})", ""]
+            group = [render_markdown_image("figure", heading, link), ""]
             if caption:
                 group.extend([caption, ""])
             item_groups.append(build_rendered_block(group))
@@ -627,7 +643,7 @@ def render_table_asset_groups(assets: list[Asset]) -> list[RenderedBlock]:
         caption = normalize_text(asset.caption)
         link = asset_link(asset)
         if link:
-            group = [f"![{heading}]({link})", ""]
+            group = [render_markdown_image("table", heading, link), ""]
             if caption:
                 group.extend([caption, ""])
             item_groups.append(build_rendered_block(group))

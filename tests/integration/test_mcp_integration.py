@@ -17,6 +17,7 @@ from paper_fetch.mcp.cache_index import (
     scoped_cached_resource_uri,
     scoped_cached_resource_uri_prefix,
 )
+from paper_fetch.provider_catalog import provider_status_order
 from tests.paths import REPO_ROOT, SRC_DIR
 
 
@@ -317,6 +318,17 @@ SERVER_SCRIPT = textwrap.dedent(
                     ],
                 )
             ),
+            "mdpi": FakeProviderClient(
+                ProviderStatusResult(
+                    provider="mdpi",
+                    status="ready",
+                    available=True,
+                    official_provider=True,
+                    checks=[
+                        build_provider_status_check("runtime_env", "ok", "mdpi runtime environment is configured."),
+                    ],
+                )
+            ),
         }
 
     def fake_default_mcp_deps():
@@ -424,14 +436,18 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
 
                         provider_status = await session.call_tool("provider_status", {})
                         self.assertFalse(provider_status.isError)
+                        providers_by_name = {
+                            item["provider"]: item
+                            for item in provider_status.structuredContent["providers"]
+                        }
                         self.assertEqual(
                             [item["provider"] for item in provider_status.structuredContent["providers"]],
-                            ["crossref", "elsevier", "springer", "wiley", "science", "pnas", "ieee", "arxiv", "copernicus", "ams"],
+                            list(provider_status_order()),
                         )
-                        self.assertEqual(provider_status.structuredContent["providers"][0]["status"], "ready")
-                        self.assertEqual(provider_status.structuredContent["providers"][1]["missing_env"], ["ELSEVIER_API_KEY"])
-                        self.assertEqual(provider_status.structuredContent["providers"][-2]["status"], "ready")
-                        self.assertEqual(provider_status.structuredContent["providers"][-1]["provider"], "ams")
+                        self.assertEqual(providers_by_name["crossref"]["status"], "ready")
+                        self.assertEqual(providers_by_name["elsevier"]["missing_env"], ["ELSEVIER_API_KEY"])
+                        self.assertIn("mdpi", providers_by_name)
+                        self.assertEqual(providers_by_name["ams"]["provider"], "ams")
 
                         custom_fetch = await session.call_tool(
                             "fetch_paper",

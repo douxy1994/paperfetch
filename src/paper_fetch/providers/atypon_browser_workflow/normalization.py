@@ -40,6 +40,7 @@ from ...extraction.html.tables import (
     wrap_table_text_fragment,
 )
 from ...markdown.citations import is_citation_link, numeric_citation_payload
+from ...markdown.images import render_markdown_image
 from ...utils import normalize_text
 from .._atypon_browser_workflow_profiles import publisher_profile as _publisher_profile
 from .formulas import (
@@ -223,7 +224,14 @@ def _normalize_abstract_blocks(container: Tag) -> None:
 
 def _caption_label(node: Tag, *, kind: str) -> str:
     label_pattern = FIGURE_LABEL_PATTERN if kind == "Figure" else TABLE_LABEL_PATTERN
-    selectors = ("header .label", ".label")
+    selectors = (
+        "header .label",
+        ".label",
+        "figcaption .heading",
+        ".caption .heading",
+        "figcaption .label",
+        "caption .label",
+    )
     if kind == "Table":
         selectors = (".tableWrapLabel", *selectors)
     for candidate in (node.select_one(selector) for selector in selectors):
@@ -232,7 +240,17 @@ def _caption_label(node: Tag, *, kind: str) -> str:
             match = label_pattern.search(text)
             if match:
                 return f"{kind} {match.group(1)}."
-    match = label_pattern.search(_short_text(node))
+    caption_text = _caption_text(node)
+    match = label_pattern.search(caption_text)
+    if match:
+        return f"{kind} {match.group(1)}."
+    fallback_text = re.sub(
+        r"^\s*open\s+in\s+viewer\s+",
+        "",
+        _short_text(node),
+        flags=re.IGNORECASE,
+    )
+    match = label_pattern.match(fallback_text)
     if match:
         return f"{kind} {match.group(1)}."
     return kind
@@ -417,6 +435,58 @@ def _figure_like_nodes(
     return _dedupe_top_level_nodes(nodes)
 
 
+BOXED_TEXT_LABEL_PATTERN = re.compile(r"^(?P<label>Box\s+\d+[A-Za-z]?\.?)\s*(?P<caption>.*)$", flags=re.IGNORECASE)
+
+
+def _boxed_text_replacement_target(node: Tag) -> Tag:
+    parent = node.parent
+    if isinstance(parent, Tag) and "figure-wrap" in node_identity_text(parent):
+        return parent
+    return node
+
+
+def _normalize_boxed_text_blocks(container: Tag) -> None:
+    soup = _soup_root(container)
+    if soup is None:
+        return
+
+    seen_targets: set[int] = set()
+    for node in list(container.select("figure.boxed-text")):
+        if not isinstance(node, Tag) or node.parent is None:
+            continue
+        target = _boxed_text_replacement_target(node)
+        if id(target) in seen_targets or target.parent is None:
+            continue
+        seen_targets.add(id(target))
+
+        lines: list[str] = []
+        caption_node = node.find("figcaption")
+        caption = _render_caption_text(caption_node) if isinstance(caption_node, Tag) else ""
+        match = BOXED_TEXT_LABEL_PATTERN.match(caption)
+        if match is not None:
+            label = normalize_text(match.group("label"))
+            caption_body = normalize_text(match.group("caption"))
+            lines.append(f"**{label}** {caption_body}".strip())
+        elif caption:
+            lines.append(caption)
+
+        for paragraph in node.find_all(attrs={"role": "paragraph"}, recursive=False):
+            if not isinstance(paragraph, Tag):
+                continue
+            text = _render_non_table_inline_text(paragraph)
+            if text:
+                lines.append(text)
+        if not lines:
+            continue
+
+        replacement = soup.new_tag("div")
+        for line in lines:
+            paragraph = soup.new_tag("p")
+            paragraph.string = line
+            replacement.append(paragraph)
+        target.replace_with(replacement)
+
+
 def _table_cell_data(cell: Tag) -> dict[str, Any]:
     return table_cell_data(cell, render_inline_text=_render_table_inline_text)
 
@@ -504,8 +574,8 @@ def _render_table_image_markdown(node: Tag, *, label: str, caption: str) -> str:
     if normalized_caption:
         heading_parts.append(normalized_caption)
     heading_line = " ".join(heading_parts).strip()
-    alt_text = normalized_label or "Table"
-    lines = [heading_line, "", f"![{alt_text}]({image_url})"] if heading_line else [f"![{alt_text}]({image_url})"]
+    image_line = render_markdown_image("table", normalized_label or "Table", image_url)
+    lines = [heading_line, "", image_line] if heading_line else [image_line]
     return "\n".join(lines)
 
 
@@ -570,6 +640,7 @@ def _normalize_special_blocks(container: Tag, publisher: str) -> list[dict[str, 
     _normalize_display_formula_blocks(container)
     _normalize_inline_math_nodes(container)
     _normalize_inline_formula_image_nodes(container)
+    _normalize_boxed_text_blocks(container)
     table_entries = _normalize_table_blocks(container)
     _normalize_figure_blocks(container, publisher)
     _normalize_non_table_inline_blocks(container)
@@ -598,6 +669,7 @@ __all__ = [
     "_is_non_table_paragraph_node",
     "_normalize_non_table_inline_blocks",
     "_normalize_abstract_blocks",
+    "_normalize_boxed_text_blocks",
     "_mathml_element_from_node",
     "_latex_from_math_node",
     "_formula_image_url_from_node",

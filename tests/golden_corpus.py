@@ -8,6 +8,10 @@ from pathlib import Path
 import tempfile
 from typing import Any
 
+from bs4 import BeautifulSoup
+
+from paper_fetch.extraction.html.parsing import choose_parser
+from paper_fetch.extraction.html.semantics import collect_html_section_hints
 from paper_fetch.extraction.html._metadata import merge_html_metadata, parse_html_metadata
 from paper_fetch.http import HttpTransport
 from paper_fetch.publisher_identity import normalize_doi
@@ -18,12 +22,14 @@ from paper_fetch.providers import (
     _atypon_browser_workflow_profiles as atypon_browser_workflow_profiles,
     _ieee_html,
     _ieee_metadata,
+    _mdpi_html,
     _wiley_html,
     copernicus as copernicus_provider,
     elsevier as elsevier_provider,
     pnas as pnas_provider,
     science as science_provider,
     ams as ams_provider,
+    mdpi as mdpi_provider,
     springer as springer_provider,
     _springer_html as springer_html,
     wiley as wiley_provider,
@@ -34,19 +40,14 @@ from paper_fetch.providers.base import ProviderContent, RawFulltextPayload
 from paper_fetch.providers._pdf_common import pdf_fetch_result_from_bytes
 from paper_fetch.tracing import trace_from_markers
 from paper_fetch.utils import normalize_text
-from tests.golden_criteria import golden_criteria_asset, golden_criteria_sample_for_doi, iter_manifest_samples
-
-
-REPRESENTATIVE_GOLDEN_CORPUS_DOIS = (
-    "10.1175/jcli-d-23-0738.1",
-    "10.1016/j.rse.2025.114648",
-    "10.1038/s43247-024-01295-w",
-    "10.1126/science.adp0212",
-    "10.1111/gcb.16414",
-    "10.1073/pnas.2309123120",
-    "10.1109/TIM.2024.3509573",
-    "10.5194/acp-24-1-2024",
+from tests.golden_corpus_adapters import (
+    GoldenCorpusAdapter,
+    ProviderGoldenContract,
+    golden_corpus_adapter,
+    register_golden_corpus_adapter,
+    representative_golden_corpus_dois,
 )
+from tests.golden_criteria import golden_criteria_asset, golden_criteria_sample_for_doi, iter_manifest_samples
 
 
 @dataclass(frozen=True)
@@ -122,7 +123,7 @@ def golden_corpus_fixture_for_doi(doi: str) -> GoldenCorpusFixture:
 
 
 def iter_golden_corpus_representative_fixtures() -> tuple[GoldenCorpusFixture, ...]:
-    return tuple(golden_corpus_fixture_for_doi(doi) for doi in REPRESENTATIVE_GOLDEN_CORPUS_DOIS)
+    return tuple(golden_corpus_fixture_for_doi(doi) for doi in representative_golden_corpus_dois())
 
 
 def _base_metadata(fixture: GoldenCorpusFixture) -> dict[str, Any]:
@@ -207,6 +208,7 @@ def _build_browser_workflow_article(fixture: GoldenCorpusFixture):
     metadata = _base_metadata(fixture)
     client_map = {
         "ams": ams_provider.AmsClient,
+        "mdpi": mdpi_provider.MdpiClient,
         "science": science_provider.ScienceClient,
         "pnas": pnas_provider.PnasClient,
         "wiley": wiley_provider.WileyClient,
@@ -457,152 +459,314 @@ def _build_copernicus_article(fixture: GoldenCorpusFixture):
     return client.to_article_model(metadata, raw_payload)
 
 
+def _article_model_positive_summary(article, fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    abstract_sections = [section for section in article.sections if section.kind == "abstract"]
+    body_sections = [section for section in article.sections if section.kind == "body"]
+    return {
+        "doi": normalize_doi(str(article.doi or fixture.doi)),
+        "has": {
+            "title": bool(normalize_text(article.metadata.title)),
+            "authors": bool(article.metadata.authors),
+            "abstract": bool(normalize_text(article.metadata.abstract)) or bool(abstract_sections),
+            "body": bool(body_sections),
+        },
+        "validated_fields": ("title", "authors", "abstract", "body"),
+        "blocking_fallback_signals": (),
+        "source_candidate_hit": True,
+    }
+
+
 def build_article_from_fixture(fixture: GoldenCorpusFixture):
-    if fixture.provider == "elsevier":
-        return _build_elsevier_article(fixture)
-    if fixture.provider == "springer":
-        return _build_springer_article(fixture)
-    if fixture.provider in {"ams", "science", "pnas", "wiley"}:
-        return _build_browser_workflow_article(fixture)
-    if fixture.provider == "ieee":
-        return _build_ieee_article(fixture)
-    if fixture.provider == "copernicus":
-        return _build_copernicus_article(fixture)
-    raise ValueError(f"Unsupported golden fixture provider: {fixture.provider}")
+    return golden_corpus_adapter(fixture.provider).build_article(fixture)
+
+
+def _lightweight_elsevier_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    return _article_model_positive_summary(_build_elsevier_article(fixture), fixture)
+
+
+def _lightweight_springer_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+    metadata = springer_html.parse_html_metadata(html_text, fixture.source_url)
+    extraction_payload = springer_html.extract_html_payload(
+        html_text,
+        fixture.source_url,
+        title=str(metadata.get("title") or fixture.title),
+    )
+    return {
+        "doi": normalize_doi(str(metadata.get("doi") or fixture.doi)),
+        "has": {
+            "title": bool(normalize_text(metadata.get("title"))),
+            "authors": bool(extraction_payload["extracted_authors"]),
+            "abstract": bool(normalize_text(metadata.get("abstract"))) or bool(extraction_payload["abstract_sections"]),
+            "body": bool(extraction_payload["section_hints"]),
+        },
+        "validated_fields": ("title", "authors", "abstract", "body"),
+        "blocking_fallback_signals": (),
+        "source_candidate_hit": True,
+    }
+
+
+def _lightweight_atypon_browser_workflow_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    if fixture.route_kind == "pdf_fallback":
+        return _article_model_positive_summary(_build_browser_workflow_article(fixture), fixture)
+    html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+    metadata = parse_html_metadata(html_text, fixture.source_url)
+    browser_helpers = {
+        "ams": (
+            _ams_html.extract_authors,
+            _ams_html.blocking_fallback_signals,
+        ),
+        "science": (
+            _science_html.extract_authors,
+            _science_html.blocking_fallback_signals,
+        ),
+        "pnas": (
+            _pnas_html.extract_authors,
+            _pnas_html.blocking_fallback_signals,
+        ),
+        "wiley": (
+            _wiley_html.extract_authors,
+            _wiley_html.blocking_fallback_signals,
+        ),
+    }
+    extract_authors, blocking_fallback_signals = browser_helpers[fixture.provider]
+    candidate_urls = atypon_browser_workflow_profiles.build_html_candidates(
+        fixture.provider,
+        fixture.doi,
+        fixture.landing_url,
+    )
+    return {
+        "doi": normalize_doi(str(metadata.get("doi") or fixture.doi)),
+        "has": {
+            "title": bool(normalize_text(metadata.get("title"))),
+            "authors": bool(extract_authors(html_text)),
+        },
+        "validated_fields": ("title", "authors"),
+        "blocking_fallback_signals": tuple(blocking_fallback_signals(html_text)),
+        "source_candidate_hit": fixture.source_url in candidate_urls or fixture.landing_url in candidate_urls,
+    }
+
+
+def _lightweight_mdpi_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    if fixture.route_kind == "pdf_fallback":
+        return _article_model_positive_summary(_build_browser_workflow_article(fixture), fixture)
+    html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+    metadata = parse_html_metadata(html_text, fixture.source_url)
+    article_html, title, abstract_text, _container_text_length = _mdpi_html._article_container_html(
+        html_text,
+        metadata,
+    )
+    article_soup = BeautifulSoup(article_html, choose_parser())
+    article = article_soup.find("article")
+    section_hints = collect_html_section_hints(article, title=title) if article is not None else []
+    client = mdpi_provider.MdpiClient(HttpTransport(), {})
+    candidate_urls = client.html_candidates(
+        fixture.doi,
+        {"landing_page_url": fixture.landing_url},
+    )
+    return {
+        "doi": normalize_doi(str(metadata.get("doi") or fixture.doi)),
+        "has": {
+            "title": bool(normalize_text(title or metadata.get("title"))),
+            "authors": bool(_mdpi_html.extract_authors(html_text)),
+            "abstract": bool(normalize_text(abstract_text)),
+            "body": bool(section_hints),
+        },
+        "validated_fields": ("title", "authors", "abstract", "body"),
+        "blocking_fallback_signals": (),
+        "source_candidate_hit": fixture.source_url in candidate_urls or fixture.landing_url in candidate_urls,
+    }
+
+
+def _lightweight_ieee_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    metadata = _ieee_fixture_metadata(fixture)
+    html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+    extraction = _ieee_html._extract_ieee_html(
+        html_text,
+        fixture.source_url,
+        metadata=metadata,
+    )
+    return {
+        "doi": fixture.doi,
+        "has": {
+            "title": bool(normalize_text(metadata.get("title"))),
+            "authors": bool(metadata.get("authors")),
+            "abstract": bool(normalize_text(metadata.get("abstract"))) or bool(extraction.abstract_sections),
+            "body": bool(extraction.section_hints) or bool(normalize_text(extraction.markdown_text)),
+        },
+        "validated_fields": ("title", "authors", "abstract", "body"),
+        "blocking_fallback_signals": (),
+        "source_candidate_hit": True,
+    }
+
+
+def _lightweight_copernicus_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    return _article_model_positive_summary(_build_copernicus_article(fixture), fixture)
 
 
 def lightweight_positive_summary_from_fixture(fixture: GoldenCorpusFixture) -> dict[str, Any]:
-    if fixture.provider == "elsevier":
-        article = _build_elsevier_article(fixture)
-        abstract_sections = [section for section in article.sections if section.kind == "abstract"]
-        body_sections = [section for section in article.sections if section.kind == "body"]
-        return {
-            "doi": normalize_doi(str(article.doi or fixture.doi)),
-            "has": {
-                "title": bool(normalize_text(article.metadata.title)),
-                "authors": bool(article.metadata.authors),
-                "abstract": bool(normalize_text(article.metadata.abstract)) or bool(abstract_sections),
-                "body": bool(body_sections),
-            },
-            "validated_fields": ("title", "authors", "abstract", "body"),
-            "blocking_fallback_signals": (),
-            "source_candidate_hit": True,
-        }
+    return golden_corpus_adapter(fixture.provider).lightweight_summary(fixture)
 
-    if fixture.provider == "springer":
-        html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
-        metadata = springer_html.parse_html_metadata(html_text, fixture.source_url)
-        extraction_payload = springer_html.extract_html_payload(
-            html_text,
-            fixture.source_url,
-            title=str(metadata.get("title") or fixture.title),
+
+def golden_contract_for_fixture(fixture: GoldenCorpusFixture) -> ProviderGoldenContract:
+    return golden_corpus_adapter(fixture.provider).contract_for_fixture(fixture)
+
+
+def _register_golden_corpus_adapters() -> None:
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="ams",
+            build_article=_build_browser_workflow_article,
+            lightweight_summary=_lightweight_atypon_browser_workflow_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="ams_html",
+                primary_marker="fulltext:ams_html_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="ams_pdf",
+                    primary_marker="fulltext:ams_pdf_fallback_ok",
+                ),
+            },
+            representative_doi="10.1175/jcli-d-23-0738.1",
         )
-        return {
-            "doi": normalize_doi(str(metadata.get("doi") or fixture.doi)),
-            "has": {
-                "title": bool(normalize_text(metadata.get("title"))),
-                "authors": bool(extraction_payload["extracted_authors"]),
-                "abstract": bool(normalize_text(metadata.get("abstract"))) or bool(extraction_payload["abstract_sections"]),
-                "body": bool(extraction_payload["section_hints"]),
-            },
-            "validated_fields": ("title", "authors", "abstract", "body"),
-            "blocking_fallback_signals": (),
-            "source_candidate_hit": True,
-        }
-
-    if fixture.provider in {"ams", "science", "pnas", "wiley"}:
-        if fixture.route_kind == "pdf_fallback":
-            article = _build_browser_workflow_article(fixture)
-            abstract_sections = [section for section in article.sections if section.kind == "abstract"]
-            body_sections = [section for section in article.sections if section.kind == "body"]
-            return {
-                "doi": normalize_doi(str(article.doi or fixture.doi)),
-                "has": {
-                    "title": bool(normalize_text(article.metadata.title)),
-                    "authors": bool(article.metadata.authors),
-                    "abstract": bool(normalize_text(article.metadata.abstract)) or bool(abstract_sections),
-                    "body": bool(body_sections),
-                },
-                "validated_fields": ("title", "authors", "abstract", "body"),
-                "blocking_fallback_signals": (),
-                "source_candidate_hit": True,
-            }
-        html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
-        metadata = parse_html_metadata(html_text, fixture.source_url)
-        browser_helpers = {
-            "ams": (
-                _ams_html.extract_authors,
-                _ams_html.blocking_fallback_signals,
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="elsevier",
+            build_article=_build_elsevier_article,
+            lightweight_summary=_lightweight_elsevier_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="official",
+                content_prefix="text/xml",
+                source="elsevier_xml",
+                primary_marker="fulltext:elsevier_xml_ok",
             ),
-            "science": (
-                _science_html.extract_authors,
-                _science_html.blocking_fallback_signals,
-            ),
-            "pnas": (
-                _pnas_html.extract_authors,
-                _pnas_html.blocking_fallback_signals,
-            ),
-            "wiley": (
-                _wiley_html.extract_authors,
-                _wiley_html.blocking_fallback_signals,
-            ),
-        }
-        extract_authors, blocking_fallback_signals = browser_helpers[fixture.provider]
-        candidate_urls = atypon_browser_workflow_profiles.build_html_candidates(
-            fixture.provider,
-            fixture.doi,
-            fixture.landing_url,
+            representative_doi="10.1016/j.rse.2025.114648",
         )
-        return {
-            "doi": normalize_doi(str(metadata.get("doi") or fixture.doi)),
-            "has": {
-                "title": bool(normalize_text(metadata.get("title"))),
-                "authors": bool(extract_authors(html_text)),
-            },
-            "validated_fields": ("title", "authors"),
-            "blocking_fallback_signals": tuple(blocking_fallback_signals(html_text)),
-            "source_candidate_hit": fixture.source_url in candidate_urls or fixture.landing_url in candidate_urls,
-        }
-
-    if fixture.provider == "ieee":
-        metadata = _ieee_fixture_metadata(fixture)
-        html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
-        extraction = _ieee_html._extract_ieee_html(
-            html_text,
-            fixture.source_url,
-            metadata=metadata,
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="springer",
+            build_article=_build_springer_article,
+            lightweight_summary=_lightweight_springer_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="springer_html",
+                primary_marker="fulltext:springer_html_ok",
+            ),
+            representative_doi="10.1038/s43247-024-01295-w",
         )
-        return {
-            "doi": fixture.doi,
-            "has": {
-                "title": bool(normalize_text(metadata.get("title"))),
-                "authors": bool(metadata.get("authors")),
-                "abstract": bool(normalize_text(metadata.get("abstract"))) or bool(extraction.abstract_sections),
-                "body": bool(extraction.section_hints) or bool(normalize_text(extraction.markdown_text)),
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="science",
+            build_article=_build_browser_workflow_article,
+            lightweight_summary=_lightweight_atypon_browser_workflow_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="science",
+                primary_marker="fulltext:science_html_ok",
+            ),
+            representative_doi="10.1126/science.adp0212",
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="wiley",
+            build_article=_build_browser_workflow_article,
+            lightweight_summary=_lightweight_atypon_browser_workflow_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="wiley_browser",
+                primary_marker="fulltext:wiley_html_ok",
+            ),
+            representative_doi="10.1111/gcb.16414",
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="pnas",
+            build_article=_build_browser_workflow_article,
+            lightweight_summary=_lightweight_atypon_browser_workflow_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="pnas",
+                primary_marker="fulltext:pnas_html_ok",
+            ),
+            representative_doi="10.1073/pnas.2309123120",
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="ieee",
+            build_article=_build_ieee_article,
+            lightweight_summary=_lightweight_ieee_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="ieee_html",
+                primary_marker="fulltext:ieee_html_ok",
+            ),
+            representative_doi="10.1109/TIM.2024.3509573",
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="copernicus",
+            build_article=_build_copernicus_article,
+            lightweight_summary=_lightweight_copernicus_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="xml",
+                content_prefix="application/xml",
+                source="copernicus_xml",
+                primary_marker="fulltext:copernicus_xml_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="copernicus_pdf",
+                    primary_marker="fulltext:copernicus_pdf_fallback_ok",
+                ),
             },
-            "validated_fields": ("title", "authors", "abstract", "body"),
-            "blocking_fallback_signals": (),
-            "source_candidate_hit": True,
-        }
-
-    if fixture.provider == "copernicus":
-        article = _build_copernicus_article(fixture)
-        abstract_sections = [section for section in article.sections if section.kind == "abstract"]
-        body_sections = [section for section in article.sections if section.kind == "body"]
-        return {
-            "doi": normalize_doi(str(article.doi or fixture.doi)),
-            "has": {
-                "title": bool(normalize_text(article.metadata.title)),
-                "authors": bool(article.metadata.authors),
-                "abstract": bool(normalize_text(article.metadata.abstract)) or bool(abstract_sections),
-                "body": bool(body_sections),
+            representative_doi="10.5194/acp-24-1-2024",
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="mdpi",
+            build_article=_build_browser_workflow_article,
+            lightweight_summary=_lightweight_mdpi_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="mdpi_html",
+                primary_marker="fulltext:mdpi_html_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="mdpi_pdf",
+                    primary_marker="fulltext:mdpi_pdf_fallback_ok",
+                ),
             },
-            "validated_fields": ("title", "authors", "abstract", "body"),
-            "blocking_fallback_signals": (),
-            "source_candidate_hit": True,
-        }
+            representative_doi="10.3390/membranes15030093",
+            representative_count_fields=("sections", "abstract_sections", "body_sections"),
+        )
+    )
 
-    raise ValueError(f"Unsupported golden fixture provider: {fixture.provider}")
+
+_register_golden_corpus_adapters()
 
 
 def expected_summary_from_article(article) -> dict[str, Any]:

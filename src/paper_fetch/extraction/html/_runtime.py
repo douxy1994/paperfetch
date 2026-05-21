@@ -28,6 +28,7 @@ from ...extraction.html.cleanup_policy import (
     classify_dom_cleanup_node,
     classify_markdown_cleanup_line,
     count_words,
+    looks_like_markdown_promo_line,
 )
 from ...extraction.html.html_tags import HTML_DROP_TAGS
 from ...extraction.html.parsing import choose_parser
@@ -83,6 +84,11 @@ PUBLICATION_WATERMARK_PUNCTUATION = ".:;!?。！？"
 PUBLICATION_WATERMARK_CONNECTORS = {"and", "of", "the", "&"}
 PUBLICATION_WATERMARK_MAX_LENGTH = 64
 PUBLICATION_WATERMARK_MAX_TOKENS = 5
+FRONT_MATTER_BYLINE_CONNECTORS = {
+    "and", "&", "et", "al", "the", "de", "del", "van", "von",
+}
+FRONT_MATTER_BYLINE_MAX_LENGTH = 96
+FRONT_MATTER_BYLINE_MAX_WORDS = 10
 TEXT_EXTRACTION_BLOCK_TAGS = frozenset(
     tag
     for tag in ("p", "div", "section", "article", "li", "ul", "ol", "table", "tr")
@@ -479,7 +485,7 @@ def _looks_like_promo_block(
     if not lowered:
         return False
     cleanup_profile = rules or html_cleanup_rules(noise_profile)
-    return any(token in lowered for token in cleanup_profile.markdown_promo_tokens)
+    return looks_like_markdown_promo_line(lowered, policy=cleanup_profile.policy)
 
 
 def _looks_like_caption_block(text: str) -> bool:
@@ -536,11 +542,44 @@ def _looks_like_publication_watermark(
     return any(token in publication_keywords for token in lowered_tokens)
 
 
+def _is_author_name_token(token: str) -> bool:
+    cleaned = token.strip(" ,;:()[]{}")
+    if not cleaned:
+        return True
+    lowered = cleaned.rstrip(".").lower()
+    if lowered in FRONT_MATTER_BYLINE_CONNECTORS:
+        return True
+    if re.fullmatch(r"(?:[A-Z]\.)+", cleaned):
+        return True
+    return cleaned[:1].isupper()
+
+
+def _looks_like_front_matter_byline(text: str) -> bool:
+    normalized = normalize_text(text)
+    if not normalized.lower().startswith("by "):
+        return False
+    byline = normalized[3:].strip()
+    if not byline or len(normalized) > FRONT_MATTER_BYLINE_MAX_LENGTH:
+        return False
+    if count_words(byline) > FRONT_MATTER_BYLINE_MAX_WORDS:
+        return False
+    sentence_text = re.sub(r"\b[A-Z]\.", "A", byline)
+    if len(re.findall(r"[.!?。！？]", sentence_text)) > 1:
+        return False
+    if re.search(r"[.!?。！？]\s+\S", sentence_text):
+        return False
+    tokens = [part for token in byline.split() for part in token.split("-")]
+    return any(_is_author_name_token(token) for token in tokens) and all(
+        _is_author_name_token(token) for token in tokens
+    )
+
+
 def _looks_like_front_matter_block(
     text: str,
     *,
     title: str | None = None,
     noise_profile: str | None = None,
+    allow_byline: bool = False,
 ) -> bool:
     normalized = normalize_text(text)
     lowered = normalized.lower()
@@ -557,7 +596,7 @@ def _looks_like_front_matter_block(
                     return True
     if any(lowered.startswith(prefix) for prefix in front_matter_footer_prefixes()):
         return True
-    if lowered.startswith("by "):
+    if allow_byline and _looks_like_front_matter_byline(normalized):
         return True
     if any(pattern.match(normalized) for pattern in COMMON_FRONT_MATTER_LINE_PATTERNS):
         return True
@@ -658,6 +697,7 @@ def _filtered_body_blocks(
                 normalized_block,
                 title=title or None,
                 noise_profile=noise_profile,
+                allow_byline=(body_heading_count == 0 and body_block_count == 0),
             )
         ):
             continue

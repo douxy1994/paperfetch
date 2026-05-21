@@ -11,6 +11,11 @@ from typing import Any
 import yaml
 
 
+PROVIDERS_MATRIX_MARKER = "<!-- SCAFFOLD: providers-capability-matrix -->"
+EXTRACTION_RULES_MARKER = "<!-- SCAFFOLD: extraction-rules-unstable-doi -->"
+CHANGELOG_UNRELEASED_MARKER = "<!-- SCAFFOLD: changelog-unreleased -->"
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -213,7 +218,204 @@ def callable_path(value: Callable[..., Any] | None) -> str | None:
     return f"{value.__module__}:{value.__qualname__}"
 
 
-def sync_manifest(path: Path, *, provider: str) -> dict[str, Any]:
+def _relative_path(path: Path, root: Path) -> str:
+    try:
+        return path.relative_to(root).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _normalize_table_cell(value: str) -> str:
+    return value.replace("`", "").strip().lower()
+
+
+def _table_cells(line: str) -> list[str]:
+    stripped = line.strip()
+    if not stripped.startswith("|") or not stripped.endswith("|"):
+        return []
+    return [cell.strip() for cell in stripped.strip("|").split("|")]
+
+
+def _table_bounds(lines: list[str], marker: str) -> tuple[int, int]:
+    marker_index = next(index for index, line in enumerate(lines) if marker in line)
+    table_start = None
+    for index in range(marker_index + 1, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("|") and stripped.endswith("|"):
+            table_start = index
+            break
+        if stripped and not stripped.startswith("<!--"):
+            break
+    if table_start is None:
+        raise ValueError(f"missing markdown table after marker: {marker}")
+    table_end = table_start
+    for index in range(table_start, len(lines)):
+        stripped = lines[index].strip()
+        if not (stripped.startswith("|") and stripped.endswith("|")):
+            break
+        table_end = index + 1
+    return table_start, table_end
+
+
+def _upsert_table_row(path: Path, *, marker: str, provider: str, row: str) -> bool:
+    text = path.read_text(encoding="utf-8")
+    if marker not in text:
+        raise ValueError(f"{path}: missing marker {marker}")
+    lines = text.splitlines()
+    table_start, table_end = _table_bounds(lines, marker)
+    changed = False
+    for index in range(table_start + 2, table_end):
+        cells = _table_cells(lines[index])
+        if cells and _normalize_table_cell(cells[0]) == provider:
+            if lines[index] != row:
+                lines[index] = row
+                changed = True
+            break
+    else:
+        lines.insert(table_end, row)
+        changed = True
+    if changed:
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return changed
+
+
+def _sync_known_providers(
+    root: Path,
+    *,
+    manifest: dict[str, Any],
+    provider: str,
+    manifest_path: Path,
+) -> list[str]:
+    known_path = root / "docs" / "ai-onboarding" / "known-providers.yml"
+    data = _load_yaml(known_path) if known_path.exists() else {"providers": []}
+    providers = data.setdefault("providers", [])
+    if not isinstance(providers, list):
+        raise ValueError(f"{known_path}: providers must be a list")
+    rel_manifest = _relative_path(manifest_path, root)
+    display_source = str(manifest["display_source"])
+    changed: list[str] = []
+    for entry in providers:
+        if not isinstance(entry, dict) or entry.get("name") != provider:
+            continue
+        updates = {
+            "display_source": display_source,
+            "manifest_path": rel_manifest,
+        }
+        if entry.get("status") in {None, "draft"}:
+            updates["status"] = "implemented"
+        for key, value in updates.items():
+            if entry.get(key) != value:
+                entry[key] = value
+                changed.append(f"known-providers.{provider}.{key}")
+        break
+    else:
+        providers.append(
+            {
+                "name": provider,
+                "display_source": display_source,
+                "status": "implemented",
+                "manifest_path": rel_manifest,
+            }
+        )
+        changed.append(f"known-providers.{provider}")
+    if changed:
+        known_path.write_text(
+            yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+            encoding="utf-8",
+        )
+    return changed
+
+
+def _format_provider_matrix_row(provider: str, docs: dict[str, Any]) -> str:
+    row = str(docs.get("providers_md_capability_row") or "").strip().strip("|").strip()
+    if not row:
+        row = f"`{provider}` | TODO | TODO | TODO | TODO | manifest docs row missing"
+    return f"| {row} |"
+
+
+def _format_extraction_rules_row(provider: str, docs: dict[str, Any]) -> str:
+    summary = docs.get("extraction_rules_summary")
+    summary_text = (
+        str(summary)
+        if summary is not None
+        else "manifest docs.extraction_rules_summary is null; no unstable DOI rule row required yet."
+    )
+    return (
+        f"| `{provider}` docs sync | {summary_text} | "
+        "Provider fixture replay or Markdown review exposes a docs-rule gap. | "
+        f"`docs/ai-onboarding/manifests/{provider}.yml` |"
+    )
+
+
+def _sync_changelog(root: Path, *, provider: str, docs: dict[str, Any]) -> bool:
+    summary = docs.get("changelog_summary")
+    if summary is None:
+        return False
+    path = root / "CHANGELOG.md"
+    text = path.read_text(encoding="utf-8")
+    marker = CHANGELOG_UNRELEASED_MARKER
+    if marker not in text:
+        raise ValueError(f"{path}: missing marker {marker}")
+    entry = f"- {summary}"
+    if entry in text:
+        return False
+    lines = text.splitlines()
+    marker_index = next(index for index, line in enumerate(lines) if marker in line)
+    added_index = None
+    for index in range(marker_index + 1, len(lines)):
+        stripped = lines[index].strip()
+        if stripped == "### Added":
+            added_index = index
+            break
+        if stripped.startswith("## ") and index > marker_index + 1:
+            break
+    insert_at = (added_index + 1) if added_index is not None else (marker_index + 1)
+    while insert_at < len(lines) and not lines[insert_at].strip():
+        insert_at += 1
+    lines.insert(insert_at, entry)
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return True
+
+
+def sync_docs_from_manifest(
+    root: Path,
+    *,
+    manifest: dict[str, Any],
+    provider: str,
+    manifest_path: Path,
+) -> list[str]:
+    docs = manifest.get("docs")
+    if not isinstance(docs, dict):
+        raise ValueError("manifest docs must be a mapping for --sync-docs")
+    changed = _sync_known_providers(
+        root,
+        manifest=manifest,
+        provider=provider,
+        manifest_path=manifest_path,
+    )
+    providers_path = root / "docs" / "providers.md"
+    if _upsert_table_row(
+        providers_path,
+        marker=PROVIDERS_MATRIX_MARKER,
+        provider=provider,
+        row=_format_provider_matrix_row(provider, docs),
+    ):
+        changed.append("docs.providers_matrix")
+    extraction_path = root / "docs" / "extraction-rules.md"
+    if _upsert_table_row(
+        extraction_path,
+        marker=EXTRACTION_RULES_MARKER,
+        provider=f"{provider} docs sync",
+        row=_format_extraction_rules_row(provider, docs),
+    ):
+        changed.append("docs.extraction_rules")
+    if _sync_changelog(root, provider=provider, docs=docs):
+        changed.append("docs.changelog")
+    return changed
+
+
+def sync_manifest(path: Path, *, provider: str, sync_docs: bool = False, root: Path | None = None) -> dict[str, Any]:
+    repo_root = root or _repo_root()
     manifest = _load_yaml(path)
     manifest_provider = str(manifest.get("name") or "")
     if manifest_provider != provider:
@@ -244,6 +446,15 @@ def sync_manifest(path: Path, *, provider: str) -> dict[str, Any]:
         yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )
+    if sync_docs:
+        changed_fields.extend(
+            sync_docs_from_manifest(
+                repo_root,
+                manifest=manifest,
+                provider=provider,
+                manifest_path=path,
+            )
+        )
     return {
         "status": "OK",
         "provider": provider,
@@ -258,6 +469,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--provider", required=True, help="provider name")
     parser.add_argument("--manifest", help="manifest YAML path; defaults via known-providers.yml")
+    parser.add_argument(
+        "--sync-docs",
+        action="store_true",
+        help="also sync known-providers, providers matrix, extraction rules, and changelog marker entries",
+    )
     parser.add_argument(
         "--output-dir",
         default=_repo_root(),
@@ -276,7 +492,12 @@ def main(argv: list[str] | None = None) -> int:
         else _known_manifest_path(root, args.provider)
     )
     try:
-        summary = sync_manifest(manifest_path, provider=args.provider)
+        summary = sync_manifest(
+            manifest_path,
+            provider=args.provider,
+            sync_docs=args.sync_docs,
+            root=root,
+        )
     except Exception as exc:
         print(
             json.dumps(

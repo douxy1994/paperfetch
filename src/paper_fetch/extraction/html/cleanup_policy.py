@@ -78,6 +78,9 @@ MARKDOWN_PREFIX_NOISE_TEXTS = HTML_PREFIX_NOISE_TEXTS + (
 )
 MARKDOWN_SHORT_NOISE_TOKENS = MARKDOWN_SHORT_ACCESS_GATE_TOKENS
 MARKDOWN_CHROME_SECTION_HEADINGS = MARKDOWN_AUXILIARY_HEADINGS - {"abbreviations"}
+MARKDOWN_PROMO_MAX_WORDS = 16
+MARKDOWN_PROMO_INTRO_PREFIXES = ("to ",)
+MARKDOWN_PROMO_TERMINAL_CHARS = ",.:;!?([{)]}"
 AVAILABILITY_DROP_TAGS = ("script", "style", "noscript", "iframe", "svg")
 BROWSER_WORKFLOW_DROP_TAGS = (
     "script",
@@ -229,6 +232,46 @@ def count_words(text: str) -> int:
     return len(re.findall(r"\b\w+\b", text, flags=re.UNICODE))
 
 
+def _count_sentences(text: str) -> int:
+    return len(re.findall(r"[.!?]+(?:\s|$)", text))
+
+
+def _strip_terminal_punctuation(text: str) -> str:
+    return text.strip().strip(MARKDOWN_PROMO_TERMINAL_CHARS).strip()
+
+
+def _has_terminal_promo_boundary(text: str, prefix_length: int) -> bool:
+    remainder = text[prefix_length:].strip()
+    if not remainder:
+        return True
+    return remainder[0] in MARKDOWN_PROMO_TERMINAL_CHARS
+
+
+def looks_like_markdown_promo_line(line: str, *, policy: CleanupPolicy) -> bool:
+    normalized = normalize_text(re.sub(r"^#+\s*", "", line)).lower()
+    if not normalized or count_words(normalized) > MARKDOWN_PROMO_MAX_WORDS:
+        return False
+    if _count_sentences(normalized) > 1:
+        return False
+    stripped = _strip_terminal_punctuation(normalized)
+    for token in policy.markdown_contains_tokens:
+        if stripped == token:
+            return True
+        if normalized.startswith(token) and _has_terminal_promo_boundary(
+            normalized,
+            len(token),
+        ):
+            return True
+        for intro_prefix in MARKDOWN_PROMO_INTRO_PREFIXES:
+            introduced_token = f"{intro_prefix}{token}"
+            if normalized.startswith(introduced_token) and _has_terminal_promo_boundary(
+                normalized,
+                len(introduced_token),
+            ):
+                return True
+    return False
+
+
 def _element_text(element: Any) -> str:
     return normalize_text(element.get_text(separator=" ", strip=True))
 
@@ -360,8 +403,8 @@ def classify_markdown_cleanup_line(
         return CleanupDecision("drop", "markdown_exact_text")
     if any(normalized.startswith(prefix) for prefix in policy.markdown_prefix_texts):
         return CleanupDecision("drop", "markdown_prefix_text")
-    if any(token in normalized for token in policy.markdown_contains_tokens):
-        return CleanupDecision("drop", "markdown_contains_token")
+    if looks_like_markdown_promo_line(normalized, policy=policy):
+        return CleanupDecision("drop", "markdown_short_contains_token")
     if (
         any(token in normalized for token in policy.markdown_short_tokens)
         and count_words(normalized) <= 16

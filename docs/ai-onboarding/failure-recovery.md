@@ -14,6 +14,24 @@ diagnosis: discovery worker 未产出合规 manifest。
 action: 重派 `discover-manifest`；超过 retry budget 后将 provider 状态置为 `blocked`。
 retryable: true
 
+## Signal: ACCESS_REVIEW_NOT_FOUND
+
+diagnosis: `docs/ai-onboarding/access-reviews/<provider>.yml` 不存在，不能派 discovery worker。
+action: 生成 operator access review 模板并等待 operator 填写合法访问、allowed runtime、禁止行为、challenge 策略、临时站点策略和 `may_continue`。
+retryable: false
+
+## Signal: ACCESS_REVIEW_SCHEMA_INVALID
+
+diagnosis: access review YAML 或 schema 字段无效。
+action: 修复 `docs/ai-onboarding/access-reviews/<provider>.yml`，不得由 worker 推断访问策略。
+retryable: false
+
+## Signal: ACCESS_REVIEW_NOT_APPROVED
+
+diagnosis: access review 标记为 blocked 或 `may_continue` 不是 true。
+action: 停在 `operator-access-preflight`；除非 operator 更新批准记录，否则不进入 discovery。
+retryable: false
+
 ## Signal: MANIFEST_SCHEMA_INVALID
 
 diagnosis: manifest 未通过 schema 或 YAML 结构校验。
@@ -35,8 +53,8 @@ retryable: true
 ## Signal: SCAFFOLD_OUTPUT_EXISTS
 
 diagnosis: scaffold 目标文件、fixture sample 或 manifest entry 已存在。
-action: 将当前 provider 状态置为 `blocked`，记录已存在路径或 sample id。
-retryable: false
+action: 运行 `scripts/scaffold_provider.py --from-manifest --merge-existing=safe`，能复用则继续，仍冲突时生成 `status: MERGE_PLAN` JSON 并按 diff preview 合并已有文件；只有 merge plan 无法生成时才将 provider 状态置为 `blocked`。
+retryable: true
 
 ## Signal: SCAFFOLD_TEMPLATE_RENDER_FAILED
 
@@ -114,6 +132,24 @@ retryable: true
 
 diagnosis: fixture manifest 的 expected outcome 仍为 `pending`，不能进入 acceptance。
 action: 运行 `scripts/snapshot_expected.py` 为该 DOI 写入 `expected.json` 并同步 manifest outcome。
+retryable: true
+
+## Signal: PROVIDER_LOCAL_ACCEPTANCE_FAILED
+
+diagnosis: provider-local pytest、Markdown review contract、route contract、forbidden central grep 或 provider subset live review 未通过。
+action: 重派 `implement-provider`，只修 provider-owned 实现、provider-local 测试或 review artifact；共享文件缺口应记录到 `shared-integration`。
+retryable: true
+
+## Signal: SHARED_INTEGRATION_FAILED
+
+diagnosis: coordinator-owned shared integration gate 未通过，例如 manifest bundle sync、golden corpus adapter、benchmark samples 或 live review support 不一致。
+action: 留在 `shared-integration`，由 coordinator 修 shared surface，并说明每个 shared 改动来自 manifest fact、bundle sync-back、fixture replay 或 provider-local test 证据。
+retryable: true
+
+## Signal: LOCAL_CHECK_FAILED
+
+diagnosis: `run-checks` 执行的本地命令失败，但该 task 没有更具体的 recovery code。
+action: 根据 stderr JSON 的 `details.command` 和 `details.returncode` 修当前 task；若失败来自 worker-owned 文件，按对应 worker retry 策略处理。
 retryable: true
 
 ## Signal: FIXTURE_NOT_FOUND

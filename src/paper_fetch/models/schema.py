@@ -17,6 +17,8 @@ SourceKind = Literal[
     "wiley_browser",
     "science",
     "pnas",
+    "mdpi_html",
+    "mdpi_pdf",
     "ieee_html",
     "ieee_pdf",
     "arxiv_html",
