@@ -28,7 +28,7 @@ def _load_yaml(path: Path) -> dict[str, Any]:
 
 
 def _known_manifest_path(root: Path, provider: str) -> Path:
-    known_path = root / "docs" / "ai-onboarding" / "known-providers.yml"
+    known_path = root / "onboarding" / "known-providers.yml"
     data = _load_yaml(known_path)
     providers = data.get("providers")
     if not isinstance(providers, list):
@@ -286,7 +286,7 @@ def _sync_known_providers(
     provider: str,
     manifest_path: Path,
 ) -> list[str]:
-    known_path = root / "docs" / "ai-onboarding" / "known-providers.yml"
+    known_path = root / "onboarding" / "known-providers.yml"
     data = _load_yaml(known_path) if known_path.exists() else {"providers": []}
     providers = data.setdefault("providers", [])
     if not isinstance(providers, list):
@@ -343,7 +343,7 @@ def _format_extraction_rules_row(provider: str, docs: dict[str, Any]) -> str:
     return (
         f"| `{provider}` docs sync | {summary_text} | "
         "Provider fixture replay or Markdown review exposes a docs-rule gap. | "
-        f"`docs/ai-onboarding/manifests/{provider}.yml` |"
+        f"`onboarding/manifests/{provider}.yml` |"
     )
 
 

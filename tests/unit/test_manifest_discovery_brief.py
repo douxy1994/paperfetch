@@ -10,20 +10,20 @@ def test_discover_brief_contains_required_search_contract() -> None:
         provider="mdpi",
         domain="mdpi.com",
         doi_prefix="10.3390",
-        output_manifest="docs/ai-onboarding/manifests/mdpi.yml",
+        output_manifest="onboarding/manifests/mdpi.yml",
     )
 
     assert brief["task_id"] == "mdpi-discover-manifest"
     assert brief["current_step"] == "discover-manifest"
     assert brief["runtime"] == "coding-agent-subagent"
-    assert brief["schema"] == "docs/ai-onboarding/provider-manifest.schema.json"
-    assert brief["hard_constraints"] == "docs/ai-onboarding/hard-constraints.md"
+    assert brief["schema"] == "onboarding/provider-manifest.schema.json"
+    assert brief["hard_constraints"] == "onboarding/hard-constraints.md"
     assert brief["provider_seed"] == {
         "name": "mdpi",
         "domain": "mdpi.com",
         "doi_prefix_hint": "10.3390",
     }
-    assert brief["output_manifest"] == "docs/ai-onboarding/manifests/mdpi.yml"
+    assert brief["output_manifest"] == "onboarding/manifests/mdpi.yml"
     assert brief["search_requirements"]["routing"] == [
         "doi_prefixes",
         "domains",
@@ -43,7 +43,7 @@ def test_discover_brief_contains_required_search_contract() -> None:
         "empty_shell",
     ]
     assert brief["files_allowed_to_modify"] == [
-        "docs/ai-onboarding/manifests/mdpi.yml"
+        "onboarding/manifests/mdpi.yml"
     ]
     assert {"src/", "tests/", "docs/providers.md", "CHANGELOG.md"}.issubset(
         set(brief["files_must_not_modify"])
@@ -57,7 +57,7 @@ def test_discover_brief_yaml_has_no_sensitive_collection_or_sdk_prompts() -> Non
         provider="mdpi",
         domain="mdpi.com",
         doi_prefix=None,
-        output_manifest="docs/ai-onboarding/manifests/mdpi.yml",
+        output_manifest="onboarding/manifests/mdpi.yml",
     )
 
     rendered = module.to_yaml(brief).lower()

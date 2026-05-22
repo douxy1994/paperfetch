@@ -274,7 +274,7 @@ def _load_provider_manifest(path: Path) -> dict[str, Any]:
     if not isinstance(manifest, dict):
         raise ManifestSchemaError("manifest root must be an object")
 
-    schema_path = _repo_root() / "docs" / "ai-onboarding" / "provider-manifest.schema.json"
+    schema_path = _repo_root() / "onboarding" / "provider-manifest.schema.json"
     try:
         schema = json.loads(schema_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -933,7 +933,7 @@ def scaffold(
     )
     manifest_path = root / "tests" / "fixtures" / "golden_criteria" / "manifest.json"
     capture_commands_path = (
-        root / "docs" / "ai-onboarding" / "capture-commands" / f"{name}.txt"
+        root / "onboarding" / "capture-commands" / f"{name}.txt"
         if spec.manifest_path is not None
         else None
     )
@@ -1099,7 +1099,7 @@ def _json_summary(
 
 
 def _write_scaffold_summary(root: Path, provider: str, summary: dict[str, object]) -> None:
-    path = root / "docs" / "ai-onboarding" / "scaffold" / f"{provider}.json"
+    path = root / "onboarding" / "scaffold" / f"{provider}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     summary["summary_path"] = _rel(path, root)
     path.write_text(

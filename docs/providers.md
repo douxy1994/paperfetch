@@ -13,7 +13,7 @@
 - Wiley / Science / PNAS / AMS / MDPI 的 CloakBrowser runtime 运维边界
 - 架构分层和数据契约的完整背景
 
-部署入口见 [`deployment.md`](deployment.md)，架构说明见 [`architecture/target-architecture.md`](architecture/target-architecture.md)。
+部署入口见 [`deployment.md`](deployment.md)，架构说明见 [`architecture/overview.md`](architecture/overview.md)。
 
 <a id="provider-canonical-sources"></a>
 `references/api_notes.md` 和 `references/routing_rules.md` 只保留 API 约束或历史草图；provider/routing/waterfall 的 canonical 事实来源是本文档和 `paper_fetch.provider_catalog.PROVIDER_CATALOG`。

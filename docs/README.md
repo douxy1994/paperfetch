@@ -38,19 +38,19 @@
 
 1. [`../README.md`](../README.md)
 2. [`deployment.md`](deployment.md)
-3. [`architecture/target-architecture.md`](architecture/target-architecture.md)
+3. [`architecture/overview.md`](architecture/overview.md)
 4. [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
 
 ### 4. 维护者
 
 如果你要理解当前业务流程、边界和扩展点，按这个顺序看：
 
-1. [`architecture/target-architecture.md`](architecture/target-architecture.md)
+1. [`architecture/overview.md`](architecture/overview.md)
 2. [`providers.md`](providers.md)
 3. [`provider-development.md`](provider-development.md)
 4. [`extraction-rules.md`](extraction-rules.md)
 5. [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
-6. [`ai-onboarding/README.md`](ai-onboarding/README.md)
+6. [`onboarding/README.md`](../onboarding/README.md)
 
 ## 文档分工
 
@@ -68,7 +68,7 @@
   - 讲 provider 能力矩阵、路由规则、默认输出、环境变量、缓存和限速。
 - [`provider-development.md`](provider-development.md)
   - 讲新增出版社 provider 的标准开发流程、typed contract、waterfall、资产语义、测试和文档验收标准。
-- [`ai-onboarding/README.md`](ai-onboarding/README.md)
+- [`onboarding/README.md`](../onboarding/README.md)
   - 讲 AI/coordinator provider onboarding 的权威输入、runner、manifest、review artifact 和自动化边界。
 - [`extraction-rules.md`](extraction-rules.md)
   - 讲当前提取 / 组装 / 渲染规则、真实样本证据和对应测试，不负责运行时路由和部署说明。
@@ -76,7 +76,7 @@
 - [`deployment.md`](deployment.md)
   - 讲安装、配置入口、MCP 注册、更新和最小验证。
   - 讲 Wiley / Science / PNAS / AMS 的 repo-local 浏览器工作流、本地 `scripts/dev-preflight.sh` 门禁和 CI 测试耗时信号。
-- [`architecture/target-architecture.md`](architecture/target-architecture.md)
+- [`architecture/overview.md`](architecture/overview.md)
   - 讲当前系统分层、端到端业务流程、数据契约和扩展点。
 - [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
   - 讲 `has_fulltext()` 的 probe 语义与边界。

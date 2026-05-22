@@ -176,7 +176,7 @@ def test_coordinator_state_conflict_emits_structured_schema(tmp_path: Path) -> N
 
 
 def test_failure_recovery_has_signal_sections_for_all_codes() -> None:
-    text = (REPO_ROOT / "docs" / "ai-onboarding" / "failure-recovery.md").read_text(encoding="utf-8")
+    text = (REPO_ROOT / "onboarding" / "failure-recovery.md").read_text(encoding="utf-8")
     for code in SIGNAL_CODES:
         section = f"## Signal: {code}"
         assert section in text

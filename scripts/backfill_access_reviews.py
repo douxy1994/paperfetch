@@ -18,8 +18,8 @@ SRC_DIR = REPO_ROOT / "src"
 if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
-KNOWN_PROVIDERS_PATH = "docs/ai-onboarding/known-providers.yml"
-ACCESS_REVIEW_DIR = "docs/ai-onboarding/access-reviews"
+KNOWN_PROVIDERS_PATH = "onboarding/known-providers.yml"
+ACCESS_REVIEW_DIR = "onboarding/access-reviews"
 FORBIDDEN_BEHAVIORS = (
     "automatic_login",
     "captcha_solving",
@@ -139,7 +139,7 @@ def build_access_review_draft(
 ) -> dict[str, Any]:
     """Build a blocked operator review draft from local manifest and bundle facts."""
     provider_name = _provider_slug(provider)
-    manifest_ref = manifest_path or f"docs/ai-onboarding/manifests/{provider_name}.yml"
+    manifest_ref = manifest_path or f"onboarding/manifests/{provider_name}.yml"
     timestamp = reviewed_at or datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     return {
         "schema_version": 1,

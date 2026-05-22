@@ -60,10 +60,10 @@ def test_manifest_sync_back_round_trips_runtime_bundle_fields(tmp_path: Path) ->
 
 def test_manifest_sync_back_sync_docs_updates_marker_entries(tmp_path: Path) -> None:
     case = next(case for case in iter_manifest_cases() if case.provider == "arxiv")
-    tmp_manifest = tmp_path / "docs" / "ai-onboarding" / "manifests" / "arxiv.yml"
+    tmp_manifest = tmp_path / "onboarding" / "manifests" / "arxiv.yml"
     tmp_manifest.parent.mkdir(parents=True)
     tmp_manifest.write_text(case.manifest_path.read_text(encoding="utf-8"), encoding="utf-8")
-    onboarding_dir = tmp_path / "docs" / "ai-onboarding"
+    onboarding_dir = tmp_path / "onboarding"
     onboarding_dir.mkdir(parents=True, exist_ok=True)
     (onboarding_dir / "known-providers.yml").write_text(
         "providers:\n"
@@ -73,6 +73,7 @@ def test_manifest_sync_back_sync_docs_updates_marker_entries(tmp_path: Path) -> 
         "    manifest_path: null\n",
         encoding="utf-8",
     )
+    (tmp_path / "docs").mkdir(parents=True, exist_ok=True)
     (tmp_path / "docs" / "providers.md").write_text(
         "# Providers\n\n"
         "<!-- SCAFFOLD: providers-capability-matrix -->\n"
@@ -126,7 +127,7 @@ def test_manifest_sync_back_sync_docs_updates_marker_entries(tmp_path: Path) -> 
     assert "docs.changelog" in summary["updated_fields"]
     assert known["providers"][-1]["name"] == "arxiv"
     assert known["providers"][-1]["manifest_path"] == (
-        "docs/ai-onboarding/manifests/arxiv.yml"
+        "onboarding/manifests/arxiv.yml"
     )
     assert "arXiv | arXiv ID" in (tmp_path / "docs" / "providers.md").read_text(
         encoding="utf-8"

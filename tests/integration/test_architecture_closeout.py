@@ -10,7 +10,7 @@ from pathlib import Path
 
 from tests.paths import REPO_ROOT, SKILL_DIR, SRC_DIR, TESTS_ROOT
 
-ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture" / "target-architecture.md"
+ARCHITECTURE_DOC = REPO_ROOT / "docs" / "architecture" / "overview.md"
 PAPER_FETCH_SRC = SRC_DIR / "paper_fetch"
 SERVICE_PATH = PAPER_FETCH_SRC / "service.py"
 RESOLVE_QUERY_PATH = PAPER_FETCH_SRC / "resolve" / "query.py"

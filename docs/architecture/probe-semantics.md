@@ -12,7 +12,7 @@
 - provider 详细配置
 - 所有未来 probe 策略的实现细节
 
-完整业务流程见 [`target-architecture.md`](target-architecture.md)。
+完整业务流程见 [`overview.md`](overview.md)。
 
 ## 背景
 
@@ -166,6 +166,6 @@ has_fulltext(query)
 
 ## 相关文档
 
-- [`target-architecture.md`](target-architecture.md)
+- [`overview.md`](overview.md)
 - [`../providers.md`](../providers.md)
 - [`../../README.md`](../../README.md)

@@ -9,7 +9,7 @@ import yaml
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANIFEST_DIR = REPO_ROOT / "docs" / "ai-onboarding" / "manifests"
+MANIFEST_DIR = REPO_ROOT / "onboarding" / "manifests"
 UNIT_DIR = REPO_ROOT / "tests" / "unit"
 STEP_ALIASES = {
     "landing_html": ("landing_html", "landing html", "landing_url", "landing"),

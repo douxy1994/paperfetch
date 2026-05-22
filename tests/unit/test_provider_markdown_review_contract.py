@@ -9,9 +9,9 @@ from jsonschema import Draft202012Validator
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-MANIFESTS_DIR = REPO_ROOT / "docs" / "ai-onboarding" / "manifests"
-REVIEWS_DIR = REPO_ROOT / "docs" / "ai-onboarding" / "reviews"
-REVIEW_SCHEMA_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "provider-review.schema.json"
+MANIFESTS_DIR = REPO_ROOT / "onboarding" / "manifests"
+REVIEWS_DIR = REPO_ROOT / "onboarding" / "reviews"
+REVIEW_SCHEMA_PATH = REPO_ROOT / "onboarding" / "provider-review.schema.json"
 PROVIDER_TEST_GLOBS = {
     "ams": ("test_ams_provider.py",),
     "elsevier": ("test_elsevier_markdown.py", "test_provider_waterfalls.py"),

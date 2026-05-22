@@ -23,12 +23,12 @@ from _structured_errors import ToolError, emit_error, error_payload  # noqa: E40
 
 
 PROVIDER_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
-SCHEMA_PATH = "docs/ai-onboarding/provider-manifest.schema.json"
-ACCESS_REVIEW_SCHEMA_PATH = "docs/ai-onboarding/access-review.schema.json"
-HARD_CONSTRAINTS_PATH = "docs/ai-onboarding/hard-constraints.md"
-FAILURE_RECOVERY_PATH = "docs/ai-onboarding/failure-recovery.md"
-STATE_SCHEMA_PATH = "docs/ai-onboarding/onboarding-state.schema.json"
-DEFAULT_STATE_PATH = "docs/ai-onboarding/onboarding-state.json"
+SCHEMA_PATH = "onboarding/provider-manifest.schema.json"
+ACCESS_REVIEW_SCHEMA_PATH = "onboarding/access-review.schema.json"
+HARD_CONSTRAINTS_PATH = "onboarding/hard-constraints.md"
+FAILURE_RECOVERY_PATH = "onboarding/failure-recovery.md"
+STATE_SCHEMA_PATH = "onboarding/onboarding-state.schema.json"
+DEFAULT_STATE_PATH = "onboarding/onboarding-state.json"
 AGENT_CLI_ENV = "PROVIDER_ONBOARDING_AGENT_CLI"
 ACCESS_PREFLIGHT_STEP = "operator-access-preflight"
 DISCOVER_STEP = "discover-manifest"
@@ -36,7 +36,7 @@ IMPLEMENT_STEP = "implement-provider"
 PROPOSE_CLEANING_STEP = "propose-cleaning-chain"
 SHARED_INTEGRATION_STEP = "shared-integration"
 SNAPSHOT_EXPECTED_STEP = "snapshot-expected"
-CLEANING_PROPOSAL_DIR = "docs/ai-onboarding/cleaning-chain-proposals"
+CLEANING_PROPOSAL_DIR = "onboarding/cleaning-chain-proposals"
 MAX_WORKER_RETRIES = 3
 ROUTING_REQUIREMENTS = [
     "doi_prefixes",
@@ -63,7 +63,7 @@ FILES_MUST_NOT_MODIFY = [
     "CHANGELOG.md",
 ]
 SHARED_FILES_MUST_NOT_MODIFY = [
-    "docs/ai-onboarding/known-providers.yml",
+    "onboarding/known-providers.yml",
     "docs/providers.md",
     "docs/extraction-rules.md",
     "CHANGELOG.md",
@@ -147,11 +147,11 @@ def _provider_slug(provider: str) -> str:
 
 
 def default_manifest_path(provider: str) -> str:
-    return f"docs/ai-onboarding/manifests/{_provider_slug(provider)}.yml"
+    return f"onboarding/manifests/{_provider_slug(provider)}.yml"
 
 
 def default_access_review_path(provider: str) -> str:
-    return f"docs/ai-onboarding/access-reviews/{_provider_slug(provider)}.yml"
+    return f"onboarding/access-reviews/{_provider_slug(provider)}.yml"
 
 
 def default_cleaning_proposal_path(provider: str) -> str:
@@ -431,7 +431,7 @@ def _implementation_allowed_files(provider: str, manifest: str) -> list[str]:
         f"src/paper_fetch/providers/{provider_name}.py",
         f"src/paper_fetch/providers/_{provider_name}_html.py",
         f"tests/unit/test_{provider_name}_provider.py",
-        f"docs/ai-onboarding/reviews/{provider_name}.yml",
+        f"onboarding/reviews/{provider_name}.yml",
     ]
 
 
@@ -500,10 +500,10 @@ def build_implementation_brief(
         },
         "upstream_artifacts": {
             "task_dag": "task-dag.json",
-            "capture_commands": f"docs/ai-onboarding/capture-commands/{provider_name}.txt",
+            "capture_commands": f"onboarding/capture-commands/{provider_name}.txt",
             "cleaning_proposal": default_cleaning_proposal_path(provider_name),
             "cleaning_proposal_evidence": default_cleaning_evidence_path(provider_name),
-            "scaffold_summary": f"docs/ai-onboarding/scaffold/{provider_name}.json",
+            "scaffold_summary": f"onboarding/scaffold/{provider_name}.json",
         },
         "cleaning_proposal": _compact_cleaning_proposal_for_brief(provider_name),
         "hard_constraints": HARD_CONSTRAINTS_PATH,
@@ -535,7 +535,7 @@ def build_implementation_brief(
             ],
         },
         "output_requirements": {
-            "review_artifact": f"docs/ai-onboarding/reviews/{provider_name}.yml",
+            "review_artifact": f"onboarding/reviews/{provider_name}.yml",
             "reviewed_fixtures": (
                 "one entry per non-null provider_manifest.fixtures.doi_samples "
                 "purpose and per provider_manifest.extra_fixtures item"
@@ -1101,7 +1101,7 @@ def _verify_commands(provider: str, task: str, *, include_live: bool = True) -> 
                 "diff",
                 "--",
                 default_manifest_path(provider_name),
-                "docs/ai-onboarding/known-providers.yml",
+                "onboarding/known-providers.yml",
                 "docs/providers.md",
                 "CHANGELOG.md",
             ]
@@ -2552,7 +2552,7 @@ def _manifest_fixture_summary(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 
 
 def _review_artifact_summary(provider: str) -> dict[str, Any]:
-    path = _repo_root() / "docs" / "ai-onboarding" / "reviews" / f"{provider}.yml"
+    path = _repo_root() / "onboarding" / "reviews" / f"{provider}.yml"
     if not path.exists():
         return {"status": "missing", "path": path.relative_to(_repo_root()).as_posix(), "fixtures": []}
     try:

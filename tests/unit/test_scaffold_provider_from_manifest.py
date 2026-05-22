@@ -13,8 +13,8 @@ import yaml
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "scaffold_provider.py"
-ARXIV_MANIFEST = REPO_ROOT / "docs" / "ai-onboarding" / "manifests" / "arxiv.yml"
-WILEY_MANIFEST = REPO_ROOT / "docs" / "ai-onboarding" / "manifests" / "wiley.yml"
+ARXIV_MANIFEST = REPO_ROOT / "onboarding" / "manifests" / "arxiv.yml"
+WILEY_MANIFEST = REPO_ROOT / "onboarding" / "manifests" / "wiley.yml"
 
 
 def _run_from_manifest(
@@ -70,7 +70,7 @@ def test_from_manifest_generates_scaffold_and_json_summary(tmp_path: Path) -> No
     assert summary["provider"] == "arxiv"
     assert "src/paper_fetch/providers/_arxiv_html.py" in summary["generated_files"]
     assert "src/paper_fetch/providers/arxiv.py" in summary["generated_files"]
-    assert "docs/ai-onboarding/capture-commands/arxiv.txt" in summary["generated_files"]
+    assert "onboarding/capture-commands/arxiv.txt" in summary["generated_files"]
 
     assert (tmp_path / "src/paper_fetch/providers/_arxiv_html.py").is_file()
     assert (tmp_path / "src/paper_fetch/providers/arxiv.py").is_file()
@@ -120,7 +120,7 @@ def test_from_manifest_generates_scaffold_and_json_summary(tmp_path: Path) -> No
     assert "skipped: manifest docs.extraction_rules_summary is null" in extraction_rules
 
     capture_commands = (
-        tmp_path / "docs/ai-onboarding/capture-commands/arxiv.txt"
+        tmp_path / "onboarding/capture-commands/arxiv.txt"
     ).read_text(encoding="utf-8")
     assert "--from-manifest" in capture_commands
     assert str(ARXIV_MANIFEST) in capture_commands
@@ -156,7 +156,7 @@ def test_from_manifest_capture_commands_include_extra_fixtures(tmp_path: Path) -
     _run_from_manifest(output_dir, manifest_path)
 
     capture_commands = (
-        output_dir / "docs/ai-onboarding/capture-commands/arxiv.txt"
+        output_dir / "onboarding/capture-commands/arxiv.txt"
     ).read_text(encoding="utf-8")
     assert "--from-manifest" in capture_commands
     assert "--all" in capture_commands
@@ -252,7 +252,7 @@ def test_from_manifest_safe_merge_reuses_complete_existing_outputs(
     assert "src/paper_fetch/providers/_arxiv_html.py" in summary["reused_existing_files"]
     assert "src/paper_fetch/providers/arxiv.py" in summary["reused_existing_files"]
     assert "tests/unit/test_arxiv_provider.py" in summary["reused_existing_files"]
-    assert (tmp_path / "docs/ai-onboarding/scaffold/arxiv.json").is_file()
+    assert (tmp_path / "onboarding/scaffold/arxiv.json").is_file()
 
 
 def test_from_manifest_reuses_existing_fixture_samples_without_merge_plan(

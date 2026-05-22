@@ -13,11 +13,11 @@ from scripts import backfill_access_reviews as backfill
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "backfill_access_reviews.py"
-ACCESS_REVIEW_SCHEMA_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "access-review.schema.json"
+ACCESS_REVIEW_SCHEMA_PATH = REPO_ROOT / "onboarding" / "access-review.schema.json"
 
 
 def _write_minimal_onboarding_root(root: Path) -> None:
-    docs = root / "docs" / "ai-onboarding"
+    docs = root / "onboarding"
     (docs / "manifests").mkdir(parents=True)
     (docs / "access-reviews").mkdir(parents=True)
     (docs / "known-providers.yml").write_text(
@@ -32,12 +32,12 @@ def _write_minimal_onboarding_root(root: Path) -> None:
                     {
                         "name": "mdpi",
                         "status": "implemented",
-                        "manifest_path": "docs/ai-onboarding/manifests/mdpi.yml",
+                        "manifest_path": "onboarding/manifests/mdpi.yml",
                     },
                     {
                         "name": "wiley",
                         "status": "implemented",
-                        "manifest_path": "docs/ai-onboarding/manifests/wiley.yml",
+                        "manifest_path": "onboarding/manifests/wiley.yml",
                     },
                 ]
             },
@@ -86,7 +86,7 @@ def _write_minimal_onboarding_root(root: Path) -> None:
 
 def test_build_access_review_draft_matches_schema_and_stays_blocked() -> None:
     manifest = yaml.safe_load(
-        (REPO_ROOT / "docs" / "ai-onboarding" / "manifests" / "wiley.yml").read_text(
+        (REPO_ROOT / "onboarding" / "manifests" / "wiley.yml").read_text(
             encoding="utf-8"
         )
     )
@@ -120,7 +120,7 @@ def test_build_access_review_draft_matches_schema_and_stays_blocked() -> None:
 def test_committed_access_reviews_match_schema_and_generated_drafts_stay_blocked() -> None:
     schema = json.loads(ACCESS_REVIEW_SCHEMA_PATH.read_text(encoding="utf-8"))
     paths = sorted(
-        (REPO_ROOT / "docs" / "ai-onboarding" / "access-reviews").glob("*.yml")
+        (REPO_ROOT / "onboarding" / "access-reviews").glob("*.yml")
     )
 
     assert paths
@@ -159,12 +159,12 @@ def test_backfill_dry_run_reports_missing_reviews_without_writing(tmp_path: Path
     assert results["mdpi"]["action"] == "skipped_exists"
     assert results["wiley"]["action"] == "would_write"
     assert results["wiley"]["draft"]["status"] == "blocked"
-    assert not (tmp_path / "docs" / "ai-onboarding" / "access-reviews" / "wiley.yml").exists()
+    assert not (tmp_path / "onboarding" / "access-reviews" / "wiley.yml").exists()
 
 
 def test_backfill_write_skips_existing_review_unless_forced(tmp_path: Path) -> None:
     _write_minimal_onboarding_root(tmp_path)
-    existing = tmp_path / "docs" / "ai-onboarding" / "access-reviews" / "mdpi.yml"
+    existing = tmp_path / "onboarding" / "access-reviews" / "mdpi.yml"
     before = existing.read_text(encoding="utf-8")
 
     result = subprocess.run(
@@ -184,7 +184,7 @@ def test_backfill_write_skips_existing_review_unless_forced(tmp_path: Path) -> N
 
     payload = json.loads(result.stdout)
     results = {item["provider"]: item for item in payload["results"]}
-    written = tmp_path / "docs" / "ai-onboarding" / "access-reviews" / "wiley.yml"
+    written = tmp_path / "onboarding" / "access-reviews" / "wiley.yml"
     draft = yaml.safe_load(written.read_text(encoding="utf-8"))
 
     assert results["mdpi"]["action"] == "skipped_exists"

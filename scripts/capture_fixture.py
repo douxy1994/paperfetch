@@ -49,7 +49,7 @@ PURPOSE_ALIASES = {
 }
 CLI_PURPOSES = sorted(set(PURPOSES) | set(PURPOSE_ALIASES))
 RETRY_VIA_ERROR_CODES = {"HTTP_FORBIDDEN", "HTTP_RATE_LIMITED", "CHALLENGE_DETECTED"}
-ACCESS_REVIEW_DIR = REPO_ROOT / "docs" / "ai-onboarding" / "access-reviews"
+ACCESS_REVIEW_DIR = REPO_ROOT / "onboarding" / "access-reviews"
 
 
 class CaptureArgumentParser(argparse.ArgumentParser):

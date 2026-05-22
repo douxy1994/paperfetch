@@ -14,7 +14,7 @@
 - 单次事故的时间线、排障过程或 root-cause 复盘全文
 - 某篇 DOI 的特殊例外规则
 
-provider、routing 和 waterfall 的 canonical 事实来源是 [`providers.md`](providers.md) 与 `paper_fetch.provider_catalog.PROVIDER_CATALOG`；本文只维护用户可见的提取 / 渲染规则。`references/` 下的文件只保留 API 约束、补充说明或历史设计草图，不再作为 provider 路由事实来源。系统分层与业务主线见 [`architecture/target-architecture.md`](architecture/target-architecture.md)，受控阶段到 canonical module 的映射见 [`target-architecture.md` 的 Extraction 阶段映射](architecture/target-architecture.md#extraction-stage-module-map)。
+provider、routing 和 waterfall 的 canonical 事实来源是 [`providers.md`](providers.md) 与 `paper_fetch.provider_catalog.PROVIDER_CATALOG`；本文只维护用户可见的提取 / 渲染规则。`references/` 下的文件只保留 API 约束、补充说明或历史设计草图，不再作为 provider 路由事实来源。系统分层与业务主线见 [`architecture/overview.md`](architecture/overview.md)，受控阶段到 canonical module 的映射见 [`overview.md` 的 Extraction 阶段映射](architecture/overview.md#extraction-stage-module-map)。
 
 ## 规则怎么读
 
@@ -287,7 +287,7 @@ metadata
 - 这条规则约束的是：availability 判定必须把真正可读的正文 HTML 识别成 fulltext，同时把 access gate、abstract-only 页面和带登录 chrome 的摘要页识别成 abstract-only；不能因为站点噪声、机构登录提示或 ancillary sections 把结果判反。
 - 如果违反，用户会看到：明明只有摘要的页面被当成全文返回，或者本来有正文的页面被误降级成 abstract-only，直接影响最终内容类型和 fallback 行为。
 - 它对应的阶段是：`availability-quality`、`article-assembly`。
-- Owner：`paper_fetch.quality.html_availability` 与 `paper_fetch.extraction.html.provider_rules`；HTML container 评分、选择、清理的架构边界见 [architecture/target-architecture.md 的 Extraction 层](architecture/target-architecture.md#6-extraction-层)。
+- Owner：`paper_fetch.quality.html_availability` 与 `paper_fetch.extraction.html.provider_rules`；HTML container 评分、选择、清理的架构边界见 [architecture/overview.md 的 Extraction 层](architecture/overview.md#6-extraction-层)。
 - 代表性 HTML / XML：
   - [`../tests/fixtures/block/10.1126_science.aeg3511/raw.html`](../tests/fixtures/block/10.1126_science.aeg3511/raw.html)
   - [`../tests/fixtures/golden_criteria/10.1126_science.aeg3511/original.html`](../tests/fixtures/golden_criteria/10.1126_science.aeg3511/original.html)
@@ -732,7 +732,7 @@ metadata
 
 > 已合并到 [Availability section contract 必须保留、归类、排除正文度量并适配 hints](#rule-keep-data-availability-once)。
 
-旧 anchor 保留用于 manifest、测试标记、历史链接和外部引用。HTML semantics 与 `ArticleModel` 的解耦边界见 [`architecture/target-architecture.md` 的 Extraction 层](architecture/target-architecture.md#6-extraction-层)。
+旧 anchor 保留用于 manifest、测试标记、历史链接和外部引用。HTML semantics 与 `ArticleModel` 的解耦边界见 [`architecture/overview.md` 的 Extraction 层](architecture/overview.md#6-extraction-层)。
 历史覆盖测试包括 [`../tests/unit/test_models_render.py`](../tests/unit/test_models_render.py) 中的 `test_article_from_markdown_coerces_dict_object_and_section_hint_in_declared_order`。
 
 <a id="rule-keep-headingless-body-flat"></a>

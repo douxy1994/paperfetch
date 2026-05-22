@@ -17,7 +17,7 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "run_provider_drift_report.py"
 
 def _load_mdpi_manifest() -> dict:
     return yaml.safe_load(
-        (REPO_ROOT / "docs" / "ai-onboarding" / "manifests" / "mdpi.yml").read_text(
+        (REPO_ROOT / "onboarding" / "manifests" / "mdpi.yml").read_text(
             encoding="utf-8"
         )
     )

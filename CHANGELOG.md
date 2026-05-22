@@ -362,7 +362,7 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 ### Docs
 
-- Kept architecture rationale in [`docs/architecture/target-architecture.md`](docs/architecture/target-architecture.md) and moved shipped changes to this file.
+- Kept architecture rationale in [`docs/architecture/overview.md`](docs/architecture/overview.md) and moved shipped changes to this file.
 - Updated deployment, provider, MCP, and skill-facing documentation to match the landed MCP surface and environment behavior.
 
 ### Validation

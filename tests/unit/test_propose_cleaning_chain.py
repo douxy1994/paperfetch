@@ -17,7 +17,7 @@ SCRIPT_PATH = REPO_ROOT / "scripts" / "propose_cleaning_chain.py"
 
 def _mdpi_subset_manifest() -> dict:
     manifest = yaml.safe_load(
-        (REPO_ROOT / "docs" / "ai-onboarding" / "manifests" / "mdpi.yml").read_text(
+        (REPO_ROOT / "onboarding" / "manifests" / "mdpi.yml").read_text(
             encoding="utf-8"
         )
     )
@@ -37,7 +37,7 @@ def _mdpi_subset_manifest() -> dict:
 def test_cleaning_proposal_contains_fixture_provenance_and_contract_delta() -> None:
     proposal = cleaning.build_cleaning_chain_proposal(
         _mdpi_subset_manifest(),
-        manifest_path="docs/ai-onboarding/manifests/mdpi.yml",
+        manifest_path="onboarding/manifests/mdpi.yml",
     )
 
     assert proposal["schema_version"] == 1
@@ -102,7 +102,7 @@ def test_markdown_baseline_uses_provider_golden_adapter(monkeypatch, tmp_path: P
 
 def test_ieee_landing_only_fallback_fixtures_render_provider_managed_baselines() -> None:
     manifest = yaml.safe_load(
-        (REPO_ROOT / "docs" / "ai-onboarding" / "manifests" / "ieee.yml").read_text(
+        (REPO_ROOT / "onboarding" / "manifests" / "ieee.yml").read_text(
             encoding="utf-8"
         )
     )

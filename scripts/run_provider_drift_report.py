@@ -26,8 +26,8 @@ from paper_fetch.utils import normalize_text  # noqa: E402
 
 
 RUN_LIVE_ENV_VAR = "PAPER_FETCH_RUN_LIVE"
-MANIFEST_DIR = "docs/ai-onboarding/manifests"
-KNOWN_PROVIDERS_PATH = "docs/ai-onboarding/known-providers.yml"
+MANIFEST_DIR = "onboarding/manifests"
+KNOWN_PROVIDERS_PATH = "onboarding/known-providers.yml"
 FULLTEXT = "fulltext"
 
 

@@ -11,10 +11,10 @@ from jsonschema import Draft202012Validator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "onboard_from_manifests.py"
-STATE_SCHEMA_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "onboarding-state.schema.json"
-ACCESS_REVIEW_SCHEMA_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "access-review.schema.json"
-HARD_CONSTRAINTS_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "hard-constraints.md"
-FAILURE_RECOVERY_PATH = REPO_ROOT / "docs" / "ai-onboarding" / "failure-recovery.md"
+STATE_SCHEMA_PATH = REPO_ROOT / "onboarding" / "onboarding-state.schema.json"
+ACCESS_REVIEW_SCHEMA_PATH = REPO_ROOT / "onboarding" / "access-review.schema.json"
+HARD_CONSTRAINTS_PATH = REPO_ROOT / "onboarding" / "hard-constraints.md"
+FAILURE_RECOVERY_PATH = REPO_ROOT / "onboarding" / "failure-recovery.md"
 CENTRAL_PROVIDER_LOGIC_PATHS = {
     "src/paper_fetch/extraction/html/provider_rules.py",
     "src/paper_fetch/quality/html_signals.py",
@@ -87,28 +87,28 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
         "global-lint",
         "merge-ready",
     ]
-    assert dag["manifest"] == "docs/ai-onboarding/manifests/mdpi.yml"
+    assert dag["manifest"] == "onboarding/manifests/mdpi.yml"
     assert dag["runtime"] == "coding-agent-subagent"
     assert discover_brief_path.is_file()
     assert implement_brief_path.is_file()
     assert "current_step: discover-manifest" in discover_brief
-    assert "output_manifest: docs/ai-onboarding/manifests/mdpi.yml" in discover_brief
+    assert "output_manifest: onboarding/manifests/mdpi.yml" in discover_brief
     assert "domain: mdpi.com" in discover_brief
     assert implement_brief["task_id"] == "mdpi-implement-provider"
-    assert implement_brief["provider_manifest"] == "docs/ai-onboarding/manifests/mdpi.yml"
+    assert implement_brief["provider_manifest"] == "onboarding/manifests/mdpi.yml"
     assert implement_brief["current_step"] == "implement-provider"
     assert implement_brief["runtime"] == "coding-agent-subagent"
     assert implement_brief["upstream_artifacts"]["cleaning_proposal"] == (
-        "docs/ai-onboarding/cleaning-chain-proposals/mdpi.yml"
+        "onboarding/cleaning-chain-proposals/mdpi.yml"
     )
     assert implement_brief["cleaning_proposal"]["producer_task"] == "propose-cleaning-chain"
     assert implement_brief["access_review"] == (
-        "docs/ai-onboarding/access-reviews/mdpi.yml"
+        "onboarding/access-reviews/mdpi.yml"
     )
     assert implement_brief["access_policy_constraints"]["do_not_auto_login"] is True
     assert implement_brief["access_policy_constraints"]["do_not_solve_captcha"] is True
     assert implement_brief["hard_constraints"] == (
-        "docs/ai-onboarding/hard-constraints.md"
+        "onboarding/hard-constraints.md"
     )
     assert HARD_CONSTRAINTS_PATH.is_file()
     assert implement_brief["no_commit"] is True
@@ -140,7 +140,7 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
         ],
     }
     assert implement_brief["output_requirements"] == {
-        "review_artifact": "docs/ai-onboarding/reviews/mdpi.yml",
+        "review_artifact": "onboarding/reviews/mdpi.yml",
         "reviewed_fixtures": (
             "one entry per non-null provider_manifest.fixtures.doi_samples "
             "purpose and per provider_manifest.extra_fixtures item"
@@ -154,7 +154,7 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
         ],
     }
     assert implement_brief["failure_recovery"]["policy"] == (
-        "docs/ai-onboarding/failure-recovery.md"
+        "onboarding/failure-recovery.md"
     )
     assert FAILURE_RECOVERY_PATH.is_file()
     assert "acceptance" in implement_brief
@@ -181,7 +181,7 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     ) in implement_brief["acceptance"]["pytest"]
     assert "files_allowed_to_modify" in implement_brief
     assert "files_must_not_modify" in implement_brief
-    assert "docs/ai-onboarding/manifests/mdpi.yml" in implement_brief["files_allowed_to_modify"]
+    assert "onboarding/manifests/mdpi.yml" in implement_brief["files_allowed_to_modify"]
     assert implement_brief["manifest_adjustment_policy"]["allowed_only_for_failure_code"] == (
         "MARKDOWN_CONTRACT_DRIFT"
     )
@@ -201,13 +201,13 @@ def test_discover_prints_brief_with_requested_output_manifest() -> None:
         "--domain",
         "mdpi.com",
         "--output",
-        "docs/ai-onboarding/manifests/mdpi.yml",
+        "onboarding/manifests/mdpi.yml",
     )
 
     assert "task_id: mdpi-discover-manifest" in result.stdout
     assert "current_step: discover-manifest" in result.stdout
-    assert "output_manifest: docs/ai-onboarding/manifests/mdpi.yml" in result.stdout
-    assert "access_review: docs/ai-onboarding/access-reviews/mdpi.yml" in result.stdout
+    assert "output_manifest: onboarding/manifests/mdpi.yml" in result.stdout
+    assert "access_review: onboarding/access-reviews/mdpi.yml" in result.stdout
 
 
 def test_start_manifest_replay_skips_discover_brief(tmp_path: Path) -> None:
@@ -293,7 +293,7 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         "--provider",
         "mdpi",
         "--manifest",
-        "docs/ai-onboarding/manifests/mdpi.yml",
+        "onboarding/manifests/mdpi.yml",
         "--sync-docs",
     ] in sync_back_commands
 
@@ -311,7 +311,7 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         "python3",
         "scripts/capture_fixture.py",
         "--from-manifest",
-        "docs/ai-onboarding/manifests/mdpi.yml",
+        "onboarding/manifests/mdpi.yml",
         "--all",
         "--auto-via",
         "--fail-fast",
@@ -479,8 +479,7 @@ def test_access_review_schema_accepts_required_operator_fields() -> None:
     review = yaml.safe_load(
         (
             REPO_ROOT
-            / "docs"
-            / "ai-onboarding"
+            / "onboarding"
             / "access-reviews"
             / "mdpi.yml"
         ).read_text(encoding="utf-8")
@@ -565,7 +564,7 @@ def test_run_checks_executes_single_task_and_records_state(tmp_path: Path) -> No
     assert payload["result"] == "passed"
     assert run["dry_run"] is False
     assert run["result"] == "passed"
-    assert ["test", "-f", "docs/ai-onboarding/access-reviews/mdpi.yml"] in run["commands"]
+    assert ["test", "-f", "onboarding/access-reviews/mdpi.yml"] in run["commands"]
 
     schema = json.loads(STATE_SCHEMA_PATH.read_text(encoding="utf-8"))
     errors = sorted(
@@ -582,7 +581,7 @@ def test_run_until_access_preflight_executes_serial_prefix(tmp_path: Path) -> No
     result = run_cli(
         "run",
         "--manifest",
-        "docs/ai-onboarding/manifests/mdpi.yml",
+        "onboarding/manifests/mdpi.yml",
         "--until",
         "operator-access-preflight",
         "--state",
@@ -749,7 +748,7 @@ def _write_blocked_state(
         "providers": {
             provider: {
                 "provider": provider,
-                "manifest": f"docs/ai-onboarding/manifests/{provider}.yml",
+                "manifest": f"onboarding/manifests/{provider}.yml",
                 "status": "blocked",
                 "current_step": task,
                 "steps": steps,
@@ -922,7 +921,7 @@ def test_summarize_outputs_json_and_markdown_without_fabricated_passes(tmp_path:
     assert "- failed_task: capture-fixtures" in markdown
     assert "failure_recovery_action:" in markdown
     assert "## Review Artifact" in markdown
-    assert "docs/ai-onboarding/reviews/mdpi.yml" in markdown
+    assert "onboarding/reviews/mdpi.yml" in markdown
     assert "tests/fixtures/golden_criteria/10.3390_membranes15030093/structure" in markdown
     assert "issue_ids=[] fix_ids=[] tests=[]" in markdown
     assert "## Run Checks" in markdown

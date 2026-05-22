@@ -32,7 +32,7 @@
 
 - 支持 DOI、URL 和标题查询。
 - 输出结构化论文元数据、正文 Markdown、引用信息和本地缓存资源。
-- 支持常见 provider 路由，包括 Crossref、arXiv、Elsevier、Springer、Wiley、Science、PNAS、IEEE 和 Copernicus。
+- 支持常见 provider 路由，包括 Crossref、arXiv、Elsevier、Springer、Wiley、Science、PNAS、AMS、IEEE、MDPI 和 Copernicus。
 - 在无法取得全文时返回带 warning 的 abstract-only 或 metadata-only 结果。
 
 项目边界：
@@ -40,7 +40,7 @@
 - 不做主题检索、文献推荐或综述生成。
 - 不绕过付费墙或访问授权；可用性取决于 provider、凭据和本机运行环境。
 - Wiley、Science、PNAS、AMS 的浏览器路径统一使用 CloakBrowser；IEEE 路线不需要额外 API key，但全文可用性取决于 IEEE Xplore 对当前环境的合法访问上下文。
-- Provider onboarding 的 AI/coordinator 自动化入口见 [`docs/ai-onboarding/README.md`](docs/ai-onboarding/README.md)，其中的 runner 仍不能代替 access approval、challenge 决策或最终语义审查签字。
+- Provider onboarding 的 AI/coordinator 自动化入口见 [`onboarding/README.md`](onboarding/README.md)，其中的 runner 仍不能代替 access approval、challenge 决策或最终语义审查签字。
 
 ## 效果展示
 
@@ -452,7 +452,7 @@ Gemini CLI 用户对应执行：
 - [`docs/deployment.md`](docs/deployment.md)：安装、配置、MCP 注册和更新。
 - [`docs/providers.md`](docs/providers.md)：provider 能力、环境变量和运行时配置。
 - [`docs/README.md`](docs/README.md)：完整文档导航。
-- [`docs/architecture/target-architecture.md`](docs/architecture/target-architecture.md)：架构边界和维护者视角。
+- [`docs/architecture/overview.md`](docs/architecture/overview.md)：架构边界和维护者视角。
 
 ## 免责声明
 

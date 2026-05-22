@@ -16,7 +16,7 @@ from paper_fetch.providers._registry import ProviderBundle, provider_bundle
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ONBOARDING_DIR = REPO_ROOT / "docs" / "ai-onboarding"
+ONBOARDING_DIR = REPO_ROOT / "onboarding"
 KNOWN_PROVIDERS_PATH = ONBOARDING_DIR / "known-providers.yml"
 MANIFEST_SCHEMA_PATH = ONBOARDING_DIR / "provider-manifest.schema.json"
 MANIFESTS_DIR = ONBOARDING_DIR / "manifests"

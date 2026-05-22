@@ -11,11 +11,11 @@ from jsonschema import Draft202012Validator
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "scripts" / "bootstrap_review_artifact.py"
-SCHEMA = REPO_ROOT / "docs" / "ai-onboarding" / "provider-review.schema.json"
+SCHEMA = REPO_ROOT / "onboarding" / "provider-review.schema.json"
 
 
 def test_bootstrap_review_artifact_writes_schema_valid_draft(tmp_path: Path) -> None:
-    manifest_path = tmp_path / "docs" / "ai-onboarding" / "manifests" / "newpub.yml"
+    manifest_path = tmp_path / "onboarding" / "manifests" / "newpub.yml"
     expected_path = (
         tmp_path
         / "tests"

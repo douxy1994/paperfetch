@@ -358,7 +358,7 @@ def default_manifest_path() -> Path:
 
 
 def provider_manifest_path(provider: str) -> Path:
-    return resolve_repo_root() / "docs" / "ai-onboarding" / "manifests" / f"{provider}.yml"
+    return resolve_repo_root() / "onboarding" / "manifests" / f"{provider}.yml"
 
 
 def timestamped_review_output_dir(*, now: datetime | None = None) -> Path:

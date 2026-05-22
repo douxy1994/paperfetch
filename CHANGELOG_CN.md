@@ -362,7 +362,7 @@
 
 ### 文档
 
-- 将 architecture rationale 保留在 [`docs/architecture/target-architecture.md`](docs/architecture/target-architecture.md)，并把已发布变更移到本文件。
+- 将 architecture rationale 保留在 [`docs/architecture/overview.md`](docs/architecture/overview.md)，并把已发布变更移到本文件。
 - 更新 deployment、provider、MCP 和 skill-facing documentation，使其匹配已经落地的 MCP surface 和 environment behavior。
 
 ### 验证

@@ -1,8 +1,8 @@
 # 添加一个 Provider：快速上手
 
-> Human reference only. AI/coordinator provider onboarding must use docs/ai-onboarding/.
+> Human reference only. AI/coordinator provider onboarding must use onboarding/.
 
-这是为第一次给 paper_fetch 接入新出版社（如 MDPI、PLOS、Frontiers）的人类开发者写的快速教程。它不作为 AI/coordinator worker 输入；AI/coordinator 的权威入口是 [`docs/ai-onboarding/README.md`](ai-onboarding/README.md)，DAG、manifest schema、hard constraints 和 merge-ready gate 分别见 [`coordinator-spec.md`](ai-onboarding/coordinator-spec.md)、[`provider-manifest.schema.json`](ai-onboarding/provider-manifest.schema.json)、[`hard-constraints.md`](ai-onboarding/hard-constraints.md) 和 [`acceptance.md`](ai-onboarding/acceptance.md)。完整人工规约见 [`provider-development.md`](provider-development.md)，本文只讲流程。
+这是为第一次给 paper_fetch 接入新出版社（如 MDPI、PLOS、Frontiers）的人类开发者写的快速教程。它不作为 AI/coordinator worker 输入；AI/coordinator 的权威入口是 [`onboarding/README.md`](../onboarding/README.md)，DAG、manifest schema、hard constraints 和 merge-ready gate 分别见 [`coordinator-spec.md`](../onboarding/coordinator-spec.md)、[`provider-manifest.schema.json`](../onboarding/provider-manifest.schema.json)、[`hard-constraints.md`](../onboarding/hard-constraints.md) 和 [`acceptance.md`](../onboarding/acceptance.md)。完整人工规约见 [`provider-development.md`](provider-development.md)，本文只讲流程。
 
 ## 你要做什么
 
@@ -128,7 +128,7 @@ python3 scripts/scaffold_provider.py --name mdpi --doi 10.3390/membranes15030093
 
 ### 3.5 Markdown Review Loop
 
-对 manifest 中每个 non-null `fixtures.doi_samples.<purpose>` 固定执行；AI/coordinator manifest 字段定义以 [`docs/ai-onboarding/provider-manifest.md`](ai-onboarding/provider-manifest.md) 和 [`provider-manifest.schema.json`](ai-onboarding/provider-manifest.schema.json) 为准：
+对 manifest 中每个 non-null `fixtures.doi_samples.<purpose>` 固定执行；AI/coordinator manifest 字段定义以 [`onboarding/provider-manifest.md`](../onboarding/provider-manifest.md) 和 [`provider-manifest.schema.json`](../onboarding/provider-manifest.schema.json) 为准：
 
 1. 生成 baseline Markdown。
 2. 逐篇阅读，记录 `fixture/purpose -> issue -> assertion -> fix`。
@@ -190,7 +190,7 @@ PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contra
 |---|---|
 | `docs/providers.md` | 能力矩阵、routing 信号、waterfall、asset_profile、status |
 | `docs/extraction-rules.md` | 用户可见新规则（若有） |
-| `docs/architecture/target-architecture.md` | 仅新增 canonical owner 时 |
+| `docs/architecture/overview.md` | 仅新增 canonical owner 时 |
 | `docs/deployment.md` / `.env.example` | 新环境变量（若有） |
 | `CHANGELOG.md` | 一行用户可见摘要 |
 
@@ -258,7 +258,7 @@ git commit -m "docs(mdpi): add provider documentation"
 
 - 详细规约：[`provider-development.md`](provider-development.md)
 - 已支持 provider 的能力矩阵：[`providers.md`](providers.md)
-- 系统分层与 typed contract：[`architecture/target-architecture.md`](architecture/target-architecture.md)
+- 系统分层与 typed contract：[`architecture/overview.md`](architecture/overview.md)
 - 用户可见提取规则：[`extraction-rules.md`](extraction-rules.md)
 
 有不清楚的，先看现有 provider 的 `_pnas_html.py` 或 `mdpi.py`（如果已存在）抄一遍——大多数模式都已有先例。

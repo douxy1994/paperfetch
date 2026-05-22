@@ -28,7 +28,7 @@ from paper_fetch.publisher_identity import normalize_doi  # noqa: E402
 from paper_fetch.utils import normalize_text  # noqa: E402
 
 
-DEFAULT_OUTPUT_DIR = "docs/ai-onboarding/cleaning-chain-proposals"
+DEFAULT_OUTPUT_DIR = "onboarding/cleaning-chain-proposals"
 GOLDEN_MANIFEST_PATH = "tests/fixtures/golden_criteria/manifest.json"
 SELECTOR_KEYWORDS = (
     "nav",
@@ -1029,7 +1029,7 @@ def _manifest_from_args(args: argparse.Namespace) -> tuple[Path, str]:
             path = REPO_ROOT / path
         return path, _repo_rel(path)
     provider = _provider_slug(args.provider)
-    rel = f"docs/ai-onboarding/manifests/{provider}.yml"
+    rel = f"onboarding/manifests/{provider}.yml"
     return REPO_ROOT / rel, rel
 
 

@@ -272,7 +272,7 @@ def main(argv: list[str] | None = None) -> int:
     manifest_path = Path(args.manifest)
     if not manifest_path.is_absolute():
         manifest_path = root / manifest_path
-    output_path = root / "docs" / "ai-onboarding" / "reviews" / f"{provider}.yml"
+    output_path = root / "onboarding" / "reviews" / f"{provider}.yml"
     try:
         if output_path.exists() and not args.force:
             print(

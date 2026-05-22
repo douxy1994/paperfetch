@@ -9,17 +9,17 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_DIR = REPO_ROOT / "src"
-AI_ONBOARDING_DIR = REPO_ROOT / "docs" / "ai-onboarding"
+AI_ONBOARDING_DIR = REPO_ROOT / "onboarding"
 HARD_CONSTRAINTS_PATH = AI_ONBOARDING_DIR / "hard-constraints.md"
 PROVIDER_DEVELOPMENT_PATH = REPO_ROOT / "docs" / "provider-development.md"
 ADDING_PROVIDER_PATH = REPO_ROOT / "docs" / "adding-a-provider.md"
 HUMAN_DOC_PATHS = (PROVIDER_DEVELOPMENT_PATH, ADDING_PROVIDER_PATH)
 AI_AUTHORITY_REQUIRED_LINKS = (
-    "ai-onboarding/README.md",
-    "ai-onboarding/coordinator-spec.md",
-    "ai-onboarding/provider-manifest.schema.json",
-    "ai-onboarding/hard-constraints.md",
-    "ai-onboarding/acceptance.md",
+    "../onboarding/README.md",
+    "../onboarding/coordinator-spec.md",
+    "../onboarding/provider-manifest.schema.json",
+    "../onboarding/hard-constraints.md",
+    "../onboarding/acceptance.md",
 )
 HUMAN_ONLY_API_ALLOWLIST = frozenset(
     {
@@ -85,7 +85,7 @@ AI_AUTHORITY_TOPIC_PATTERN = re.compile(
     r"|fixtures\.doi_samples",
     re.IGNORECASE,
 )
-AI_AUTHORITY_LINK_PATTERN = re.compile(r"(?:^|[\s(`])(?:docs/)?ai-onboarding/")
+AI_AUTHORITY_LINK_PATTERN = re.compile(r"(?:^|[\s(`])(?:\.\./)?onboarding/")
 API_TOKEN_PATTERN = re.compile(
     r"`(?P<backtick>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`"
     r"|\b(?P<call>[A-Za-z_][A-Za-z0-9_]*)\s*\("
@@ -202,7 +202,7 @@ def test_human_docs_ai_topics_link_ai_authority_in_same_block() -> None:
     assert not violations, (
         "Human docs may explain onboarding, but AI worker input, DAG, manifest "
         "fields, hard constraints, acceptance, and merge-ready gates must link "
-        "docs/ai-onboarding/ authority in the same block:\n"
+        "onboarding/ authority in the same block:\n"
         + "\n".join(violations)
     )
 
@@ -296,7 +296,7 @@ def test_human_only_api_drift_warns_but_ai_prohibition_conflicts_fail() -> None:
     )
     if missing_from_ai:
         warnings.warn(
-            "Human reference docs mention APIs not present in docs/ai-onboarding/: "
+            "Human reference docs mention APIs not present in onboarding/: "
             + ", ".join(missing_from_ai),
             UserWarning,
             stacklevel=1,
