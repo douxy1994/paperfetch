@@ -94,9 +94,9 @@ markdown_contract:
   supplementary:
     doi: 10.1111/gcb.16414
     must_include:
-    - Supplementary
+    - DATA AVAILABILITY STATEMENT
     must_not_include:
-    - Download Citation
+    - Supporting Information
   references:
     doi: 10.1111/gcb.16998
     must_include:

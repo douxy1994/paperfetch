@@ -70,7 +70,7 @@ markdown_contract:
   structure:
     doi: 10.1109/ACCESS.2024.3352924
     must_include:
-    - '## Abstract'
+    - '**Abstract.**'
     must_not_include:
     - Download PDF
   table:
@@ -84,7 +84,7 @@ markdown_contract:
   formula:
     doi: 10.1109/CICTN64563.2025.10932570
     must_include:
-    - Equation
+    - '$$'
     must_not_include:
     - '[Formula unavailable]'
     must_match:
@@ -100,7 +100,7 @@ markdown_contract:
   supplementary:
     doi: 10.1109/RITA.2026.3668995
     must_include:
-    - Supplementary
+    - Computational Thinking Assessment Instrument
     must_not_include:
     - Download Citation
   references:

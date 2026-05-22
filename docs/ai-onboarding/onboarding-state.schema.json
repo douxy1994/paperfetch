@@ -36,6 +36,7 @@
         "discover-manifest",
         "validate-manifest",
         "capture-fixtures",
+        "propose-cleaning-chain",
         "scaffold",
         "implement-provider",
         "shared-integration",

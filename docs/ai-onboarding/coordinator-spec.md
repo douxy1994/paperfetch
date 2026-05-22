@@ -11,6 +11,10 @@ python3 scripts/onboard_from_manifests.py start --provider <name> --domain <doma
 python3 scripts/onboard_from_manifests.py start --manifest docs/ai-onboarding/manifests/<name>.yml --dry-run --output-dir <dir>
 python3 scripts/onboard_from_manifests.py run --provider <name> --domain <domain> --output-dir <dir>
 python3 scripts/onboard_from_manifests.py run --manifest docs/ai-onboarding/manifests/<name>.yml --until merge-ready
+python3 scripts/onboard_from_manifests.py diagnose --state docs/ai-onboarding/onboarding-state.json
+python3 scripts/onboard_from_manifests.py resume-blocked --provider <name> --dry-run
+python3 scripts/onboard_from_manifests.py resume-blocked --provider <name> --until provider-local-acceptance
+python3 scripts/onboard_from_manifests.py summarize --provider <name> --format markdown --output <path>
 python3 scripts/onboard_from_manifests.py next --provider <name>
 python3 scripts/onboard_from_manifests.py verify --provider <name> --task <task-id>
 python3 scripts/onboard_from_manifests.py run-checks --provider <name> --task <task-id>
@@ -40,18 +44,19 @@ The provider DAG is ordered:
 2. `discover-manifest`
 3. `validate-manifest`
 4. `capture-fixtures`
-5. `scaffold`
-6. `implement-provider`
-7. `shared-integration`
-8. `snapshot-expected`
-9. `manifest-sync-back`
-10. `provider-local-acceptance`
-11. `global-lint`
-12. `merge-ready`
+5. `propose-cleaning-chain`
+6. `scaffold`
+7. `implement-provider`
+8. `shared-integration`
+9. `snapshot-expected`
+10. `manifest-sync-back`
+11. `provider-local-acceptance`
+12. `global-lint`
+13. `merge-ready`
 
 `operator-access-preflight` validates `docs/ai-onboarding/access-reviews/<provider>.yml` against `docs/ai-onboarding/access-review.schema.json`. Required operator decisions are legal access mode, allowed runtime, forbidden behaviors, CAPTCHA/challenge policy, temporary site policy, and `may_continue: true`. Missing, blocked, or schema-invalid access review prevents discovery worker dispatch.
 
-`start --provider` includes all 12 tasks and writes `briefs/discover-manifest.yml` plus `briefs/implement-provider.yml`.
+`start --provider` includes all 13 tasks and writes `briefs/discover-manifest.yml` plus `briefs/implement-provider.yml`.
 
 `start --manifest` skips `discover-manifest`, reads the provider name from the manifest YAML, and writes `briefs/implement-provider.yml`; it does not skip `operator-access-preflight`.
 
@@ -61,12 +66,13 @@ The provider DAG is ordered:
 - `discover-manifest`: coordinator dispatches discovery worker with the access review as constraints only.
 - `validate-manifest`: coordinator validates schema, known-provider conflict, draft state, and DOI sample evidence.
 - `capture-fixtures`: coordinator runs `scripts/capture_fixture.py --from-manifest <manifest> --all --auto-via --fail-fast`.
+- `propose-cleaning-chain`: coordinator runs `scripts/propose_cleaning_chain.py --provider <provider> --write`, producing compact `docs/ai-onboarding/cleaning-chain-proposals/<provider>.yml` and full evidence `<provider>.evidence.yml`. This task dispatches no worker and must use only committed fixture evidence.
 - `scaffold`: coordinator runs `scripts/scaffold_provider.py --from-manifest --merge-existing=safe`; existing outputs are reused when safe, otherwise produce a merge plan JSON instead of deleting user work.
 - `implement-provider`: coordinator dispatches implementation worker with access review constraints.
 - `shared-integration`: coordinator integrates shared surfaces after provider-owned implementation, including `provider_catalog`, MCP status/instructions/schema, golden/live review, benchmark samples, shared renderer/workflow gaps, shared docs, and changelog entries. Each shared edit must trace to manifest facts, bundle sync-back, fixture replay, or provider-local test evidence.
 - `snapshot-expected`: coordinator enumerates every non-null manifest DOI sample and `extra_fixtures[].doi`, runs `scripts/snapshot_expected.py --doi <doi> --review`, runs `scripts/snapshot_expected.py --doi <doi>`, and checks fixture directory, `expected.json`, and non-pending `expected_outcome`.
 - `manifest-sync-back`: coordinator runs `scripts/manifest_sync_back.py --sync-docs`.
-- `provider-local-acceptance`: coordinator runs provider-local pytest, review artifact validation, hard-constraint grep, and provider subset live review for browser/CDN-risk providers.
+- `provider-local-acceptance`: coordinator first checks compact proposal fixture digest freshness, then runs `scripts/propose_cleaning_chain.py --provider <provider> --check-contract`, provider-local pytest, review artifact validation, hard-constraint grep, and provider subset live review for browser/CDN-risk providers.
 - `global-lint`: coordinator runs manifest sync, owner reuse, bundle completeness, import boundary, and docs validation checks.
 - `merge-ready`: coordinator updates manifest readiness, known provider index, shared docs, and PR summary.
 
@@ -102,13 +108,18 @@ Rules:
 - A second provider cannot become `in_progress` while another provider is active.
 - Retry counters are stored per task.
 - `run --until <task>` executes the same DAG inclusively through `<task>` and leaves the next task in state for continuation.
+- `diagnose` reads state only and emits stable JSON containing provider status, current step, latest failure code, retryable flag, failure-recovery action, access review state, and whether operator action is required.
+- `resume-blocked --dry-run` reads state only and emits the next task plus blockers. Non dry-run only resumes one provider when the latest failure is retryable, access review is approved, and no operator-only blocker remains.
+- `summarize` reads state plus manifest/access/review artifacts and renders JSON or Markdown without fabricating pass results for commands that are not recorded in state.
 
 ## Retry
 
 - Worker retry limit is 3.
 - `WORKER_MODIFIED_FORBIDDEN_FILE` requires coordinator to discard or revert forbidden-path changes before retry.
 - `UNSUITABLE_DOI_SAMPLE` from fixture capture routes back to `discover-manifest` and only replaces the failed `fixtures.doi_samples.<purpose>` object.
+- `resume-blocked` does not auto-resume `UNSUITABLE_DOI_SAMPLE`, `WORKER_MODIFIED_FORBIDDEN_FILE`, `BROWSER_RUNTIME_REQUIRED`, access review failures, challenge/CAPTCHA, or retry exhaustion; these require operator/coordinator action first.
 - Provider-local acceptance failure routes back to `implement-provider`.
+- `MARKDOWN_CONTRACT_DRIFT` is retryable. Digest-stale details name `propose-cleaning-chain` as the immediate refresh task; contract drift routes resume planning back to `implement-provider`.
 - Retry count 3 sets provider status to `blocked` and stops the pipeline.
 
 ## Worker Isolation
@@ -148,6 +159,7 @@ Implementation worker prompt must inline:
 - approved access review YAML
 - `docs/ai-onboarding/hard-constraints.md`
 - current provider manifest YAML
+- compact cleaning proposal YAML from `docs/ai-onboarding/cleaning-chain-proposals/<provider>.yml`; the full `.evidence.yml` remains a coordinator/operator artifact and is not inlined.
 
 Worker must not read README, audit documents, or chat history as provider behavior input.
 

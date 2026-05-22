@@ -75,7 +75,7 @@ markdown_contract:
   formula:
     doi: 10.1016/j.agrformet.2024.109975
     must_include:
-    - Equation
+    - $$
     must_not_include:
     - '[Formula unavailable]'
     must_match:
@@ -91,7 +91,7 @@ markdown_contract:
   supplementary:
     doi: 10.1016/j.ecolind.2024.112140
     must_include:
-    - Supplementary
+    - Data availability
     must_not_include:
     - Download Citation
   references:

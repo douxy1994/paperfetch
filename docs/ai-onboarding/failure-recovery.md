@@ -2,6 +2,8 @@
 
 Coordinator 按 stderr JSON 的 `code` 选择恢复动作。每个 signal 的 `action` 是确定性步骤。
 
+`python3 scripts/onboard_from_manifests.py diagnose` 会把 state 中最近一次 `runs.<task>.failure.code` 映射到本文的 `diagnosis`、`action` 和 `retryable`。`resume-blocked` 只会自动续跑 retryable 且前置条件已满足的 blocked task；access approval、browser runtime、challenge/CAPTCHA、forbidden-path diff、样本替换和 retry exhaustion 仍必须由 operator/coordinator 先处理。
+
 ## Signal: MANIFEST_NOT_FOUND
 
 diagnosis: 指定 manifest 路径不存在。
@@ -138,6 +140,12 @@ retryable: true
 
 diagnosis: provider-local pytest、Markdown review contract、route contract、forbidden central grep 或 provider subset live review 未通过。
 action: 重派 `implement-provider`，只修 provider-owned 实现、provider-local 测试或 review artifact；共享文件缺口应记录到 `shared-integration`。
+retryable: true
+
+## Signal: MARKDOWN_CONTRACT_DRIFT
+
+diagnosis: cleaning proposal gate 发现 Markdown contract 与当前 production baseline 不一致，或 compact proposal 的 `fixtures_digest` 已过期。
+action: 若 `details.recovery_task=propose-cleaning-chain`，先重跑 `propose-cleaning-chain` 刷新 proposal；否则重派 `implement-provider`，只允许调和当前 provider manifest 的相关 `markdown_contract` purpose、provider-owned implementation、provider-local tests 或 review artifact。
 retryable: true
 
 ## Signal: SHARED_INTEGRATION_FAILED

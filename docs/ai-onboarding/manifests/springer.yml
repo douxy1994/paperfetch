@@ -89,7 +89,7 @@ markdown_contract:
   formula:
     doi: 10.1038/nature12915
     must_include:
-    - Equation
+    - '![Formula]'
     must_not_include:
     - '[Formula unavailable]'
     must_match:

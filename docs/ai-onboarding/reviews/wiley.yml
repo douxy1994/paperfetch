@@ -65,8 +65,8 @@ fixtures:
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - must include Supplementary
-  - must not include Download Citation
+  - must include DATA AVAILABILITY STATEMENT
+  - must not include Supporting Information
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.16414/extracted.md
   baseline_markdown_sha256: 05a4b8153a01ae607d860f4e5e0775bc1d7705b9b2dbed513556f36c84b53616

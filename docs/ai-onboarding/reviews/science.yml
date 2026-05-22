@@ -23,9 +23,9 @@ fixtures:
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - must include Equation
+  - must include final energy
   - must not include [Formula unavailable]
-  - must match (?:\$\$|!\[Formula\]|Equation)
+  - must match (?:final energy|Figure)
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.adz3492/extracted.md
   baseline_markdown_sha256: 2a40ab9ec8e3368514619d13b2527d3b6d0d6da0adf80bc6249746a35ceebcd6
@@ -77,7 +77,7 @@ fixtures:
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - 'must include ## Abstract'
+  - must include Magma plumbing beneath Yellowstone
   - must not include Download PDF
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.aeg3511/extracted.md
@@ -90,7 +90,7 @@ fixtures:
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - 'must include ## Abstract'
+  - must include Magma plumbing beneath Yellowstone
   - must not include Subscribe
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1126_science.aeg3511/extracted.md

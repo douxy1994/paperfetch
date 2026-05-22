@@ -58,39 +58,46 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
    - `PYTHONPATH=src python3 scripts/onboard_from_manifests.py start --provider <provider> --domain <domain> --dry-run --output-dir .paper-fetch-runs/<provider>-onboarding`
    - 检查 DAG 顺序和 generated briefs。
 3. 编写或修复 manifest：
-   - 若缺少 `docs/ai-onboarding/access-reviews/<provider>.yml`，先停在 operator gate，补齐合法访问、allowed runtime、禁止行为、challenge 策略、临时站点策略和 `may_continue`。
+   - 若缺少 `docs/ai-onboarding/access-reviews/<provider>.yml`，可用 `python3 scripts/backfill_access_reviews.py --provider <provider> --write` 生成 blocked 草稿；草稿不等于批准，operator 仍需补齐合法访问、allowed runtime、禁止行为、challenge 策略、临时站点策略并改为 `may_continue: true`。
    - 填 `routing`、`main_path`、`route_contract`、`markdown_contract`、`asset_profile`、`supplementary_scope`、`probe`、`fixtures.doi_samples` 和 docs fact base。
    - `success_criteria` 和 `extraction_hints` 是 sync-back 字段，初稿只放空对象、空数组或 null。
    - 验证：`PYTHONPATH=src python3 -m pytest tests/unit/test_provider_manifest_schema.py -q`
 4. 捕获 fixtures：
    - 运行 `scripts/capture_fixture.py --from-manifest docs/ai-onboarding/manifests/<provider>.yml --all --auto-via --fail-fast`。
    - null purpose 必须有清楚的 `evidence_reason`。
-5. Scaffold provider：
+5. 生成 cleaning proposal：
+   - `python3 scripts/propose_cleaning_chain.py --provider <provider> --write`
+   - 确认 compact proposal 和 full evidence 都存在：`docs/ai-onboarding/cleaning-chain-proposals/<provider>.yml` 与 `<provider>.evidence.yml`。
+   - `python3 scripts/onboard_from_manifests.py check-cleaning-proposal --provider <provider>` 必须通过，保证 `fixtures_digest` 未过期。
+6. Scaffold provider：
    - `python3 scripts/scaffold_provider.py --from-manifest docs/ai-onboarding/manifests/<provider>.yml --merge-existing=safe`
    - 若 stdout 返回 `status: MERGE_PLAN`，按 diff preview 合并已有文件，不删除用户改动。
-6. 实现 provider：
+7. 实现 provider：
+   - Implementation worker brief 会 inline compact cleaning proposal；只把其中带 provenance 的清洗建议、contract delta、over-cleaning probes 和 token conflict report 当作输入证据。
    - 只改 provider-owned 文件和 provider-local 测试。
    - 先把每个 `route_contract.<step>` 写成 route 成功 / 拒绝测试。
    - 先把每个 `markdown_contract.<purpose>` 写成 provider-local Markdown 断言，marker 用 `markdown-review: purpose=<purpose> doi=<doi>`。
    - 再实现 waterfall、typed payload、HTML/XML/PDF 转换、资产和 status。
-7. Markdown Review Loop：
+8. Markdown Review Loop：
    - 对每个 non-null fixture 生成 baseline Markdown。
    - 可先运行 `python3 scripts/bootstrap_review_artifact.py --provider <provider> --manifest docs/ai-onboarding/manifests/<provider>.yml` 生成 review 草稿；草稿默认 `markdown_semantic_reviewed: false`。
    - 人工阅读 Markdown，并写入 `docs/ai-onboarding/reviews/<provider>.yml`：`baseline_markdown_path`、`baseline_markdown_sha256`、`review_notes`、`sample_representative`、`markdown_semantic_reviewed`、`issues`、`assertions`、`fixes`。
    - `issues` 和 `fixes` 使用带稳定 `id` 的对象；每个 fix 必须引用已有 `issue_ids`，并列出至少一个 provider-local `test_names`。
    - 每个 issue 先落 provider-local 断言，再修 provider-owned 实现。
    - 重复到所有 fixture Markdown 干净。
-8. Shared integration：
+9. Shared integration：
    - 由 coordinator 集成 provider-owned worker 之外的共享面：provider catalog、MCP status/instructions/schema、golden/live review、benchmark samples、必要的 shared renderer/workflow、shared docs 和 changelog。
    - 每个共享改动必须能追溯到 manifest fact、bundle sync-back、fixture replay 或 provider-local test 暴露的共享缺口。
-9. 生成 expected snapshots：
+10. 生成 expected snapshots：
    - `PYTHONPATH=src python3 scripts/snapshot_expected.py --doi "<doi>" --review`
    - `PYTHONPATH=src python3 scripts/snapshot_expected.py --doi "<doi>"`
    - 或用 `python3 scripts/onboard_from_manifests.py verify --provider <provider> --task snapshot-expected` 枚举 manifest 中所有 non-null DOI 的 review/write/check 命令。
-10. Sync-back manifest：
+11. Sync-back manifest：
    - `PYTHONPATH=src python3 scripts/manifest_sync_back.py --provider <provider> --manifest docs/ai-onboarding/manifests/<provider>.yml --sync-docs`
-11. 本地验收：
+12. 本地验收：
     - 优先运行 `python3 scripts/onboard_from_manifests.py run-checks --provider <provider> --all-local`。
+    - `python3 scripts/onboard_from_manifests.py check-cleaning-proposal --provider <provider>`
+    - `python3 scripts/propose_cleaning_chain.py --provider <provider> --check-contract`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_<provider>_provider.py -q`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contract.py -q`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_route_contract.py -q`
@@ -99,8 +106,9 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_human_docs_drift.py -q`
     - `python3 scripts/validate_extraction_rules.py`
     - 对 browser/CDN-risk provider 运行 provider subset live review，例如 `PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_golden_criteria_live_review.py --providers mdpi`
+    - 维护期或合并前人工巡检 route-source drift 时，可本地手动运行 `PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_provider_drift_report.py --provider <provider> --output .paper-fetch-runs/drift/<provider>.json`；该命令不是 GitHub CI gate。
     - `PYTHONPATH=src python3 -m pytest tests/unit -q`
-12. 文档同步与 merge-ready：
+13. 文档同步与 merge-ready：
     - 更新 `docs/providers.md`、`docs/extraction-rules.md`、`CHANGELOG.md` 和 `docs/ai-onboarding/known-providers.yml`。
     - 文档同步后重新运行 docs drift、manifest bundle sync 和 extraction rules validation。
 
@@ -118,6 +126,12 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
 - `probe_status()` 不访问秘密路径，不泄露 token 或本地 browser endpoint。
 
 ## 最终汇报格式
+
+可先生成 operator digest：
+
+```bash
+python3 scripts/onboard_from_manifests.py summarize --provider <provider> --format markdown --output .paper-fetch-runs/<provider>-onboarding/summary.md
+```
 
 目标完成时，最终回复应包含：
 

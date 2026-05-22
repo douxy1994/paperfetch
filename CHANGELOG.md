@@ -6,10 +6,13 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.6 - 2026-05-22
+
 ### Added
 
-- Added operator access-review and provider Markdown-review artifacts for AI provider onboarding, with schema-backed gates before discovery and acceptance.
+- Added experimental macOS offline release tarballs for CPython 3.11, 3.12, 3.13, and 3.14, with CI installation checks, headful layout validation, and CloakBrowser smoke coverage.
 - Added the MDPI CloakBrowser HTML provider with browser PDF fallback, recorded replay fixtures, Markdown cleanup coverage, and `mdpi_html` / `mdpi_pdf` sources.
+- Added operator access-review and provider Markdown-review artifacts for AI provider onboarding, with schema-backed gates before discovery and acceptance.
 - Added a local `scripts/dev-preflight.sh` gate plus low-strength contract-layer `mypy` checking, formula Node package sync tests, and golden corpus provider adapters for easier provider onboarding.
 
 ### Changed

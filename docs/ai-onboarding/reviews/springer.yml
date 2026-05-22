@@ -37,7 +37,7 @@ fixtures:
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - must include Equation
+  - must include '![Formula]'
   - must not include [Formula unavailable]
   - must match (?:\$\$|!\[Formula\]|Equation)
   fixes: []

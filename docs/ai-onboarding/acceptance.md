@@ -19,10 +19,13 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 - Every non-null fixture purpose has a matching `markdown_contract` entry with positive and negative Markdown assertions.
 - Capture failures use structured JSON stderr with `code` from `failure-recovery.md`.
 - `UNSUITABLE_DOI_SAMPLE` changes only `fixtures.doi_samples.<purpose>` for the failed purpose.
+- `propose-cleaning-chain` has generated `docs/ai-onboarding/cleaning-chain-proposals/<provider>.yml` and `<provider>.evidence.yml`; both are bound to current fixture digests.
+- `python3 scripts/onboard_from_manifests.py check-cleaning-proposal --provider <provider>` passes before provider-local acceptance.
 
 ## Implementation Gates
 
 - Provider-local pytest from `briefs/implement-provider.yml` passes.
+- `python3 scripts/propose_cleaning_chain.py --provider <provider> --check-contract` passes; `MARKDOWN_CONTRACT_DRIFT` is retryable and must be resolved by refreshing stale proposal digests or by implementation/contract reconciliation.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contract.py -q`
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_route_contract.py -q`
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_bundle_completeness.py tests/unit/test_provider_owner_reuse.py -q`

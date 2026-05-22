@@ -42,9 +42,13 @@ def test_help_includes_discover() -> None:
 
     assert "discover" in result.stdout
     assert "run" in result.stdout
+    assert "diagnose" in result.stdout
+    assert "resume-blocked" in result.stdout
+    assert "summarize" in result.stdout
     assert "next" in result.stdout
     assert "verify" in result.stdout
     assert "run-checks" in result.stdout
+    assert "check-cleaning-proposal" in result.stdout
     assert "advance" in result.stdout
 
 
@@ -73,6 +77,7 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
         "discover-manifest",
         "validate-manifest",
         "capture-fixtures",
+        "propose-cleaning-chain",
         "scaffold",
         "implement-provider",
         "shared-integration",
@@ -93,6 +98,10 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     assert implement_brief["provider_manifest"] == "docs/ai-onboarding/manifests/mdpi.yml"
     assert implement_brief["current_step"] == "implement-provider"
     assert implement_brief["runtime"] == "coding-agent-subagent"
+    assert implement_brief["upstream_artifacts"]["cleaning_proposal"] == (
+        "docs/ai-onboarding/cleaning-chain-proposals/mdpi.yml"
+    )
+    assert implement_brief["cleaning_proposal"]["producer_task"] == "propose-cleaning-chain"
     assert implement_brief["access_review"] == (
         "docs/ai-onboarding/access-reviews/mdpi.yml"
     )
@@ -149,6 +158,10 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     )
     assert FAILURE_RECOVERY_PATH.is_file()
     assert "acceptance" in implement_brief
+    assert implement_brief["acceptance"]["cleaning_contract_gate"] == [
+        "python3 scripts/onboard_from_manifests.py check-cleaning-proposal --provider mdpi",
+        "python3 scripts/propose_cleaning_chain.py --provider mdpi --check-contract",
+    ]
     assert implement_brief["acceptance"]["live_review"] == {
         "required_for_browser_or_cdn_risk": True,
         "command": (
@@ -168,6 +181,10 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     ) in implement_brief["acceptance"]["pytest"]
     assert "files_allowed_to_modify" in implement_brief
     assert "files_must_not_modify" in implement_brief
+    assert "docs/ai-onboarding/manifests/mdpi.yml" in implement_brief["files_allowed_to_modify"]
+    assert implement_brief["manifest_adjustment_policy"]["allowed_only_for_failure_code"] == (
+        "MARKDOWN_CONTRACT_DRIFT"
+    )
     grep_paths = set(implement_brief["acceptance"]["grep_must_be_empty"][0]["paths"])
     forbidden_paths = set(implement_brief["files_must_not_modify"])
     assert CENTRAL_PROVIDER_LOGIC_PATHS <= grep_paths
@@ -301,6 +318,24 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         "--dry-run",
     ] in capture_commands
 
+    proposal = run_cli(
+        "verify",
+        "--provider",
+        "mdpi",
+        "--task",
+        "propose-cleaning-chain",
+        "--state",
+        str(state_path),
+    )
+    proposal_commands = json.loads(proposal.stdout)["commands"]
+    assert [
+        "python3",
+        "scripts/propose_cleaning_chain.py",
+        "--provider",
+        "mdpi",
+        "--write",
+    ] in proposal_commands
+
     snapshot = run_cli(
         "verify",
         "--provider",
@@ -399,6 +434,20 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         str(state_path),
     )
     local_acceptance_commands = json.loads(local_acceptance.stdout)["commands"]
+    assert [
+        "python3",
+        "scripts/onboard_from_manifests.py",
+        "check-cleaning-proposal",
+        "--provider",
+        "mdpi",
+    ] in local_acceptance_commands
+    assert [
+        "python3",
+        "scripts/propose_cleaning_chain.py",
+        "--provider",
+        "mdpi",
+        "--check-contract",
+    ] in local_acceptance_commands
     assert markdown_contract_command in local_acceptance_commands
     assert route_contract_command in local_acceptance_commands
     assert [
@@ -619,6 +668,269 @@ def test_run_checks_emits_structured_failure_for_missing_access_review(tmp_path:
     payload = json.loads(result.stderr)
     assert payload["code"] == "ACCESS_REVIEW_NOT_FOUND"
     assert payload["retryable"] is False
+
+
+def test_check_cleaning_proposal_detects_stale_digest(tmp_path: Path) -> None:
+    raw_path = tmp_path / "raw.html"
+    raw_path.write_text("<article>fresh</article>", encoding="utf-8")
+    proposal_path = tmp_path / "proposal.yml"
+    proposal_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 2,
+                "provider": "mdpi",
+                "fixtures_digest": [
+                    {
+                        "purpose": "structure",
+                        "doi": "10.0000/example",
+                        "raw_path": raw_path.as_posix(),
+                        "sha256": "0" * 64,
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "check-cleaning-proposal",
+            "--provider",
+            "mdpi",
+            "--proposal",
+            str(proposal_path),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+
+    assert result.returncode != 0
+    payload = json.loads(result.stderr)
+    assert payload["code"] == "MARKDOWN_CONTRACT_DRIFT"
+    assert payload["retryable"] is True
+    assert payload["details"]["recovery_task"] == "propose-cleaning-chain"
+    assert payload["details"]["stale_fixtures_digest"][0]["reason"] == "sha256_mismatch"
+
+
+def _write_blocked_state(
+    path: Path,
+    *,
+    provider: str = "mdpi",
+    task: str = "capture-fixtures",
+    code: str = "NETWORK_TRANSIENT",
+) -> None:
+    steps = [
+        "operator-access-preflight",
+        "discover-manifest",
+        "validate-manifest",
+        "capture-fixtures",
+        "propose-cleaning-chain",
+        "scaffold",
+        "implement-provider",
+        "shared-integration",
+        "snapshot-expected",
+        "manifest-sync-back",
+        "provider-local-acceptance",
+        "global-lint",
+        "merge-ready",
+    ]
+    statuses = {step: "pending" for step in steps}
+    statuses[task] = "failed"
+    completed = steps[: steps.index(task)]
+    state = {
+        "schema_version": 1,
+        "agent_cli": None,
+        "active_provider": provider,
+        "providers": {
+            provider: {
+                "provider": provider,
+                "manifest": f"docs/ai-onboarding/manifests/{provider}.yml",
+                "status": "blocked",
+                "current_step": task,
+                "steps": steps,
+                "completed_steps": completed,
+                "task_statuses": statuses,
+                "retry_counts": {step: 0 for step in steps},
+                "verifications": {
+                    "provider-local-acceptance": {
+                        "result": "planned",
+                        "commands": [
+                            [
+                                "python3",
+                                "-m",
+                                "pytest",
+                                "tests/unit/test_mdpi_provider.py",
+                                "-q",
+                            ]
+                        ],
+                    }
+                },
+                "runs": {
+                    task: {
+                        "dry_run": False,
+                        "commands": [["fake-command"]],
+                        "result": "failed",
+                        "failure": {
+                            "code": code,
+                            "command": ["fake-command"],
+                            "returncode": 1,
+                        },
+                    }
+                },
+            }
+        },
+    }
+    path.write_text(json.dumps(state), encoding="utf-8")
+
+
+def test_diagnose_reports_retryable_failure_and_recovery_action(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    _write_blocked_state(state_path, code="NETWORK_TRANSIENT")
+
+    result = run_cli("diagnose", "--provider", "mdpi", "--state", str(state_path))
+    payload = json.loads(result.stdout)
+    diagnosis = payload["providers"][0]
+
+    assert diagnosis["provider"] == "mdpi"
+    assert diagnosis["status"] == "blocked"
+    assert diagnosis["failure"]["task"] == "capture-fixtures"
+    assert diagnosis["failure"]["code"] == "NETWORK_TRANSIENT"
+    assert diagnosis["failure"]["retryable"] is True
+    assert "retry budget" in diagnosis["failure"]["action"]
+
+
+def test_markdown_contract_drift_recovery_targets_implementation(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    _write_blocked_state(
+        state_path,
+        task="provider-local-acceptance",
+        code="MARKDOWN_CONTRACT_DRIFT",
+    )
+
+    diagnosis_result = run_cli("diagnose", "--provider", "mdpi", "--state", str(state_path))
+    diagnosis = json.loads(diagnosis_result.stdout)["providers"][0]
+    resume_result = run_cli(
+        "resume-blocked",
+        "--provider",
+        "mdpi",
+        "--dry-run",
+        "--state",
+        str(state_path),
+    )
+    resume_plan = json.loads(resume_result.stdout)["resume_plan"]
+
+    assert diagnosis["failure"]["code"] == "MARKDOWN_CONTRACT_DRIFT"
+    assert diagnosis["failure"]["retryable"] is True
+    assert "implement-provider" in diagnosis["failure"]["action"]
+    assert resume_plan["next_task"] == "implement-provider"
+
+
+def test_resume_blocked_dry_run_requires_approved_access_review(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    _write_blocked_state(state_path, provider="newpub", code="NETWORK_TRANSIENT")
+    before = state_path.read_text(encoding="utf-8")
+
+    result = run_cli(
+        "resume-blocked",
+        "--provider",
+        "newpub",
+        "--dry-run",
+        "--state",
+        str(state_path),
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["resume_plan"]["resumable"] is False
+    assert any(
+        "access review is not approved" in blocker
+        for blocker in payload["resume_plan"]["blockers"]
+    )
+    assert state_path.read_text(encoding="utf-8") == before
+
+
+def test_resume_blocked_executes_retryable_prefix_after_preconditions(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    output_dir = tmp_path / "run"
+    _write_blocked_state(
+        state_path,
+        provider="mdpi",
+        task="operator-access-preflight",
+        code="LOCAL_CHECK_FAILED",
+    )
+
+    result = run_cli(
+        "resume-blocked",
+        "--provider",
+        "mdpi",
+        "--until",
+        "operator-access-preflight",
+        "--state",
+        str(state_path),
+        "--output-dir",
+        str(output_dir),
+    )
+    payload = json.loads(result.stdout)
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    provider_state = state["providers"]["mdpi"]
+
+    assert payload["resume_plan"]["resumable"] is True
+    assert payload["run"]["executed"] == ["operator-access-preflight"]
+    assert provider_state["status"] == "in_progress"
+    assert provider_state["task_statuses"]["operator-access-preflight"] == "completed"
+    assert provider_state["task_statuses"]["discover-manifest"] == "in_progress"
+
+
+def test_summarize_outputs_json_and_markdown_without_fabricated_passes(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    markdown_path = tmp_path / "summary.md"
+    _write_blocked_state(state_path, code="NETWORK_TRANSIENT")
+
+    result = run_cli(
+        "summarize",
+        "--provider",
+        "mdpi",
+        "--state",
+        str(state_path),
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["provider"] == "mdpi"
+    assert payload["status"] == "blocked"
+    assert payload["access_review"]["status"] == "approved"
+    assert payload["fixture_coverage"]
+    assert payload["run_checks"][0]["result"] == "failed"
+    assert payload["run_checks"][0]["failure_code"] == "NETWORK_TRANSIENT"
+
+    run_cli(
+        "summarize",
+        "--provider",
+        "mdpi",
+        "--format",
+        "markdown",
+        "--output",
+        str(markdown_path),
+        "--state",
+        str(state_path),
+    )
+    markdown = markdown_path.read_text(encoding="utf-8")
+    assert "# mdpi onboarding summary" in markdown
+    assert "- failed_task: capture-fixtures" in markdown
+    assert "failure_recovery_action:" in markdown
+    assert "## Review Artifact" in markdown
+    assert "docs/ai-onboarding/reviews/mdpi.yml" in markdown
+    assert "tests/fixtures/golden_criteria/10.3390_membranes15030093/structure" in markdown
+    assert "issue_ids=[] fix_ids=[] tests=[]" in markdown
+    assert "## Run Checks" in markdown
+    assert "- command: `fake-command`" in markdown
+    assert "## Verification Plans" in markdown
+    assert "- provider-local-acceptance: result=planned" in markdown
+    assert "- command: `python3 -m pytest tests/unit/test_mdpi_provider.py -q`" in markdown
+    assert "no recorded run-check results" not in markdown
 
 
 def test_onboard_script_does_not_import_llm_sdks() -> None:

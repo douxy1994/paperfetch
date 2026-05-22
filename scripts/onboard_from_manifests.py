@@ -33,8 +33,10 @@ AGENT_CLI_ENV = "PROVIDER_ONBOARDING_AGENT_CLI"
 ACCESS_PREFLIGHT_STEP = "operator-access-preflight"
 DISCOVER_STEP = "discover-manifest"
 IMPLEMENT_STEP = "implement-provider"
+PROPOSE_CLEANING_STEP = "propose-cleaning-chain"
 SHARED_INTEGRATION_STEP = "shared-integration"
 SNAPSHOT_EXPECTED_STEP = "snapshot-expected"
+CLEANING_PROPOSAL_DIR = "docs/ai-onboarding/cleaning-chain-proposals"
 MAX_WORKER_RETRIES = 3
 ROUTING_REQUIREMENTS = [
     "doi_prefixes",
@@ -111,6 +113,7 @@ TASK_DAG: tuple[DagStep, ...] = (
     ),
     DagStep(id="validate-manifest", type="coordinator-check", owner="coordinator"),
     DagStep(id="capture-fixtures", type="coordinator-action", owner="coordinator"),
+    DagStep(id=PROPOSE_CLEANING_STEP, type="coordinator-action", owner="coordinator"),
     DagStep(id="scaffold", type="coordinator-action", owner="coordinator"),
     DagStep(
         id=IMPLEMENT_STEP,
@@ -149,6 +152,14 @@ def default_manifest_path(provider: str) -> str:
 
 def default_access_review_path(provider: str) -> str:
     return f"docs/ai-onboarding/access-reviews/{_provider_slug(provider)}.yml"
+
+
+def default_cleaning_proposal_path(provider: str) -> str:
+    return f"{CLEANING_PROPOSAL_DIR}/{_provider_slug(provider)}.yml"
+
+
+def default_cleaning_evidence_path(provider: str) -> str:
+    return f"{CLEANING_PROPOSAL_DIR}/{_provider_slug(provider)}.evidence.yml"
 
 
 def _repo_root() -> Path:
@@ -413,9 +424,10 @@ def build_discover_brief(
     }
 
 
-def _implementation_allowed_files(provider: str) -> list[str]:
+def _implementation_allowed_files(provider: str, manifest: str) -> list[str]:
     provider_name = _provider_slug(provider)
     return [
+        manifest,
         f"src/paper_fetch/providers/{provider_name}.py",
         f"src/paper_fetch/providers/_{provider_name}_html.py",
         f"tests/unit/test_{provider_name}_provider.py",
@@ -423,13 +435,44 @@ def _implementation_allowed_files(provider: str) -> list[str]:
     ]
 
 
-def _implementation_forbidden_files(manifest: str) -> list[str]:
+def _implementation_forbidden_files() -> list[str]:
     return [
-        manifest,
         *SHARED_FILES_MUST_NOT_MODIFY,
         "src/paper_fetch/provider_catalog.py",
         *CENTRAL_PROVIDER_LOGIC_PATHS,
     ]
+
+
+def _compact_cleaning_proposal_for_brief(provider: str) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    proposal_ref = default_cleaning_proposal_path(provider_name)
+    evidence_ref = default_cleaning_evidence_path(provider_name)
+    path = _repo_root() / proposal_ref
+    base = {
+        "artifact": proposal_ref,
+        "evidence_artifact": evidence_ref,
+        "producer_task": PROPOSE_CLEANING_STEP,
+    }
+    if not path.exists():
+        return {
+            **base,
+            "status": "missing",
+            "action": f"run python3 scripts/propose_cleaning_chain.py --provider {provider_name} --write",
+        }
+    try:
+        proposal = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        return {**base, "status": "invalid_yaml", "error": str(exc)}
+    if not isinstance(proposal, dict):
+        return {**base, "status": "invalid_shape", "error": "proposal root is not a mapping"}
+    if proposal.get("schema_version") != 2:
+        return {
+            **base,
+            "status": "legacy_schema",
+            "schema_version": proposal.get("schema_version"),
+            "action": f"rerun {PROPOSE_CLEANING_STEP} before implementation",
+        }
+    return {"status": "ready", "producer_task": PROPOSE_CLEANING_STEP, **proposal}
 
 
 def build_implementation_brief(
@@ -458,8 +501,11 @@ def build_implementation_brief(
         "upstream_artifacts": {
             "task_dag": "task-dag.json",
             "capture_commands": f"docs/ai-onboarding/capture-commands/{provider_name}.txt",
+            "cleaning_proposal": default_cleaning_proposal_path(provider_name),
+            "cleaning_proposal_evidence": default_cleaning_evidence_path(provider_name),
             "scaffold_summary": f"docs/ai-onboarding/scaffold/{provider_name}.json",
         },
+        "cleaning_proposal": _compact_cleaning_proposal_for_brief(provider_name),
         "hard_constraints": HARD_CONSTRAINTS_PATH,
         "markdown_review_loop": {
             "required": True,
@@ -519,6 +565,10 @@ def build_implementation_brief(
                     "paths": CENTRAL_PROVIDER_LOGIC_PATHS,
                 }
             ],
+            "cleaning_contract_gate": [
+                f"python3 scripts/onboard_from_manifests.py check-cleaning-proposal --provider {provider_name}",
+                f"python3 scripts/propose_cleaning_chain.py --provider {provider_name} --check-contract",
+            ],
             "live_review": {
                 "required_for_browser_or_cdn_risk": _provider_requires_live_review(provider_name),
                 "command": (
@@ -529,14 +579,29 @@ def build_implementation_brief(
                 "markdown_contract": "provider_manifest.markdown_contract",
             },
         },
-        "files_allowed_to_modify": _implementation_allowed_files(provider_name),
-        "files_must_not_modify": _implementation_forbidden_files(manifest),
+        "files_allowed_to_modify": _implementation_allowed_files(provider_name, manifest),
+        "files_must_not_modify": _implementation_forbidden_files(),
         "failure_recovery": {
             "policy": FAILURE_RECOVERY_PATH,
             "max_retries": MAX_WORKER_RETRIES,
             "forbidden_write_code": "WORKER_MODIFIED_FORBIDDEN_FILE",
             "acceptance_failure_retry_task": IMPLEMENT_STEP,
             "blocked_after_retry_exhaustion": True,
+        },
+        "manifest_adjustment_policy": {
+            "allowed_only_for_failure_code": "MARKDOWN_CONTRACT_DRIFT",
+            "allowed_path": manifest,
+            "allowed_fields": ["markdown_contract.<purpose>"],
+            "forbidden_fields": [
+                "routing",
+                "main_path",
+                "route_contract",
+                "fixtures",
+                "extra_fixtures",
+                "probe",
+                "access_policy",
+            ],
+            "must_match_current_provider": provider_name,
         },
         "no_commit": True,
     }
@@ -573,6 +638,11 @@ def build_dag(
             item["produces"] = [default_access_review_path(provider_name)]
         if step.id == DISCOVER_STEP and manifest is not None:
             item["produces"] = [manifest]
+        if step.id == PROPOSE_CLEANING_STEP and provider_name is not None:
+            item["produces"] = [
+                default_cleaning_proposal_path(provider_name),
+                default_cleaning_evidence_path(provider_name),
+            ]
         steps.append(item)
         previous_step = step.id
     return {
@@ -603,6 +673,10 @@ def _yaml_scalar(value: Any) -> str:
     text = str(value)
     if not text:
         return '""'
+    if "\n" in text or "\r" in text:
+        return json.dumps(text)
+    if text in {"-", "?", ":"} or text.startswith(("- ", "? ", ": ")):
+        return json.dumps(text)
     if any(char in text for char in [":", "#", "{", "}", "[", "]", ",", "&", "*", "!", "|", ">", "'", '"']):
         return json.dumps(text)
     if text.lower() in {"null", "true", "false", "yes", "no"}:
@@ -882,6 +956,15 @@ def _verify_commands(provider: str, task: str, *, include_live: bool = True) -> 
                 "--dry-run",
             ]
         ],
+        PROPOSE_CLEANING_STEP: [
+            [
+                "python3",
+                "scripts/propose_cleaning_chain.py",
+                "--provider",
+                provider_name,
+                "--write",
+            ]
+        ],
         "scaffold": [
             [
                 "python3",
@@ -951,6 +1034,20 @@ def _verify_commands(provider: str, task: str, *, include_live: bool = True) -> 
             ]
         ],
         "provider-local-acceptance": [
+            [
+                "python3",
+                "scripts/onboard_from_manifests.py",
+                "check-cleaning-proposal",
+                "--provider",
+                provider_name,
+            ],
+            [
+                "python3",
+                "scripts/propose_cleaning_chain.py",
+                "--provider",
+                provider_name,
+                "--check-contract",
+            ],
             [
                 "PYTHONPATH=src",
                 "python3",
@@ -1084,8 +1181,156 @@ def _run_env_command(command: list[str]) -> subprocess.CompletedProcess[str]:
     )
 
 
+def _sha256_file(path: Path) -> str:
+    import hashlib
+
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _resolve_repo_path(value: str) -> Path:
+    path = Path(value)
+    return path if path.is_absolute() else _repo_root() / path
+
+
+def check_cleaning_proposal_freshness(
+    provider: str,
+    *,
+    proposal_path: Path | None = None,
+) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    proposal_ref = default_cleaning_proposal_path(provider_name)
+    path = proposal_path or (_repo_root() / proposal_ref)
+    if not path.exists():
+        raise ToolError(
+            "MARKDOWN_CONTRACT_DRIFT",
+            "Cleaning proposal is missing; rerun propose-cleaning-chain.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=f"{provider_name}-{PROPOSE_CLEANING_STEP}",
+            details={
+                "proposal": path.as_posix(),
+                "recovery_task": PROPOSE_CLEANING_STEP,
+                "reason": "missing_proposal",
+            },
+        )
+    try:
+        proposal = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        raise ToolError(
+            "MARKDOWN_CONTRACT_DRIFT",
+            "Cleaning proposal YAML is invalid; rerun propose-cleaning-chain.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=f"{provider_name}-{PROPOSE_CLEANING_STEP}",
+            details={
+                "proposal": path.as_posix(),
+                "recovery_task": PROPOSE_CLEANING_STEP,
+                "reason": str(exc),
+            },
+        ) from exc
+    if not isinstance(proposal, dict) or proposal.get("schema_version") != 2:
+        raise ToolError(
+            "MARKDOWN_CONTRACT_DRIFT",
+            "Cleaning proposal is stale or legacy; rerun propose-cleaning-chain.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=f"{provider_name}-{PROPOSE_CLEANING_STEP}",
+            details={
+                "proposal": path.as_posix(),
+                "schema_version": proposal.get("schema_version") if isinstance(proposal, dict) else None,
+                "recovery_task": PROPOSE_CLEANING_STEP,
+                "reason": "proposal_schema_not_compact",
+            },
+        )
+    digest_items = proposal.get("fixtures_digest")
+    if not isinstance(digest_items, list) or not digest_items:
+        raise ToolError(
+            "MARKDOWN_CONTRACT_DRIFT",
+            "Cleaning proposal has no fixture digest; rerun propose-cleaning-chain.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=f"{provider_name}-{PROPOSE_CLEANING_STEP}",
+            details={
+                "proposal": path.as_posix(),
+                "recovery_task": PROPOSE_CLEANING_STEP,
+                "reason": "missing_fixtures_digest",
+            },
+        )
+
+    stale: list[dict[str, Any]] = []
+    checked = 0
+    for item in digest_items:
+        if not isinstance(item, dict):
+            stale.append({"reason": "invalid_digest_item", "item": item})
+            continue
+        raw_path = item.get("raw_path")
+        expected_sha = item.get("sha256")
+        if not raw_path or not expected_sha:
+            stale.append(
+                {
+                    "purpose": item.get("purpose"),
+                    "doi": item.get("doi"),
+                    "raw_path": raw_path,
+                    "reason": "missing_digest_path_or_sha256",
+                }
+            )
+            continue
+        fixture_path = _resolve_repo_path(str(raw_path))
+        if not fixture_path.exists():
+            stale.append(
+                {
+                    "purpose": item.get("purpose"),
+                    "doi": item.get("doi"),
+                    "raw_path": raw_path,
+                    "reason": "fixture_missing",
+                }
+            )
+            continue
+        actual_sha = _sha256_file(fixture_path)
+        checked += 1
+        if actual_sha != str(expected_sha):
+            stale.append(
+                {
+                    "purpose": item.get("purpose"),
+                    "doi": item.get("doi"),
+                    "raw_path": raw_path,
+                    "expected_sha256": expected_sha,
+                    "actual_sha256": actual_sha,
+                    "reason": "sha256_mismatch",
+                }
+            )
+    if stale:
+        raise ToolError(
+            "MARKDOWN_CONTRACT_DRIFT",
+            "Cleaning proposal fixture digest is stale; rerun propose-cleaning-chain.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=f"{provider_name}-{PROPOSE_CLEANING_STEP}",
+            details={
+                "proposal": path.as_posix(),
+                "recovery_task": PROPOSE_CLEANING_STEP,
+                "stale_fixtures_digest": stale,
+            },
+        )
+    return {
+        "provider": provider_name,
+        "proposal": path.as_posix(),
+        "fixtures_checked": checked,
+        "result": "passed",
+    }
+
+
 def _command_failed(command: list[str], completed: subprocess.CompletedProcess[str]) -> bool:
-    argv = [part for part in command if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", part)]
+    argv = _command_argv(command)
     if len(argv) >= 2 and argv[0] == "git" and argv[1] == "grep":
         return completed.returncode != 1
     return completed.returncode != 0
@@ -1097,7 +1342,23 @@ def _tail(text: str, limit: int = 4000) -> str:
     return text[-limit:]
 
 
-def _failure_code_for_task(task: str) -> str:
+def _command_argv(command: list[str]) -> list[str]:
+    return [part for part in command if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*=.*", part)]
+
+
+def _is_cleaning_contract_command(command: list[str]) -> bool:
+    argv = _command_argv(command)
+    return (
+        len(argv) >= 3
+        and argv[0] == "python3"
+        and argv[1] == "scripts/propose_cleaning_chain.py"
+        and "--check-contract" in argv
+    )
+
+
+def _failure_code_for_task(task: str, command: list[str] | None = None) -> str:
+    if command is not None and _is_cleaning_contract_command(command):
+        return "MARKDOWN_CONTRACT_DRIFT"
     if task == SNAPSHOT_EXPECTED_STEP:
         return "EXPECTED_SNAPSHOT_FAILED"
     if task == "global-lint":
@@ -1111,6 +1372,278 @@ def _failure_code_for_task(task: str) -> str:
     if task == ACCESS_PREFLIGHT_STEP:
         return "ACCESS_REVIEW_NOT_FOUND"
     return "LOCAL_CHECK_FAILED"
+
+
+def _load_failure_recovery_entries() -> dict[str, dict[str, Any]]:
+    path = _repo_root() / FAILURE_RECOVERY_PATH
+    entries: dict[str, dict[str, Any]] = {}
+    current_code: str | None = None
+    for raw_line in path.read_text(encoding="utf-8").splitlines():
+        line = raw_line.strip()
+        if line.startswith("## Signal: "):
+            current_code = line.removeprefix("## Signal: ").strip()
+            entries[current_code] = {}
+            continue
+        if current_code is None or ":" not in line:
+            continue
+        key, value = line.split(":", 1)
+        key = key.strip()
+        value = value.strip()
+        if key in {"diagnosis", "action", "retryable"}:
+            entries[current_code][key] = value
+    for entry in entries.values():
+        retryable = entry.get("retryable")
+        if isinstance(retryable, str):
+            entry["retryable"] = retryable.lower() == "true"
+    return entries
+
+
+def _latest_failure(provider_state: dict[str, Any]) -> dict[str, Any] | None:
+    runs = provider_state.get("runs")
+    if not isinstance(runs, dict):
+        return None
+    ordered_tasks: list[str] = []
+    current_step = provider_state.get("current_step")
+    if isinstance(current_step, str):
+        ordered_tasks.append(current_step)
+    steps = provider_state.get("steps")
+    if isinstance(steps, list):
+        ordered_tasks.extend(str(step) for step in reversed(steps))
+    task_statuses = provider_state.get("task_statuses")
+    if isinstance(task_statuses, dict):
+        ordered_tasks.extend(
+            str(task) for task, status in task_statuses.items() if status in {"failed", "blocked"}
+        )
+    seen: set[str] = set()
+    for task in ordered_tasks:
+        if task in seen:
+            continue
+        seen.add(task)
+        run = runs.get(task)
+        if not isinstance(run, dict):
+            continue
+        failure = run.get("failure")
+        if isinstance(failure, dict):
+            return {"task": task, **failure}
+    return None
+
+
+def _access_review_summary(provider: str) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    path = _repo_root() / default_access_review_path(provider_name)
+    if not path.exists():
+        return {
+            "status": "missing",
+            "path": default_access_review_path(provider_name),
+            "may_continue": False,
+            "approved": False,
+        }
+    try:
+        review = _load_access_review(provider_name)
+    except ToolError as exc:
+        return {
+            "status": "schema_invalid",
+            "path": default_access_review_path(provider_name),
+            "may_continue": False,
+            "approved": False,
+            "error_code": exc.code,
+        }
+    status = str(review.get("status") or "unknown")
+    may_continue = review.get("may_continue") is True
+    approved = status == "approved" and may_continue
+    if not approved and review.get("reviewed_by") == "operator-required":
+        status_label = "draft"
+    else:
+        status_label = "approved" if approved else status
+    return {
+        "status": status_label,
+        "path": default_access_review_path(provider_name),
+        "may_continue": may_continue,
+        "approved": approved,
+        "reviewed_by": review.get("reviewed_by"),
+        "legal_access_mode": (
+            review.get("legal_access", {}).get("mode")
+            if isinstance(review.get("legal_access"), dict)
+            else None
+        ),
+        "allowed_runtimes": review.get("allowed_runtimes"),
+    }
+
+
+OPERATOR_REQUIRED_FAILURE_CODES = {
+    "ACCESS_REVIEW_NOT_FOUND",
+    "ACCESS_REVIEW_SCHEMA_INVALID",
+    "ACCESS_REVIEW_NOT_APPROVED",
+    "BROWSER_RUNTIME_REQUIRED",
+    "CHALLENGE_DETECTED",
+    "WORKER_MODIFIED_FORBIDDEN_FILE",
+    "MANIFEST_PROVIDER_CONFLICT",
+    "DISCOVERY_RETRY_EXHAUSTED",
+    "TASK_RETRY_EXHAUSTED",
+}
+
+
+def diagnose_provider_state(provider_state: dict[str, Any]) -> dict[str, Any]:
+    provider = _provider_slug(str(provider_state.get("provider") or "unknown"))
+    recovery_entries = _load_failure_recovery_entries()
+    failure = _latest_failure(provider_state)
+    failure_code = str(failure.get("code")) if failure and failure.get("code") else None
+    recovery = recovery_entries.get(failure_code or "", {})
+    retryable = bool(recovery.get("retryable")) if failure_code in recovery_entries else None
+    operator_required = (
+        failure_code in OPERATOR_REQUIRED_FAILURE_CODES
+        if failure_code is not None
+        else False
+    )
+    access = _access_review_summary(provider)
+    if not access["approved"] and provider_state.get("status") == "blocked":
+        operator_required = True
+    return {
+        "provider": provider,
+        "status": provider_state.get("status"),
+        "current_step": provider_state.get("current_step"),
+        "failure": {
+            "task": failure.get("task") if failure else None,
+            "code": failure_code,
+            "retryable": retryable,
+            "diagnosis": recovery.get("diagnosis"),
+            "action": recovery.get("action"),
+        },
+        "access_review": access,
+        "operator_required": operator_required,
+    }
+
+
+def plan_resume_blocked(provider_state: dict[str, Any]) -> dict[str, Any]:
+    diagnosis = diagnose_provider_state(provider_state)
+    provider = diagnosis["provider"]
+    failure = diagnosis["failure"]
+    code = failure.get("code")
+    task = failure.get("task") or provider_state.get("current_step")
+    blockers: list[str] = []
+    if provider_state.get("status") != "blocked":
+        blockers.append("provider status is not blocked")
+    if not isinstance(task, str) or not task:
+        blockers.append("no failed or current task is recorded")
+    if failure.get("retryable") is not True:
+        blockers.append(f"failure code is not retryable: {code}")
+    access = diagnosis["access_review"]
+    if not access.get("approved"):
+        blockers.append(
+            f"access review is not approved: {access.get('status')}"
+        )
+    if code in OPERATOR_REQUIRED_FAILURE_CODES:
+        blockers.append(f"operator action required for failure code: {code}")
+    if code == "UNSUITABLE_DOI_SAMPLE":
+        blockers.append("failed DOI purpose must be replaced or explicitly approved before retry")
+    if code == "BROWSER_RUNTIME_REQUIRED":
+        blockers.append("browser runtime must be configured and approved before retry")
+    resumable = not blockers
+    next_task = IMPLEMENT_STEP if code == "MARKDOWN_CONTRACT_DRIFT" else task
+    return {
+        "provider": provider,
+        "resumable": resumable,
+        "next_task": next_task if isinstance(next_task, str) else None,
+        "operator_required": bool(blockers),
+        "blockers": blockers,
+        "diagnosis": diagnosis,
+    }
+
+
+def _source_from_provider_state(provider_state: dict[str, Any]) -> OnboardingSource:
+    provider = _provider_slug(str(provider_state["provider"]))
+    manifest = str(provider_state.get("manifest") or default_manifest_path(provider))
+    include_discovery = DISCOVER_STEP in set(provider_state.get("steps") or [])
+    manifest_yaml: str | None = None
+    if not include_discovery:
+        manifest_path = _repo_root() / manifest
+        if manifest_path.exists():
+            manifest_yaml = manifest_path.read_text(encoding="utf-8")
+    return OnboardingSource(
+        provider=provider,
+        manifest=manifest,
+        include_discovery=include_discovery,
+        manifest_yaml=manifest_yaml,
+    )
+
+
+def _execute_run_loop(
+    *,
+    source: OnboardingSource,
+    output_dir: Path,
+    state_path: Path,
+    state: dict[str, Any],
+    provider_state: dict[str, Any],
+    until: str,
+    domain: str | None,
+    doi_prefix: str | None,
+) -> dict[str, Any]:
+    _run_artifacts(
+        source=source,
+        output_dir=output_dir,
+        domain=domain,
+        doi_prefix=doi_prefix,
+    )
+    executed: list[str] = []
+    try:
+        while True:
+            task = _next_pending_step(provider_state)
+            if task is None:
+                break
+            if task in {DISCOVER_STEP, IMPLEMENT_STEP}:
+                brief_name = (
+                    "discover-manifest.yml"
+                    if task == DISCOVER_STEP
+                    else "implement-provider.yml"
+                )
+                _dispatch_worker(
+                    provider=source.provider,
+                    task=task,
+                    brief_path=output_dir / "briefs" / brief_name,
+                    output_dir=output_dir,
+                    provider_state=provider_state,
+                )
+            else:
+                _execute_local_task(
+                    provider=source.provider,
+                    task=task,
+                    provider_state=provider_state,
+                )
+                if task == PROPOSE_CLEANING_STEP:
+                    _write_implementation_brief(output_dir=output_dir, source=source)
+            executed.append(task)
+            _mark_step_completed(
+                state,
+                provider_state,
+                provider=source.provider,
+                task=task,
+            )
+            _write_json(state_path, state)
+            if task == until:
+                break
+    except ToolError:
+        failed_task = provider_state.get("current_step")
+        if isinstance(failed_task, str):
+            _mark_step_failed(
+                state,
+                provider_state,
+                provider=source.provider,
+                task=failed_task,
+            )
+            _write_json(state_path, state)
+        raise
+
+    _write_json(state_path, state)
+    return {
+        "provider": source.provider,
+        "manifest": source.manifest,
+        "executed": executed,
+        "until": until,
+        "status": provider_state["status"],
+        "current_step": provider_state.get("current_step"),
+        "state": str(state_path),
+        "output_dir": str(output_dir),
+    }
 
 
 def _record_run(
@@ -1168,6 +1701,22 @@ def _mark_step_completed(
     return next_step
 
 
+def _write_implementation_brief(*, output_dir: Path, source: OnboardingSource) -> None:
+    manifest_yaml = source.manifest_yaml
+    manifest_path = _repo_root() / source.manifest
+    if manifest_yaml is None and manifest_path.exists():
+        manifest_yaml = manifest_path.read_text(encoding="utf-8")
+    implementation_brief = build_implementation_brief(
+        provider=source.provider,
+        manifest=source.manifest,
+        manifest_yaml=manifest_yaml,
+    )
+    write_text(
+        output_dir / "briefs" / "implement-provider.yml",
+        to_yaml(implementation_brief) + "\n",
+    )
+
+
 def _run_artifacts(
     *,
     source: OnboardingSource,
@@ -1196,19 +1745,7 @@ def _run_artifacts(
             output_dir / "briefs" / "discover-manifest.yml",
             to_yaml(discover_brief) + "\n",
         )
-    manifest_yaml = source.manifest_yaml
-    manifest_path = _repo_root() / source.manifest
-    if manifest_yaml is None and manifest_path.exists():
-        manifest_yaml = manifest_path.read_text(encoding="utf-8")
-    implementation_brief = build_implementation_brief(
-        provider=source.provider,
-        manifest=source.manifest,
-        manifest_yaml=manifest_yaml,
-    )
-    write_text(
-        output_dir / "briefs" / "implement-provider.yml",
-        to_yaml(implementation_brief) + "\n",
-    )
+    _write_implementation_brief(output_dir=output_dir, source=source)
 
 
 def _workspace_changed_paths() -> set[str]:
@@ -1329,6 +1866,17 @@ def _worker_prompt(
                     "## Provider Manifest",
                     "```yaml",
                     manifest_path.read_text(encoding="utf-8"),
+                    "```",
+                ]
+            )
+        proposal_path = root / default_cleaning_proposal_path(provider)
+        if proposal_path.exists():
+            parts.extend(
+                [
+                    "",
+                    "## Compact Cleaning Proposal",
+                    "```yaml",
+                    proposal_path.read_text(encoding="utf-8"),
                     "```",
                 ]
             )
@@ -1476,6 +2024,16 @@ def _run_task_commands(
                 "--fail-fast",
             ]
         ]
+    if task == PROPOSE_CLEANING_STEP:
+        return [
+            [
+                "python3",
+                "scripts/propose_cleaning_chain.py",
+                "--provider",
+                provider_name,
+                "--write",
+            ]
+        ]
     if task == "scaffold":
         return [
             [
@@ -1522,6 +2080,14 @@ def _payload_from_stderr(stderr: str) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def _payload_from_stdout_yaml(stdout: str) -> dict[str, Any] | None:
+    try:
+        payload = yaml.safe_load(stdout)
+    except yaml.YAMLError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _execute_local_task(
     *,
     provider: str,
@@ -1535,7 +2101,7 @@ def _execute_local_task(
     for command in commands:
         completed = _run_env_command(command)
         if _command_failed(command, completed):
-            failure_code = _failure_code_for_task(task)
+            failure_code = _failure_code_for_task(task, command)
             structured = _payload_from_stderr(completed.stderr)
             if structured and isinstance(structured.get("code"), str):
                 failure_code = str(structured["code"])
@@ -1548,6 +2114,10 @@ def _execute_local_task(
             }
             if structured:
                 failure["structured_error"] = structured
+            if _is_cleaning_contract_command(command):
+                contract_payload = _payload_from_stdout_yaml(completed.stdout)
+                if contract_payload is not None:
+                    failure["contract_check"] = contract_payload
             _record_run(provider_state, task=task, commands=commands, result="failed", failure=failure)
             raise ToolError(
                 failure_code,
@@ -1573,12 +2143,6 @@ def run_run(args: argparse.Namespace) -> int:
     output_dir = Path(args.output_dir or f".paper-fetch-runs/{source.provider}-onboarding")
     if not output_dir.is_absolute():
         output_dir = _repo_root() / output_dir
-    _run_artifacts(
-        source=source,
-        output_dir=output_dir,
-        domain=args.domain,
-        doi_prefix=args.doi_prefix,
-    )
     step_ids = _dag_step_ids(source.include_discovery)
     if args.until not in step_ids:
         raise ToolError(
@@ -1598,66 +2162,18 @@ def run_run(args: argparse.Namespace) -> int:
         manifest=source.manifest,
         include_discovery=source.include_discovery,
     )
-    executed: list[str] = []
-    try:
-        while True:
-            task = _next_pending_step(provider_state)
-            if task is None:
-                break
-            if task in {DISCOVER_STEP, IMPLEMENT_STEP}:
-                brief_name = (
-                    "discover-manifest.yml"
-                    if task == DISCOVER_STEP
-                    else "implement-provider.yml"
-                )
-                _dispatch_worker(
-                    provider=source.provider,
-                    task=task,
-                    brief_path=output_dir / "briefs" / brief_name,
-                    output_dir=output_dir,
-                    provider_state=provider_state,
-                )
-            else:
-                _execute_local_task(
-                    provider=source.provider,
-                    task=task,
-                    provider_state=provider_state,
-                )
-            executed.append(task)
-            _mark_step_completed(
-                state,
-                provider_state,
-                provider=source.provider,
-                task=task,
-            )
-            _write_json(state_path, state)
-            if task == args.until:
-                break
-    except ToolError:
-        failed_task = provider_state.get("current_step")
-        if isinstance(failed_task, str):
-            _mark_step_failed(
-                state,
-                provider_state,
-                provider=source.provider,
-                task=failed_task,
-            )
-            _write_json(state_path, state)
-        raise
-
-    _write_json(state_path, state)
     print(
         json.dumps(
-            {
-                "provider": source.provider,
-                "manifest": source.manifest,
-                "executed": executed,
-                "until": args.until,
-                "status": provider_state["status"],
-                "current_step": provider_state.get("current_step"),
-                "state": str(state_path),
-                "output_dir": str(output_dir),
-            },
+            _execute_run_loop(
+                source=source,
+                output_dir=output_dir,
+                state_path=state_path,
+                state=state,
+                provider_state=provider_state,
+                until=args.until,
+                domain=args.domain,
+                doi_prefix=args.doi_prefix,
+            ),
             indent=2,
             sort_keys=True,
         )
@@ -1871,6 +2387,20 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
     return 0
 
 
+def run_check_cleaning_proposal(args: argparse.Namespace) -> int:
+    proposal_path = Path(args.proposal) if args.proposal else None
+    if proposal_path is not None and not proposal_path.is_absolute():
+        proposal_path = _repo_root() / proposal_path
+    print(
+        json.dumps(
+            check_cleaning_proposal_freshness(args.provider, proposal_path=proposal_path),
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
 def run_run_checks(args: argparse.Namespace) -> int:
     provider = _provider_slug(args.provider)
     if bool(args.task) == bool(args.all_local):
@@ -1916,7 +2446,10 @@ def run_run_checks(args: argparse.Namespace) -> int:
         for command in commands:
             completed = _run_env_command(command)
             if _command_failed(command, completed):
-                failure_code = _failure_code_for_task(task)
+                failure_code = _failure_code_for_task(task, command)
+                structured = _payload_from_stderr(completed.stderr)
+                if structured and isinstance(structured.get("code"), str):
+                    failure_code = str(structured["code"])
                 failure = {
                     "code": failure_code,
                     "command": command,
@@ -1924,12 +2457,18 @@ def run_run_checks(args: argparse.Namespace) -> int:
                     "stdout_tail": _tail(completed.stdout),
                     "stderr_tail": _tail(completed.stderr),
                 }
+                if structured:
+                    failure["structured_error"] = structured
+                if _is_cleaning_contract_command(command):
+                    contract_payload = _payload_from_stdout_yaml(completed.stdout)
+                    if contract_payload is not None:
+                        failure["contract_check"] = contract_payload
                 _record_run(provider_state, task=task, commands=commands, result="failed", failure=failure)
                 _write_json(state_path, state)
                 raise ToolError(
                     failure_code,
                     f"onboarding local check failed for task {task}.",
-                    retryable=True,
+                    retryable=bool(structured.get("retryable")) if structured else True,
                     provider=provider,
                     manifest=default_manifest_path(provider),
                     task_id=f"{provider}-run-checks-{task}",
@@ -1951,6 +2490,420 @@ def run_run_checks(args: argparse.Namespace) -> int:
             sort_keys=True,
         )
     )
+    return 0
+
+
+def _fixture_path_for_doi(doi: str) -> str | None:
+    try:
+        golden_manifest = _load_golden_manifest()
+    except ToolError:
+        return None
+    sample_entry = _golden_sample_for_doi(doi, golden_manifest)
+    if sample_entry is None:
+        return None
+    sample_id, sample = sample_entry
+    return _fixture_root_for_sample(sample_id, sample).relative_to(_repo_root()).as_posix()
+
+
+def _manifest_fixture_summary(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    fixtures: list[dict[str, Any]] = []
+    manifest_fixtures = manifest.get("fixtures") if isinstance(manifest.get("fixtures"), dict) else {}
+    doi_samples = (
+        manifest_fixtures.get("doi_samples")
+        if isinstance(manifest_fixtures.get("doi_samples"), dict)
+        else {}
+    )
+    for purpose, sample in doi_samples.items():
+        if not isinstance(sample, dict):
+            continue
+        doi = sample.get("doi")
+        item = {
+            "purpose": purpose,
+            "doi": doi,
+            "fixture_path": _fixture_path_for_doi(str(doi)) if doi else None,
+            "expected_outcome": None,
+            "null_reason": None if doi else sample.get("evidence_reason"),
+        }
+        if doi:
+            try:
+                golden_manifest = _load_golden_manifest()
+                sample_entry = _golden_sample_for_doi(str(doi), golden_manifest)
+            except ToolError:
+                sample_entry = None
+            if sample_entry is not None:
+                item["expected_outcome"] = sample_entry[1].get("expected_outcome")
+        fixtures.append(item)
+    extra_fixtures = manifest.get("extra_fixtures")
+    if isinstance(extra_fixtures, list):
+        for index, sample in enumerate(extra_fixtures):
+            if not isinstance(sample, dict):
+                continue
+            doi = sample.get("doi")
+            fixtures.append(
+                {
+                    "purpose": sample.get("purpose") or f"extra_fixtures[{index}]",
+                    "doi": doi,
+                    "fixture_path": _fixture_path_for_doi(str(doi)) if doi else None,
+                    "expected_outcome": sample.get("expected_outcome"),
+                    "null_reason": None if doi else sample.get("evidence_reason"),
+                }
+            )
+    return fixtures
+
+
+def _review_artifact_summary(provider: str) -> dict[str, Any]:
+    path = _repo_root() / "docs" / "ai-onboarding" / "reviews" / f"{provider}.yml"
+    if not path.exists():
+        return {"status": "missing", "path": path.relative_to(_repo_root()).as_posix(), "fixtures": []}
+    try:
+        review = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except yaml.YAMLError as exc:
+        return {
+            "status": "invalid_yaml",
+            "path": path.relative_to(_repo_root()).as_posix(),
+            "error": str(exc),
+            "fixtures": [],
+        }
+    fixtures = review.get("fixtures") if isinstance(review, dict) else None
+    summaries: list[dict[str, Any]] = []
+    if isinstance(fixtures, list):
+        for fixture in fixtures:
+            if not isinstance(fixture, dict):
+                continue
+            fixes = fixture.get("fixes") if isinstance(fixture.get("fixes"), list) else []
+            issues = fixture.get("issues") if isinstance(fixture.get("issues"), list) else []
+            summaries.append(
+                {
+                    "fixture": fixture.get("fixture"),
+                    "purpose": fixture.get("purpose"),
+                    "doi": fixture.get("doi"),
+                    "issue_ids": [
+                        issue.get("id")
+                        for issue in issues
+                        if isinstance(issue, dict) and issue.get("id")
+                    ],
+                    "fix_ids": [
+                        fix.get("id")
+                        for fix in fixes
+                        if isinstance(fix, dict) and fix.get("id")
+                    ],
+                    "test_names": sorted(
+                        {
+                            str(test_name)
+                            for fix in fixes
+                            if isinstance(fix, dict)
+                            for test_name in (fix.get("test_names") or [])
+                        }
+                    ),
+                    "markdown_semantic_reviewed": fixture.get("markdown_semantic_reviewed"),
+                }
+            )
+    return {
+        "status": "present",
+        "path": path.relative_to(_repo_root()).as_posix(),
+        "fixtures": summaries,
+    }
+
+
+def build_provider_summary(
+    *,
+    provider: str,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    providers = state.get("providers") if isinstance(state.get("providers"), dict) else {}
+    provider_state = providers.get(provider_name) if isinstance(providers, dict) else None
+    if not isinstance(provider_state, dict):
+        provider_state = {
+            "provider": provider_name,
+            "manifest": default_manifest_path(provider_name),
+            "status": "not_started",
+            "current_step": None,
+        }
+    manifest_path = _repo_root() / str(provider_state.get("manifest") or default_manifest_path(provider_name))
+    manifest: dict[str, Any] = {}
+    if manifest_path.exists():
+        manifest = _read_manifest(manifest_path)
+    runs = provider_state.get("runs") if isinstance(provider_state.get("runs"), dict) else {}
+    verifications = (
+        provider_state.get("verifications")
+        if isinstance(provider_state.get("verifications"), dict)
+        else {}
+    )
+    diagnosis = diagnose_provider_state(provider_state)
+    summary: dict[str, Any] = {
+        "provider": provider_name,
+        "status": provider_state.get("status"),
+        "current_step": provider_state.get("current_step"),
+        "failed_task": diagnosis["failure"].get("task"),
+        "failure_code": diagnosis["failure"].get("code"),
+        "failure_recovery_action": diagnosis["failure"].get("action"),
+        "access_review": diagnosis["access_review"],
+        "manifest": {
+            "path": manifest_path.relative_to(_repo_root()).as_posix(),
+            "main_path": manifest.get("main_path"),
+            "route_sources": manifest.get("route_sources"),
+            "display_source": manifest.get("display_source"),
+        },
+        "fixture_coverage": _manifest_fixture_summary(manifest) if manifest else [],
+        "review_artifact": _review_artifact_summary(provider_name),
+        "run_checks": [
+            {
+                "task": task,
+                "result": run.get("result"),
+                "commands": run.get("commands"),
+                "failure_code": (
+                    run.get("failure", {}).get("code")
+                    if isinstance(run.get("failure"), dict)
+                    else None
+                ),
+            }
+            for task, run in runs.items()
+            if isinstance(run, dict)
+        ],
+        "verification_plans": [
+            {
+                "task": task,
+                "result": plan.get("result"),
+                "commands": plan.get("commands"),
+            }
+            for task, plan in verifications.items()
+            if isinstance(plan, dict)
+        ],
+        "operator_action": None,
+        "merge_ready_pr_draft": None,
+    }
+    if provider_state.get("status") == "blocked":
+        plan = plan_resume_blocked(provider_state)
+        summary["operator_action"] = (
+            diagnosis["failure"].get("action")
+            or "; ".join(plan["blockers"])
+            or "inspect blocked provider state"
+        )
+    if provider_state.get("status") == "merge_ready":
+        summary["merge_ready_pr_draft"] = (
+            f"Add {provider_name} provider onboarding artifacts and local verification summary."
+        )
+    return summary
+
+
+def _markdown_scalar(value: Any) -> str:
+    if value is None:
+        return "None"
+    if isinstance(value, (list, dict)):
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value)
+
+
+def _markdown_command(command: Any) -> str:
+    if isinstance(command, list):
+        return shlex.join(str(part) for part in command)
+    if isinstance(command, str):
+        return command
+    return _markdown_scalar(command)
+
+
+def _append_markdown_commands(lines: list[str], commands: Any) -> None:
+    if not isinstance(commands, list) or not commands:
+        lines.append("  - commands: []")
+        return
+    for command in commands:
+        lines.append(f"  - command: `{_markdown_command(command)}`")
+
+
+def render_provider_summary_markdown(summary: dict[str, Any]) -> str:
+    lines = [
+        f"# {summary['provider']} onboarding summary",
+        "",
+        f"- status: {summary.get('status')}",
+        f"- current_step: {summary.get('current_step')}",
+        f"- failed_task: {summary.get('failed_task')}",
+        f"- failure_code: {summary.get('failure_code')}",
+        f"- failure_recovery_action: {summary.get('failure_recovery_action')}",
+        f"- access_review: {summary['access_review'].get('status')}",
+        "",
+        "## Manifest",
+        "",
+        f"- path: {summary['manifest'].get('path')}",
+        f"- display_source: {summary['manifest'].get('display_source')}",
+        f"- main_path: {summary['manifest'].get('main_path')}",
+        f"- route_sources: {summary['manifest'].get('route_sources')}",
+        "",
+        "## Fixture Coverage",
+        "",
+    ]
+    for fixture in summary.get("fixture_coverage", []):
+        lines.append(
+            "- "
+            f"{fixture.get('purpose')}: doi={fixture.get('doi')} "
+            f"fixture={fixture.get('fixture_path')} "
+            f"expected={fixture.get('expected_outcome')}"
+        )
+
+    review = summary.get("review_artifact")
+    lines.extend(["", "## Review Artifact", ""])
+    if not isinstance(review, dict):
+        lines.append("- missing review artifact summary")
+    else:
+        lines.append(f"- status: {review.get('status')}")
+        lines.append(f"- path: {review.get('path')}")
+        fixtures = review.get("fixtures") if isinstance(review.get("fixtures"), list) else []
+        if not fixtures:
+            lines.append("- no review fixture summaries")
+        for fixture in fixtures:
+            if not isinstance(fixture, dict):
+                continue
+            lines.append(
+                "- "
+                f"{fixture.get('fixture')}/{fixture.get('purpose')}: "
+                f"doi={fixture.get('doi')} "
+                f"reviewed={fixture.get('markdown_semantic_reviewed')} "
+                f"issue_ids={_markdown_scalar(fixture.get('issue_ids') or [])} "
+                f"fix_ids={_markdown_scalar(fixture.get('fix_ids') or [])} "
+                f"tests={_markdown_scalar(fixture.get('test_names') or [])}"
+            )
+
+    lines.extend(["", "## Run Checks", ""])
+    run_checks = summary.get("run_checks") or []
+    if not run_checks:
+        lines.append("- no recorded run-check results")
+    for run in run_checks:
+        lines.append(
+            f"- {run.get('task')}: result={run.get('result')} failure_code={run.get('failure_code')}"
+        )
+        _append_markdown_commands(lines, run.get("commands"))
+
+    lines.extend(["", "## Verification Plans", ""])
+    verification_plans = summary.get("verification_plans") or []
+    if not verification_plans:
+        lines.append("- no recorded verification plans")
+    for plan in verification_plans:
+        lines.append(f"- {plan.get('task')}: result={plan.get('result')}")
+        _append_markdown_commands(lines, plan.get("commands"))
+
+    lines.extend(["", "## Operator Action", ""])
+    lines.append(f"- {summary.get('operator_action') or 'none recorded'}")
+    if summary.get("merge_ready_pr_draft"):
+        lines.extend(["", "## PR Draft", "", str(summary["merge_ready_pr_draft"])])
+    return "\n".join(lines) + "\n"
+
+
+def run_diagnose(args: argparse.Namespace) -> int:
+    state_path = _state_path(args.state)
+    state = _load_state(state_path)
+    providers = state.get("providers") if isinstance(state.get("providers"), dict) else {}
+    if args.provider:
+        provider_name = _provider_slug(args.provider)
+        provider_state = providers.get(provider_name)
+        if not isinstance(provider_state, dict):
+            raise ToolError(
+                "TASK_BRIEF_INVALID",
+                f"provider is missing from state: {provider_name}",
+                retryable=False,
+                provider=provider_name,
+                task_id=f"{provider_name}-diagnose",
+            )
+        diagnoses = [diagnose_provider_state(provider_state)]
+    else:
+        diagnoses = [
+            diagnose_provider_state(provider_state)
+            for provider_state in providers.values()
+            if isinstance(provider_state, dict)
+        ]
+    print(
+        json.dumps(
+            {
+                "state": str(state_path),
+                "providers": diagnoses,
+            },
+            indent=2,
+            sort_keys=True,
+        )
+    )
+    return 0
+
+
+def run_resume_blocked(args: argparse.Namespace) -> int:
+    provider = _provider_slug(args.provider)
+    state_path = _state_path(args.state)
+    state = _load_state(state_path)
+    providers = state.get("providers") if isinstance(state.get("providers"), dict) else {}
+    provider_state = providers.get(provider)
+    if not isinstance(provider_state, dict):
+        raise ToolError(
+            "TASK_BRIEF_INVALID",
+            f"provider is missing from state: {provider}",
+            retryable=False,
+            provider=provider,
+            task_id=f"{provider}-resume-blocked",
+        )
+    plan = plan_resume_blocked(provider_state)
+    payload = {"resume_plan": {**plan, "until": args.until}, "state": str(state_path)}
+    if args.dry_run:
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    if not plan["resumable"]:
+        raise ToolError(
+            "TASK_BRIEF_INVALID",
+            "blocked provider is not resumable without operator action.",
+            retryable=False,
+            provider=provider,
+            manifest=provider_state.get("manifest"),
+            task_id=f"{provider}-resume-blocked",
+            details=payload,
+        )
+    steps = provider_state.get("steps") if isinstance(provider_state.get("steps"), list) else []
+    if args.until not in steps:
+        raise ToolError(
+            "TASK_BRIEF_INVALID",
+            f"--until must name a task in the provider state DAG: {args.until}",
+            retryable=False,
+            provider=provider,
+            manifest=provider_state.get("manifest"),
+            task_id=f"{provider}-resume-blocked",
+            details={"until": args.until, "steps": steps},
+        )
+    next_task = str(plan["next_task"])
+    task_statuses = provider_state.setdefault("task_statuses", {})
+    task_statuses[next_task] = "in_progress"
+    provider_state["current_step"] = next_task
+    provider_state["status"] = "in_progress"
+    state["active_provider"] = provider
+    _write_json(state_path, state)
+    source = _source_from_provider_state(provider_state)
+    output_dir = Path(args.output_dir or f".paper-fetch-runs/{provider}-onboarding")
+    if not output_dir.is_absolute():
+        output_dir = _repo_root() / output_dir
+    run_payload = _execute_run_loop(
+        source=source,
+        output_dir=output_dir,
+        state_path=state_path,
+        state=state,
+        provider_state=provider_state,
+        until=args.until,
+        domain=None,
+        doi_prefix=None,
+    )
+    print(json.dumps({**payload, "run": run_payload}, indent=2, sort_keys=True))
+    return 0
+
+
+def run_summarize(args: argparse.Namespace) -> int:
+    provider = _provider_slug(args.provider)
+    state_path = _state_path(args.state)
+    state = _load_state(state_path)
+    summary = build_provider_summary(provider=provider, state=state)
+    if args.format == "json":
+        content = json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    else:
+        content = render_provider_summary_markdown(summary)
+    if args.output:
+        output_path = Path(args.output)
+        if not output_path.is_absolute():
+            output_path = _repo_root() / output_path
+        write_text(output_path, content)
+    else:
+        print(content, end="")
     return 0
 
 
@@ -2077,6 +3030,59 @@ def build_parser() -> argparse.ArgumentParser:
     )
     run.set_defaults(func=run_run)
 
+    diagnose = subparsers.add_parser(
+        "diagnose",
+        help="summarize blocked provider failures from coordinator state",
+    )
+    diagnose.add_argument("--provider", help="optional provider name")
+    diagnose.add_argument(
+        "--state",
+        default=DEFAULT_STATE_PATH,
+        help="coordinator state JSON path",
+    )
+    diagnose.set_defaults(func=run_diagnose)
+
+    resume_blocked = subparsers.add_parser(
+        "resume-blocked",
+        help="resume one retryable blocked provider after preconditions are satisfied",
+    )
+    resume_blocked.add_argument("--provider", required=True, help="provider name")
+    resume_blocked.add_argument("--dry-run", action="store_true", help="print resume plan only")
+    resume_blocked.add_argument(
+        "--until",
+        default="provider-local-acceptance",
+        help="inclusive task id to stop after; defaults to provider-local-acceptance",
+    )
+    resume_blocked.add_argument(
+        "--output-dir",
+        help="directory for DAG, briefs, and worker logs",
+    )
+    resume_blocked.add_argument(
+        "--state",
+        default=DEFAULT_STATE_PATH,
+        help="coordinator state JSON path",
+    )
+    resume_blocked.set_defaults(func=run_resume_blocked)
+
+    summarize = subparsers.add_parser(
+        "summarize",
+        help="render an operator-facing provider onboarding summary",
+    )
+    summarize.add_argument("--provider", required=True, help="provider name")
+    summarize.add_argument(
+        "--format",
+        choices=("json", "markdown"),
+        default="json",
+        help="summary output format",
+    )
+    summarize.add_argument("--output", help="optional output path")
+    summarize.add_argument(
+        "--state",
+        default=DEFAULT_STATE_PATH,
+        help="coordinator state JSON path",
+    )
+    summarize.set_defaults(func=run_summarize)
+
     next_task = subparsers.add_parser(
         "next",
         help="print and persist the next serial task for one provider",
@@ -2128,6 +3134,14 @@ def build_parser() -> argparse.ArgumentParser:
     check_snapshot.add_argument("--provider", required=True, help="provider name")
     check_snapshot.add_argument("--doi", required=True, help="DOI to check")
     check_snapshot.set_defaults(func=run_check_snapshot)
+
+    check_cleaning = subparsers.add_parser(
+        "check-cleaning-proposal",
+        help="check cleaning proposal fixture digest freshness",
+    )
+    check_cleaning.add_argument("--provider", required=True, help="provider name")
+    check_cleaning.add_argument("--proposal", help="optional compact proposal path")
+    check_cleaning.set_defaults(func=run_check_cleaning_proposal)
 
     advance = subparsers.add_parser(
         "advance",

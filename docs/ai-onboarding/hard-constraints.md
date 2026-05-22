@@ -8,6 +8,7 @@ Worker 和 coordinator 必须满足下列机器可判约束。
 - Worker must not commit.
 - Worker may only modify paths listed in `files_allowed_to_modify`.
 - Worker must not modify paths listed in `files_must_not_modify`.
+- The current provider manifest may be listed in `files_allowed_to_modify` only for the `MARKDOWN_CONTRACT_DRIFT` exception: worker may adjust related `markdown_contract.<purpose>` entries, and must not edit routing, route contracts, fixtures, access policy, probe requirements, docs facts, or unrelated purposes.
 - Worker must not edit `docs/ai-onboarding/known-providers.yml`.
 - Worker must not edit shared docs: `docs/providers.md`, `docs/extraction-rules.md`, `CHANGELOG.md`.
 - Worker must not write API keys, tokens, browser endpoint URLs, or local secret file paths into manifest, docs, tests, or task brief output.
@@ -35,6 +36,8 @@ Worker 和 coordinator 必须满足下列机器可判约束。
 ## Acceptance
 
 - Provider-local pytest listed in the task brief must pass.
+- `python3 scripts/onboard_from_manifests.py check-cleaning-proposal --provider <provider>` must pass.
+- `python3 scripts/propose_cleaning_chain.py --provider <provider> --check-contract` must pass; warning-only sentinel/cross-route findings are allowed, while missing include, truly vacuous guard, or stale digest is `MARKDOWN_CONTRACT_DRIFT`.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contract.py -q` must pass.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_route_contract.py -q` must pass.
 - `docs/ai-onboarding/access-reviews/<provider>.yml` and `docs/ai-onboarding/reviews/<provider>.yml` must pass their schemas.

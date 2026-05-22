@@ -14,7 +14,11 @@
 - `scripts/capture_fixture.py --from-manifest <manifest> --all --auto-via --fail-fast` 是 coordinator capture 默认入口，按 manifest probe 和 access review 选择 `http` / `browser`。
 - `scripts/scaffold_provider.py --from-manifest --merge-existing=safe` 负责从 manifest 生成 provider-owned skeleton；已有输出时复用安全内容或返回 JSON merge plan 和 diff preview。
 - `scripts/bootstrap_review_artifact.py --provider <name> --manifest <path>` 生成 Markdown review 草稿，但不会把最终语义审查自动签为 true。
+- `scripts/backfill_access_reviews.py --all --write` 为已实现但缺少 access review 的 provider 生成 blocked 草稿；草稿不是批准，`status: approved` 和 `may_continue: true` 仍只能由 operator 写入。
+- `scripts/propose_cleaning_chain.py --provider <name> --write` 基于已提交 fixture 生成 `cleaning-chain-proposals/<name>.yml`，用于 capture 后、implement 前的清洗候选、contract delta、过度清洗探针和 token 冲突检查。
 - `scripts/manifest_sync_back.py --provider <name> --manifest <path> --sync-docs` 是 `extraction_hints`、`success_criteria` 和 manifest docs facts 自动同步入口。
+- `scripts/onboard_from_manifests.py diagnose`、`resume-blocked` 和 `summarize` 读取 coordinator state，分别提供 blocked 分诊、受控续跑和 operator digest；它们不会批准 access review、解决 challenge 或触发 GitHub CI。
+- `scripts/run_provider_drift_report.py` 是本地手动 route-source drift report 入口；真实 live run 必须显式设置 `PAPER_FETCH_RUN_LIVE=1`，不接 CI。
 - `docs/ai-onboarding/failure-recovery.md` 定义 coordinator 对 structured JSON error code 的恢复动作。
 - `docs/ai-onboarding/automation-roadmap.md` 记录 runner、worker dispatch、live gate 和不可自动化边界。
 
@@ -23,7 +27,7 @@
 S14/S17 coordinator:
 
 - local entrypoint: `python3 scripts/onboard_from_manifests.py`
-- supported actions: `start`, `run`, `next`, `verify`, `advance`
+- supported actions: `start`, `run`, `diagnose`, `resume-blocked`, `summarize`, `next`, `verify`, `advance`
 - provider execution model: one active provider, serial task DAG, retry counters per task
 - worker dispatch input: generated task brief plus manifest/hard-constraints material
 - full automation entrypoint: `python3 scripts/onboard_from_manifests.py run --manifest docs/ai-onboarding/manifests/<name>.yml --until merge-ready`
@@ -50,16 +54,17 @@ The provider DAG is fixed:
 2. `discover-manifest`
 3. `validate-manifest`
 4. `capture-fixtures`
-5. `scaffold`
-6. `implement-provider`
-7. `shared-integration`
-8. `snapshot-expected`
-9. `manifest-sync-back`
-10. `provider-local-acceptance`
-11. `global-lint`
-12. `merge-ready`
+5. `propose-cleaning-chain`
+6. `scaffold`
+7. `implement-provider`
+8. `shared-integration`
+9. `snapshot-expected`
+10. `manifest-sync-back`
+11. `provider-local-acceptance`
+12. `global-lint`
+13. `merge-ready`
 
-`operator-access-preflight` validates `docs/ai-onboarding/access-reviews/<name>.yml` before discovery. `start --provider` includes all tasks and writes discovery plus implementation briefs. `start --manifest` skips `discover-manifest`, reads provider identity from manifest YAML, and still starts with the access preflight gate.
+`operator-access-preflight` validates `docs/ai-onboarding/access-reviews/<name>.yml` before discovery. `propose-cleaning-chain` runs after fixture capture and before scaffold, writing compact proposal/evidence artifacts bound to fixture digests. `start --provider` includes all 13 tasks and writes discovery plus implementation briefs. `start --manifest` skips `discover-manifest`, reads provider identity from manifest YAML, and still starts with the access preflight gate.
 
 ## Required Verification
 
@@ -79,7 +84,7 @@ For local operator execution, `python3 scripts/onboard_from_manifests.py run-che
 
 For end-to-end local orchestration, `python3 scripts/onboard_from_manifests.py run --provider <name> --domain <domain> --output-dir .paper-fetch-runs/<name>-onboarding` executes the serial DAG and dispatches worker steps through `PROVIDER_ONBOARDING_AGENT_CLI`. It still cannot approve access, solve challenges, or mark semantic review complete.
 
-Provider-local acceptance commands must come from the generated task brief. Hard-constraint grep checks must be listed in the brief or `hard-constraints.md`; non-empty forbidden central-provider matches fail acceptance.
+Provider-local acceptance commands must come from the generated task brief. They include `check-cleaning-proposal` freshness validation and `scripts/propose_cleaning_chain.py --provider <name> --check-contract`; warning-only sentinel/cross-route findings pass, while stale digests or blocking contract drift fail with `MARKDOWN_CONTRACT_DRIFT`. Hard-constraint grep checks must be listed in the brief or `hard-constraints.md`; non-empty forbidden central-provider matches fail acceptance.
 
 ## File Index
 
@@ -100,6 +105,7 @@ Provider-local acceptance commands must come from the generated task brief. Hard
 | [`provider-manifest.schema.json`](./provider-manifest.schema.json) | Provider manifest JSON Schema |
 | [`onboarding-state.schema.json`](./onboarding-state.schema.json) | Coordinator state JSON Schema |
 | [`known-providers.yml`](./known-providers.yml) | Provider manifest index and status registry |
+| [`cleaning-chain-proposals/`](./cleaning-chain-proposals/) | Fixture-derived cleaning proposal artifacts; proposals do not modify provider implementation or semantic review signoff |
 | [`manifests/elsevier.yml`](./manifests/elsevier.yml) | Elsevier provider manifest |
 | [`manifests/springer.yml`](./manifests/springer.yml) | Springer provider manifest |
 | [`manifests/wiley.yml`](./manifests/wiley.yml) | Wiley provider manifest |

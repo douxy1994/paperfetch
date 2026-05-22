@@ -6,8 +6,12 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.6 - 2026-05-22
+
 ### 新增
 
+- 新增实验性 macOS 离线 release tarball，覆盖 CPython 3.11、3.12、3.13、3.14，并在 CI 中验证安装、headful 布局和 CloakBrowser smoke。
+- 新增 MDPI CloakBrowser HTML provider，支持 browser PDF fallback、录制 replay fixtures、Markdown 清洗覆盖，以及 `mdpi_html` / `mdpi_pdf` source。
 - 新增 AI provider onboarding 的 operator access review 和 Markdown review artifact，并用 schema gate 在 discovery 前和 acceptance 阶段校验。
 - 新增本地 `scripts/dev-preflight.sh` 门禁、低强度 contract 层 `mypy` 检查、公式 Node 包版本同步测试，以及 golden corpus provider adapter，方便后续 provider 接入。
 

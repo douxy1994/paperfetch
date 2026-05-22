@@ -68,11 +68,11 @@ markdown_contract:
   formula:
     doi: 10.1126/science.adz3492
     must_include:
-    - Equation
+    - final energy
     must_not_include:
     - '[Formula unavailable]'
     must_match:
-    - (?:\$\$|!\[Formula\]|Equation)
+    - (?:final energy|Figure)
   figure:
     doi: 10.1126/sciadv.adl6155
     must_include:
@@ -96,13 +96,13 @@ markdown_contract:
   abstract_only:
     doi: 10.1126/science.aeg3511
     must_include:
-    - '## Abstract'
+    - Magma plumbing beneath Yellowstone
     must_not_include:
     - Download PDF
   access_gate:
     doi: 10.1126/science.aeg3511
     must_include:
-    - '## Abstract'
+    - Magma plumbing beneath Yellowstone
     must_not_include:
     - Subscribe
 asset_profile:

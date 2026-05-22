@@ -1,6 +1,6 @@
 # Manifest Discovery
 
-`discover-manifest` 是 AI onboarding 的第一个 worker step。它必须等 `operator-access-preflight` 通过后运行，把 provider 种子转换成带证据的 `ProviderManifest`，供后续 `validate-manifest`、`capture-fixtures`、`scaffold` 和 `implement-provider` 使用。Coordinator DAG 和状态机规则见 `docs/ai-onboarding/coordinator-spec.md`。
+`discover-manifest` 是 AI onboarding 的第一个 worker step。它必须等 `operator-access-preflight` 通过后运行，把 provider 种子转换成带证据的 `ProviderManifest`，供后续 `validate-manifest`、`capture-fixtures`、`propose-cleaning-chain`、`scaffold` 和 `implement-provider` 使用。Coordinator DAG 和状态机规则见 `docs/ai-onboarding/coordinator-spec.md`。
 
 ## Worker Input
 

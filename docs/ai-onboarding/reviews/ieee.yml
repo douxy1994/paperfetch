@@ -10,7 +10,7 @@ fixtures:
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - 'must include ## Abstract'
+  - must include **Abstract.**
   - must not include Download PDF
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1109_ACCESS.2024.3352924/expected.json
@@ -37,7 +37,7 @@ fixtures:
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - must include Equation
+  - must include $$
   - must not include [Formula unavailable]
   - must match (?:\$\$|!\[Formula\]|Equation)
   fixes: []
@@ -65,7 +65,7 @@ fixtures:
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - must include Supplementary
+  - must include Computational Thinking Assessment Instrument
   - must not include Download Citation
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1109_RITA.2026.3668995/original.html

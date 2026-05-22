@@ -106,7 +106,25 @@ access_policy_constraints:
 upstream_artifacts:
   task_dag: task-dag.json
   capture_commands: docs/ai-onboarding/capture-commands/mdpi.txt
+  cleaning_proposal: docs/ai-onboarding/cleaning-chain-proposals/mdpi.yml
+  cleaning_proposal_evidence: docs/ai-onboarding/cleaning-chain-proposals/mdpi.evidence.yml
   scaffold_summary: docs/ai-onboarding/scaffold/mdpi.json
+cleaning_proposal:
+  status: ready
+  schema_version: 2
+  provider: mdpi
+  artifact: docs/ai-onboarding/cleaning-chain-proposals/mdpi.yml
+  evidence_artifact: docs/ai-onboarding/cleaning-chain-proposals/mdpi.evidence.yml
+  fixtures_digest: []
+  proposed_markdown_contract_delta: {}
+  selected_drop_tokens: []
+  selected_drop_selectors: []
+  overcleaning_probe_summary:
+    count: 0
+    samples: []
+  token_conflict_summary:
+    count: 0
+    possible_body_conflict_tokens: []
 hard_constraints: docs/ai-onboarding/hard-constraints.md
 markdown_review_loop:
   required: true
@@ -144,18 +162,21 @@ acceptance:
         - src/paper_fetch/extraction/html/provider_rules.py
         - src/paper_fetch/quality/html_signals.py
         - src/paper_fetch/quality/html_availability.py
+  cleaning_contract_gate:
+    - python3 scripts/onboard_from_manifests.py check-cleaning-proposal --provider mdpi
+    - python3 scripts/propose_cleaning_chain.py --provider mdpi --check-contract
   live_review:
     required_for_browser_or_cdn_risk: true
     command: PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_golden_criteria_live_review.py --providers mdpi
     source_contract: provider_manifest.route_sources
     markdown_contract: provider_manifest.markdown_contract
 files_allowed_to_modify:
+  - docs/ai-onboarding/manifests/mdpi.yml
   - src/paper_fetch/providers/mdpi.py
   - src/paper_fetch/providers/_mdpi_html.py
   - tests/unit/test_mdpi_provider.py
   - docs/ai-onboarding/reviews/mdpi.yml
 files_must_not_modify:
-  - docs/ai-onboarding/manifests/mdpi.yml
   - docs/ai-onboarding/known-providers.yml
   - docs/providers.md
   - docs/extraction-rules.md
@@ -170,6 +191,20 @@ failure_recovery:
   forbidden_write_code: WORKER_MODIFIED_FORBIDDEN_FILE
   acceptance_failure_retry_task: implement-provider
   blocked_after_retry_exhaustion: true
+manifest_adjustment_policy:
+  allowed_only_for_failure_code: MARKDOWN_CONTRACT_DRIFT
+  allowed_path: docs/ai-onboarding/manifests/mdpi.yml
+  allowed_fields:
+    - markdown_contract.<purpose>
+  forbidden_fields:
+    - routing
+    - main_path
+    - route_contract
+    - fixtures
+    - extra_fixtures
+    - probe
+    - access_policy
+  must_match_current_provider: mdpi
 no_commit: true
 ```
 
@@ -181,7 +216,8 @@ no_commit: true
 - `runtime` must be `coding-agent-subagent`.
 - `access_review` must point to the approved operator access review.
 - `access_policy_constraints` must require no automatic login, no CAPTCHA solving, no paywall/challenge bypass, and stop/report on challenge or permission uncertainty.
-- `upstream_artifacts` must include `task_dag`, `capture_commands`, and `scaffold_summary`.
+- `upstream_artifacts` must include `task_dag`, `capture_commands`, `cleaning_proposal`, `cleaning_proposal_evidence`, and `scaffold_summary`.
+- `cleaning_proposal` must inline only the compact proposal (`schema_version: 2`), not the full evidence artifact.
 - `hard_constraints` must be `docs/ai-onboarding/hard-constraints.md`.
 - `markdown_review_loop.required` must be `true`.
 - `markdown_review_loop.fixture_source` must be `provider_manifest.fixtures.doi_samples + provider_manifest.extra_fixtures`.
@@ -198,9 +234,11 @@ no_commit: true
 - `acceptance.pytest` must contain `tests/unit/test_provider_markdown_review_contract.py`.
 - `acceptance.pytest` must contain `tests/unit/test_provider_route_contract.py`.
 - `acceptance.grep_must_be_empty` must contain central provider-logic grep checks.
+- `acceptance.cleaning_contract_gate` must contain proposal freshness and `--check-contract` commands.
 - `acceptance.live_review` must declare whether provider subset live review is required for browser/CDN risk and must point to `route_sources` plus `markdown_contract`.
-- `files_allowed_to_modify` must only contain provider-specific implementation, provider-specific tests, and the provider review artifact.
-- `files_must_not_modify` must include manifest, shared docs, known provider index, and central provider logic files.
+- `files_allowed_to_modify` may include the current provider manifest only for the `manifest_adjustment_policy` exception.
+- `files_must_not_modify` must include shared docs, known provider index, and central provider logic files.
+- `manifest_adjustment_policy` must only allow current-provider `markdown_contract.<purpose>` edits when recovering from `MARKDOWN_CONTRACT_DRIFT`; routing, fixtures, access policy, probe, and unrelated manifest fields remain forbidden.
 - `failure_recovery.policy` must be `docs/ai-onboarding/failure-recovery.md`.
 - `failure_recovery.max_retries` must be `3`.
 - `failure_recovery.acceptance_failure_retry_task` must be `implement-provider`.
@@ -213,6 +251,7 @@ Coordinator must inline these inputs when dispatching the worker through the sel
 - implementation brief YAML
 - `docs/ai-onboarding/hard-constraints.md`
 - current provider manifest YAML
+- compact cleaning proposal from `docs/ai-onboarding/cleaning-chain-proposals/<provider>.yml`
 
 The worker must return a structured summary containing changed files, tests run, grep checks run, and unresolved failures.
 It must also write `docs/ai-onboarding/reviews/<provider>.yml`: one entry per non-null `fixtures.doi_samples.<purpose>` and per `extra_fixtures` item, with `sample_representative`, `markdown_semantic_reviewed`, `issues`, `assertions`, and `fixes`. If a fixture has no finding, the entry must still name the fixture and purpose and state that baseline Markdown was reviewed. The worker must turn every `markdown_contract.<purpose>` and every extra fixture `markdown_contract` item into provider-local assertions before changing extraction code, and must turn every `route_contract.<step>` rejection rule into a route or fallback test before accepting that route as implemented.
