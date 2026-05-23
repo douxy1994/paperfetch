@@ -1,16 +1,19 @@
 from __future__ import annotations
 
 import re
+import tempfile
+from pathlib import Path
 
 import pytest
 
 from paper_fetch.provider_catalog import PROVIDER_CATALOG
 from paper_fetch.providers._registry import provider_bundle
 from paper_fetch.providers.base import ProviderFailure
-from paper_fetch.providers.royalsocietypublishing import RoyalsocietypublishingClient
+from paper_fetch.providers.royalsocietypublishing import RoyalsocietypublishingClient, clean_pdf_markdown
 from paper_fetch.tracing import source_trail_from_trace
 from tests.golden_corpus import GoldenCorpusFixture, build_article_from_fixture
 from tests.golden_criteria import golden_criteria_sample_for_doi
+from tests.unit._atypon_browser_workflow_provider_support import png_header
 from tests.unit._paper_fetch_support import RecordingTransport, fulltext_pdf_bytes, http_response
 
 
@@ -110,6 +113,70 @@ def test_article_html_route_follows_direct_doi_redirect_without_xml_route() -> N
     assert "text/html" in str(first_headers["Accept"])
 
 
+def test_article_html_fetch_result_downloads_figure_assets_and_rewrites_inline_links() -> None:
+    """asset-download-contract: provider=royalsocietypublishing"""
+
+    doi = "10.1098/rsos.150470"
+    doi_url = f"https://royalsocietypublishing.org/doi/{doi}"
+    article_url = "https://royalsocietypublishing.org/rsos/article/2/10/150470/example"
+    figure_url = "https://royalsocietypublishing.org/view-large/figure/18113020/rsos150470f01.jpeg"
+    body_text = (
+        "Royal Society body paragraph discusses the fossil record and introduces Figure 1 "
+        "as the main visual evidence for the article. "
+        * 80
+    )
+    html = _royal_article_html(doi=doi, body_text=body_text).decode("utf-8").replace(
+        "<figure><figcaption>Figure 1. Direct HTML figure caption.</figcaption></figure>",
+        f"""
+        <div class="fig-section" id="f1" data-id="f1">
+          <a href="{figure_url}"><img src="{figure_url}" alt="Figure 1. Direct HTML figure caption." /></a>
+          <div class="fig-label">Figure 1.</div>
+          <div class="fig-caption">Direct HTML figure caption.</div>
+        </div>
+        """,
+    )
+    image_bytes = png_header(640, 480)
+    transport = RecordingTransport(
+        {
+            ("GET", doi_url): http_response(
+                doi_url,
+                b"<html>Moved</html>",
+                "text/html",
+                status_code=302,
+                headers={"location": article_url},
+            ),
+            ("GET", article_url): http_response(
+                article_url,
+                html.encode("utf-8"),
+                "text/html; charset=utf-8",
+            ),
+            ("GET", figure_url): http_response(figure_url, image_bytes, "image/png"),
+        }
+    )
+    client = RoyalsocietypublishingClient(transport, {})
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        result = client.fetch_result(
+            doi,
+            {"doi": doi},
+            Path(tmpdir),
+            asset_profile="body",
+        )
+        markdown = result.article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
+        downloaded_asset = result.artifacts.assets[0]
+        saved_path = Path(downloaded_asset["path"])
+
+        assert saved_path.is_file()
+        assert saved_path.read_bytes() == image_bytes
+        assert downloaded_asset["downloaded_bytes"] == len(image_bytes)
+        assert downloaded_asset["kind"] == "figure"
+        assert downloaded_asset["path"] in markdown
+        assert "![Figure 1](" in markdown
+        assert figure_url not in markdown
+        assert markdown.index("Figure 1 as the main visual evidence") < markdown.index("![Figure 1](")
+        assert result.artifacts.asset_failures == []
+
+
 def test_pdf_fallback_uses_citation_pdf_url_after_html_is_not_fulltext() -> None:
     doi = "10.1098/rsta.2020.0108"
     doi_url = f"https://royalsocietypublishing.org/doi/{doi}"
@@ -195,14 +262,36 @@ def test_metadata_only_route_contract_is_service_fallback_after_provider_failure
 
 
 def test_markdown_contract_structure_fixture() -> None:
+    """rule: rule-royalsociety-silverchair-markdown-cleanup"""
+
     # markdown-review: purpose=structure doi=10.1098/rsta.2019.0558
     markdown = _render_markdown_for_fixture("10.1098/rsta.2019.0558")
+    assert '# Creation and application of virtual patient cohorts of heart models' in markdown
+    assert '# 10.1098/rsta.2019.0558' not in markdown
     assert "## Abstract" in markdown
     assert markdown.count("## Abstract") == 1
     assert "virtual patient cohorts" in markdown
+    assert "Schematic of the strategies for obtaining a virtual cohort" in markdown
+    assert "| [9] | 35 samples from ex vivo RAA | atrial model calibration | 0D | RVAC |" in markdown
+    assert "The parameter set for each member of the virtual cohort can be obtained in three ways" in markdown
+    assert "| [22] | $70\\,\\text{(training)} + 60\\,\\text{(test)} + 3\\,(12\\, k\\,\\text{samples})$ | shape uncertainty | LA | SID |" in markdown
+    assert "| [23,24] | 5 PsAF | patient-specific modelling of atrial action potentials | not specified | 1:1 |" in markdown
+    assert "| [ |" not in markdown
+    assert "## Authors' contributions" in markdown
+    assert "## Competing interests" in markdown
+    assert "## Funding" in markdown
+    assert "We declare we have no competing interest." in markdown
+    assert "RF Government Act No. 211" in markdown
+    assert "Bootstrap methods: another look at the jackknife" in markdown
+    assert "A new optimizer using particle swarm theory" in markdown
+    assert not re.search(r"(?m)^- Efron B\\s*\\.?\\s*1992\\s*$", markdown)
+    assert not re.search(r"(?m)^- Eberhart R, Kennedy J\\s*\\.?\\s*1995\\s*$", markdown)
+    assert "creativecommons" not in markdown.lower()
+    assert "which permits unrestricted use" not in markdown
     assert "Close navigation menu" not in markdown
     assert "Open figure viewer" not in markdown
     assert "javascript:;" not in markdown
+    assert not re.search(r"(?m)^- Figure$", markdown)
 
 
 def test_markdown_contract_table_fixture() -> None:
@@ -210,6 +299,18 @@ def test_markdown_contract_table_fixture() -> None:
     markdown = _render_markdown_for_fixture("10.1098/rspb.2020.0097")
     assert "table 1" in markdown
     assert "male reproductive success" in markdown
+    assert "Table 1: Results from PCA for male dominance" in markdown
+    assert "Table 2: Full model outputs from generalized linear negative binomial model" in markdown
+    assert markdown.count("| not specified | PC1 | PC2 |") == 1
+    assert markdown.count("| parameter | estimate | s.e. | z-value | Pr(>|z|) |") == 1
+    assert re.search(r"(?m)^\| FIII \| .+ \|$", markdown)
+    assert re.search(r"(?m)^\| PC2: FIII \| .+ \|$", markdown)
+    assert not re.search(r"(?m)^(?:FIII|PC2: FIII) \|", markdown)
+    assert "## Ethics" in markdown
+    assert "## Data accessibility" in markdown
+    assert "Dryad Digital Repository" in markdown
+    assert "## Acknowledgements" in markdown
+    assert "Daniel Nugent" in markdown
     assert "Download slide" not in markdown
     assert "Article navigation" not in markdown
     assert re.search("(?m)^\\|.+\\|$", markdown)
@@ -220,6 +321,14 @@ def test_markdown_contract_formula_fixture() -> None:
     markdown = _render_markdown_for_fixture("10.1098/rsos.201188")
     assert "Black" in markdown
     assert "Scholes" in markdown
+    assert r"\text{price} = \text{BS}(S_{0},K,T,\sigma)." in markdown
+    assert r"x_{t}^{i} = \sum\limits_{\, j = 1}^{n}a_{ij}x_{t - 1}^{j}" in markdown
+    assert "consensus to $" in markdown
+    assert r"}{\overset{\sim}{X}}_{t - 1}e_{t}" not in markdown
+    assert r"\text{and\textbackslash~}" not in markdown
+    assert "Atand" not in markdown
+    assert "εinot" not in markdown
+    assert "- —" not in markdown
     assert "Open figure viewer" not in markdown
     assert "Download slide" not in markdown
     assert "javascript:;" not in markdown
@@ -227,12 +336,20 @@ def test_markdown_contract_formula_fixture() -> None:
 
 
 def test_markdown_contract_figure_fixture() -> None:
+    """rule: rule-royalsociety-silverchair-markdown-cleanup"""
+
     # markdown-review: purpose=figure doi=10.1098/rsos.150470
     markdown = _render_markdown_for_fixture("10.1098/rsos.150470")
     assert "figures 1" in markdown
     assert "Plesiochelys" in markdown
+    assert "Palaeobiogeographic distribution" in markdown
+    assert "### 3.3 Referred material" in markdown
+    assert "NHMUK R3370, a basicranium" in markdown
+    assert "### 3.9 Referred material" in markdown
+    assert "NHMUK OR44178b" in markdown
     assert "Download slide" not in markdown
     assert "Article navigation" not in markdown
+    assert not re.search(r"(?m)^- Figure$", markdown)
     assert re.search("(?:figure|figures 1)", markdown)
 
 
@@ -241,6 +358,8 @@ def test_markdown_contract_supplementary_fixture() -> None:
     markdown = _render_markdown_for_fixture("10.1098/rsif.2019.0334")
     assert "electronic supplementary material" in markdown
     assert "hepatitis C virus" in markdown
+    assert "\nEquation 3.2:" in markdown
+    assert not re.search(r"Equation 3\.1: .+ Equation 3\.2:", markdown)
     assert "Download citation" not in markdown
     assert "Article navigation" not in markdown
 
@@ -255,8 +374,58 @@ def test_markdown_contract_references_fixture() -> None:
 
 
 def test_markdown_contract_pdf_fallback_fixture() -> None:
+    """rule: rule-royalsociety-silverchair-markdown-cleanup"""
+
     # markdown-review: purpose=pdf_fallback doi=10.1098/rsta.2020.0108
     markdown = _render_markdown_for_fixture("10.1098/rsta.2020.0108")
-    assert "#" in markdown
-    assert "Royal Society" in markdown
+    assert "# Topics in the mathematical design of materials" in markdown
+    assert "# 10.1098/rsta.2020.0108" not in markdown
+    assert "Topics in the mathematical desi n of materials g" not in markdown
+    assert "## Abstract" in markdown
+    assert "We present a perspective on several current research directions" in markdown
+    assert "## 1. Introduction" in markdown
+    assert "Many recent and spectacular advances in the world of materials" in markdown
+    assert "## References" in markdown
+    assert "Warburg E. 1881 Magnetische untersuchungen" in markdown
+    assert "Brezis H, Coron JM, Lieb EH. 1986" in markdown
     assert "Access Denied" not in markdown
+    assert "Cite this article" not in markdown
+    assert "Subject Areas" not in markdown
+    assert "Author for correspondence" not in markdown
+    assert "Published by the Royal Society. All rights reserved" not in markdown
+    assert "Downloaded from http://royalsocietypublishing.org" not in markdown
+    assert "Peking University Library" not in markdown
+    assert "intentionally omitted" not in markdown
+    assert "~~**" not in markdown
+    assert "```" not in markdown
+
+
+def test_pdf_markdown_cleanup_removes_royal_society_watermark_and_placeholders() -> None:
+    """rule: rule-royalsociety-silverchair-markdown-cleanup"""
+
+    cleaned = clean_pdf_markdown(
+        "\n".join(
+            [
+                "# Article",
+                "",
+                "Downloaded from http://royalsocietypublishing.org/doi/pdf/10.1098/rsta.2020.0108/rsta.2020.0108.pdf",
+                "by Peking University Library user",
+                "on 22 May 2026",
+                "~~**2**~~",
+                "```",
+                "```",
+                "**==> picture [11 x 10] intentionally omitted <==**",
+                "Shape-programmable magnetic",
+                "`Downloaded from http://royalsocietypublishing.org/rsta/article-pdf/doi/10.1098/rsta.2020.0108/373338/rsta.2020.0108.pdf` soft matter. `by Peking University Library user on 22 May 2026`",
+                "Useful Royal Society PDF body text.",
+            ]
+        )
+    )
+
+    assert "Downloaded from" not in cleaned
+    assert "Peking University Library" not in cleaned
+    assert "intentionally omitted" not in cleaned
+    assert "~~**2**~~" not in cleaned
+    assert "```" not in cleaned
+    assert "Shape-programmable magnetic\nsoft matter." in cleaned
+    assert "Useful Royal Society PDF body text." in cleaned

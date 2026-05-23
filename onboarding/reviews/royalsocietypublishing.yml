@@ -7,7 +7,7 @@ fixtures:
   purpose: structure
   doi: 10.1098/rsta.2019.0558
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsta.2019.0558/extracted.md
-  baseline_markdown_sha256: 389002d5acaeb5d2e04767367f61d96d74d1f19963913ea6d4a3d56dc428f4e6
+  baseline_markdown_sha256: 50f2ad90c97793ef16d07b35495f3c45145f49ab07e7eeef6b43ed23274e4c05
   review_notes: Semantic review completed against committed fixture evidence.
   sample_representative: true
   markdown_semantic_reviewed: true
@@ -15,16 +15,18 @@ fixtures:
   assertions:
   - 'must include ## Abstract'
   - must include virtual patient cohorts
+  - must include Schematic of the strategies for obtaining a virtual cohort
   - must not include Close navigation menu
   - must not include Open figure viewer
+  - must not match (?m)^- Figure$
   fixes: []
   markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsta.2019.0558/markdown-quality.json
-  markdown_quality_sha256: c67dd15f5569bcfc25475c2ee345dcc59db84faff6e5e799432d61647b9248f8
+  markdown_quality_sha256: 33344e04eb97cc07b72d4cc87471dcaefad5cbc63dfa5eb176d3dd0928a14990
 - fixture: tests/fixtures/golden_criteria/10.1098_rspb.2020.0097
   purpose: table
   doi: 10.1098/rspb.2020.0097
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rspb.2020.0097/extracted.md
-  baseline_markdown_sha256: d784998e5c2f5d705020087f29b8951d31f88b5d5a78451597ce03d2825c6a96
+  baseline_markdown_sha256: 1269a65232a80bdd807e8e915997e5966b0eb58aeb95df550109052df73e2227
   review_notes: Semantic review completed against committed fixture evidence.
   sample_representative: true
   markdown_semantic_reviewed: true
@@ -37,12 +39,12 @@ fixtures:
   - must match (?m)^\|.+\|$
   fixes: []
   markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rspb.2020.0097/markdown-quality.json
-  markdown_quality_sha256: 207549db5bc74b9777dc7c070ea3b8380ca6cda67c7369b9ea0e9a67255f410d
+  markdown_quality_sha256: ee6d42a123ef82b6cf653961924f5750ac2322ea9d628710b23f818f16b45e50
 - fixture: tests/fixtures/golden_criteria/10.1098_rsos.201188
   purpose: formula
   doi: 10.1098/rsos.201188
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsos.201188/extracted.md
-  baseline_markdown_sha256: 684ec2abcd937901c9ed6acf3fb5dd3200dd19345c0a5fdee5391649b0d8d218
+  baseline_markdown_sha256: 4f2ff982c21504ed0456f9201f3572af8c612e6d50235f8bbbf888e0a6ef4499
   review_notes: Semantic review completed against committed fixture evidence.
   sample_representative: true
   markdown_semantic_reviewed: true
@@ -55,12 +57,12 @@ fixtures:
   - must match (?:\$|Equation|BS)
   fixes: []
   markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsos.201188/markdown-quality.json
-  markdown_quality_sha256: 44bf1ff3270f17343f23ab4b4396f236e6c14902010abbe9f93169e34376fb7e
+  markdown_quality_sha256: b546c82286d8d33fbedfd073539a65a3470eea2755243b2d1fbd9e01a197dfd8
 - fixture: tests/fixtures/golden_criteria/10.1098_rsos.150470
   purpose: figure
   doi: 10.1098/rsos.150470
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsos.150470/extracted.md
-  baseline_markdown_sha256: 019fc9629d5a14125c6c266b13ddb16006b6aed8cc91212e5d991b9e5e294e4f
+  baseline_markdown_sha256: 53e6785f72134c65c7746924added6da447dcf7000db89047cd0dd57a04cdf54
   review_notes: Semantic review completed against committed fixture evidence.
   sample_representative: true
   markdown_semantic_reviewed: true
@@ -68,17 +70,19 @@ fixtures:
   assertions:
   - must include figures 1
   - must include Plesiochelys
+  - must include Palaeobiogeographic distribution
   - must not include Download slide
   - must not include Article navigation
+  - must not match (?m)^- Figure$
   - must match (?:figure|figures 1)
   fixes: []
   markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsos.150470/markdown-quality.json
-  markdown_quality_sha256: 0f10d93ea8118cf0c6f2a297e34c1df9cb4879baa260d6ff464ff0a573db348e
+  markdown_quality_sha256: 5186da0347eb067f5a80c2f8d8a957e84e50b4d79ada3cf13f61db2c381df531
 - fixture: tests/fixtures/golden_criteria/10.1098_rsif.2019.0334
   purpose: supplementary
   doi: 10.1098/rsif.2019.0334
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsif.2019.0334/extracted.md
-  baseline_markdown_sha256: 2a76732d9efddfaf73309cfe897802cdf6a1917310765036b6b39d6847fef52b
+  baseline_markdown_sha256: 4051c5a89eb50f0b5790d1edf0a06031abeeb41d5edf942da16193e994d3c381
   review_notes: Semantic review completed against committed fixture evidence.
   sample_representative: true
   markdown_semantic_reviewed: true
@@ -90,12 +94,12 @@ fixtures:
   - must not include Article navigation
   fixes: []
   markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsif.2019.0334/markdown-quality.json
-  markdown_quality_sha256: ade96beaa0007f9ba0fefd00b932d3112efda8e4afd9fa79a6f505b72a26f37e
+  markdown_quality_sha256: f31bdedbfc6c8887f5faa96f29b5cce38745d3dddad8b12eb28bc971236bcc20
 - fixture: tests/fixtures/golden_criteria/10.1098_rsos.201200
   purpose: references
   doi: 10.1098/rsos.201200
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsos.201200/extracted.md
-  baseline_markdown_sha256: 25b76e3b21b4175930e2422fb5dde060d7411e7bb86f3abd312d44d3c7231647
+  baseline_markdown_sha256: 01df27c50d617b1e2871b50b8b7c03334824717500182780cabb58b136c3fde2
   review_notes: Semantic review completed against committed fixture evidence.
   sample_representative: true
   markdown_semantic_reviewed: true
@@ -107,20 +111,33 @@ fixtures:
   - must not include Download citation
   fixes: []
   markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsos.201200/markdown-quality.json
-  markdown_quality_sha256: c6c9c3b0f09252ba112ccd31a2fbb89aebb17ca2122d5616f5d0edbb81bcd599
+  markdown_quality_sha256: 9103baf36f8f55777e3b58a9004baec0b3f3aab4431b80389276227357d0d3e3
 - fixture: tests/fixtures/golden_criteria/10.1098_rsta.2020.0108
   purpose: pdf_fallback
   doi: 10.1098/rsta.2020.0108
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsta.2020.0108/extracted.md
-  baseline_markdown_sha256: 39cac044fc543ed1709bdf8fe70e68f856278e47cd0641deaa737eaa095aef6c
+  baseline_markdown_sha256: 44389c1f83cae755eeb8f1bd0490c5e08c0cd11128b01cd87672071a4bf24bd4
   review_notes: Semantic review completed against committed fixture evidence.
   sample_representative: true
   markdown_semantic_reviewed: true
   issues: []
   assertions:
-  - 'must include #'
-  - must include Royal Society
+  - 'must include # Topics in the mathematical design of materials'
+  - must include
+  - must include
+  - must include
+  - must include Warburg E. 1881 Magnetische untersuchungen
+  - must include Brezis H, Coron JM, Lieb EH. 1986
   - must not include Access Denied
+  - must not include Cite this article
+  - must not include Subject Areas
+  - must not include Author for correspondence
+  - must not include Published by the Royal Society. All rights reserved
+  - must not include Downloaded from http://royalsocietypublishing.org
+  - must not include Peking University Library
+  - must not include intentionally omitted
+  - must not include ~~**
+  - must not include ```
   fixes: []
   markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsta.2020.0108/markdown-quality.json
-  markdown_quality_sha256: 4b5fd2c77a96ead284dda89736e8ef998d32f0efbca60283c79a83c1a5d751a5
+  markdown_quality_sha256: 5b2a82941fb0f88cc44dd8e34b7710af3d2c3676dd60f84955807093ba51e268

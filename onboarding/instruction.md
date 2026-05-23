@@ -17,7 +17,7 @@ python3 scripts/onboard_from_manifests.py run --provider <provider> --domain <do
 python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<provider>.yml --until merge-ready
 ```
 
-runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；它不能代替 operator 批准 access review，也不能把最终 Markdown 语义审查自动签为 true。snapshot gate 会每次重新读取当前 `extracted.md` 做 fresh Markdown quality review，不能只信旧 `markdown-quality.json`。
+runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox workspace-write -c approval_policy="never" -`）派发 coding-agent-subagent；`PROVIDER_ONBOARDING_AGENT_CLI` 仅作为 operator override。runner 不能代替 operator 批准 access review，也不能把最终 Markdown 语义审查自动签为 true。snapshot gate 会每次重新读取当前 `extracted.md` 做 fresh Markdown quality review，不能只信旧 `markdown-quality.json`。
 
 ## 目标
 
@@ -61,7 +61,8 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
    - 检查 DAG 顺序和 generated briefs。
 3. 编写或修复 manifest：
    - 若缺少 `onboarding/access-reviews/<provider>.yml`，可用 `python3 scripts/backfill_access_reviews.py --provider <provider> --write` 生成 blocked 草稿；草稿不等于批准，operator 仍需补齐合法访问、allowed runtime、禁止行为、challenge 策略、临时站点策略并改为 `may_continue: true`。
-   - 填 `routing`、`main_path`、`route_contract`、`markdown_contract`、`asset_profile`、`supplementary_scope`、`probe`、`fixtures.doi_samples` 和 docs fact base。
+   - 填 `routing`、`main_path`、`route_contract`、`markdown_contract`、`asset_profile`、`asset_contract`、`supplementary_scope`、`probe`、`fixtures.doi_samples` 和 docs fact base。
+   - 填 `asset_contract.figures`：有可用 figure asset 的 fixture 必须 `inline: body`、`download: required`、`purposes: [figure]`；text-only PDF fallback、无可下载图片或 access/empty-shell 类样本才允许 `not_applicable`，且必须写明原因。
    - `success_criteria` 和 `extraction_hints` 是 sync-back 字段，初稿只放空对象、空数组或 null。
    - 验证：`PYTHONPATH=src python3 -m pytest tests/unit/test_provider_manifest_schema.py -q`
 4. 捕获 fixtures：
@@ -86,7 +87,8 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
    - agent 按 fixture 目录下的 `markdown-quality-prompt.md` 阅读 `extracted.md`，并把 `markdown-quality.json` 从 `pending_agent_review` 写成真实的 `pass` / `fail` 持久报告。
    - 人工阅读 `extracted.md`，并写入 `onboarding/reviews/<provider>.yml`：`baseline_markdown_path`、`baseline_markdown_sha256`、`markdown_quality_path`、`markdown_quality_sha256`、`review_notes`、`sample_representative`、`markdown_semantic_reviewed`、`issues`、`assertions`、`fixes`。
    - `markdown-quality.json` 必须为 `review_method: agent_prompt`、`status: pass` 且没有 blocking issue；pending 或 fail 都会阻断 `markdown_semantic_reviewed: true`。
-   - `check-snapshot` 还会通过 `PROVIDER_ONBOARDING_AGENT_CLI` 重新读取当前 `extracted.md` 并写入 `.paper-fetch-runs/<provider>-markdown-quality-audit/<doi_slug>/attempt-N/fresh-markdown-quality.json`；fresh review 发现 blocking issue 时，即使旧 `markdown-quality.json` 是 pass 也必须失败。
+   - 若 manifest 声明 `asset_contract.figures.inline: body`，fresh review 必须把缺少正文 `![Figure ...](...)`、仅有文末 `## Figures` caption 作为 blocking issue；若声明 `download: required`，缺少本地 asset path rewrite 也必须 blocking。
+   - `check-snapshot` 还会通过默认 Codex CLI 或 `PROVIDER_ONBOARDING_AGENT_CLI` override 重新读取当前 `extracted.md` 并写入 `.paper-fetch-runs/<provider>-markdown-quality-audit/<doi_slug>/attempt-N/fresh-markdown-quality.json`；fresh review 发现 blocking issue 时，即使旧 `markdown-quality.json` 是 pass 也必须失败。
    - full runner 在 `snapshot-expected` 阶段遇到 fresh Markdown quality blocking issue 时，会自动进入 `repair-markdown-quality`，修复后再重新运行 fresh review 和 snapshot gate。
    - `issues` 和 `fixes` 使用带稳定 `id` 的对象；每个 fix 必须引用已有 `issue_ids`，并列出至少一个 provider-local `test_names`。
    - 每个 issue 先落 provider-local 断言，再修 provider-owned 实现。
@@ -107,6 +109,7 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
     - `python3 scripts/propose_cleaning_chain.py --provider <provider> --check-contract`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_<provider>_provider.py -q`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contract.py -q`
+    - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_asset_contract.py -q`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_route_contract.py -q`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_bundle_completeness.py tests/unit/test_provider_owner_reuse.py -q`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_manifest_bundle_sync.py -q`
@@ -127,6 +130,7 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
 - HTML/XML/PDF wrapper、access gate、challenge、empty shell 和 abstract-only 不得误判 fulltext。
 - PDF fallback 必须拒绝 HTML wrapper；text-only fallback 必须标记资产跳过。
 - `asset_profile=none/body/all` 语义稳定；supplementary 只能来自明确 scope。
+- Figure asset contract 必须落到正文内联和下载两层：`![Figure ...](...)` 出现在正文首次引用或 caption block 附近，下载后最终 Markdown 使用本地相对 asset path，不靠文末 `## Figures` caption bullet 通过。
 - `ProviderMetadata` 是 provider / metadata adapter 产出的可选字段 `TypedDict`，用于 metadata merge、routing probe 和文章构建前的元数据传递；它不是新的 runtime payload 容器。Provider 对外 override 签名必须保持 `Mapping[str, Any]` 兼容，只在内部构造、合并或局部收窄时使用 `ProviderMetadata`。
 - Markdown 无站点 chrome、access noise、重复 boilerplate、重复 figures/tables。
 - References 不被误清洗，正文 citation anchor 不被误当成 references 条目。

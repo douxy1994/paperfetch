@@ -484,6 +484,10 @@ def _build_royalsocietypublishing_article(fixture: GoldenCorpusFixture):
             final_url=fixture.source_url,
             pdf_bytes=body,
         )
+        prepared_pdf = royalsocietypublishing_provider.prepare_pdf_fallback_markdown(
+            pdf_result.markdown_text,
+            metadata,
+        )
         raw_payload = RawFulltextPayload(
             provider="royalsocietypublishing",
             source_url=fixture.source_url,
@@ -494,9 +498,17 @@ def _build_royalsocietypublishing_article(fixture: GoldenCorpusFixture):
                 source_url=fixture.source_url,
                 content_type=fixture.content_type or "application/pdf",
                 body=body,
-                markdown_text=pdf_result.markdown_text,
-                merged_metadata=metadata,
-                diagnostics={"pdf_fallback": {"fixture": "golden_corpus"}},
+                markdown_text=prepared_pdf.markdown_text,
+                merged_metadata=prepared_pdf.metadata,
+                diagnostics={
+                    "pdf_fallback": {
+                        "fixture": "golden_corpus",
+                        "reference_count": len(prepared_pdf.references),
+                    },
+                    "extraction": {
+                        "abstract_sections": prepared_pdf.abstract_sections,
+                    },
+                },
                 reason="Loaded Royal Society Publishing PDF fallback golden fixture.",
             ),
             trace=trace_from_markers(
@@ -505,7 +517,7 @@ def _build_royalsocietypublishing_article(fixture: GoldenCorpusFixture):
                     "fulltext:royalsocietypublishing_pdf_fallback_ok",
                 ]
             ),
-            merged_metadata=metadata,
+            merged_metadata=prepared_pdf.metadata,
             warnings=[
                 "Full text was extracted from Royal Society Publishing PDF fallback after the HTML route was not usable.",
             ],

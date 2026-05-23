@@ -192,12 +192,15 @@ class CopernicusProviderTests(unittest.TestCase):
         )
 
     def test_xml_assets_download_from_canonical_original_url(self) -> None:
+        """asset-download-contract: provider=copernicus"""
+
         figure_url = "https://acp.copernicus.org/articles/24/1/2024/acp-24-1-2024-f01.png"
+        figure_body = b"\x89PNG\r\n\x1a\nfigure"
         transport = RecordingTransport(
             {
                 ("GET", LANDING_URL): http_response(LANDING_URL, _landing_html(), "text/html"),
                 ("GET", XML_URL): http_response(XML_URL, _xml_fixture(graphic_href=figure_url), "application/xml"),
-                ("GET", figure_url): http_response(figure_url, b"\x89PNG\r\n\x1a\nfigure", "image/png"),
+                ("GET", figure_url): http_response(figure_url, figure_body, "image/png"),
             }
         )
         client = CopernicusClient(transport, {})
@@ -209,9 +212,16 @@ class CopernicusProviderTests(unittest.TestCase):
                 Path(tmpdir),
                 asset_profile="body",
             )
+            downloaded_asset = result.artifacts.assets[0]
+            markdown = result.article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
+            self.assertTrue(Path(downloaded_asset["path"]).is_file())
+            self.assertEqual(Path(downloaded_asset["path"]).read_bytes(), figure_body)
+            self.assertIn(downloaded_asset["path"], markdown)
+            self.assertNotIn(figure_url, markdown)
 
         self.assertTrue(result.artifacts.assets)
         self.assertEqual(result.artifacts.assets[0]["original_url"], figure_url)
+        self.assertEqual(result.artifacts.assets[0]["downloaded_bytes"], len(figure_body))
         self.assertIn(("GET", figure_url), [(call["method"], call["url"]) for call in transport.calls])
 
     def test_xml_failure_skips_landing_html_and_falls_back_to_pdf(self) -> None:

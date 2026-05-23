@@ -66,7 +66,7 @@ PYTHONPATH=src。本次接入 provider: <NAME>，domain: <DOMAIN>。
 每步完成或失败均输出 task_id、状态和（失败时）structured error code。
 ```
 
-`PROVIDER_ONBOARDING_AGENT_CLI` env 在启动前由 operator 设定；本 prompt 不写具体 CLI 品牌。
+worker dispatch 默认使用本机 `codex exec --cd <repo-root> --sandbox workspace-write -c approval_policy="never" -`；只有需要指定其它兼容 coding-agent CLI 时，operator 才设置 `PROVIDER_ONBOARDING_AGENT_CLI` override。
 
 ## B. discover-manifest Worker Prompt
 
@@ -217,7 +217,7 @@ python3 scripts/onboard_from_manifests.py advance --provider <NAME> --task imple
 
 每次接入新 provider，operator 必须：
 
-1. 设定 `PROVIDER_ONBOARDING_AGENT_CLI` 环境变量并打开主会话。
+1. 打开主会话；如需覆盖默认本机 Codex CLI，再设定 `PROVIDER_ONBOARDING_AGENT_CLI` 环境变量。
 2. 贴入 §A 模板，替换 `<NAME>` / `<DOMAIN>`。
 3. 完成 `operator-access-preflight`，确保 `onboarding/access-reviews/<NAME>.yml` approved。
 4. 在 §B 模板中替换 `<NAME>` 与四处 `<<<...>>>` 占位，派 discover-manifest 子 agent。

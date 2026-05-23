@@ -30,7 +30,7 @@ S14/S17 coordinator:
 - local entrypoint: `python3 scripts/onboard_from_manifests.py`
 - supported actions: `start`, `run`, `diagnose`, `resume-blocked`, `summarize`, `next`, `verify`, `run-checks`, `check-snapshot`, `repair-markdown-quality`, `advance`
 - provider execution model: one active provider, serial task DAG, retry counters per task
-- worker dispatch input: generated task brief plus manifest/hard-constraints material
+- worker dispatch input: generated task brief plus manifest/hard-constraints material; default dispatcher is local `codex exec`, with `PROVIDER_ONBOARDING_AGENT_CLI` available as an operator override
 - full automation entrypoint: `python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<name>.yml --until merge-ready`
 
 S15 manifest capture/retry:
@@ -83,7 +83,7 @@ python3 scripts/validate_extraction_rules.py
 
 For local operator execution, `python3 scripts/onboard_from_manifests.py run-checks --provider <name> --all-local` runs the access, manifest, review/provider-local, shared integration, and global lint gates without triggering GitHub CI.
 
-For end-to-end local orchestration, `python3 scripts/onboard_from_manifests.py run --provider <name> --domain <domain> --output-dir .paper-fetch-runs/<name>-onboarding` executes the serial DAG and dispatches worker steps through `PROVIDER_ONBOARDING_AGENT_CLI`. It still cannot approve access, solve challenges, or mark semantic review complete.
+For end-to-end local orchestration, `python3 scripts/onboard_from_manifests.py run --provider <name> --domain <domain> --output-dir .paper-fetch-runs/<name>-onboarding` executes the serial DAG and dispatches worker steps through local `codex exec` by default, or through `PROVIDER_ONBOARDING_AGENT_CLI` when the operator sets an override. It still cannot approve access, solve challenges, or mark semantic review complete.
 
 Provider-local acceptance commands must come from the generated task brief. They include `check-cleaning-proposal` freshness validation and `scripts/propose_cleaning_chain.py --provider <name> --check-contract`; warning-only sentinel/cross-route findings pass, while stale digests or blocking contract drift fail with `MARKDOWN_CONTRACT_DRIFT`. Hard-constraint grep checks must be listed in the brief or `hard-constraints.md`; non-empty forbidden central-provider matches fail acceptance.
 

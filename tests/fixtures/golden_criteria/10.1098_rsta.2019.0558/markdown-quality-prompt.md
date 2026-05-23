@@ -21,6 +21,8 @@ Read the Markdown as a human reviewer. Judge whether it is a usable, provider-ne
 - Publisher chrome, navigation, cookie text, license boilerplate, or download widgets mixed into article content.
 - Broken tables, orphan table rows, malformed formula blocks, or formula text glued to prose.
 - Missing figure captions, empty figure/table sections, or media placeholders presented as content.
+- When the provider manifest has `asset_contract.figures.inline: body`, missing body `![Figure ...](...)` images before References/Figures/Supplementary tail sections is blocking; a caption-only `## Figures` appendix is not enough.
+- When the provider manifest has `asset_contract.figures.download: required`, missing local asset-path rewrites for downloaded figure images is blocking; remote-only image links do not satisfy the asset contract.
 - References that are absent when expected from the article, mostly DOI-only, duplicated, or polluted by unrelated text.
 - JavaScript placeholder links, unresolved template text, severe OCR noise, or repeated article fragments.
 - Any other semantic corruption that would make `extracted.md` unsafe as a golden Markdown baseline.

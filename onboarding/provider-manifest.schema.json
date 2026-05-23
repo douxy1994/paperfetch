@@ -15,6 +15,7 @@
     "markdown_contract",
     "success_criteria",
     "asset_profile",
+    "asset_contract",
     "supplementary_scope",
     "abstract_only_strategy",
     "probe",
@@ -172,6 +173,16 @@
         },
         "all": {
           "$ref": "#/$defs/asset_kind_array"
+        }
+      }
+    },
+    "asset_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["figures"],
+      "properties": {
+        "figures": {
+          "$ref": "#/$defs/figure_asset_contract"
         }
       }
     },
@@ -451,6 +462,62 @@
           "supplementary",
           "multimedia"
         ]
+      }
+    },
+    "figure_asset_contract": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["inline", "download", "purposes", "exception_reason"],
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "inline": {
+                    "const": "not_applicable"
+                  }
+                }
+              },
+              {
+                "properties": {
+                  "download": {
+                    "const": "not_applicable"
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "exception_reason": {
+                "type": "string",
+                "minLength": 1
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "exception_reason": {
+                "type": "null"
+              }
+            }
+          }
+        }
+      ],
+      "properties": {
+        "inline": {
+          "enum": ["body", "not_applicable"]
+        },
+        "download": {
+          "enum": ["required", "not_applicable"]
+        },
+        "purposes": {
+          "$ref": "#/$defs/non_empty_string_array"
+        },
+        "exception_reason": {
+          "type": ["string", "null"]
+        }
       }
     },
     "sync_back_value": {

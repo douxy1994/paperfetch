@@ -321,6 +321,8 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
         )
         self.assertEqual(result["asset_failures"], [])
     def test_wiley_provider_download_related_assets_uses_shared_browser_primary_path(self) -> None:
+        """asset-download-contract: provider=wiley"""
+
         full_size_url = "https://onlinelibrary.wiley.com/cms/asset/full/figure1.jpg"
         html = f"""
 <article>

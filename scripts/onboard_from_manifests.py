@@ -9,6 +9,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -40,6 +41,10 @@ FAILURE_RECOVERY_PATH = "onboarding/failure-recovery.md"
 STATE_SCHEMA_PATH = "onboarding/onboarding-state.schema.json"
 DEFAULT_STATE_PATH = "onboarding/onboarding-state.json"
 AGENT_CLI_ENV = "PROVIDER_ONBOARDING_AGENT_CLI"
+DEFAULT_CODEX_AGENT_CLI = (
+    "codex exec --cd <repo-root> --sandbox workspace-write "
+    "-c approval_policy=\"never\" -"
+)
 ACCESS_PREFLIGHT_STEP = "operator-access-preflight"
 DISCOVER_STEP = "discover-manifest"
 IMPLEMENT_STEP = "implement-provider"
@@ -194,6 +199,12 @@ class MarkdownQualityRepairContext(NamedTuple):
     fresh_quality_path: Path | None
 
 
+class WorkerDispatcher(NamedTuple):
+    argv: list[str]
+    agent_cli: str
+    source: str
+
+
 def _provider_slug(provider: str) -> str:
     slug = provider.strip().lower()
     if not slug:
@@ -221,6 +232,77 @@ def default_cleaning_evidence_path(provider: str) -> str:
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
+
+
+def _default_codex_agent_argv() -> list[str]:
+    return [
+        "codex",
+        "exec",
+        "--cd",
+        str(_repo_root()),
+        "--sandbox",
+        "workspace-write",
+        "-c",
+        'approval_policy="never"',
+        "-",
+    ]
+
+
+def _worker_dispatcher_label() -> str | None:
+    agent_cli = os.environ.get(AGENT_CLI_ENV)
+    if agent_cli is not None and agent_cli.strip():
+        return agent_cli
+    if shutil.which("codex"):
+        return shlex.join(_default_codex_agent_argv())
+    return None
+
+
+def _worker_dispatcher(
+    *,
+    provider: str,
+    task: str,
+    manifest: str | None = None,
+) -> WorkerDispatcher:
+    agent_cli = os.environ.get(AGENT_CLI_ENV)
+    if agent_cli is not None and agent_cli.strip():
+        argv = shlex.split(agent_cli)
+        if not argv or not argv[0]:
+            raise ToolError(
+                "WORKER_AGENT_CLI_MISSING",
+                f"{AGENT_CLI_ENV} did not contain an executable command.",
+                retryable=False,
+                provider=provider,
+                manifest=manifest,
+                task_id=f"{provider}-{task}",
+                details={"env": AGENT_CLI_ENV, "source": "env_override"},
+            )
+        return WorkerDispatcher(argv=argv, agent_cli=agent_cli, source="env_override")
+
+    if shutil.which("codex"):
+        argv = _default_codex_agent_argv()
+        return WorkerDispatcher(
+            argv=argv,
+            agent_cli=shlex.join(argv),
+            source="default_codex_cli",
+        )
+
+    raise ToolError(
+        "WORKER_AGENT_CLI_MISSING",
+        (
+            "Codex CLI was not found on PATH and "
+            f"{AGENT_CLI_ENV} is not set; install codex or set "
+            f"{AGENT_CLI_ENV} to a compatible worker CLI."
+        ),
+        retryable=False,
+        provider=provider,
+        manifest=manifest,
+        task_id=f"{provider}-{task}",
+        details={
+            "env": AGENT_CLI_ENV,
+            "default_dispatcher": DEFAULT_CODEX_AGENT_CLI,
+            "codex_on_path": False,
+        },
+    )
 
 
 def _load_json_schema(path: Path) -> dict[str, Any]:
@@ -611,6 +693,8 @@ def build_implementation_brief(
                 "PYTHONPATH=src python3 -m pytest "
                 "tests/unit/test_provider_markdown_review_contract.py -q",
                 "PYTHONPATH=src python3 -m pytest "
+                "tests/unit/test_provider_asset_contract.py -q",
+                "PYTHONPATH=src python3 -m pytest "
                 "tests/unit/test_provider_route_contract.py -q",
                 "PYTHONPATH=src python3 -m pytest "
                 "tests/unit/test_provider_bundle_completeness.py "
@@ -708,6 +792,11 @@ def build_dag(
         "dry_run": dry_run,
         "runtime": "coding-agent-subagent",
         "agent_cli_env": AGENT_CLI_ENV,
+        "worker_dispatch": {
+            "default": DEFAULT_CODEX_AGENT_CLI,
+            "override_env": AGENT_CLI_ENV,
+            "prompt_transport": "stdin",
+        },
         "state_schema": STATE_SCHEMA_PATH,
         "serial": {
             "single_provider": True,
@@ -784,7 +873,7 @@ def _state_path(value: str) -> Path:
 def _default_state() -> dict[str, Any]:
     return {
         "schema_version": 1,
-        "agent_cli": os.environ.get(AGENT_CLI_ENV),
+        "agent_cli": _worker_dispatcher_label(),
         "active_provider": None,
         "providers": {},
     }
@@ -797,7 +886,7 @@ def _load_state(path: Path) -> dict[str, Any]:
     if not isinstance(data, dict):
         raise ValueError(f"state root must be an object: {path}")
     data.setdefault("schema_version", 1)
-    data.setdefault("agent_cli", os.environ.get(AGENT_CLI_ENV))
+    data["agent_cli"] = _worker_dispatcher_label() or data.get("agent_cli")
     data.setdefault("active_provider", None)
     providers = data.setdefault("providers", {})
     if not isinstance(providers, dict):
@@ -877,6 +966,18 @@ def _next_pending_step(provider_state: dict[str, Any]) -> str | None:
             return str(step_id)
     provider_state["current_step"] = None
     return None
+
+
+def _failed_steps(provider_state: dict[str, Any]) -> list[str]:
+    task_statuses = provider_state.get("task_statuses")
+    steps = provider_state.get("steps")
+    if not isinstance(task_statuses, dict) or not isinstance(steps, list):
+        return []
+    return [
+        str(step_id)
+        for step_id in steps
+        if task_statuses.get(step_id) in {"failed", "blocked"}
+    ]
 
 
 def _provider_requires_live_review(provider: str) -> bool:
@@ -1053,6 +1154,14 @@ def _verify_commands(provider: str, task: str, *, include_live: bool = True) -> 
                 "python3",
                 "-m",
                 "pytest",
+                "tests/unit/test_provider_asset_contract.py",
+                "-q",
+            ],
+            [
+                "PYTHONPATH=src",
+                "python3",
+                "-m",
+                "pytest",
                 "tests/unit/test_provider_route_contract.py",
                 "-q",
             ],
@@ -1119,6 +1228,14 @@ def _verify_commands(provider: str, task: str, *, include_live: bool = True) -> 
                 "-m",
                 "pytest",
                 "tests/unit/test_provider_markdown_review_contract.py",
+                "-q",
+            ],
+            [
+                "PYTHONPATH=src",
+                "python3",
+                "-m",
+                "pytest",
+                "tests/unit/test_provider_asset_contract.py",
                 "-q",
             ],
             [
@@ -1745,6 +1862,7 @@ def _markdown_repair_commands(ctx: MarkdownQualityRepairContext) -> list[list[st
             "pytest",
             f"tests/unit/test_{ctx.provider}_provider.py",
             "tests/unit/test_provider_markdown_review_contract.py",
+            "tests/unit/test_provider_asset_contract.py",
             "-q",
         ],
         [
@@ -2117,17 +2235,23 @@ def _latest_failure(provider_state: dict[str, Any]) -> dict[str, Any] | None:
     if not isinstance(runs, dict):
         return None
     ordered_tasks: list[str] = []
+    task_statuses = provider_state.get("task_statuses")
+    task_statuses = task_statuses if isinstance(task_statuses, dict) else {}
     current_step = provider_state.get("current_step")
-    if isinstance(current_step, str):
+    if isinstance(current_step, str) and task_statuses.get(current_step) != "completed":
         ordered_tasks.append(current_step)
     steps = provider_state.get("steps")
     if isinstance(steps, list):
-        ordered_tasks.extend(str(step) for step in reversed(steps))
-    task_statuses = provider_state.get("task_statuses")
-    if isinstance(task_statuses, dict):
         ordered_tasks.extend(
-            str(task) for task, status in task_statuses.items() if status in {"failed", "blocked"}
+            str(step)
+            for step in reversed(steps)
+            if task_statuses.get(step) in {"failed", "blocked"}
         )
+    ordered_tasks.extend(
+        str(task)
+        for task, status in task_statuses.items()
+        if status in {"failed", "blocked"} and (not isinstance(steps, list) or task not in steps)
+    )
     seen: set[str] = set()
     for task in ordered_tasks:
         if task in seen:
@@ -2310,11 +2434,37 @@ def _execute_run_loop(
         domain=domain,
         doi_prefix=doi_prefix,
     )
+    state["agent_cli"] = _worker_dispatcher_label() or state.get("agent_cli")
     executed: list[str] = []
     try:
         while True:
             task = _next_pending_step(provider_state)
             if task is None:
+                failed_steps = _failed_steps(provider_state)
+                if failed_steps:
+                    failed_task = failed_steps[0]
+                    provider_state["current_step"] = failed_task
+                    provider_state["status"] = "blocked"
+                    state["active_provider"] = source.provider
+                    _write_json(state_path, state)
+                    failure = (
+                        provider_state.get("runs", {})
+                        .get(failed_task, {})
+                        .get("failure", {})
+                    )
+                    raise ToolError(
+                        str(failure.get("code") or "TASK_PREVIOUSLY_FAILED"),
+                        f"onboarding run cannot continue while task {failed_task} is failed.",
+                        retryable=bool(failure.get("retryable", True)),
+                        provider=source.provider,
+                        manifest=source.manifest,
+                        task_id=f"{source.provider}-run-{failed_task}",
+                        details={
+                            "failed_task": failed_task,
+                            "failed_steps": failed_steps,
+                            "failure": failure if isinstance(failure, dict) else {},
+                        },
+                    )
                 break
             if task in {DISCOVER_STEP, IMPLEMENT_STEP}:
                 brief_name = (
@@ -2421,8 +2571,14 @@ def _mark_step_completed(
     provider_state["current_step"] = None
     next_step = _next_pending_step(provider_state)
     if next_step is None:
-        provider_state["status"] = "merge_ready"
-        state["active_provider"] = None
+        failed_steps = _failed_steps(provider_state)
+        if failed_steps:
+            provider_state["current_step"] = failed_steps[0]
+            provider_state["status"] = "blocked"
+            state["active_provider"] = provider
+        else:
+            provider_state["status"] = "merge_ready"
+            state["active_provider"] = None
     else:
         provider_state["status"] = "in_progress"
         state["active_provider"] = provider
@@ -2558,29 +2714,7 @@ def _agent_argv(
     task: str,
     manifest: str | None = None,
 ) -> list[str]:
-    agent_cli = os.environ.get(AGENT_CLI_ENV)
-    if not agent_cli:
-        raise ToolError(
-            "WORKER_AGENT_CLI_MISSING",
-            f"{AGENT_CLI_ENV} is required to dispatch onboarding worker tasks.",
-            retryable=False,
-            provider=provider,
-            manifest=manifest,
-            task_id=f"{provider}-{task}",
-            details={"env": AGENT_CLI_ENV},
-        )
-    argv = shlex.split(agent_cli)
-    if not argv:
-        raise ToolError(
-            "WORKER_AGENT_CLI_MISSING",
-            f"{AGENT_CLI_ENV} did not contain an executable command.",
-            retryable=False,
-            provider=provider,
-            manifest=manifest,
-            task_id=f"{provider}-{task}",
-            details={"env": AGENT_CLI_ENV},
-        )
-    return argv
+    return _worker_dispatcher(provider=provider, task=task, manifest=manifest).argv
 
 
 def _load_brief(path: Path) -> dict[str, Any]:
@@ -2675,33 +2809,17 @@ def _dispatch_worker(
     output_dir: Path,
     provider_state: dict[str, Any],
 ) -> None:
-    agent_cli = os.environ.get(AGENT_CLI_ENV)
-    if not agent_cli:
-        raise ToolError(
-            "WORKER_AGENT_CLI_MISSING",
-            f"{AGENT_CLI_ENV} is required to dispatch onboarding worker tasks.",
-            retryable=False,
-            provider=provider,
-            manifest=provider_state.get("manifest"),
-            task_id=f"{provider}-{task}",
-            details={"env": AGENT_CLI_ENV},
-        )
+    dispatcher = _worker_dispatcher(
+        provider=provider,
+        task=task,
+        manifest=provider_state.get("manifest"),
+    )
     brief = _load_brief(brief_path)
     prompt = _worker_prompt(provider=provider, task=task, brief=brief)
     forbidden = [str(value) for value in brief.get("files_must_not_modify") or ()]
     worker_dir = output_dir / "workers"
     worker_dir.mkdir(parents=True, exist_ok=True)
-    argv = shlex.split(agent_cli)
-    if not argv:
-        raise ToolError(
-            "WORKER_AGENT_CLI_MISSING",
-            f"{AGENT_CLI_ENV} did not contain an executable command.",
-            retryable=False,
-            provider=provider,
-            manifest=provider_state.get("manifest"),
-            task_id=f"{provider}-{task}",
-            details={"env": AGENT_CLI_ENV},
-        )
+    argv = dispatcher.argv
 
     retry_counts = provider_state.setdefault("retry_counts", {})
     attempt_start = int(retry_counts.get(task, 0)) + 1
@@ -3703,11 +3821,13 @@ def run_repair_markdown_quality(args: argparse.Namespace) -> int:
         allow_passing_report=True,
         allow_pending_report=True,
     )
-    argv = _agent_argv(
+    dispatcher = _worker_dispatcher(
         provider=provider,
         task=REPAIR_MARKDOWN_QUALITY_STEP,
         manifest=_rel(ctx.manifest_path),
     )
+    state["agent_cli"] = dispatcher.agent_cli
+    argv = dispatcher.argv
     initial_issue_ids: list[str] = []
     changed_paths: set[str] = set()
     executed_commands: list[list[str]] = []

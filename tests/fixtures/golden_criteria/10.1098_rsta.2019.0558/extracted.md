@@ -1,5 +1,5 @@
 ---
-title: "10.1098/rsta.2019.0558"
+title: "Creation and application of virtual patient cohorts of heart models"
 authors: "Niederer, S. A., Aboelkassem, Y., Cantwell, C. D., Corrado, C., Coveney, S., Cherry, E. M., Delhaas, T., Fenton, F. H., Panfilov, A. V., Pathmanathan, P., Plank, G., Riabiz, M., Roney, C. H., dos Santos, R. W., Wang, L."
 journal: "Philosophical Transactions of the Royal Society A: Mathematical, Physical and Engineering Sciences"
 doi: "10.1098/rsta.2019.0558"
@@ -8,10 +8,10 @@ source: "royalsocietypublishing_html"
 has_fulltext: true
 content_kind: "fulltext"
 has_abstract: true
-token_estimate: 12504
+token_estimate: 13161
 ---
 
-# 10.1098/rsta.2019.0558
+# Creation and application of virtual patient cohorts of heart models
 
 ## Abstract
 
@@ -20,7 +20,7 @@ This article is part of the theme issue ‘Uncertainty quantification in cardiac
 
 ## 1 Introduction
 
-Hindsight is a wonderful thing. If we know what will happen, it is easy to make the right decision. Biophysical patient-specific models strive to encode known physics and physiology within mathematical equations and to tune these models to represent individual patients. The aim is to use these *digital twins* to predict disease progression, better estimate risk and predict treatment response so that the outcome might be known before a decision is made. With sufficiently accurate predictions, the choice of the best treatment for a patient shifts from being based on the current or past condition of the patient to the future one. While conceptually simple, the practical reality of determining the equations, tuning the parameters to patient data and generating reliable predictions remains a significant engineering and mathematical challenge.
+Hindsight is a wonderful thing. If we know what will happen, it is easy to make the right decision. Biophysical patient-specific models strive to encode known physics and physiology within mathematical equations and to tune these models to represent individual patients. The aim is to use these digital twins to predict disease progression, better estimate risk and predict treatment response so that the outcome might be known before a decision is made. With sufficiently accurate predictions, the choice of the best treatment for a patient shifts from being based on the current or past condition of the patient to the future one. While conceptually simple, the practical reality of determining the equations, tuning the parameters to patient data and generating reliable predictions remains a significant engineering and mathematical challenge.
 Overcoming such engineering and mathematical challenges has huge potential. Once a patient-specific model is created, it can then be re-used to design new treatments, evaluate inclusion criteria, simulate imaging or diagnostic signals, or test mechanistic hypotheses. In contrast to recent advances in statistical regression models—which are limited to cases where large datasets are already available—biophysical models are based on physical laws and known physiological systems and so have greater versatility in their predictions, mechanistic explanatory power and susceptibility to analysis.
 There has been significant investment in the development of biophysical models. Cardiac modelling, in particular, has made major recent advances in moving patient-specific modelling into the clinic [1]. The move to human-scale simulations has driven the development of efficient and scalable code that is required for the simulation of large human hearts [2–4]. The ability to simulate human hearts increased the ability to tune models to clinical datasets, motivating the use of image- and signal-processing techniques to convert medical images into data that could be used to constrain the models. This work has culminated in the recent use of models to guide therapies in prospective studies of ventricular tachycardia ablation [5], atrial fibrillation ablation [6] and cardiac resynchronization therapy lead positioning [7].
 This shift from developing research or proof-of-concept models to using models in clinical workflows requires a step change in speed and robustness in model creation [8]. A patient-specific model needs to be created from standard clinical data robustly and reliably, assessed and interrogated, all within a short time frame, often less than 24 h. As the cost, in time, of model creation decreases significantly, this enables the development of large virtual cohorts of models. These virtual cohorts will allow inter-patient variability to be captured in cardiac model simulations. These virtual cohorts will allow virtual trials (VTs), which will impact clinical care through therapy design and development, including patient selection and therapy guidance.
@@ -28,29 +28,30 @@ The development of virtual patient cohorts poses new opportunities for cardiac m
 
 ## 2 Examples of virtual cohorts of cardiac models
 
-Table 1 provides an overview of representative studies which used virtual cohorts of cardiac models. To date, these studies have included a relatively small number of individuals, between 5 and 100 virtual patients. In contrast, algorithmic studies may be applied to much larger clinical datasets; for example, Pennells *et al.* computed cardiovascular disease risk algorithms using data from 360 737 participants by pooling data across 86 prospective studies [25]. Constructing virtual patient computational modelling cohorts on such a scale is not currently possible because of the challenges associated with data availability, as well as the time and specialist methodology required to construct these detailed biophysical models.
+Table 1 provides an overview of representative studies which used virtual cohorts of cardiac models. To date, these studies have included a relatively small number of individuals, between 5 and 100 virtual patients. In contrast, algorithmic studies may be applied to much larger clinical datasets; for example, Pennells et al. computed cardiovascular disease risk algorithms using data from 360 737 participants by pooling data across 86 prospective studies [25]. Constructing virtual patient computational modelling cohorts on such a scale is not currently possible because of the challenges associated with data availability, as well as the time and specialist methodology required to construct these detailed biophysical models.
+Table 1: Patient-specific modelling studies: number of models and study goals.
 | reference | number of patients | goal of the study | type of model | strategy |
 |---|---|---|---|---|
-| [| 35 samples from ex vivo RAA | atrial model calibration | 0D | RVAC |
-| [| 4 CRT upgrade; 14 de novo implantation | predicting activation with CRT devices | BV | 1:1 |
-| [| 24 ICM | mechanisms for arrhythmia risk with CRT | LV | 1:1 |
-| [| 46 HF | building personalized models | BV + T | 1:1 |
-| [| 7 clinical cases with ICD | building personalized models | LV | 1:1 |
-| [| 7 PAF cases | building personalized models | LA | 1:1 |
-| [| 5 CT cases with torso | calculating a shock efficiency metric | BV + T | 1:1 |
-| [| RS: 5 swine; 21 humans (5 with ICD) | guiding the ablation of infarct-related ventricular tachycardia | BV | 1:1 |
-| [| 4 PAF; 16 PsAF | simulating different ablation strategies | LA | 1:1 |
-| [| 12 PsAF | simulating ablation of inter-atrial connections | LA | 1:1 |
-| [| 7 PAF, 5 PsAF | simulating AF pre- and post ablation | LA | 1:1 |
-| [| 108 PsAF | simulating empirical versus computer-guided ablation | LA | 1:1 |
-| [| 4 PAF; 6 PsAF | computationally guided personalized ablation | BA | 1:1 |
-| [| 118 PsAF | computationally guided personalized ablation | LA | 1:1 |
-| [| 5 AF patients | stroke risk assessment in AF (CFD) | LA | 1:1 |
-| [| shape uncertainty | LA | SID | |
-| [| 5 PsAF | patient-specific modelling of atrial action potentials | 1:1 |
+| [9] | 35 samples from ex vivo RAA | atrial model calibration | 0D | RVAC |
+| [10] | 4 CRT upgrade; 14 de novo implantation | predicting activation with CRT devices | BV | 1:1 |
+| [11] | 24 ICM | mechanisms for arrhythmia risk with CRT | LV | 1:1 |
+| [12] | 46 HF | building personalized models | BV + T | 1:1 |
+| [13] | 7 clinical cases with ICD | building personalized models | LV | 1:1 |
+| [14] | 7 PAF cases | building personalized models | LA | 1:1 |
+| [15] | 5 CT cases with torso | calculating a shock efficiency metric | BV + T | 1:1 |
+| [5] | RS: 5 swine; 21 humans (5 with ICD) PS: 5 humans | guiding the ablation of infarct-related ventricular tachycardia | BV | 1:1 |
+| [16] | 4 PAF; 16 PsAF | simulating different ablation strategies | LA | 1:1 |
+| [17] | 12 PsAF | simulating ablation of inter-atrial connections | LA | 1:1 |
+| [18] | 7 PAF, 5 PsAF | simulating AF pre- and post ablation | LA | 1:1 |
+| [19] | 108 PsAF | simulating empirical versus computer-guided ablation | LA | 1:1 |
+| [6] | 4 PAF; 6 PsAF | computationally guided personalized ablation | BA | 1:1 |
+| [20] | 118 PsAF | computationally guided personalized ablation | LA | 1:1 |
+| [21] | 5 AF patients | stroke risk assessment in AF (CFD) | LA | 1:1 |
+| [22] | $70\,\text{(training)} + 60\,\text{(test)} + 3\,(12\, k\,\text{samples})$ | shape uncertainty | LA | SID |
+| [23,24] | 5 PsAF | patient-specific modelling of atrial action potentials | not specified | 1:1 |
 CT, computed tomography; CRT, cardiac re-synchronization therapy; HF, heart failure; HCM, hypertrophic cardiomyopathy; ICM, ischaemic cardiomyopathy; ICD, implantable cardioverter defibrillator; RAA, right atrial appendage; PAF, paroxysmal atrial fibrillation; PsAF, persistent atrial fibrillation; PS, prospective study; RS, retrospective study; 0D, cell model; BV, bi-ventricular; LV, left ventricle; BV + T, bi-ventricular + thorax; LA, left atrium; BA, bi-atrial; 1:1 = 1:1 mapping virtual cohort; SID, sampling from inferred distributions; RVAC, random variation with acceptance criteria.
-The studies in table 1 focused on aspects of model construction and calibration, on obtaining mechanistic understanding of a disease or on predicting response to a therapy. For example, Cedilnik *et al.* presented a modelling pipeline for constructing fast personalized ventricular models using an eikonal formulation [13], demonstrating their methodology on seven CT and electrophysiology datasets. Corrado *et al.* [14] presented a workflow to build personalized computational models from local multi-electrode catheter measurements and applied the technique to data from seven paroxysmal atrial fibrillation clinical cases. Kayvanpour *et al.* generated a larger cohort of models consisting of 46 heart failure patients, incorporating personalized anatomy, electrophysiology, biomechanics and haemodynamics [12]. As well as personalizing the cardiac anatomy, models may include a torso mesh from imaging data [15]. The effect of variability is also important; Muszkiewicz *et al.* investigated this by integrating cellular-level and ion channel recordings in human atrial models using right atrial appendage measurements from 35 patients [9].
-Multiple studies have used computational models to test response to therapies, including ablation of atrial arrhythmias [16–19], ablation of ventricular arrhythmias [5], CRT optimization [10] and ventricular tachycardia risk assessment following CRT [11]. These studies vary in the degree of model complexity and personalization included and the size of the virtual cohort. For example, atrial ablation studies range from smaller studies, incorporating left and right atrial fibrosis distributions in bilayer models (*n*=12 [17]), or left atrial volumetric models including transmural fibrosis (*n*=12 [18]), to large studies using left atrial shell models for which only the anatomy was personalized (*n*=108 patients [19]).
+The studies in table 1 focused on aspects of model construction and calibration, on obtaining mechanistic understanding of a disease or on predicting response to a therapy. For example, Cedilnik et al. presented a modelling pipeline for constructing fast personalized ventricular models using an eikonal formulation [13], demonstrating their methodology on seven CT and electrophysiology datasets. Corrado et al. [14] presented a workflow to build personalized computational models from local multi-electrode catheter measurements and applied the technique to data from seven paroxysmal atrial fibrillation clinical cases. Kayvanpour et al. generated a larger cohort of models consisting of 46 heart failure patients, incorporating personalized anatomy, electrophysiology, biomechanics and haemodynamics [12]. As well as personalizing the cardiac anatomy, models may include a torso mesh from imaging data [15]. The effect of variability is also important; Muszkiewicz et al. investigated this by integrating cellular-level and ion channel recordings in human atrial models using right atrial appendage measurements from 35 patients [9].
+Multiple studies have used computational models to test response to therapies, including ablation of atrial arrhythmias [16–19], ablation of ventricular arrhythmias [5], CRT optimization [10] and ventricular tachycardia risk assessment following CRT [11]. These studies vary in the degree of model complexity and personalization included and the size of the virtual cohort. For example, atrial ablation studies range from smaller studies, incorporating left and right atrial fibrosis distributions in bilayer models (n=12 [17]), or left atrial volumetric models including transmural fibrosis (n=12 [18]), to large studies using left atrial shell models for which only the anatomy was personalized (n=108 patients [19]).
 
 ## 3 Approaches to generating a virtual cohort of cardiac models
 
@@ -58,8 +59,11 @@ The aim of virtual cohorts of cardiac models is to account for inter-patient var
 
 ### (a) Strategies for generating virtual cohorts
 
-*1:1 mapping*); second, by generating a parameter set from inferred parameter distributions (*sampling from inferred distributions*); and, third, by completely randomly generating parameters and testing if these result in physiologically plausible models (*random variation with acceptance criteria*).
-Figure 1gives a schematic summary, while the methods are detailed below.
+The parameter set for each member of the virtual cohort can be obtained in three ways: first, by having each member of the virtual cohort represent a specific patient from a real-world cohort (1:1 mapping); second, by generating a parameter set from inferred parameter distributions (sampling from inferred distributions); and, third, by completely randomly generating parameters and testing if these result in physiologically plausible models (random variation with acceptance criteria). Figure 1 gives a schematic summary, while the methods are detailed below.
+
+![Figure 1](https://royalsocietypublishing.org/view-large/figure/17919659/rsta20190558f01.tif)
+
+**Figure 1.** Schematic of the strategies for obtaining a virtual cohort, based on biophysical models. (Online version in colour.)
 
 #### (i) 1:1 mapping virtual cohorts
 
@@ -75,11 +79,15 @@ In situations where the variance and co-variance of the model parameters is unkn
 
 ### (b) Synthetic versus patient-derived members of the virtual patient cohort
 
-The strategies for model development can be separated into development of *synthetic virtual patients*, where virtual patients are generated by sampling from distributions (whether inferred or guessed and not-rejected) and *patient-derived virtual patients*, generated using the 1:1 mapping approach, in which case the virtual patients correspond to actual real people. While the data cost for each patient is high in the 1:1 mapping approach, this does provide some guarantee that each virtual patient’s heart will operate within some physiologically plausible space. In the case where only a limited number of models can be made, due to time or data restrictions, using a 1:1 mapping approach has the potential for patient-specific bias. The bias, if any, can potentially be estimated by comparing emergent model phenomena with population statistics from larger clinical trials or from population databases. On the other hand, the generation of synthetic virtual patients allows speculative studies to evaluate what could potentially happen in extreme edge cases. This could be useful when trying to identify rare events or edge patient cases, who may not be represented in available patient cohorts. However, this approach runs the risk of creating non-physiological or implausible models that can skew the results for the virtual cohort, especially in the case where parameters are randomly guessed. However, once 1:1 mapping cohorts of sufficient size have been generated, these provide better bounds and parameter distribution estimates for constraining synthetic virtual patient approaches.
+The strategies for model development can be separated into development of synthetic virtual patients, where virtual patients are generated by sampling from distributions (whether inferred or guessed and not-rejected) and patient-derived virtual patients, generated using the 1:1 mapping approach, in which case the virtual patients correspond to actual real people. While the data cost for each patient is high in the 1:1 mapping approach, this does provide some guarantee that each virtual patient’s heart will operate within some physiologically plausible space. In the case where only a limited number of models can be made, due to time or data restrictions, using a 1:1 mapping approach has the potential for patient-specific bias. The bias, if any, can potentially be estimated by comparing emergent model phenomena with population statistics from larger clinical trials or from population databases. On the other hand, the generation of synthetic virtual patients allows speculative studies to evaluate what could potentially happen in extreme edge cases. This could be useful when trying to identify rare events or edge patient cases, who may not be represented in available patient cohorts. However, this approach runs the risk of creating non-physiological or implausible models that can skew the results for the virtual cohort, especially in the case where parameters are randomly guessed. However, once 1:1 mapping cohorts of sufficient size have been generated, these provide better bounds and parameter distribution estimates for constraining synthetic virtual patient approaches.
 
 ## 4 Constructing, constraining and validating virtual cohort models
 
-figure 2.
+Creating a virtual cohort requires the development of a template model for representing each member of the cohort. The template needs to be carefully designed to be able to capture patient variability, physiology, diseases and treatments of interest. In cases where the model is tied to clinical data for specific patients, the model complexity needs to reflect the available clinical data and the time and resources available to create the model. In virtual cohort strategies, where models need to be tuned to represent all or a subset of specific patients, the model parameters must be inferred using nonlinear optimization, statistical or machine learning approaches. The constrained model is subsequently exposed to a validation step, in order to assess its generalization properties for predictions tasks. These three steps are depicted graphically in figure 2.
+
+![Figure 2](https://royalsocietypublishing.org/view-large/figure/17919669/rsta20190558f02.tif)
+
+**Figure 2.** Process of creating a virtual cohort. (a) Defining a template model structure for the members of the cohort, (b) constraining the parameters for the members of the virtual cohort and, (c) validating the models representing specific individual patients and the virtual cohort. (Online version in colour.)
 
 ### (a) Designing virtual cohort template model templates
 
@@ -118,7 +126,7 @@ A natural solution is offered by Bayesian inference, that forms a large part of 
 
 #### (ii) History matching approaches
 
-When the variance–covariance structure of the parameters is not of strict interest, or it too costly to obtain, history matching (HM) provides an approach to constrain the parameters to *plausible* regions. The model is evaluated for a large space-filling design of parameter values (e.g. latin hypercube), which are accepted or rejected based on an implausibility criterion. As an example, in [60], HM is used to constrain a subset of the parameters of the Courtemanche and the Maleckar cell models. The main difference between the MCMC and the HM acceptance criteria is that the former, if successfully converged, guarantees that all the accepted parameter values are (correlated) samples from the posterior distribution, although to assess the convergence of MCMC chains remains a challenging task in itself [61]. The latter simply identifies regions of the parameter space that are consistent with the measured data, trying to account for uncertainty in both observations and predictions, but without guarantees. To tackle the computational burden of evaluating a very large number of samples, MCMC and HM often rely on a model surrogate or emulator, as described in a later section.
+When the variance–covariance structure of the parameters is not of strict interest, or it too costly to obtain, history matching (HM) provides an approach to constrain the parameters to plausible regions. The model is evaluated for a large space-filling design of parameter values (e.g. latin hypercube), which are accepted or rejected based on an implausibility criterion. As an example, in [60], HM is used to constrain a subset of the parameters of the Courtemanche and the Maleckar cell models. The main difference between the MCMC and the HM acceptance criteria is that the former, if successfully converged, guarantees that all the accepted parameter values are (correlated) samples from the posterior distribution, although to assess the convergence of MCMC chains remains a challenging task in itself [61]. The latter simply identifies regions of the parameter space that are consistent with the measured data, trying to account for uncertainty in both observations and predictions, but without guarantees. To tackle the computational burden of evaluating a very large number of samples, MCMC and HM often rely on a model surrogate or emulator, as described in a later section.
 
 #### (iii) Machine learning approaches for mapping data to parameters
 
@@ -131,7 +139,7 @@ With the rapid growth in their modelling capacity, data-driven deep learning mod
 
 ### (c) Validation of virtual cohorts
 
-Validation is the process of assessing whether a model is suitably representative of the physical process it seeks to represent and therefore whether predictions from the model are sufficiently close to those of the real system. It should be noted that there is no such thing as a *validated* model, but rather a body of evidence that the model produces results which are consistent with the physical system being modelled in a specified regime or parameter space. While a model may generate accurate predictions within one region of parameter space, it may not necessarily extend to producing reliable, or even physiologically plausible, results outside of that region [73]. Our confidence in a specific model output should, therefore, reflect its position relative to the regime in which validation has been undertaken. Furthermore, models will often predict variables that can not be or were not measured directly, for example stress in cardiac mechanics models. These variables can be of interest for understanding mechanisms underpinning emergent observations. There will be less confidence in these model predictions that can not be compared against experimental data. However, confidence in the model prediction can be gained if the model is physics based and is validated across a wide range of conditions that alter the unmeasured model output.
+Validation is the process of assessing whether a model is suitably representative of the physical process it seeks to represent and therefore whether predictions from the model are sufficiently close to those of the real system. It should be noted that there is no such thing as a validated model, but rather a body of evidence that the model produces results which are consistent with the physical system being modelled in a specified regime or parameter space. While a model may generate accurate predictions within one region of parameter space, it may not necessarily extend to producing reliable, or even physiologically plausible, results outside of that region [73]. Our confidence in a specific model output should, therefore, reflect its position relative to the regime in which validation has been undertaken. Furthermore, models will often predict variables that can not be or were not measured directly, for example stress in cardiac mechanics models. These variables can be of interest for understanding mechanisms underpinning emergent observations. There will be less confidence in these model predictions that can not be compared against experimental data. However, confidence in the model prediction can be gained if the model is physics based and is validated across a wide range of conditions that alter the unmeasured model output.
 
 #### (i) Challenges in validating individual models
 
@@ -143,7 +151,7 @@ These issues are further compounded when looking to validate cohort models. Inde
 
 #### (iii) Improving validation in cohort models
 
-To improve validation, each study should be able to reference a body of primary evidence (rather than earlier studies using the model) supporting the components of the model being used from earlier work, and include evidence that the model as a whole is representative of the population it aims to represent. This may include some cohort-level validation steps taken within the study, but also explicitly citing validation data for sub-components used, such as assessments of tissue-scale and action potential models, and their calibration methods, for the individual simulations within the cohort and for the regimes under consideration in the study. This procedure should be used in helping to establish the validity of results, and consequently the strength of conclusions drawn during the peer-review process. This process would be made more effective through the pursuit of specific (multiple, independent) validation studies, either published through traditional journals or as white papers on pre-print servers, which includes the raw data used. As part of this validation process, quantification and propagation of uncertainties in sub-components must inevitably play a role. Substantial work has already been done in the area of UQ for action potential models [76,77], but this needs to be propagated through to whole-organ models and cohort models [22]. Stating that a given outcome is the *most likely* outcome, given the available data, is a much stronger statement than a given outcome is *plausible*. Achieving all this, and being transparent about the extent to which the constituent components are themselves validated, will provide greater strength to cohort studies and document a clear and unambiguous provenance of validation evidence to support their use.
+To improve validation, each study should be able to reference a body of primary evidence (rather than earlier studies using the model) supporting the components of the model being used from earlier work, and include evidence that the model as a whole is representative of the population it aims to represent. This may include some cohort-level validation steps taken within the study, but also explicitly citing validation data for sub-components used, such as assessments of tissue-scale and action potential models, and their calibration methods, for the individual simulations within the cohort and for the regimes under consideration in the study. This procedure should be used in helping to establish the validity of results, and consequently the strength of conclusions drawn during the peer-review process. This process would be made more effective through the pursuit of specific (multiple, independent) validation studies, either published through traditional journals or as white papers on pre-print servers, which includes the raw data used. As part of this validation process, quantification and propagation of uncertainties in sub-components must inevitably play a role. Substantial work has already been done in the area of UQ for action potential models [76,77], but this needs to be propagated through to whole-organ models and cohort models [22]. Stating that a given outcome is the most likely outcome, given the available data, is a much stronger statement than a given outcome is plausible. Achieving all this, and being transparent about the extent to which the constituent components are themselves validated, will provide greater strength to cohort studies and document a clear and unambiguous provenance of validation evidence to support their use.
 
 ## 5 Potential and future applications of virtual cohorts of patient models
 
@@ -181,7 +189,7 @@ Virtual cohorts of cardiac models should include member template models that con
 
 ### (b) Omics driven models
 
-In view of the huge amount of data obtained using genomics and proteomics data, it would be useful to connect the cardiac model parameters to the characteristics measured from omics. One of the most straightforward ways to do this would be to use widely available mRNA expression data and tune conductivities for the corresponding ion channels [93]. Another interesting approach was recently proposed in [94], which uses a novel methodology of Cap-Analysis of Gene Expression to tune model parameters to patient-specific data. In addition, as we obtain more and more data on cell regulatory systems, it would be good to add such data to electrophysiological models as was done, e.g., by Tan *et al.* [95] for cardiomyocyte mechano-signalling. It would be good to extend similar approaches to other regulatory systems.
+In view of the huge amount of data obtained using genomics and proteomics data, it would be useful to connect the cardiac model parameters to the characteristics measured from omics. One of the most straightforward ways to do this would be to use widely available mRNA expression data and tune conductivities for the corresponding ion channels [93]. Another interesting approach was recently proposed in [94], which uses a novel methodology of Cap-Analysis of Gene Expression to tune model parameters to patient-specific data. In addition, as we obtain more and more data on cell regulatory systems, it would be good to add such data to electrophysiological models as was done, e.g., by Tan et al. [95] for cardiomyocyte mechano-signalling. It would be good to extend similar approaches to other regulatory systems.
 
 ### (c) Modelling tissue substrate
 
@@ -204,112 +212,119 @@ The mention of commercial products, their sources, or their use in connection wi
 
 This article has no additional data.
 
-## Figures
+## Authors' contributions
 
-- Figure
-- Figure
+All authors contributed to the conception, writing and editing of this paper.
+
+## Competing interests
+
+We declare we have no competing interest.
+
+## Funding
+
+A.V.P. is supported by RF Government Act No. 211 of 16 March 2013, and RFBR(grant no. 18-29-13008). S.A.N., C.C., C.R. and M.R. are supported by the EPSRCgrant nos (EP/P01268X/1, EP/M012492/1, NS/A000049/1, EP/R045046/1), the BHF(SP/18/6/33805, PG/19/44/34368) and the National Institute for Health Research (NIHR) KCL Biomedical Research Centre. C.R. is supported by the MRCgrant no (MR/S015086/1). C.D.C. is supported by the Rosetrees Trust(M577) and BHF (PG/16/17/32069). R.W.d.S. is supported by CAPES, CNPq and FAPEMIG. This paper came out of the Fickle Heart program at the Isaac Newton Institute meeting, supported by the EPSRC grant no. (EP/R014604/1). E.M.C. and F.H.F. are supported by NIH 1R01HL143450-01 and F.H.F. is supported by NSF CMMI-1762803 for EMC and NSF CMMI-1762553.
 
 ## References (102 total, showing 102)
 
-- Niederer SA, Lumens J, Trayanova NA. Computational models in cardiology. Nat. Rev. Cardiol.. 2019
-- Niederer S, Mitchell L, Smith N, Plank G. Simulating human cardiac electrophysiology on clinical time-scales. Front. Physiol.. 2011
-- Augustin CM, Neic A, Liebmann M, Prassl AJ, Niederer SA, Haase G. Anatomically accurate high resolution modeling of human whole heart electromechanics: a strongly scalable algebraic multigrid solver method for nonlinear deformation. J. Comput. Phys.. 2016
-- Richards DF. Towards real-time simulation of cardiac electrophysiology in a human heart at high resolution. Comput. Methods Biomech. Biomed. Eng.. 2013
-- Prakosa A. Personalized virtual-heart technology for guiding the ablation of infarct-related ventricular tachycardia. Nat. Biomed. Eng.. 2018
-- Boyle PM. Computationally guided personalized targeted ablation of persistent atrial fibrillation. Nat. Biomed. Eng.. 2019
-- Sidhu BS, Lee AW, Haberland U, Rajani R, Niederer S, Rinaldi CA. Combined computed tomographic perfusion and mechanics with predicted activation pattern can successfully guide implantation of a wireless endocardial pacing system. EP Europace. 2020
-- Hose DR, Lawford PV, Huberts W, Hellevik LR, Omholt SW, van de Vosse FN. Cardiovascular models for personalised medicine: where now and where next?. Med. Eng. Phys.. 2019
-- Muszkiewicz A, Liu X, Bueno-Orovio A, Lawson BAJ, Burrage K, Casadei B. From ionic to cellular variability in human atrial myocytes: an integrative computational and experimental study. Am. J. Physiol.-Heart Circ. Physiol.. 2018
-- Lee A. A rule-based method for predicting the electrical activation of the heart with cardiac resynchronization therapy from non-invasive clinical data. Med. Image Anal.. 2019
-- Costa CM. Pacing in proximity to scar during cardiac resynchronization therapy increases local dispersion of repolarization and susceptibility to ventricular arrhythmogenesis. Heart Rhythm. 2019
-- Kayvanpour E. Towards personalized cardiology: multi-scale modeling of the failing heart. PLoS ONE. 2015
-- Cedilnik N, Duchateau J, Dubois R, Sacher F, Jaïs P, Cochet H. Fast personalized electrophysiological models from computed tomography images for ventricular tachycardia ablation planning. EP Europace. 2018
-- Corrado C, Williams S, Karim R, Plank G, O’Neill M, Niederer S. A work flow to build and validate patient specific left atrium electrophysiology models from catheter measurements. Med. Image Anal.. 2018
-- Plancke AM. Generation of a cohort of whole-torso cardiac models for assessing the utility of a novel computed shock vector efficiency metric for ICD optimisation. Comput. Biol. Med.. 2019
-- Hwang M, Kwon SS, Wi J, Park M, Lee HS, Park JS. Virtual ablation for atrial fibrillation in personalized in silico three-dimensional left atrial modeling: comparison with clinical catheter ablation. Prog. Biophys. Mol. Biol.. 2014
-- Roney CH. Patient-specific simulations predict efficacy of ablation of interatrial connections for treatment of persistent atrial fibrillation. EP Europace. 2018
-- Ali RL, Hakim JB, Boyle PM, Zahid S, Sivasambu B, Marine JE. Arrhythmogenic propensity of the fibrotic substrate after atrial fibrillation ablation: a longitudinal study using magnetic resonance imaging-based atrial models. Cardiovasc. Res.. 2019
-- Shim J. Virtual in-silico modeling guided catheter ablation predicts effective linear ablation lesion set for longstanding persistent atrial fibrillation: multicenter prospective randomized study. Front. Physiol.. 2017
-- Kim IS. Clinical usefulness of computational modeling-guided persistent atrial fibrillation ablation: updated outcome of multicenter randomized study. Front. Physiol.. 2019
-- Masci A, Barone L, Dedé L, Fedele M, Tomasi C, Quarteroni A. The impact of left atrium appendage morphology on stroke risk assessment in atrial fibrillation: a computational fluid dynamics study. Front. Physiol.. 2019
-- Corrado C. Quantifying atrial anatomy uncertainty from clinical data and its impact on electro-physiology simulation predictions. Med. Image Anal.. 2020
-- Lombardo DM, Fenton FH, Narayan SM, Rappel WJ. Comparison of detailed and simplified models of human atrial myocytes to recapitulate patient specific properties. PLoS Comput. Biol.. 2016
-- Kaboudian A, Cherry EM, Fenton FH. Real-time interactive simulations of large-scale systems on personal computers and cell phones: toward patient-specific heart modeling and other applications. Sci. Adv.. 2019
-- Pennells L. Equalization of four cardiovascular risk algorithms after systematic recalibration: individual-participant meta-analysis of 86 prospective studies. Eur. Heart J.. 2018
-- Mineroff J, McCulloch AD, Krummen D, Ganapathysubramanian B, Krishnamurthy A. Optimization framework for patient-specific cardiac modeling. Cardiovas. Eng. Technol.. 2019
-- Quarteroni A, Manzoni A, Vergara C. The cardiovascular system: mathematical modelling, numerical algorithms and clinical applications. Acta Numerica. 2017
-- Sermesant M, Moireau P, Camara O, Sainte-Marie J, Andriantsimiavona R, Cimrman R. Cardiac function estimation from MRI using a heart model and data assimilation: advances and difficulties. Med. Image Anal.. 2006
-- Oliveira RS, Alonso S, Campos FO, Rocha BM, Fernandes JF, Kuehne T. Ectopic beats arise from micro-reentries near infarct regions in simulations of a patient-specific heart model. Sci. Rep.. 2018
-- Bernardo JM, Smith AF. Bayesian theory. 2009
-- Gilks WR, Richardson S, Spiegelhalter D. Markov Chain Monte Carlo in practice. 1995
-- Efron B. 1992
-- Vik JO, Gjuvsland A, Li L, T⊘ndel K, Niederer S, Smith N. Genotype-phenotype map characteristics of an in silico heart cell. Front. Physiol.. 2011
-- Sarkar AX, Christini DJ, Sobie EA. Exploiting mathematical models to illuminate electrophysiological variability between individuals. J. Physiol.. 2012
-- Britton OJ, Bueno-Orovio A, Van Ammel K, Lu HR, Towart R, Gallacher DJ. Experimentally calibrated population of models predicts and explains intersubject variability in cardiac cellular electrophysiology. Proc. Natl Acad. Sci. USA. 2013
-- Corrado C, Whitaker J, Chubb H, Williams S, Wright M, Gill J. Personalized models of human atrial electrophysiology derived from endocardial electrograms. IEEE Trans. Biomed. Eng.. 2017
-- Ljung L, Glad T. On global identifiability for arbitrary model parametrizations. Automatica. 1994
-- Pironet A, Desaive T, Geoffrey Chase J, Morimont P, Dauby P. Model-based computation of total stressed blood volume from a preload reduction manoeuver. Math. Biosci.. 2015
-- Fink M, Noble D. Markov models for ion channels: versatility versus identifiability and speed. Phil. Trans. R. Soc. A. 2009
-- Eck VG, Donders WP, Sturdy J, Feinberg J, Delhaas T, Hellevik LR. A guide to uncertainty quantification and sensitivity analysis for cardiovascular applications. Int. J. Numer. Methods Biomed. Eng.. 2016
-- Banks HT, Dediu S, Ernstberger SL, Kappel F. Generalized sensitivities and optimal experimental design. J. Inverse Ill-posed Probl.. 2010
-- Cecconi M. Consensus on circulatory shock and hemodynamic monitoring. Task force of the European Society of Intensive Care Medicine. Intensive Care Med.. 2014
-- Širanović M, Kovač J, Gopčević A, Kelečić M, Vučić M, Kovač N. Constant cardiac output monitoring using the PiCCO and LiDCO methods versus PAK in septic patients: when to do calibration?. Acta Clinica Croatica. 2011
-- Bycroft C. The UK Biobank resource with deep phenotyping and genomic data. Nature. 2018
-- Auffray C. Making sense of big data in health research: towards an EU action plan. Genome Med.. 2016
-- Duarte A. Future opportunities and trends for e-infrastructures and life sciences: going beyond the grid to enable life science data analysis. Front. Genet.. 2015
-- Ghahramani Z. Probabilistic machine learning and artificial intelligence. Nature. 2015
-- Nocedal J, Wright S. Numerical optimization. 2006
-- McCall J. Genetic algorithms for modelling and optimisation. J. Comput. Appl. Math.. 2005
-- Eberhart R, Kennedy J. 1995
-- Doucet A, De Freitas N, Gordon N. Sequential Monte Carlo methods in practice. 2013
-- Corrado C, Gerbeau JF, Moireau P. Identification of weakly coupled multiphysics problems. Application to the inverse problem of electrocardiography. J. Comput. Phys.. 2015
-- Blei DM, Kucukelbir A, McAuliffe JD. Variational inference: a review for statisticians. J. Am. Stat. Assoc.. 2017
-- Beaumont MA, Zhang W, Balding DJ. Approximate Bayesian computation in population genetics. Genetics. 2002
-- Toni T, Welch D, Strelkowa N, Ipsen A, Stumpf MP. Approximate Bayesian computation scheme for parameter inference and model selection in dynamical systems. J. R. Soc. Interface. 2008
-- Sambridge M. A parallel tempering algorithm for probabilistic sampling and multimodal optimization. Geophys. J. Int.. 2014
-- Cui T, Martin J, Marzouk YM, Solonen A, Spantini A. Likelihood-informed dimension reduction for nonlinear inverse problems. Inverse Prob.. 2014
-- Girolami M, Calderhead B. Riemann manifold Langevin and Hamiltonian Monte Carlo methods. J. R. Stat. Soc.: Ser. B (Statistical Methodology). 2011
-- Neal RM. 2011
-- Coveney S, Clayton RH. Fitting two human atrial cell models to experimental data using Bayesian history matching. Prog. Biophys. Mol. Biol.. 2018
-- Cowles MK, Carlin BP. Markov Chain Monte Carlo convergence diagnostics: a comparative review. J. Am. Stat. Assoc.. 1996
-- Zettinig O. Data-driven estimation of cardiac electrical diffusivity from 12-lead ECG signals. Med. Image Anal.. 2014
-- Giffard-Roisin S, Jackson T, Fovargue L, Lee J, Delingette H, Razavi R. Noninvasive personalization of a cardiac electrophysiology model from body surface potential mapping. IEEE Trans. Biomed. Eng.. 2017
-- Giffard-Roisin S. Transfer learning from simulations on a reference anatomy for ECGI in personalised cardiac resynchronization therapy. IEEE Trans. Biomed. Eng.. 2018
-- Sankaran S, Grady L, Taylor CA. Impact of geometric uncertainty on hemodynamic simulations using machine learning. Comput. Methods Appl. Mech. Eng.. 2015
-- Dhamala J, Arevalo HJ, Sapp J, Horácek BM, Wu KC, Trayanova NA. Quantifying the uncertainty in model parameters using gaussian process-based Markov Chain Monte Carlo in cardiac electrophysiology. Med. Image Anal.. 2018
-- Zettinig O. 2013
-- Ghimire S, Dhamala J, Gyawali PK, Sapp JL, Horacek M, Wang L. 2018
-- Cantwell CD, Mohamied Y, Tzortzis KN, Garasto S, Houston C, Chowdhury RA. Rethinking multiscale cardiac electrophysiology with machine learning and predictive modelling. Comput. Biol. Med.. 2019
-- Hoffman MJ, LaVigne NS, Scorse ST, Fenton FH, Cherry EM. Reconstructing three-dimensional reentrant cardiac electrical wave dynamics using data assimilation. Chaos. 2016
-- Costabal FS, Perdikaris P, Kuhl E. Multi-fidelity classification using Gaussian processes: accelerating the prediction of large-scale computational models. Comput. Methods Appl. Mech. Eng.. 2019
-- Zhao L, Li Z, Caswell B, Ouyang J, Karniadakis GE. Active learning of constitutive relation from mesoscopic dynamics for macroscopic modeling of non-Newtonian flows. J. Comput. Phys.. 2018
-- Li Z. General principles for the validation of proarrhythmia risk prediction models: an extension of the CiPA in silico strategy. Clin. Pharmacol. Ther.. 2020
-- Niederer SA. Verification of cardiac tissue electrophysiology simulators using an N-version benchmark. Phil. Trans. R. Soc. A. 2011
-- Land S. Verification of cardiac mechanics software: benchmark problems and solutions for testing active and passive material behaviour. Proc. R. Soc. A. 2015
-- Pathmanathan P, Cordeiro JM, Gray RA. Comprehensive uncertainty quantification and sensitivity analysis for cardiac action potential models. Front. Physiol.. 2019
-- Chang KC. Uncertainty quantification reveals the importance of data variability and experimental design considerations for in silico proarrhythmia risk assessment. Front. Physiol.. 2017
-- Chase JG. Next-generation, personalised, model-based critical care medicine: a state-of-the art review of in silico virtual patient models, methods, and cohorts, and how to validation them. Biomed. Eng. Online. 2018
-- Chase JG, Desaive T, Preiser JC. 2016
-- Gallego B, Walter SR, Day RO, Dunn AG, Sivaraman V, Shah N. Bringing cohort studies to the bedside: framework for a ‘green button’ to support clinical decision-making. J. Comp. Effectiveness Res.. 2015
-- Willemet M, Chowienczyk P, Alastruey J. A database of virtual healthy subjects to assess the accuracy of foot-to-foot pulse wave velocities for estimation of aortic stiffness. Am. J. Physiol.-Heart Circ. Physiol.. 2015
-- Moss R, Grosse T, Marchant I, Lassau N, Gueyffier F, Thomas SR. Virtual patients and sensitivity analysis of the guyton model of blood pressure regulation: towards individualized models of whole-body physiology. PLoS Comput. Biol.. 2012
-- Eymard N. Mathematical model of T-cell lymphoblastic lymphoma: disease, treatment, cure or relapse of a virtual cohort of patients. Math. Med. Biol.: A J. IMA. 2016
-- Dickson JL. Generalisability of a virtual trials method for glycaemic control in intensive care. IEEE Trans. Biomed. Eng.. 2018
-- Viceconti M, Cobelli C, Haddad T, Himes A, Kovatchev B, Palmer M. In silico assessment of biomedical products: the conundrum of rare but not so rare events in two case studies. Proc. Inst. Mech. Eng. H. 2017
-- Clermont G, Bartels J, Kumar R, Constantine G, Vodovotz Y, Chow C. In silico design of clinical trials: a method coming of age. Crit. Care Med.. 2004
-- Jang KJ, Pant YV, Zhang B, Weimer J, Mangharam R. 2019
-- on Behalf of MDIC Computer Modeling, Participants SWG, Haddad T, Himes A, Thompson L, Irony T, Nair R. Incorporation of stochastic engineering models as prior information in Bayesian medical device trials. J. Biopharm. Stat.. 2017
-- Gosselin MC. Development of a new generation of high-resolution anatomical models for medical device evaluation: the virtual population 3.0. Phys. Med. Biol.. 2014
-- Morrison TM, Pathmanathan P, Adwan M, Margerrison E. Advancing regulatory science with computational modeling for medical devices at the FDA’s office of science and engineering laboratories. Front. Med.. 2018
-- Alawad M, Wang L. Learning domain shift in simulated and clinical data: localizing the origin of ventricular activation from 12-lead electrocardiograms. IEEE Trans. Med. Imaging. 2018
-- Viceconti M, Henney A, Morley-Fletcher E. In silico clinical trials: how computer simulation will transform the biomedical industry. Int. J. Clin. Trials. 2016
-- Walmsley J, Rodriguez JF, Mirams GR, Burrage K, Efimov IR, Rodriguez B. mRNA expression levels in failing human hearts predict cellular electrophysiological remodeling: a population-based simulation study. PLoS ONE. 2013
-- Smirnov D, Syunyaev R, Deviatiiarov R, Gusev O, Aras K, Koppel A. Genetic algorithm-based personalized models of human cardiac action potential. bioRxiv. 2019
-- Tan PM, Buchholz KS, Omens JH, McCulloch AD, Saucerman JJ. Predictive model identifies key network regulators of cardiomyocyte mechano-signaling. PLoS Comput. Biol.. 2017
-- Behradfar E, Nygren A, Vigmond EJ. The role of purkinje-myocardial coupling during ventricular arrhythmia: a modeling study. PLoS ONE. 2014
-- Quaglino A, Pezzuto S, Koutsourelakis PS, Auricchio A, Krause R. Fast uncertainty quantification of activation sequences in patient-specific cardiac electrophysiology meeting clinical time constraints. Int. J. Numer. Methods Biomed. Eng.. 2018
-- Campos JO, Sundnes J, Rocha BM. Effects of left ventricle wall thickness uncertainties on cardiac mechanics. Biomech. Model. Mechanobiol.. 2019
-- Ulysses JN, Berg LA, Cherry EM, Liu BR, de Barros BG, Rocha BM. An optimization-based algorithm for the construction of cardiac purkinje network models. IEEE Trans. Biomed. Eng.. 2018
-- Rutherford SL, Trew ML, Sands GB, LeGrice IJ, Smaill BH. High-resolution 3-dimensional reconstruction of the infarct border zone. Circ. Res.. 2012
-- Kazbanov IV, Ten Tusscher KH, Panfilov AV. Effects of heterogeneous diffuse fibrosis on arrhythmia dynamics and mechanism. Sci. Rep.. 2016
-- Sengupta PP, Chandrashekhar Y. The new wave of cardiovascular biomechanics. JACC: Cardiovasc. Imaging. 2019
+- Niederer SA , Lumens J , Trayanova NA . 2019 Computational models in cardiology . Nat. Rev. Cardiol. , 16 , 100 – 111 . ( doi:10.1038/s41569-018-0104-y )
+- Niederer S , Mitchell L , Smith N , Plank G . 2011 Simulating human cardiac electrophysiology on clinical time-scales . Front. Physiol. , 2 , 14 . ( doi:10.3389/fphys.2011.00014 )
+- Augustin CM , Neic A , Liebmann M , Prassl AJ , Niederer SA , Haase G , Plank G . 2016 Anatomically accurate high resolution modeling of human whole heart electromechanics: a strongly scalable algebraic multigrid solver method for nonlinear deformation . J. Comput. Phys. , 305 , 622 – 646 . ( doi:10.1016/j.jcp.2015.10.045 )
+- Richards DF et al. 2013 Towards real-time simulation of cardiac electrophysiology in a human heart at high resolution . Comput. Methods Biomech. Biomed. Eng. , 16 , 802 – 805 . ( doi:10.1080/10255842.2013.795556 )
+- Prakosa A et al. 2018 Personalized virtual-heart technology for guiding the ablation of infarct-related ventricular tachycardia . Nat. Biomed. Eng. , 2 , 732 – 740 . ( doi:10.1038/s41551-018-0282-2 )
+- Boyle PM et al. 2019 Computationally guided personalized targeted ablation of persistent atrial fibrillation . Nat. Biomed. Eng. , 3 , 870 – 879 . ( doi:10.1038/s41551-019-0437-9 )
+- Sidhu BS , Lee AW , Haberland U , Rajani R , Niederer S , Rinaldi CA . 2020 Combined computed tomographic perfusion and mechanics with predicted activation pattern can successfully guide implantation of a wireless endocardial pacing system . EP Europace , 22 , 298 – 298 . ( doi:10.1093/europace/euz227 )
+- Hose DR , Lawford PV , Huberts W , Hellevik LR , Omholt SW , van de Vosse FN . 2019 Cardiovascular models for personalised medicine: where now and where next? . Med. Eng. Phys. , 72 , 38 – 48 . ( doi:10.1016/j.medengphy.2019.08.007 )
+- Muszkiewicz A , Liu X , Bueno-Orovio A , Lawson BAJ , Burrage K , Casadei B , Rodriguez B . 2018 From ionic to cellular variability in human atrial myocytes: an integrative computational and experimental study . Am. J. Physiol.-Heart Circ. Physiol. , 314 , H895 – H916 . ( doi:10.1152/ajpheart.00477.2017 )
+- Lee A et al. 2019 A rule-based method for predicting the electrical activation of the heart with cardiac resynchronization therapy from non-invasive clinical data . Med. Image Anal. , 57 , 197 – 213 . ( doi:10.1016/j.media.2019.06.017 )
+- Costa CM et al. 2019 Pacing in proximity to scar during cardiac resynchronization therapy increases local dispersion of repolarization and susceptibility to ventricular arrhythmogenesis . Heart Rhythm , 16 , 1475 – 1483 . ( doi:10.1016/j.hrthm.2019.03.027 )
+- Kayvanpour E et al. 2015 Towards personalized cardiology: multi-scale modeling of the failing heart . PLoS ONE , 10 , e0134869 . ( doi:10.1371/journal.pone.0134869 )
+- Cedilnik N , Duchateau J , Dubois R , Sacher F , Jaïs P , Cochet H , Sermesant M . 2018 Fast personalized electrophysiological models from computed tomography images for ventricular tachycardia ablation planning . EP Europace , 20 , iii94 – iii101 . ( doi:10.1093/europace/euy228 )
+- Corrado C , Williams S , Karim R , Plank G , O’Neill M , Niederer S . 2018 A work flow to build and validate patient specific left atrium electrophysiology models from catheter measurements . Med. Image Anal. , 47 , 153 – 163 . ( doi:10.1016/j.media.2018.04.005 )
+- Plancke AM et al. 2019 Generation of a cohort of whole-torso cardiac models for assessing the utility of a novel computed shock vector efficiency metric for ICD optimisation . Comput. Biol. Med. , 112 , 103368 . ( doi:10.1016/j.compbiomed.2019.103368 )
+- Hwang M , Kwon SS , Wi J , Park M , Lee HS , Park JS , Lee YS , Shim EB , Pak HN . 2014 Virtual ablation for atrial fibrillation in personalized in silico three-dimensional left atrial modeling: comparison with clinical catheter ablation . Prog. Biophys. Mol. Biol. , 116 , 40 – 47 . ( doi:10.1016/j.pbiomolbio.2014.09.006 )
+- Roney CH et al. 2018 Patient-specific simulations predict efficacy of ablation of interatrial connections for treatment of persistent atrial fibrillation . EP Europace , 20 , iii55 – iii68 . ( doi:10.1093/europace/euy232 )
+- Ali RL , Hakim JB , Boyle PM , Zahid S , Sivasambu B , Marine JE , Calkins H , Trayanova NA , Spragg DD . 2019 Arrhythmogenic propensity of the fibrotic substrate after atrial fibrillation ablation: a longitudinal study using magnetic resonance imaging-based atrial models . Cardiovasc. Res. , 115 , 1757 – 1765 . ( doi:10.1093/cvr/cvz083 )
+- Shim J et al. 2017 Virtual in-silico modeling guided catheter ablation predicts effective linear ablation lesion set for longstanding persistent atrial fibrillation: multicenter prospective randomized study . Front. Physiol. , 8 , 792 . ( doi:10.3389/fphys.2017.00792 )
+- Kim IS et al. 2019 Clinical usefulness of computational modeling-guided persistent atrial fibrillation ablation: updated outcome of multicenter randomized study . Front. Physiol. , 10 , 1512 . ( doi:10.3389/fphys.2019.01512 )
+- Masci A , Barone L , Dedé L , Fedele M , Tomasi C , Quarteroni A , Corsi C . 2019 The impact of left atrium appendage morphology on stroke risk assessment in atrial fibrillation: a computational fluid dynamics study . Front. Physiol. , 9 , 1938 . ( doi:10.3389/fphys.2018.01938 )
+- Corrado C et al. 2020 Quantifying atrial anatomy uncertainty from clinical data and its impact on electro-physiology simulation predictions . Med. Image Anal. , 61 , 101626 . ( doi:10.1016/j.media.2019.101626 )
+- Lombardo DM , Fenton FH , Narayan SM , Rappel WJ . 2016 Comparison of detailed and simplified models of human atrial myocytes to recapitulate patient specific properties . PLoS Comput. Biol. , 12 , e1005060 . ( doi:10.1371/journal.pcbi.1005060 )
+- Kaboudian A , Cherry EM , Fenton FH . 2019 Real-time interactive simulations of large-scale systems on personal computers and cell phones: toward patient-specific heart modeling and other applications . Sci. Adv. , 5 , eaav6019 . ( doi:10.1126/sciadv.aav6019 )
+- Pennells L et al. 2018 Equalization of four cardiovascular risk algorithms after systematic recalibration: individual-participant meta-analysis of 86 prospective studies . Eur. Heart J. , 40 , 621 – 631 . ( doi:10.1093/eurheartj/ehy653 )
+- Mineroff J , McCulloch AD , Krummen D , Ganapathysubramanian B , Krishnamurthy A . 2019 Optimization framework for patient-specific cardiac modeling . Cardiovas. Eng. Technol. , 10 , 553 – 567 . ( doi:10.1007/s13239-019-00428-z )
+- Quarteroni A , Manzoni A , Vergara C . 2017 The cardiovascular system: mathematical modelling, numerical algorithms and clinical applications . Acta Numerica , 26 , 365 – 590 . ( doi:10.1017/S0962492917000046 )
+- Sermesant M , Moireau P , Camara O , Sainte-Marie J , Andriantsimiavona R , Cimrman R , Hill DL , Chapelle D , Razavi R . 2006 Cardiac function estimation from MRI using a heart model and data assimilation: advances and difficulties . Med. Image Anal. , 10 , 642 – 656 . ( doi:10.1016/j.media.2006.04.002 )
+- Oliveira RS , Alonso S , Campos FO , Rocha BM , Fernandes JF , Kuehne T . 2018 Ectopic beats arise from micro-reentries near infarct regions in simulations of a patient-specific heart model . Sci. Rep. , 8 , 16392 . ( doi:10.1038/s41598-018-34304-y )
+- Bernardo JM , Smith AF . 2009 Bayesian theory , vol. 405 . Hoboken, NJ: John Wiley & Sons .
+- Gilks WR , Richardson S , Spiegelhalter D . 1995 Markov Chain Monte Carlo in practice . London, UK: Chapman and Hall/CRC .
+- Efron B . 1992 Bootstrap methods: another look at the jackknife. In Breakthroughs in statistics: Methodology and Distribution (eds S Kotz, NL Johnson), pp. 569–593. New York, NY: Springer .
+- Vik JO , Gjuvsland A , Li L , T⊘ndel K , Niederer S , Smith N , Hunter P , Omholt S . 2011 Genotype-phenotype map characteristics of an in silico heart cell . Front. Physiol. , 2 , 106 .
+- Sarkar AX , Christini DJ , Sobie EA . 2012 Exploiting mathematical models to illuminate electrophysiological variability between individuals . J. Physiol. , 590 , 2555 – 2567 . ( doi:10.1113/jphysiol.2011.223313 )
+- Britton OJ , Bueno-Orovio A , Van Ammel K , Lu HR , Towart R , Gallacher DJ , Rodriguez B . 2013 Experimentally calibrated population of models predicts and explains intersubject variability in cardiac cellular electrophysiology . Proc. Natl Acad. Sci. USA , 110 , E2098 – E2105 . ( doi:10.1073/pnas.1304382110 )
+- Corrado C , Whitaker J , Chubb H , Williams S , Wright M , Gill J , O’Neill MD , Niederer SA . 2017 Personalized models of human atrial electrophysiology derived from endocardial electrograms . IEEE Trans. Biomed. Eng. , 64 , 735 – 742 . ( doi:10.1109/TBME.2016.2574619 )
+- Ljung L , Glad T . 1994 On global identifiability for arbitrary model parametrizations . Automatica , 30 , 265 – 276 . ( doi:10.1016/0005-1098(94)90029-9 )
+- Pironet A , Desaive T , Geoffrey Chase J , Morimont P , Dauby P . 2015 Model-based computation of total stressed blood volume from a preload reduction manoeuver . Math. Biosci. , 265 , 28 – 39 . ( doi:10.1016/j.mbs.2015.03.015 )
+- Fink M , Noble D . 2009 Markov models for ion channels: versatility versus identifiability and speed . Phil. Trans. R. Soc. A , 367 , 2161 – 2179 . ( doi:10.1098/rsta.2008.0301 )
+- Eck VG , Donders WP , Sturdy J , Feinberg J , Delhaas T , Hellevik LR , Huberts W . 2016 A guide to uncertainty quantification and sensitivity analysis for cardiovascular applications . Int. J. Numer. Methods Biomed. Eng. , 32 , e02755 . ( doi:10.1002/cnm.2755 )
+- Banks HT , Dediu S , Ernstberger SL , Kappel F . 2010 Generalized sensitivities and optimal experimental design . J. Inverse Ill-posed Probl. , 18 , 25 – 83 . ( doi:10.1515/jiip.2010.002 )
+- Cecconi M et al. 2014 Consensus on circulatory shock and hemodynamic monitoring. Task force of the European Society of Intensive Care Medicine . Intensive Care Med. , 40 , 1795 – 1815 . ( doi:10.1007/s00134-014-3525-z )
+- Širanović M , Kovač J , Gopčević A , Kelečić M , Vučić M , Kovač N , Rode B . 2011 Constant cardiac output monitoring using the PiCCO and LiDCO methods versus PAK in septic patients: when to do calibration? . Acta Clinica Croatica , 50 , 267 – 272 .
+- Bycroft C et al. 2018 The UK Biobank resource with deep phenotyping and genomic data . Nature , 562 , 203 . ( doi:10.1038/s41586-018-0579-z )
+- Auffray C et al. 2016 Making sense of big data in health research: towards an EU action plan . Genome Med. , 8 , 71 . ( doi:10.1186/s13073-016-0323-y )
+- Duarte A et al. 2015 Future opportunities and trends for e-infrastructures and life sciences: going beyond the grid to enable life science data analysis . Front. Genet. , 6 , 197 . ( doi:10.3389/fgene.2015.00197 )
+- Ghahramani Z . 2015 Probabilistic machine learning and artificial intelligence . Nature , 521 , 452 – 459 . ( doi:10.1038/nature14541 )
+- Nocedal J , Wright S . 2006 Numerical optimization . New York, NY: Springer Science & Business Media .
+- McCall J . 2005 Genetic algorithms for modelling and optimisation . J. Comput. Appl. Math. , 184 , 205 – 222 . ( doi:10.1016/j.cam.2004.07.034 )
+- Eberhart R , Kennedy J . 1995 A new optimizer using particle swarm theory. In MHS’95. Proc. of the Sixth Int. Symp. on Micro Machine and Human Science , pp. 39–43. IEEE .
+- Doucet A , De Freitas N , Gordon N . 2013 Sequential Monte Carlo methods in practice . New York, NY: Springer Science & Business Media .
+- Corrado C , Gerbeau JF , Moireau P . 2015 Identification of weakly coupled multiphysics problems. Application to the inverse problem of electrocardiography . J. Comput. Phys. , 283 , 271 – 298 . ( doi:10.1016/j.jcp.2014.11.041 )
+- Blei DM , Kucukelbir A , McAuliffe JD . 2017 Variational inference: a review for statisticians . J. Am. Stat. Assoc. , 112 , 859 – 877 . ( doi:10.1080/01621459.2017.1285773 )
+- Beaumont MA , Zhang W , Balding DJ . 2002 Approximate Bayesian computation in population genetics . Genetics , 162 , 2025 – 2035 .
+- Toni T , Welch D , Strelkowa N , Ipsen A , Stumpf MP . 2008 Approximate Bayesian computation scheme for parameter inference and model selection in dynamical systems . J. R. Soc. Interface , 6 , 187 – 202 . ( doi:10.1098/rsif.2008.0172 )
+- Sambridge M . 2014 A parallel tempering algorithm for probabilistic sampling and multimodal optimization . Geophys. J. Int. , 196 , 357 – 374 . ( doi:10.1093/gji/ggt342 )
+- Cui T , Martin J , Marzouk YM , Solonen A , Spantini A . 2014 Likelihood-informed dimension reduction for nonlinear inverse problems . Inverse Prob. , 30 , 114015 . ( doi:10.1088/0266-5611/30/11/114015 )
+- Girolami M , Calderhead B . 2011 Riemann manifold Langevin and Hamiltonian Monte Carlo methods . J. R. Stat. Soc.: Ser. B (Statistical Methodology) , 73 , 123 – 214 . ( doi:10.1111/j.1467-9868.2010.00765.x )
+- Neal RM et al. 2011 MCMC using Hamiltonian dynamics. In Handbook of Markov Chain Monte Carlo (eds S Brooks, A Gelman, GL Jones, X-L Meng). Boca Raton, FL: Chapman and Hall/CRC.
+- Coveney S , Clayton RH . 2018 Fitting two human atrial cell models to experimental data using Bayesian history matching . Prog. Biophys. Mol. Biol. , 139 , 43 – 58 . ( doi:10.1016/j.pbiomolbio.2018.08.001 )
+- Cowles MK , Carlin BP . 1996 Markov Chain Monte Carlo convergence diagnostics: a comparative review . J. Am. Stat. Assoc. , 91 , 883 – 904 . ( doi:10.1080/01621459.1996.10476956 )
+- Zettinig O et al. 2014 Data-driven estimation of cardiac electrical diffusivity from 12-lead ECG signals . Med. Image Anal. , 18 , 1361 – 76 . ( doi:10.1016/j.media.2014.04.011 )
+- Giffard-Roisin S , Jackson T , Fovargue L , Lee J , Delingette H , Razavi R , Ayache N , Sermesant M . 2017 Noninvasive personalization of a cardiac electrophysiology model from body surface potential mapping . IEEE Trans. Biomed. Eng. , 64 , 2206 – 2218 . ( doi:10.1109/TBME.2016.2629849 )
+- Giffard-Roisin S et al. 2018 Transfer learning from simulations on a reference anatomy for ECGI in personalised cardiac resynchronization therapy . IEEE Trans. Biomed. Eng. , 66 , 343 – 353 . ( doi:10.1109/TBME.2018.2839713 )
+- Sankaran S , Grady L , Taylor CA . 2015 Impact of geometric uncertainty on hemodynamic simulations using machine learning . Comput. Methods Appl. Mech. Eng. , 297 , 167 – 190 . ( doi:10.1016/j.cma.2015.08.014 )
+- Dhamala J , Arevalo HJ , Sapp J , Horácek BM , Wu KC , Trayanova NA , Wang L . 2018 Quantifying the uncertainty in model parameters using gaussian process-based Markov Chain Monte Carlo in cardiac electrophysiology . Med. Image Anal. , 48 , 43 – 57 . ( doi:10.1016/j.media.2018.05.007 )
+- Zettinig O et al. 2013 Fast data-driven calibration of a cardiac electrophysiology model from images and ECG. In Int. Conf. on Medical Image Computing and Computer-Assisted Intervention (eds K Mori, I Sakuma, Y Sato, C Barillot, N Navab), pp. 1–8. Berlin, Germany: Springer .
+- Ghimire S , Dhamala J , Gyawali PK , Sapp JL , Horacek M , Wang L . 2018 Generative modeling and inverse imaging of cardiac transmembrane potential. In Int. Conf. on Medical Image Computing and Computer-Assisted Intervention (AF Frangi, JA Schnabel, C Davatzikos, C Alberola-López, G Fichtinger), pp. 508–516. New York, NY: Springer International Publishing .
+- Cantwell CD , Mohamied Y , Tzortzis KN , Garasto S , Houston C , Chowdhury RA , Ng FS , Bharath AA , Peters NS . 2019 Rethinking multiscale cardiac electrophysiology with machine learning and predictive modelling . Comput. Biol. Med. , 104 , 339 – 351 . ( doi:10.1016/j.compbiomed.2018.10.015 )
+- Hoffman MJ , LaVigne NS , Scorse ST , Fenton FH , Cherry EM . 2016 Reconstructing three-dimensional reentrant cardiac electrical wave dynamics using data assimilation . Chaos , 26 , 013107 . ( doi:10.1063/1.4940238 )
+- Costabal FS , Perdikaris P , Kuhl E . 2019 Multi-fidelity classification using Gaussian processes: accelerating the prediction of large-scale computational models . Comput. Methods Appl. Mech. Eng. , 357 , 112602 . ( doi:10.1016/j.cma.2019.112602 )
+- Zhao L , Li Z , Caswell B , Ouyang J , Karniadakis GE . 2018 Active learning of constitutive relation from mesoscopic dynamics for macroscopic modeling of non-Newtonian flows . J. Comput. Phys. , 363 , 116 – 127 . ( doi:10.1016/j.jcp.2018.02.039 )
+- Li Z et al. 2020 General principles for the validation of proarrhythmia risk prediction models: an extension of the CiPA in silico strategy . Clin. Pharmacol. Ther. , 107 , 102 – 111 . ( doi:10.1002/cpt.1647 )
+- Niederer SA et al. 2011 Verification of cardiac tissue electrophysiology simulators using an N-version benchmark . Phil. Trans. R. Soc. A , 369 , 4331 – 4351 . ( doi:10.1098/rsta.2011.0139 )
+- Land S et al. 2015 Verification of cardiac mechanics software: benchmark problems and solutions for testing active and passive material behaviour . Proc. R. Soc. A , 471 , 20150641 . ( doi:10.1098/rspa.2015.0641 )
+- Pathmanathan P , Cordeiro JM , Gray RA . 2019 Comprehensive uncertainty quantification and sensitivity analysis for cardiac action potential models . Front. Physiol. , 10 , 721 . ( doi:10.3389/fphys.2019.00721 )
+- Chang KC et al. 2017 Uncertainty quantification reveals the importance of data variability and experimental design considerations for in silico proarrhythmia risk assessment . Front. Physiol. , 8 , 917 . ( doi:10.3389/fphys.2017.00917 )
+- Chase JG et al. 2018 Next-generation, personalised, model-based critical care medicine: a state-of-the art review of in silico virtual patient models, methods, and cohorts, and how to validation them . Biomed. Eng. Online , 17 , 24 . ( doi:10.1186/s12938-018-0455-y )
+- Chase JG , Desaive T , Preiser JC . 2016 Virtual patients and virtual cohorts: a new way to think about the design and implementation of personalized ICU treatments. In Annual Update in Intensive Care and Emergency Medicine 2016 (ed. JL Vincent), pp. 435–448. New York, NY: Springer International Publishing .
+- Gallego B , Walter SR , Day RO , Dunn AG , Sivaraman V , Shah N , Longhurst CA , Coiera E . 2015 Bringing cohort studies to the bedside: framework for a ‘green button’ to support clinical decision-making . J. Comp. Effectiveness Res. , 4 , 191 – 197 . ( doi:10.2217/cer.15.12 )
+- Willemet M , Chowienczyk P , Alastruey J . 2015 A database of virtual healthy subjects to assess the accuracy of foot-to-foot pulse wave velocities for estimation of aortic stiffness . Am. J. Physiol.-Heart Circ. Physiol. , 309 , H663 – H675 . ( doi:10.1152/ajpheart.00175.2015 )
+- Moss R , Grosse T , Marchant I , Lassau N , Gueyffier F , Thomas SR . 2012 Virtual patients and sensitivity analysis of the guyton model of blood pressure regulation: towards individualized models of whole-body physiology . PLoS Comput. Biol. , 8 , 1 – 16 . ( doi:10.1371/journal.pcbi.1002571 )
+- Eymard N et al. 2016 Mathematical model of T-cell lymphoblastic lymphoma: disease, treatment, cure or relapse of a virtual cohort of patients . Math. Med. Biol.: A J. IMA , 35 , 25 – 47 .
+- Dickson JL et al. 2018 Generalisability of a virtual trials method for glycaemic control in intensive care . IEEE Trans. Biomed. Eng. , 65 , 1543 – 1553 . ( doi:10.1109/TBME.2017.2686432 )
+- Viceconti M , Cobelli C , Haddad T , Himes A , Kovatchev B , Palmer M . 2017 In silico assessment of biomedical products: the conundrum of rare but not so rare events in two case studies . Proc. Inst. Mech. Eng. H , 231 , 455 – 466 . ( doi:10.1177/0954411917702931 )
+- Clermont G , Bartels J , Kumar R , Constantine G , Vodovotz Y , Chow C . 2004 In silico design of clinical trials: a method coming of age . Crit. Care Med. , 32 , 2061 – 2070 . ( doi:10.1097/01.CCM.0000142394.28791.C3 )
+- Jang KJ , Pant YV , Zhang B , Weimer J , Mangharam R . 2019 Robustness evaluation of computer-aided clinical trials for medical devices. In Proc. of the Int. Conf. on Cyber-Physical Systems ICCPS ’19, pp. 163–173. New York, NY: ACM .
+- Haddad T , Himes A , Thompson L , Irony T , Nair R , on Behalf of MDIC Computer Modeling, Participants SWG . 2017 Incorporation of stochastic engineering models as prior information in Bayesian medical device trials . J. Biopharm. Stat. , 27 , 1089 – 1103 . ( doi:10.1080/10543406.2017.1300907 )
+- Gosselin MC et al. 2014 Development of a new generation of high-resolution anatomical models for medical device evaluation: the virtual population 3.0 . Phys. Med. Biol. , 59 , 5287 – 5303 . ( doi:10.1088/0031-9155/59/18/5287 )
+- Morrison TM , Pathmanathan P , Adwan M , Margerrison E . 2018 Advancing regulatory science with computational modeling for medical devices at the FDA’s office of science and engineering laboratories . Front. Med. , 5 , 241 . ( doi:10.3389/fmed.2018.00241 )
+- Alawad M , Wang L . 2018 Learning domain shift in simulated and clinical data: localizing the origin of ventricular activation from 12-lead electrocardiograms . IEEE Trans. Med. Imaging , 38 , 1172 – 1184 . ( doi:10.1109/TMI.2018.2880092 )
+- Viceconti M , Henney A , Morley-Fletcher E . 2016 In silico clinical trials: how computer simulation will transform the biomedical industry . Int. J. Clin. Trials , 3 , 37 – 46 . ( doi:10.18203/2349-3259.ijct20161408 )
+- Walmsley J , Rodriguez JF , Mirams GR , Burrage K , Efimov IR , Rodriguez B . 2013 mRNA expression levels in failing human hearts predict cellular electrophysiological remodeling: a population-based simulation study . PLoS ONE , 8 , e56359 . ( doi:10.1371/journal.pone.0056359 )
+- Smirnov D , Syunyaev R , Deviatiiarov R , Gusev O , Aras K , Koppel A , Efimov I . 2019 Genetic algorithm-based personalized models of human cardiac action potential . bioRxiv 712406 . ( doi:10.1101/712406 )
+- Tan PM , Buchholz KS , Omens JH , McCulloch AD , Saucerman JJ . 2017 Predictive model identifies key network regulators of cardiomyocyte mechano-signaling . PLoS Comput. Biol. , 13 , 1 – 17 . ( doi:10.1371/journal.pcbi.1005854 )
+- Behradfar E , Nygren A , Vigmond EJ . 2014 The role of purkinje-myocardial coupling during ventricular arrhythmia: a modeling study . PLoS ONE , 9 , 1 – 9 . ( doi:10.1371/journal.pone.0088000 )
+- Quaglino A , Pezzuto S , Koutsourelakis PS , Auricchio A , Krause R . 2018 Fast uncertainty quantification of activation sequences in patient-specific cardiac electrophysiology meeting clinical time constraints . Int. J. Numer. Methods Biomed. Eng. , 34 , e2985 . ( doi:10.1002/cnm.2985 )
+- Campos JO , Sundnes J , Rocha BM . 2019 Effects of left ventricle wall thickness uncertainties on cardiac mechanics . Biomech. Model. Mechanobiol. , 18 , 1415 – 1427 . ( doi:10.1007/s10237-019-01153-1 )
+- Ulysses JN , Berg LA , Cherry EM , Liu BR , de Barros BG , Rocha BM , de Queiroz RA . 2018 An optimization-based algorithm for the construction of cardiac purkinje network models . IEEE Trans. Biomed. Eng. , 65 , 2760 – 2768 . ( doi:10.1109/TBME.2018.2815504 )
+- Rutherford SL , Trew ML , Sands GB , LeGrice IJ , Smaill BH . 2012 High-resolution 3-dimensional reconstruction of the infarct border zone . Circ. Res. , 111 , 301 – 311 . ( doi:10.1161/CIRCRESAHA.111.260943 )
+- Kazbanov IV , Ten Tusscher KH , Panfilov AV . 2016 Effects of heterogeneous diffuse fibrosis on arrhythmia dynamics and mechanism . Sci. Rep. , 6 , 20835 . ( doi:10.1038/srep20835 )
+- Sengupta PP , Chandrashekhar Y . 2019 The new wave of cardiovascular biomechanics . JACC: Cardiovasc. Imaging , 12 , 1297 – 1299 . ( doi:10.1016/j.jcmg.2019.05.013 )

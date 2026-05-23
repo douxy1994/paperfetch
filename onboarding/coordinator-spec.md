@@ -23,20 +23,20 @@ python3 scripts/onboard_from_manifests.py repair-markdown-quality --provider <na
 python3 scripts/onboard_from_manifests.py advance --provider <name> --task <task-id>
 ```
 
-`PROVIDER_ONBOARDING_AGENT_CLI` records the operator-selected coding agent CLI. `start` only writes task DAG, task brief, verification plan, and coordinator state. `run` may call that local CLI through subprocess with prompt stdin, but must not call an LLM SDK or vendor client.
+Worker dispatch defaults to the local Codex CLI: `codex exec --cd <repo-root> --sandbox workspace-write -c approval_policy="never" -`. `PROVIDER_ONBOARDING_AGENT_CLI` records an operator-selected override when set. `start` only writes task DAG, task brief, verification plan, and coordinator state. `run` may call the resolved local CLI through subprocess with prompt stdin, but must not call an LLM SDK or vendor client.
 
 ## Runtime
 
 - Coordinator is one long-running coding agent CLI session.
 - Worker is one child agent task with isolated context and no commit right.
-- Worker dispatch uses the selected coding agent CLI; `run` invokes only `PROVIDER_ONBOARDING_AGENT_CLI` and stores prompt/stdout/stderr logs under `<output-dir>/workers/`.
+- Worker dispatch uses the resolved coding agent CLI; `run` uses local `codex exec` by default, or `PROVIDER_ONBOARDING_AGENT_CLI` when the operator sets it, and stores prompt/stdout/stderr logs under `<output-dir>/workers/`.
 - The script must not call any LLM SDK or vendor client.
 - The script must not run a GitHub Actions matrix.
 - Provider onboarding is serial across providers.
 - Task execution is serial inside one provider.
 - One coordinator state file may contain at most one provider with `status: in_progress`.
 - Worker output remains in the workspace; coordinator owns verification, shared-file updates, and commit preparation.
-- Markdown quality fresh review and repair also use only `PROVIDER_ONBOARDING_AGENT_CLI`; fresh review logs are written under `.paper-fetch-runs/<provider>-markdown-quality-audit/<doi-slug>/attempt-N/`, and repair prompts/stdout/stderr/changed-path snapshots/briefs/command logs are written under `<output-dir>/markdown-quality/<doi-slug>/attempt-N/`.
+- Markdown quality fresh review and repair use the same resolved dispatcher; fresh review logs are written under `.paper-fetch-runs/<provider>-markdown-quality-audit/<doi-slug>/attempt-N/`, and repair prompts/stdout/stderr/changed-path snapshots/briefs/command logs are written under `<output-dir>/markdown-quality/<doi-slug>/attempt-N/`.
 
 ## Task DAG
 

@@ -15,8 +15,9 @@
 - `scripts/onboard_from_manifests.py run` 会在 `capture-fixtures` 后固定执行 `propose-cleaning-chain`，调用 `scripts/propose_cleaning_chain.py --provider <provider> --write` 生成 compact proposal 和 full evidence。
 - `scripts/onboard_from_manifests.py diagnose` 可只读分诊 blocked state；`resume-blocked --dry-run` 只输出续跑计划；非 dry-run 只在 retryable failure 且 access review 已批准、无 operator-only blocker 时复用现有 runner 续跑。
 - `scripts/onboard_from_manifests.py summarize --provider <provider>` 可从 state、manifest、access review、review artifact 和真实 run records 合成 JSON/Markdown operator digest。
-- `scripts/onboard_from_manifests.py check-snapshot --provider <provider> --doi <doi>` 每次通过 `PROVIDER_ONBOARDING_AGENT_CLI` 重新读取当前 `extracted.md`，写入 fresh Markdown quality report；fresh blocking issue 会阻断，即使旧 `markdown-quality.json` 是 pass。
+- `scripts/onboard_from_manifests.py check-snapshot --provider <provider> --doi <doi>` 每次通过默认本机 Codex CLI 或 `PROVIDER_ONBOARDING_AGENT_CLI` override 重新读取当前 `extracted.md`，写入 fresh Markdown quality report；fresh blocking issue 会阻断，即使旧 `markdown-quality.json` 是 pass。
 - `scripts/onboard_from_manifests.py repair-markdown-quality --provider <provider> --doi <doi>` 可把 fresh review 或持久 `markdown-quality.json` 暴露的 blocking issue 转成最多 3 轮修复闭环：派发实现 agent、运行 provider-local 验证和 snapshot、再派发 quality review agent 写回 pass/fail。
+- `tests/unit/test_provider_asset_contract.py` 可自动验证 manifest `asset_contract.figures`、正文图片位置，以及 `download: required` provider-local marker 是否包含真实下载断言。
 - `scripts/run_provider_drift_report.py` 可本地手动生成 route-source drift report；fake runner 可单测 schema，真实 runner 需要 `PAPER_FETCH_RUN_LIVE=1`。
 - `scripts/manifest_sync_back.py --sync-docs` 从 manifest docs facts 同步 `known-providers.yml`、provider matrix、extraction rules marker row 和 changelog marker entry。
 
@@ -28,6 +29,7 @@
 - `markdown_semantic_reviewed: true` 不能由 bootstrap 自动设置；最终 Markdown 语义审查签字必须来自 worker/operator 的真实阅读结论。
 - cleaning proposal 只能生成建议和风险报告，不直接修改 provider implementation，也不更新 `markdown_semantic_reviewed`。Implementation worker 只接收 compact proposal；full evidence artifact 留给 coordinator/operator 复核。
 - markdown quality repair 可以更新 `markdown_quality_sha256` / snapshot hash，但不得把 `markdown_semantic_reviewed` 自动改为 true；最终语义签字仍归 operator。
+- figure asset 语义不能由脚本自动豁免；无正文内联图、无本地下载路径、只保留 caption appendix 或没有下载测试 marker 时必须回到实现/manifest 修复，只有 text-only、不可下载或 access/empty-shell 类样本可写明 `not_applicable` 原因。
 - worker 不得修改 shared docs、central provider logic 或未授权路径；runner 会用 git changed-path diff 检测 forbidden writes。
 - GitHub CI 不由 onboarding runner 触发；本地 gate 只运行 repo-local commands。
 
@@ -67,7 +69,7 @@ python3 scripts/onboard_from_manifests.py repair-markdown-quality \
 
 ## Worker Dispatch 契约
 
-- runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用外部本地 agent CLI，不接入 LLM SDK。
+- runner 默认通过本机 `codex exec --cd <repo-root> --sandbox workspace-write -c approval_policy="never" -` 调用 coding-agent-subagent；`PROVIDER_ONBOARDING_AGENT_CLI` 仅作为 operator override。脚本不接入 LLM SDK。
 - prompt 通过 stdin 输入，内容包含 worker brief、access review、hard constraints，以及 discovery schema 或当前 manifest。
 - 日志写入 `<output-dir>/workers/<task>-attempt-N.{prompt.md,stdout.log,stderr.log}`。
 - 调用前后读取 git changed paths；新增 forbidden path 变更会以 `WORKER_MODIFIED_FORBIDDEN_FILE` 失败。

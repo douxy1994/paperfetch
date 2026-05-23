@@ -126,10 +126,16 @@ markdown_contract:
   pdf_fallback:
     doi: 10.1098/rsta.2020.0108
     must_include:
-    - '#'
-    - Royal Society
+    - '# Topics in the mathematical design of materials'
+    - '## Abstract'
+    - '## 1. Introduction'
+    - '## References'
+    - Warburg E. 1881 Magnetische untersuchungen
+    - Brezis H, Coron JM, Lieb EH. 1986
     must_not_include:
     - Access Denied
+    - Published by the Royal Society. All rights reserved
+    - Peking University Library
 asset_profile:
   none: []
   body:
@@ -141,6 +147,13 @@ asset_profile:
   - body_tables
   - formula_images
   - supplementary
+asset_contract:
+  figures:
+    inline: body
+    download: required
+    purposes:
+    - figure
+    exception_reason: null
 supplementary_scope:
   selector: .article-body
   url_pattern: /article-supplement/

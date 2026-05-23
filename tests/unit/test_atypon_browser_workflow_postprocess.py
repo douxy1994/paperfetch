@@ -399,6 +399,85 @@ class AtyponBrowserWorkflowPostprocessTests(unittest.TestCase):
             injected.index("**Figure 2.** Caption body."),
         )
 
+    def test_inject_inline_figure_links_falls_back_to_first_body_reference(self) -> None:
+        markdown = "\n\n".join(
+            [
+                "# Figure Link Example",
+                "## Abstract",
+                "The graphical summary in Figure 1 is front matter and should not receive the image.",
+                "## Results",
+                "The main comparison appears in figures 1 and 2.",
+                "Additional text mentions Fig. 2 again.",
+                "## References",
+                "Reference title mentioning Figure 1.",
+                "## Figures",
+                "- Figure captions are listed here.",
+            ]
+        )
+
+        injected = inject_inline_figure_links(
+            markdown,
+            figure_assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 1",
+                    "path": "downloads/figure1.png",
+                    "section": "body",
+                },
+                {
+                    "kind": "figure",
+                    "heading": "Figure 2",
+                    "path": "downloads/figure2.png",
+                    "section": "body",
+                },
+            ],
+            clean_markdown_fn=lambda value: value,
+        )
+
+        self.assertIn("![Figure 1](downloads/figure1.png)", injected)
+        self.assertIn("![Figure 2](downloads/figure2.png)", injected)
+        self.assertLess(
+            injected.index("The main comparison appears in figures 1 and 2."),
+            injected.index("![Figure 1](downloads/figure1.png)"),
+        )
+        self.assertLess(
+            injected.index("![Figure 2](downloads/figure2.png)"),
+            injected.index("Additional text mentions Fig. 2 again."),
+        )
+        self.assertLess(
+            injected.index("![Figure 1](downloads/figure1.png)"),
+            injected.index("## References"),
+        )
+
+    def test_inject_inline_figure_links_caption_block_takes_priority_over_body_reference(self) -> None:
+        markdown = "\n\n".join(
+            [
+                "# Figure Link Example",
+                "## Results",
+                "The first paragraph mentions Figure 3 before the caption.",
+                "**Figure 3.** Caption body.",
+            ]
+        )
+
+        injected = inject_inline_figure_links(
+            markdown,
+            figure_assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 3",
+                    "path": "downloads/figure3.png",
+                    "section": "body",
+                }
+            ],
+            clean_markdown_fn=lambda value: value,
+        )
+
+        self.assertEqual(injected.count("![Figure 3](downloads/figure3.png)"), 1)
+        self.assertLess(
+            injected.index("![Figure 3](downloads/figure3.png)"),
+            injected.index("**Figure 3.** Caption body."),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

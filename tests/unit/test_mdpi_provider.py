@@ -559,6 +559,8 @@ class MdpiProviderTests(AtyponBrowserWorkflowProviderTestCase):
     def test_mdpi_download_related_assets_uses_browser_image_fetcher_after_http_403(
         self,
     ) -> None:
+        """asset-download-contract: provider=mdpi"""
+
         figure_url = "https://www.mdpi.com/images/f1.png"
         html = f"""
 <html><body><article><div id="article-contents">
@@ -617,6 +619,7 @@ class MdpiProviderTests(AtyponBrowserWorkflowProviderTestCase):
                 tmpdir,
                 asset_profile="body",
             )
+            saved_bytes = Path(result["assets"][0]["path"]).read_bytes()
 
         mocked_builder.assert_called_once()
         shared_fetcher.assert_called_once()
@@ -624,7 +627,9 @@ class MdpiProviderTests(AtyponBrowserWorkflowProviderTestCase):
         self.assertEqual(transport.calls, [])
         self.assertEqual(len(result["assets"]), 1)
         self.assertEqual(result["assets"][0]["download_tier"], "preview")
+        self.assertEqual(result["assets"][0]["downloaded_bytes"], len(png_header(640, 480)))
         self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(saved_bytes, png_header(640, 480))
 
     def test_mdpi_asset_partial_warning_is_only_emitted_by_artifacts(self) -> None:
         client = MdpiClient(transport=None, env={})

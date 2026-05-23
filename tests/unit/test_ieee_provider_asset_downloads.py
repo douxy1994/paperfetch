@@ -155,6 +155,8 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
             any(call.kwargs["headers"].get("Referer") == landing_url for call in mocked_opener.call_args_list)
         )
     def test_ieee_download_related_assets_downloads_mediastore_gifs_without_support_icon_failure(self) -> None:
+        """asset-download-contract: provider=ieee"""
+
         doi = "10.1109/ACCESS.2024.3352924"
         article_number = "10388355"
         landing_url = f"https://ieeexplore.ieee.org/document/{article_number}/"

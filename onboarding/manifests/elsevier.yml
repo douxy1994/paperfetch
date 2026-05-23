@@ -104,6 +104,13 @@ asset_profile:
   none: []
   body: []
   all: []
+asset_contract:
+  figures:
+    inline: body
+    download: not_applicable
+    purposes:
+      - figure
+    exception_reason: "Elsevier XML fixtures validate inline figure placement, but the manifest disables body asset downloads because official asset retrieval depends on object-reference API payloads not exposed as onboarding body assets."
 supplementary_scope:
   selector: null
   url_pattern: null

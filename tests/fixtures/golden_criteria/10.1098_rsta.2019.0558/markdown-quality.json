@@ -1,14 +1,16 @@
 {
   "blocking_issue_count": 0,
   "doi": "10.1098/rsta.2019.0558",
+  "fresh_review": true,
   "issues": [],
   "markdown_path": "tests/fixtures/golden_criteria/10.1098_rsta.2019.0558/extracted.md",
   "prompt_path": "tests/fixtures/golden_criteria/10.1098_rsta.2019.0558/markdown-quality-prompt.md",
   "provider": "royalsocietypublishing",
   "review_method": "agent_prompt",
-  "reviewed_at": "2026-05-23T00:00:00Z",
-  "reviewed_by": "codex-agent",
+  "reviewed_at": "2026-05-23T10:00:00Z",
+  "reviewed_by": "codex",
   "sample_id": "10.1098_rsta.2019.0558",
   "schema_version": 2,
+  "source_markdown_sha256": "50f2ad90c97793ef16d07b35495f3c45145f49ab07e7eeef6b43ed23274e4c05",
   "status": "pass"
 }

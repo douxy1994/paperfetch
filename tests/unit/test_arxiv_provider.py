@@ -1799,6 +1799,8 @@ class ArxivProviderTests(unittest.TestCase):
     def test_html_route_recovers_missing_official_html_images_from_source_archive(
         self,
     ) -> None:
+        """asset-download-contract: provider=arxiv"""
+
         arxiv_id = "2605.06556v1"
         metadata = _metadata(arxiv_id)
         html_body = _fixture_html(arxiv_id).replace(
@@ -1837,6 +1839,7 @@ class ArxivProviderTests(unittest.TestCase):
                 metadata["doi"], metadata, Path(tmpdir), asset_profile="body"
             )
             self.assertEqual(result.content.route_kind, "html")
+            self.assertTrue(result.artifacts.assets)
             self.assertEqual(len(result.article.assets), 1)
             asset = result.article.assets[0]
             self.assertEqual(asset.download_tier, "arxiv_source")

@@ -846,7 +846,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 
 - routing: 通过 `10.1098/` DOI prefix、`royalsocietypublishing.org` domain 和 Royal Society publisher alias 命中。
 - waterfall: direct `/doi/{doi}` HTML 跟随 Silverchair article redirect；HTML 不可用时尝试 `citation_pdf_url` 或 `/doi/pdf/{doi}`；两条全文路线都失败时交给 metadata-only fallback。
-- asset_profile: HTML 路线使用 article-scoped body assets，`all` 额外保留 `/article-supplement/` supplementary 链接；PDF fallback 是 text-only。
+- asset_profile: HTML 路线使用 article-scoped body assets，并从 Silverchair `div.fig-section` 保留 figure caption；`all` 额外保留 `/article-supplement/` supplementary 链接；PDF fallback 是 text-only，会从 PDF front matter 恢复标题、作者和摘要，解析 PDF references 到 Article metadata，并清理 citation/sidebar/license 前置信息、Royal Society 下载水印、页码、空代码 fence 和图片占位符。
 - status: 不需要 Playwright、CloakBrowser 或 provider credential；`citation_xml_url` 会回到 HTML/站点路由，不作为 XML route 使用。
 
 <!-- SCAFFOLD: provider-docs -->

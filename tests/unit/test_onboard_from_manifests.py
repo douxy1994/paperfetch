@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 import argparse
@@ -38,6 +39,44 @@ def run_cli(*args: str) -> subprocess.CompletedProcess[str]:
         cwd=REPO_ROOT,
         text=True,
         capture_output=True,
+    )
+
+
+def _write_executable(path: Path, content: str) -> Path:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(f"#!{sys.executable}\n{content.lstrip()}", encoding="utf-8")
+    path.chmod(0o755)
+    return path
+
+
+def _prepend_path(monkeypatch: pytest.MonkeyPatch, path: Path) -> None:
+    current = os.environ.get("PATH")
+    value = str(path) if not current else f"{path}{os.pathsep}{current}"
+    monkeypatch.setenv("PATH", value)
+
+
+def _write_fake_codex_wrapper(bin_dir: Path, agent: Path, *, repo_root: Path = REPO_ROOT) -> Path:
+    return _write_executable(
+        bin_dir / "codex",
+        f"""
+from __future__ import annotations
+
+import runpy
+import sys
+
+assert sys.argv[1:] == [
+    "exec",
+    "--cd",
+    {str(repo_root)!r},
+    "--sandbox",
+    "workspace-write",
+    "-c",
+    'approval_policy="never"',
+    "-",
+]
+sys.argv = [{str(agent)!r}]
+runpy.run_path({str(agent)!r}, run_name="__main__")
+""",
     )
 
 
@@ -179,6 +218,10 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     assert (
         "PYTHONPATH=src python3 -m pytest "
         "tests/unit/test_provider_markdown_review_contract.py -q"
+    ) in implement_brief["acceptance"]["pytest"]
+    assert (
+        "PYTHONPATH=src python3 -m pytest "
+        "tests/unit/test_provider_asset_contract.py -q"
     ) in implement_brief["acceptance"]["pytest"]
     assert (
         "PYTHONPATH=src python3 -m pytest "
@@ -397,6 +440,15 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         "-q",
     ]
     assert markdown_contract_command in implement_commands
+    asset_contract_command = [
+        "PYTHONPATH=src",
+        "python3",
+        "-m",
+        "pytest",
+        "tests/unit/test_provider_asset_contract.py",
+        "-q",
+    ]
+    assert asset_contract_command in implement_commands
     route_contract_command = [
         "PYTHONPATH=src",
         "python3",
@@ -454,6 +506,7 @@ def test_verify_plan_uses_existing_tool_interfaces(tmp_path: Path) -> None:
         "--check-contract",
     ] in local_acceptance_commands
     assert markdown_contract_command in local_acceptance_commands
+    assert asset_contract_command in local_acceptance_commands
     assert route_contract_command in local_acceptance_commands
     assert [
         "PAPER_FETCH_RUN_LIVE=1",
@@ -610,6 +663,17 @@ def test_run_dispatches_worker_through_agent_cli(
     tmp_path: Path,
     monkeypatch,
 ) -> None:
+    codex_marker = tmp_path / "codex-called.txt"
+    _write_executable(
+        tmp_path / "bin" / "codex",
+        f"""
+from pathlib import Path
+import sys
+
+Path({str(codex_marker)!r}).write_text("called", encoding="utf-8")
+sys.exit(13)
+""",
+    )
     fake_agent = tmp_path / "fake_agent.py"
     fake_agent.write_text(
         """
@@ -625,6 +689,7 @@ print("worker ok")
     )
     state_path = tmp_path / "state.json"
     output_dir = tmp_path / "run"
+    _prepend_path(monkeypatch, tmp_path / "bin")
     monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
 
     result = run_cli(
@@ -647,6 +712,72 @@ print("worker ok")
     assert (
         output_dir / "workers" / "discover-manifest-attempt-1.stdout.log"
     ).read_text(encoding="utf-8") == "worker ok\n"
+    assert not codex_marker.exists()
+
+
+def test_run_uses_default_codex_dispatcher_when_agent_cli_env_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    record_path = tmp_path / "codex-record.json"
+    _write_executable(
+        tmp_path / "bin" / "codex",
+        f"""
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+prompt = sys.stdin.read()
+Path({str(record_path)!r}).write_text(
+    json.dumps({{"argv": sys.argv[1:], "prompt": prompt}}, indent=2, sort_keys=True) + "\\n",
+    encoding="utf-8",
+)
+assert sys.argv[1:] == [
+    "exec",
+    "--cd",
+    {str(REPO_ROOT)!r},
+    "--sandbox",
+    "workspace-write",
+    "-c",
+    'approval_policy="never"',
+    "-",
+]
+assert "mdpi-discover-manifest" in prompt
+print("codex worker ok")
+""",
+    )
+    state_path = tmp_path / "state.json"
+    output_dir = tmp_path / "run"
+    monkeypatch.delenv("PROVIDER_ONBOARDING_AGENT_CLI", raising=False)
+    _prepend_path(monkeypatch, tmp_path / "bin")
+
+    result = run_cli(
+        "run",
+        "--provider",
+        "mdpi",
+        "--domain",
+        "mdpi.com",
+        "--until",
+        "discover-manifest",
+        "--state",
+        str(state_path),
+        "--output-dir",
+        str(output_dir),
+    )
+    payload = json.loads(result.stdout)
+    record = json.loads(record_path.read_text(encoding="utf-8"))
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert payload["executed"] == ["operator-access-preflight", "discover-manifest"]
+    assert record["argv"][0] == "exec"
+    assert record["argv"][-1] == "-"
+    assert "mdpi-discover-manifest" in record["prompt"]
+    assert state["agent_cli"].startswith("codex exec --cd ")
+    assert (
+        output_dir / "workers" / "discover-manifest-attempt-1.stdout.log"
+    ).read_text(encoding="utf-8") == "codex worker ok\n"
 
 
 def test_run_checks_emits_structured_failure_for_missing_access_review(tmp_path: Path) -> None:
@@ -808,6 +939,31 @@ def test_diagnose_reports_retryable_failure_and_recovery_action(tmp_path: Path) 
     assert "retry budget" in diagnosis["failure"]["action"]
 
 
+def test_diagnose_ignores_stale_failure_for_completed_task(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    _write_blocked_state(
+        state_path,
+        task="snapshot-expected",
+        code="WORKER_AGENT_CLI_MISSING",
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    provider_state = state["providers"]["mdpi"]
+    provider_state["status"] = "merge_ready"
+    provider_state["current_step"] = None
+    provider_state["completed_steps"] = list(provider_state["steps"])
+    provider_state["task_statuses"] = {step: "completed" for step in provider_state["steps"]}
+    state["active_provider"] = None
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = run_cli("diagnose", "--provider", "mdpi", "--state", str(state_path))
+    diagnosis = json.loads(result.stdout)["providers"][0]
+
+    assert diagnosis["status"] == "merge_ready"
+    assert diagnosis["failure"]["task"] is None
+    assert diagnosis["failure"]["code"] is None
+    assert diagnosis["operator_required"] is False
+
+
 def test_markdown_contract_drift_recovery_targets_implementation(tmp_path: Path) -> None:
     state_path = tmp_path / "state.json"
     _write_blocked_state(
@@ -887,6 +1043,56 @@ def test_resume_blocked_executes_retryable_prefix_after_preconditions(tmp_path: 
     assert provider_state["status"] == "in_progress"
     assert provider_state["task_statuses"]["operator-access-preflight"] == "completed"
     assert provider_state["task_statuses"]["discover-manifest"] == "in_progress"
+
+
+def test_run_refuses_merge_ready_state_with_failed_task(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    _write_blocked_state(
+        state_path,
+        provider="mdpi",
+        task="snapshot-expected",
+        code="WORKER_AGENT_FAILED",
+    )
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    provider_state = state["providers"]["mdpi"]
+    steps = provider_state["steps"]
+    provider_state["status"] = "merge_ready"
+    provider_state["current_step"] = None
+    provider_state["completed_steps"] = [step for step in steps if step != "snapshot-expected"]
+    provider_state["task_statuses"] = {step: "completed" for step in steps}
+    provider_state["task_statuses"]["snapshot-expected"] = "failed"
+    state["active_provider"] = None
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            str(SCRIPT_PATH),
+            "run",
+            "--manifest",
+            "onboarding/manifests/mdpi.yml",
+            "--until",
+            "merge-ready",
+            "--state",
+            str(state_path),
+            "--output-dir",
+            str(tmp_path / "run"),
+        ],
+        check=False,
+        cwd=REPO_ROOT,
+        text=True,
+        capture_output=True,
+    )
+    payload = json.loads(result.stderr)
+    updated = json.loads(state_path.read_text(encoding="utf-8"))
+    updated_provider = updated["providers"]["mdpi"]
+
+    assert result.returncode != 0
+    assert payload["code"] == "WORKER_AGENT_FAILED"
+    assert updated["active_provider"] == "mdpi"
+    assert updated_provider["status"] == "blocked"
+    assert updated_provider["current_step"] == "snapshot-expected"
+    assert updated_provider["task_statuses"]["snapshot-expected"] == "failed"
 
 
 def test_summarize_outputs_json_and_markdown_without_fabricated_passes(tmp_path: Path) -> None:
@@ -1136,6 +1342,30 @@ def test_check_snapshot_requires_prompt_asset_and_agent_pass_report(
     assert failed.value.details["issues"][0]["id"] == "broken-table"
 
 
+def test_check_snapshot_uses_default_codex_dispatcher_for_fresh_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    fake_agent = _write_fake_fresh_quality_agent(tmp_path)
+    _write_fake_codex_wrapper(tmp_path / "bin", fake_agent, repo_root=tmp_path)
+    monkeypatch.delenv("PROVIDER_ONBOARDING_AGENT_CLI", raising=False)
+    _prepend_path(monkeypatch, tmp_path / "bin")
+    _write_check_snapshot_fixture(tmp_path)
+
+    assert module.run_check_snapshot(argparse.Namespace(provider="newpub", doi="10.1234/sample")) == 0
+
+    fresh_reports = list(
+        (tmp_path / ".paper-fetch-runs" / "newpub-markdown-quality-audit").glob(
+            "10.1234_sample/attempt-*/fresh-markdown-quality.json"
+        )
+    )
+    assert len(fresh_reports) == 1
+    report = json.loads(fresh_reports[0].read_text(encoding="utf-8"))
+    assert report["status"] == "pass"
+
+
 def test_check_snapshot_fresh_review_blocks_stale_pass_report(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1300,6 +1530,9 @@ def test_repair_markdown_quality_requires_agent_for_fresh_review(
 ) -> None:
     module = load_script_module("onboard_from_manifests")
     monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    (tmp_path / "empty-bin").mkdir()
+    monkeypatch.delenv("PROVIDER_ONBOARDING_AGENT_CLI", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "empty-bin"))
     _write_repair_fixture(tmp_path, quality_status="pending_agent_review")
 
     with pytest.raises(module.ToolError) as missing_agent:
@@ -1314,6 +1547,8 @@ def test_repair_markdown_quality_requires_agent_for_fresh_review(
         )
 
     assert missing_agent.value.code == "WORKER_AGENT_CLI_MISSING"
+    assert "install codex" in missing_agent.value.message
+    assert missing_agent.value.details["default_dispatcher"].startswith("codex exec")
 
 
 def test_repair_markdown_quality_fake_agent_success_records_state(
@@ -1518,7 +1753,9 @@ print("ok")
         encoding="utf-8",
     )
     snapshots = iter([set(), set(), set(), {"docs/providers.md"}])
-    monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
+    _write_fake_codex_wrapper(tmp_path / "bin", fake_agent, repo_root=tmp_path)
+    monkeypatch.delenv("PROVIDER_ONBOARDING_AGENT_CLI", raising=False)
+    monkeypatch.setenv("PATH", str(tmp_path / "bin"))
     monkeypatch.setattr(module, "_workspace_changed_paths", lambda: next(snapshots))
 
     with pytest.raises(module.ToolError) as forbidden:

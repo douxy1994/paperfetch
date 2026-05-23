@@ -126,6 +126,13 @@ asset_profile:
     - body_tables
     - formula_images
     - supplementary
+asset_contract:
+  figures:
+    inline: body
+    download: required
+    purposes:
+      - figure
+    exception_reason: null
 supplementary_scope:
   selector: "#support-information-section"
   url_pattern: "/action/downloadSupplement"

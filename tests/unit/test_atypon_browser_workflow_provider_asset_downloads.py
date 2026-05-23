@@ -28,7 +28,104 @@ class _ProviderFakeBrowserContext:
 
 
 class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProviderTestCase):
+    def test_ams_provider_download_related_assets_downloads_full_size_figure(self) -> None:
+        """asset-download-contract: provider=ams"""
+
+        landing_url = "https://journals.ametsoc.org/view/journals/clim/37/24/JCLI-D-23-0738.1.xml"
+        figure_url = "https://journals.ametsoc.org/view/journals/clim/37/24/full-JCLI-D-23-0738.1-f1.jpg"
+        preview_url = "https://journals.ametsoc.org/view/journals/clim/37/24/inline-JCLI-D-23-0738.1-f1.jpg"
+        image_body = png_header(640, 480)
+        html = f"""
+<article>
+  <section id="bodymatter">
+    <h2>Results</h2>
+    <p>{"Body text " * 80}</p>
+    <p>Figure 1 summarizes the observed circulation response.</p>
+    <figure>
+      <a class="figure-link">
+        <img data-image-src="{preview_url}" src="/skin/site/img/Blank.svg" alt="Fig. 1." />
+      </a>
+      <pf-box class="figure-popover">
+        <img data-image-src="{figure_url}" src="/skin/site/img/Blank.svg" alt="Fig. 1." />
+      </pf-box>
+      <figcaption><b>Fig. 1.</b> Circulation response.</figcaption>
+    </figure>
+  </section>
+</article>
+"""
+        transport = AssetTransport({})
+        client = ams_provider.AmsClient(transport=transport, env={})
+        shared_fetcher = mock.Mock(
+            return_value={
+                "status_code": 200,
+                "headers": {"content-type": "image/png"},
+                "body": image_body,
+                "url": figure_url,
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = self._runtime_config(tmpdir, "ams", "10.1175/jcli-d-23-0738.1")
+            raw_payload = _typed_raw_payload(
+                provider="ams",
+                source_url=landing_url,
+                content_type="text/html",
+                body=html.encode("utf-8"),
+                route="html",
+                markdown_text=(
+                    "# AMS Figure\n\n## Results\n\n"
+                    "Figure 1 summarizes the observed circulation response.\n\n"
+                    f"![Figure 1]({figure_url})\n\n"
+                    "**Figure 1.** Circulation response."
+                ),
+                browser_context_seed={},
+            )
+            mocked_builder = mock.Mock(return_value=shared_fetcher)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                _build_shared_browser_image_fetcher=mocked_builder,
+            )
+            with (
+                mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
+                mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
+            ):
+                result = client.download_related_assets(
+                    "10.1175/jcli-d-23-0738.1",
+                    {"doi": "10.1175/jcli-d-23-0738.1", "title": "AMS Figure"},
+                    raw_payload,
+                    Path(tmpdir),
+                    asset_profile="body",
+                )
+                saved_path = Path(result["assets"][0]["path"])
+                saved_exists = saved_path.is_file()
+                saved_bytes = saved_path.read_bytes()
+                article = client.to_article_model(
+                    {"doi": "10.1175/jcli-d-23-0738.1", "title": "AMS Figure"},
+                    raw_payload,
+                    downloaded_assets=result["assets"],
+                    asset_failures=result["asset_failures"],
+                )
+                rendered = article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
+
+        mocked_builder.assert_called_once()
+        mocked_opener.assert_not_called()
+        mocked_request.assert_not_called()
+        shared_fetcher.assert_called_once()
+        self.assertEqual(shared_fetcher.call_args.args[0], figure_url)
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(len(result["assets"]), 1)
+        self.assertEqual(result["assets"][0]["kind"], "figure")
+        self.assertEqual(result["assets"][0]["downloaded_bytes"], len(image_body))
+        self.assertEqual(saved_bytes, image_body)
+        self.assertTrue(saved_exists)
+        self.assertIn(f"![Figure 1]({saved_path})", rendered)
+        self.assertNotIn(figure_url, rendered)
+
     def test_science_provider_download_related_assets_body_profile_ignores_supplementary(self) -> None:
+        """asset-download-contract: provider=science"""
+
         html = """
 <article>
   <figure>
@@ -394,7 +491,9 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         self.assertEqual(result["assets"][0]["download_tier"], "preview")
         self.assertEqual(saved_bytes, png_header(320, 240))
     def test_pnas_provider_download_related_assets_uses_shared_browser_primary_path_before_preview(self) -> None:
-        """rule: rule-browser-primary-image-download-path"""
+        """rule: rule-browser-primary-image-download-path
+        asset-download-contract: provider=pnas
+        """
         figure_page_url = "https://www.pnas.org/figures/figure-1"
         preview_url = "https://www.pnas.org/images/preview/figure1.png"
         full_size_url = "https://www.pnas.org/images/original/figure1.png"

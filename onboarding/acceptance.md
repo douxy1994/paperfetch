@@ -16,6 +16,8 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 - `structure`, `figure`, and `references` DOI values are non-null.
 - Every `main_path` step has a `route_contract` entry with non-empty success requirements.
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_route_contract.py -q`
+- Every manifest defines `asset_contract.figures`; non-null figure-capable routes use `inline: body` and `download: required`, while `not_applicable` is allowed only with a concrete exception reason.
+- `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_asset_contract.py -q`
 - Every non-null fixture purpose has a matching `markdown_contract` entry with positive and negative Markdown assertions.
 - Capture failures use structured JSON stderr with `code` from `failure-recovery.md`.
 - `UNSUITABLE_DOI_SAMPLE` changes only `fixtures.doi_samples.<purpose>` for the failed purpose.
@@ -35,7 +37,7 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 - New provider integration must be synchronized through the provider fact sources: register a golden corpus adapter when golden replay fixtures exist, expose MCP provider status through the bundle-derived catalog, keep benchmark samples covered for official providers, and let live review support derive from provider capabilities.
 - Shared integration runs after provider implementation and before snapshot generation; coordinator-owned changes must be traced to manifest facts, bundle sync-back, fixture replay, or provider-local test evidence.
 - Local operator acceptance may use `python3 scripts/onboard_from_manifests.py run-checks --provider <provider> --all-local`; this command does not trigger GitHub CI.
-- Full local orchestration may use `python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<provider>.yml --until merge-ready`; worker dispatch must go only through `PROVIDER_ONBOARDING_AGENT_CLI`.
+- Full local orchestration may use `python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<provider>.yml --until merge-ready`; worker dispatch must go only through the resolved local dispatcher: default `codex exec` or `PROVIDER_ONBOARDING_AGENT_CLI` operator override.
 
 ## Markdown Review Gates
 
@@ -48,6 +50,8 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 - Provider-local tests should prefer exact markers of the form `markdown-review: purpose=<purpose> doi=<doi>` next to the assertions generated from `markdown_contract`.
 - Provider-local tests do not contain scaffold skipped placeholders or Markdown review-loop placeholders.
 - Provider-local tests include at least one positive Markdown assertion and at least one negative site-chrome / access-noise / boilerplate assertion.
+- For `asset_contract.figures.inline: body`, `extracted.md` must include a body Markdown image before References/Figures/Supplementary tail sections; a caption-only `## Figures` section is blocking.
+- For `asset_contract.figures.download: required`, provider-local tests must include marker `asset-download-contract: provider=<provider>` and assert actual local file path/bytes plus asset result state.
 - Worker completion summary is secondary; acceptance uses `onboarding/reviews/<provider>.yml` as the durable source.
 
 ## Live Review Gates

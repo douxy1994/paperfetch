@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import re
+import tempfile
 import unittest
+from pathlib import Path
 
 from bs4 import BeautifulSoup
 
@@ -10,6 +12,7 @@ from paper_fetch.providers import springer as springer_provider
 from paper_fetch.extraction.html.tables import render_table_markdown
 from paper_fetch.runtime import RuntimeContext
 from tests.golden_criteria import golden_criteria_asset
+from tests.unit._atypon_browser_workflow_provider_support import png_header
 
 
 SPRINGER_CLASSIC_DOI = "10.1007/s10584-011-0143-4"
@@ -96,6 +99,83 @@ class FakeTransport:
 
 
 class SpringerHtmlTableTests(unittest.TestCase):
+    def test_springer_download_related_assets_downloads_body_figure_and_rewrites_local_path(
+        self,
+    ) -> None:
+        """asset-download-contract: provider=springer"""
+
+        figure_url = (
+            "https://media.springernature.com/full/springer-static/image/"
+            "art%3A10.1038%2Fs43247-024-01295-w/MediaObjects/43247_2024_1295_Fig1_HTML.png"
+        )
+        image_body = png_header(640, 480)
+        responses = {
+            figure_url: {
+                "headers": {"content-type": "image/png"},
+                "body": image_body,
+                "url": figure_url,
+                "status_code": 200,
+            }
+        }
+        transport = FakeTransport(responses)
+        client = springer_provider.SpringerClient(transport=transport, env={})
+        raw_payload = springer_provider.RawFulltextPayload(
+            provider="springer",
+            source_url=SPRINGER_NATURE_LANDING_URL,
+            content_type="text/html",
+            body=b"<html><body><article><p>Figure 1 summarizes the basin response.</p></article></body></html>",
+            content=springer_provider.ProviderContent(
+                route_kind="html",
+                source_url=SPRINGER_NATURE_LANDING_URL,
+                content_type="text/html",
+                body=b"<html></html>",
+                markdown_text=(
+                    f"# {SPRINGER_NATURE_TITLE}\n\n"
+                    "## Results\n\n"
+                    "Figure 1 summarizes the basin response.\n\n"
+                    f"![Figure 1]({figure_url})\n\n"
+                    "**Figure 1.** Basin response."
+                ),
+                extracted_assets=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "caption": "Basin response.",
+                        "url": figure_url,
+                        "section": "body",
+                    }
+                ],
+            ),
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = client.download_related_assets(
+                SPRINGER_NATURE_DOI,
+                {"doi": SPRINGER_NATURE_DOI, "title": SPRINGER_NATURE_TITLE},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="body",
+            )
+            saved_path = Path(result["assets"][0]["path"])
+            saved_exists = saved_path.is_file()
+            saved_bytes = saved_path.read_bytes()
+            article = client.to_article_model(
+                {"doi": SPRINGER_NATURE_DOI, "title": SPRINGER_NATURE_TITLE},
+                raw_payload,
+                downloaded_assets=result["assets"],
+                asset_failures=result["asset_failures"],
+            )
+            rendered = article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
+
+        self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(len(result["assets"]), 1)
+        self.assertEqual(result["assets"][0]["kind"], "figure")
+        self.assertEqual(result["assets"][0]["downloaded_bytes"], len(image_body))
+        self.assertEqual(saved_bytes, image_body)
+        self.assertTrue(saved_exists)
+        self.assertIn(f"![Figure 1]({saved_path})", rendered)
+        self.assertNotIn(figure_url, rendered)
+
     def test_supplementary_section_titles_derive_only_asset_scopes_from_back_matter(
         self,
     ) -> None:

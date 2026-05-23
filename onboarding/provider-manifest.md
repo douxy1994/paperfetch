@@ -17,6 +17,7 @@
 | `markdown_contract` | object | 是 | 每个 non-null fixture purpose 都必须有同名 key | 实现前固定 Markdown 质量断言，供 scaffold 和 review loop 转成 provider-local tests。 |
 | `success_criteria` | object | 是 | step key 到 object / array / `null`；每个 step value 标注 `x-sync-back: true` | 实现完成后由代码侧实际阈值回写。 |
 | `asset_profile` | object | 是 | `none` / `body` / `all` 三组数组，item enum `figures` / `body_tables` / `formula_images` / `supplementary` / `multimedia` | 对齐运行时 asset profile 语义。 |
+| `asset_contract` | object | 是 | 当前必须含 `figures`；见下方 `asset_contract.figures` | 对 figure fixture 固定正文内联和本地下载契约，避免只用 caption 证明资产支持。 |
 | `supplementary_scope` | object | 是 | `selector` / `url_pattern` 可为 string 或 `null` | 描述补充材料的 DOM 或 URL 边界。 |
 | `abstract_only_strategy` | string | 是 | enum `provider_managed` / `metadata_only` / `not_supported` | 对齐 provider-managed fallback 行为。 |
 | `probe` | object | 是 | 见下表 | provider status 和 live 运行依赖的输入。 |
@@ -84,6 +85,19 @@ route_sources:
   article_html: mdpi_html
   pdf_fallback: mdpi_pdf
 ```
+
+## `asset_contract.figures`
+
+`asset_contract.figures` 是 figure fixture 的强制资产验收合同。只要 provider 有 non-null `fixtures.doi_samples.figure.doi` 且 approved 主路线可以获得 figure asset，就必须声明正文内联和下载要求；只有 text-only PDF fallback、abstract-only/access-gate/empty-shell，或确实没有可下载图片时，才允许 `not_applicable`，并必须写明具体 `exception_reason`。
+
+| 字段 | Type | Required | 约束 | 决策依据 |
+|---|---|---:|---|---|
+| `inline` | string | 是 | enum `body` / `not_applicable` | `body` 表示 `extracted.md` 正文中必须出现 `![Figure ...](...)`，位置早于 `## References` / `## Figures` / Supplementary 等尾部 section。 |
+| `download` | string | 是 | enum `required` / `not_applicable` | `required` 表示 provider-local tests 必须实际下载 figure asset 到本地，并断言 path / bytes / asset result state。 |
+| `purposes` | array[string] | 是 | 至少包含有 DOI 的 fixture purpose，通常是 `figure` | 指定哪些 fixture purpose 触发 inline/download 检查。 |
+| `exception_reason` | string/null | 是 | 任一字段为 `not_applicable` 时必须是非空字符串；全部适用时必须为 `null` | 记录无法执行内联或下载契约的可审计原因。 |
+
+正文内联不接受只在文末 `## Figures` 输出 caption bullet；下载契约不接受只保存远程 URL 或只 mock asset metadata，必须验证本地文件落盘、字节数和最终 Markdown 链接 rewrite 到本地 asset path。
 
 ## `markdown_contract`
 
