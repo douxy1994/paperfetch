@@ -90,6 +90,80 @@ def build_markdown_quality_prompt(
     )
 
 
+def build_fresh_markdown_quality_prompt(
+    *,
+    provider: str,
+    doi: str,
+    sample_id: str,
+    markdown_path: str,
+    prompt_path: str,
+    report_path: str,
+    markdown_sha256: str,
+) -> str:
+    """Return a prompt for a fresh machine review of the current Markdown file."""
+
+    report_template = {
+        "schema_version": SCHEMA_VERSION,
+        "review_method": REVIEW_METHOD,
+        "provider": provider,
+        "doi": doi,
+        "sample_id": sample_id,
+        "markdown_path": markdown_path,
+        "prompt_path": prompt_path,
+        "status": "pass",
+        "issues": [],
+        "blocking_issue_count": 0,
+        "reviewed_by": "<agent-or-operator-id>",
+        "reviewed_at": "<UTC ISO-8601 timestamp>",
+        "fresh_review": True,
+        "source_markdown_sha256": markdown_sha256,
+    }
+    return (
+        "# Fresh Markdown Quality Review\n"
+        "\n"
+        "You are independently judging the current extracted Markdown for provider onboarding.\n"
+        "\n"
+        "## Inputs\n"
+        "\n"
+        f"- Provider: `{provider}`\n"
+        f"- DOI: `{doi}`\n"
+        f"- Sample ID: `{sample_id}`\n"
+        f"- Markdown to read now: `{markdown_path}`\n"
+        f"- Markdown SHA-256 at dispatch: `{markdown_sha256}`\n"
+        f"- Standing review instructions: `{prompt_path}`\n"
+        f"- Fresh report to write: `{report_path}`\n"
+        "\n"
+        "## Task\n"
+        "\n"
+        "Open and read the current Markdown file from disk. Ignore any previous "
+        "`markdown-quality.json` conclusion except as historical context if you "
+        "happen to inspect it. The pass/fail decision must come from the current "
+        "`extracted.md` content.\n"
+        "\n"
+        "Judge whether this Markdown is a usable semantic baseline. Blocking "
+        "issues include missing, duplicated, empty, or misplaced title/abstract/body "
+        "sections; publisher chrome or license/download widgets mixed into article "
+        "content; broken tables; orphan rows; malformed formula blocks; formula "
+        "text glued into prose; empty figure/table sections; missing captions; "
+        "missing or DOI-only references; missing back matter; JavaScript links; "
+        "unresolved template text; severe OCR noise; and repeated article fragments.\n"
+        "\n"
+        "## Output JSON Contract\n"
+        "\n"
+        "Write JSON to the fresh report path using this schema. Use `status: \"pass\"` "
+        "only when there are no blocking issues. Use `status: \"fail\"` when one "
+        "or more blocking issues remain, and set `blocking_issue_count` to the "
+        "number of issues whose `blocking` field is `true`.\n"
+        "\n"
+        "```json\n"
+        f"{json.dumps(report_template, indent=2, sort_keys=True)}\n"
+        "```\n"
+        "\n"
+        "Each issue must include `id`, `severity`, `blocking`, and `summary`; add "
+        "`evidence` when a short excerpt or location helps.\n"
+    )
+
+
 def build_pending_markdown_quality_report(
     *,
     provider: str,

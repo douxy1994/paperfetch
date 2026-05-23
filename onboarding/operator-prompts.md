@@ -156,7 +156,7 @@ docs/adding-a-provider.md、README、audit 文件或聊天记录推断 provider 
 7. 优先复用已有 provider 测试断言模式；不要保留 scaffold skipped placeholder 或 review-loop placeholder。
 8. 修复只能写 brief 允许的 provider-owned 文件；不要把清洗规则写到中心模块。
 9. 重复生成 / 阅读 / 写断言 / 修 provider，直到所有 non-null fixture Markdown 干净。
-10. 先按 fixture 目录下的 `markdown-quality-prompt.md` 审查 `extracted.md`，把 `markdown-quality.json` 写成 agent-authored pass/fail 报告；再将最终人工语义审查写入 `onboarding/reviews/<NAME>.yml`，每个 non-null fixture 和 `extra_fixtures` 都要有指向 `extracted.md` 的 `baseline_markdown_path`、`baseline_markdown_sha256`、指向 `markdown-quality.json` 的 `markdown_quality_path`、`markdown_quality_sha256`、`review_notes`、`sample_representative: true`、`markdown_semantic_reviewed: true`、`issues`、`assertions`、`fixes`；`fixes[].issue_ids` 必须引用已有 issue，`fixes[].test_names` 至少列出一个 provider-local 测试。
+10. 先按 fixture 目录下的 `markdown-quality-prompt.md` 审查 `extracted.md`，把 `markdown-quality.json` 写成 agent-authored pass/fail 持久报告；`check-snapshot` 还会重新读取当前 `extracted.md` 做 fresh quality review，旧 JSON pass 不能覆盖 fresh blocking issue。再将最终人工语义审查写入 `onboarding/reviews/<NAME>.yml`，每个 non-null fixture 和 `extra_fixtures` 都要有指向 `extracted.md` 的 `baseline_markdown_path`、`baseline_markdown_sha256`、指向 `markdown-quality.json` 的 `markdown_quality_path`、`markdown_quality_sha256`、`review_notes`、`sample_representative: true`、`markdown_semantic_reviewed: true`、`issues`、`assertions`、`fixes`；`fixes[].issue_ids` 必须引用已有 issue，`fixes[].test_names` 至少列出一个 provider-local 测试。
 
 # 实现约束 (hard-constraints.md §Provider Logic)
 - Provider routing / asset profile / probe / fixture purpose / docs source name

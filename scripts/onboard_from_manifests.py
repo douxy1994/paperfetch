@@ -27,6 +27,7 @@ from _structured_errors import ToolError, emit_error, error_payload  # noqa: E40
 from paper_fetch.markdown_quality import (  # noqa: E402
     PENDING_STATUS,
     blocking_markdown_quality_issues,
+    build_fresh_markdown_quality_prompt,
     validate_markdown_quality_report,
 )
 
@@ -189,6 +190,8 @@ class MarkdownQualityRepairContext(NamedTuple):
     purpose: str | None
     markdown_contract: dict[str, Any]
     quality_report: dict[str, Any]
+    persistent_quality_report: dict[str, Any]
+    fresh_quality_path: Path | None
 
 
 def _provider_slug(provider: str) -> str:
@@ -1253,6 +1256,233 @@ def _read_json_object(path: Path, *, code: str, task_id: str, provider: str | No
     return data
 
 
+def _markdown_quality_report_errors(
+    report: Any,
+    *,
+    markdown_path: Path,
+    prompt_path: Path,
+) -> list[str]:
+    errors = validate_markdown_quality_report(report)
+    if isinstance(report, dict):
+        if report.get("markdown_path") != _rel(markdown_path):
+            errors.append("markdown_path must point to extracted.md")
+        if report.get("prompt_path") != _rel(prompt_path):
+            errors.append("prompt_path must point to markdown-quality-prompt.md")
+    else:
+        errors.append("markdown quality report root must be an object")
+    return errors
+
+
+class FreshMarkdownQualityReview(NamedTuple):
+    report: dict[str, Any]
+    report_path: Path
+    attempt_dir: Path
+
+
+def _fresh_markdown_quality_attempt_dir(
+    *,
+    provider: str,
+    doi: str,
+    output_dir: Path | None,
+) -> Path:
+    base_dir = output_dir or (_repo_root() / f".paper-fetch-runs/{provider}-markdown-quality-audit")
+    if not base_dir.is_absolute():
+        base_dir = _repo_root() / base_dir
+    review_root = base_dir / _doi_slug(doi)
+    existing: list[int] = []
+    if review_root.is_dir():
+        for child in review_root.iterdir():
+            match = re.fullmatch(r"attempt-(\d+)", child.name)
+            if match and child.is_dir():
+                existing.append(int(match.group(1)))
+    return review_root / f"attempt-{max(existing, default=0) + 1}"
+
+
+def _parse_json_object_from_stdout(stdout: str) -> dict[str, Any] | None:
+    stripped = stdout.strip()
+    if not stripped:
+        return None
+    try:
+        payload = json.loads(stripped)
+    except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _run_fresh_markdown_quality_review(
+    *,
+    provider: str,
+    doi: str,
+    sample_id: str,
+    markdown_path: Path,
+    prompt_path: Path,
+    output_dir: Path | None = None,
+    task_id: str | None = None,
+) -> FreshMarkdownQualityReview:
+    provider_name = _provider_slug(provider)
+    normalized_doi = _normalized_doi(doi)
+    argv = _agent_argv(
+        provider=provider_name,
+        task="fresh-markdown-quality-review",
+        manifest=default_manifest_path(provider_name),
+    )
+    attempt_dir = _fresh_markdown_quality_attempt_dir(
+        provider=provider_name,
+        doi=normalized_doi,
+        output_dir=output_dir,
+    )
+    attempt_dir.mkdir(parents=True, exist_ok=True)
+    report_path = attempt_dir / "fresh-markdown-quality.json"
+    prompt = build_fresh_markdown_quality_prompt(
+        provider=provider_name,
+        doi=normalized_doi,
+        sample_id=sample_id,
+        markdown_path=_rel(markdown_path),
+        prompt_path=_rel(prompt_path),
+        report_path=_rel(report_path),
+        markdown_sha256=_sha256_file(markdown_path),
+    )
+    completed, before, after = _run_agent_with_scope(
+        argv=argv,
+        prompt=prompt,
+        attempt_dir=attempt_dir,
+        prefix="fresh-quality-agent",
+        allowed_scope=[_rel(report_path)],
+    )
+    disallowed = _disallowed_changes(before, after, [_rel(report_path)])
+    if disallowed:
+        raise ToolError(
+            "WORKER_MODIFIED_FORBIDDEN_FILE",
+            "fresh markdown quality worker modified files outside its report path.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id or f"{provider_name}-fresh-markdown-quality-review",
+            details={
+                "doi": normalized_doi,
+                "fresh_markdown_quality_path": _rel(report_path),
+                "forbidden_paths": disallowed,
+                "stdout_tail": _tail(completed.stdout),
+                "stderr_tail": _tail(completed.stderr),
+            },
+        )
+    if completed.returncode != 0:
+        raise ToolError(
+            "WORKER_AGENT_FAILED",
+            "fresh markdown quality worker failed.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id or f"{provider_name}-fresh-markdown-quality-review",
+            details={
+                "doi": normalized_doi,
+                "fresh_markdown_quality_path": _rel(report_path),
+                "returncode": completed.returncode,
+                "stdout_tail": _tail(completed.stdout),
+                "stderr_tail": _tail(completed.stderr),
+            },
+        )
+    if not report_path.is_file():
+        stdout_report = _parse_json_object_from_stdout(completed.stdout)
+        if stdout_report is not None:
+            write_text(report_path, json.dumps(stdout_report, indent=2, sort_keys=True) + "\n")
+    if not report_path.is_file():
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "fresh markdown quality worker did not write its report.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id or f"{provider_name}-fresh-markdown-quality-review",
+            details={
+                "doi": normalized_doi,
+                "fresh_markdown_quality_path": _rel(report_path),
+                "stdout_tail": _tail(completed.stdout),
+                "stderr_tail": _tail(completed.stderr),
+            },
+        )
+    try:
+        report = json.loads(report_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "fresh markdown quality report cannot be loaded.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id or f"{provider_name}-fresh-markdown-quality-review",
+            details={
+                "doi": normalized_doi,
+                "fresh_markdown_quality_path": _rel(report_path),
+                "reason": str(exc),
+            },
+        ) from exc
+    validation_errors = _markdown_quality_report_errors(
+        report,
+        markdown_path=markdown_path,
+        prompt_path=prompt_path,
+    )
+    if validation_errors:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "fresh markdown quality report must use the agent_prompt schema v2 contract.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id or f"{provider_name}-fresh-markdown-quality-review",
+            details={
+                "doi": normalized_doi,
+                "fresh_markdown_quality_path": _rel(report_path),
+                "validation_errors": validation_errors,
+            },
+        )
+    return FreshMarkdownQualityReview(
+        report=report,
+        report_path=report_path,
+        attempt_dir=attempt_dir,
+    )
+
+
+def _fresh_markdown_quality_blocking_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
+    blocking = blocking_markdown_quality_issues(report)
+    if blocking:
+        return blocking
+    if report.get("status") == "fail":
+        issues = report.get("issues")
+        return [issue for issue in issues if isinstance(issue, dict)] if isinstance(issues, list) else []
+    return []
+
+
+def _synthetic_persistent_quality_issue(report: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "id": "markdown-quality-report-not-pass",
+        "severity": "high",
+        "blocking": True,
+        "summary": "Persistent markdown-quality.json is not pass for the current fixture.",
+        "evidence": f"status={report.get('status')!r}",
+    }
+
+
+def _effective_markdown_repair_report(
+    *,
+    persistent_report: dict[str, Any],
+    fresh_report: dict[str, Any],
+) -> dict[str, Any]:
+    fresh_issues = _fresh_markdown_quality_blocking_issues(fresh_report)
+    if fresh_report.get("status") != "pass" or fresh_issues:
+        return fresh_report
+    persistent_issues = _markdown_repair_issues(persistent_report)
+    if persistent_report.get("status") != "pass" or persistent_issues:
+        if persistent_issues:
+            return persistent_report
+        report = dict(persistent_report)
+        report["status"] = "fail"
+        report["issues"] = [_synthetic_persistent_quality_issue(persistent_report)]
+        report["blocking_issue_count"] = 1
+        return report
+    return persistent_report
+
+
 def _manifest_fixture_for_doi(
     manifest: dict[str, Any],
     doi: str,
@@ -1282,7 +1512,15 @@ def _manifest_fixture_for_doi(
     return None, {}
 
 
-def _load_markdown_repair_context(provider: str, doi: str) -> MarkdownQualityRepairContext:
+def _load_markdown_repair_context(
+    provider: str,
+    doi: str,
+    *,
+    quality_report_override: dict[str, Any] | None = None,
+    fresh_quality_path: Path | None = None,
+    allow_passing_report: bool = False,
+    allow_pending_report: bool = False,
+) -> MarkdownQualityRepairContext:
     provider_name = _provider_slug(provider)
     normalized_doi = _normalized_doi(doi)
     task_id = f"{provider_name}-{REPAIR_MARKDOWN_QUALITY_STEP}"
@@ -1340,13 +1578,11 @@ def _load_markdown_repair_context(provider: str, doi: str) -> MarkdownQualityRep
         task_id=task_id,
         provider=provider_name,
     )
-    validation_errors = validate_markdown_quality_report(quality)
-    expected_markdown_rel = _rel(markdown_path)
-    expected_prompt_rel = _rel(prompt_path)
-    if quality.get("markdown_path") != expected_markdown_rel:
-        validation_errors.append("markdown_path must point to extracted.md")
-    if quality.get("prompt_path") != expected_prompt_rel:
-        validation_errors.append("prompt_path must point to markdown-quality-prompt.md")
+    validation_errors = _markdown_quality_report_errors(
+        quality,
+        markdown_path=markdown_path,
+        prompt_path=prompt_path,
+    )
     if validation_errors:
         raise ToolError(
             "MARKDOWN_QUALITY_FAILED",
@@ -1361,7 +1597,7 @@ def _load_markdown_repair_context(provider: str, doi: str) -> MarkdownQualityRep
                 "validation_errors": validation_errors,
             },
         )
-    if quality.get("status") == PENDING_STATUS:
+    if quality.get("status") == PENDING_STATUS and not allow_pending_report:
         raise ToolError(
             "MARKDOWN_QUALITY_REVIEW_PENDING",
             "Markdown quality report is pending agent review; complete the quality review before repair.",
@@ -1376,8 +1612,9 @@ def _load_markdown_repair_context(provider: str, doi: str) -> MarkdownQualityRep
                 "status": quality.get("status"),
             },
         )
-    blocking_issues = blocking_markdown_quality_issues(quality)
-    if quality.get("status") == "pass" and not blocking_issues:
+    effective_quality = quality_report_override or quality
+    blocking_issues = blocking_markdown_quality_issues(effective_quality)
+    if effective_quality.get("status") == "pass" and not blocking_issues and not allow_passing_report:
         raise ToolError(
             "MARKDOWN_QUALITY_REPAIR_NOT_REQUIRED",
             "Markdown quality report is already passing.",
@@ -1387,7 +1624,12 @@ def _load_markdown_repair_context(provider: str, doi: str) -> MarkdownQualityRep
             task_id=task_id,
             details={"doi": normalized_doi, "markdown_quality_path": _rel(quality_path)},
         )
-    if quality.get("status") != "fail" and not blocking_issues:
+    if (
+        effective_quality.get("status") != "fail"
+        and not blocking_issues
+        and not (allow_pending_report and effective_quality.get("status") == PENDING_STATUS)
+        and not allow_passing_report
+    ):
         raise ToolError(
             "MARKDOWN_QUALITY_FAILED",
             "Markdown quality report must be fail or contain blocking issues before repair.",
@@ -1398,7 +1640,7 @@ def _load_markdown_repair_context(provider: str, doi: str) -> MarkdownQualityRep
             details={
                 "doi": normalized_doi,
                 "markdown_quality_path": _rel(quality_path),
-                "status": quality.get("status"),
+                "status": effective_quality.get("status"),
             },
         )
 
@@ -1418,7 +1660,9 @@ def _load_markdown_repair_context(provider: str, doi: str) -> MarkdownQualityRep
         golden_sample=sample,
         purpose=purpose,
         markdown_contract=contract,
-        quality_report=quality,
+        quality_report=effective_quality,
+        persistent_quality_report=quality,
+        fresh_quality_path=fresh_quality_path,
     )
 
 
@@ -1563,6 +1807,7 @@ def _markdown_repair_brief(
             "markdown_sha256": _sha256_file(ctx.markdown_path),
             "quality_prompt": _rel(ctx.prompt_path),
             "quality_report": _rel(ctx.quality_path),
+            "fresh_quality_report": _rel(ctx.fresh_quality_path) if ctx.fresh_quality_path else None,
             "assets": assets,
         },
         "markdown_contract": ctx.markdown_contract,
@@ -2089,6 +2334,8 @@ def _execute_run_loop(
                     provider=source.provider,
                     task=task,
                     provider_state=provider_state,
+                    state=state,
+                    state_path=state_path,
                 )
                 if task == PROPOSE_CLEANING_STEP:
                     _write_implementation_brief(output_dir=output_dir, source=source)
@@ -2630,6 +2877,8 @@ def _execute_local_task(
     provider: str,
     task: str,
     provider_state: dict[str, Any],
+    state: dict[str, Any] | None = None,
+    state_path: Path | None = None,
 ) -> None:
     if task in {ACCESS_PREFLIGHT_STEP, DISCOVER_STEP}:
         validate_access_review(provider)
@@ -2642,6 +2891,69 @@ def _execute_local_task(
             structured = _payload_from_stderr(completed.stderr)
             if structured and isinstance(structured.get("code"), str):
                 failure_code = str(structured["code"])
+            if (
+                task == SNAPSHOT_EXPECTED_STEP
+                and failure_code == "MARKDOWN_QUALITY_FAILED"
+                and state_path is not None
+                and "check-snapshot" in command
+            ):
+                try:
+                    doi_index = command.index("--doi") + 1
+                    repair_doi = command[doi_index]
+                except (ValueError, IndexError):
+                    repair_doi = None
+                if repair_doi:
+                    try:
+                        run_repair_markdown_quality(
+                            argparse.Namespace(
+                                provider=provider,
+                                doi=repair_doi,
+                                state=str(state_path),
+                                output_dir=f".paper-fetch-runs/{provider}-markdown-repair",
+                                max_attempts=MAX_WORKER_RETRIES,
+                            )
+                        )
+                    except ToolError as exc:
+                        failure = {
+                            "code": exc.code,
+                            "command": command,
+                            "returncode": completed.returncode,
+                            "stdout_tail": _tail(completed.stdout),
+                            "stderr_tail": _tail(completed.stderr),
+                            "auto_repair_failure": {
+                                "code": exc.code,
+                                "message": exc.message,
+                                "details": exc.details,
+                            },
+                        }
+                        if structured:
+                            failure["structured_error"] = structured
+                        _record_run(provider_state, task=task, commands=commands, result="failed", failure=failure)
+                        raise ToolError(
+                            exc.code,
+                            "snapshot Markdown quality auto-repair failed.",
+                            retryable=exc.retryable,
+                            provider=provider,
+                            manifest=manifest_path,
+                            task_id=f"{provider}-run-{task}",
+                            details=failure,
+                        ) from exc
+                    if state is not None:
+                        fresh_state = _load_state(state_path)
+                        fresh_provider_state = fresh_state.get("providers", {}).get(provider)
+                        if isinstance(fresh_provider_state, dict):
+                            provider_state.clear()
+                            provider_state.update(fresh_provider_state)
+                            state["agent_cli"] = fresh_state.get("agent_cli")
+                            state["active_provider"] = fresh_state.get("active_provider")
+                            state.setdefault("providers", {})[provider] = provider_state
+                    completed = _run_env_command(command)
+                    if not _command_failed(command, completed):
+                        continue
+                    failure_code = _failure_code_for_task(task, command)
+                    structured = _payload_from_stderr(completed.stderr)
+                    if structured and isinstance(structured.get("code"), str):
+                        failure_code = str(structured["code"])
             failure = {
                 "code": failure_code,
                 "command": command,
@@ -2946,14 +3258,11 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
                 "reason": str(exc),
             },
         ) from exc
-    validation_errors = validate_markdown_quality_report(quality)
-    expected_markdown_rel = markdown_path.relative_to(_repo_root()).as_posix()
-    expected_prompt_rel = prompt_path.relative_to(_repo_root()).as_posix()
-    if isinstance(quality, dict):
-        if quality.get("markdown_path") != expected_markdown_rel:
-            validation_errors.append("markdown_path must point to extracted.md")
-        if quality.get("prompt_path") != expected_prompt_rel:
-            validation_errors.append("prompt_path must point to markdown-quality-prompt.md")
+    validation_errors = _markdown_quality_report_errors(
+        quality,
+        markdown_path=markdown_path,
+        prompt_path=prompt_path,
+    )
     if validation_errors:
         raise ToolError(
             "MARKDOWN_QUALITY_FAILED",
@@ -2968,6 +3277,33 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
                 "validation_errors": validation_errors,
             },
         )
+    fresh = _run_fresh_markdown_quality_review(
+        provider=provider,
+        doi=doi,
+        sample_id=sample_id,
+        markdown_path=markdown_path,
+        prompt_path=prompt_path,
+        task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+    )
+    fresh_blocking_issues = _fresh_markdown_quality_blocking_issues(fresh.report)
+    if fresh.report.get("status") != "pass" or fresh_blocking_issues:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Fresh Markdown quality review found blocking issues in extracted.md.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={
+                "doi": doi,
+                "baseline_markdown_path": markdown_path.relative_to(_repo_root()).as_posix(),
+                "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "markdown_quality_status": quality.get("status") if isinstance(quality, dict) else None,
+                "fresh_markdown_quality_path": _rel(fresh.report_path),
+                "fresh_markdown_quality_status": fresh.report.get("status"),
+                "issues": fresh_blocking_issues,
+            },
+        )
     if isinstance(quality, dict) and quality.get("status") == PENDING_STATUS:
         raise ToolError(
             "MARKDOWN_QUALITY_FAILED",
@@ -2980,6 +3316,8 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
                 "doi": doi,
                 "markdown_quality_prompt_path": prompt_path.relative_to(_repo_root()).as_posix(),
                 "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "fresh_markdown_quality_path": _rel(fresh.report_path),
+                "fresh_markdown_quality_status": fresh.report.get("status"),
                 "status": quality.get("status"),
             },
         )
@@ -2995,6 +3333,8 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
             details={
                 "doi": doi,
                 "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "fresh_markdown_quality_path": _rel(fresh.report_path),
+                "fresh_markdown_quality_status": fresh.report.get("status"),
                 "status": quality.get("status") if isinstance(quality, dict) else None,
                 "issues": blocking_issues,
             },
@@ -3041,6 +3381,8 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
                 "baseline_markdown_path": markdown_path.relative_to(_repo_root()).as_posix(),
                 "markdown_quality_prompt_path": prompt_path.relative_to(_repo_root()).as_posix(),
                 "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "fresh_markdown_quality_path": _rel(fresh.report_path),
+                "fresh_markdown_quality_status": fresh.report.get("status"),
                 "markdown_quality_status": quality.get("status"),
                 "expected_outcome": sample.get("expected_outcome"),
                 "result": "passed",
@@ -3254,6 +3596,51 @@ def _load_quality_after_review(ctx: MarkdownQualityRepairContext) -> tuple[dict[
     return quality, errors
 
 
+def _load_fresh_markdown_repair_context(
+    provider: str,
+    doi: str,
+    *,
+    output_dir: Path,
+) -> MarkdownQualityRepairContext:
+    base_ctx = _load_markdown_repair_context(
+        provider,
+        doi,
+        allow_passing_report=True,
+        allow_pending_report=True,
+    )
+    fresh = _run_fresh_markdown_quality_review(
+        provider=base_ctx.provider,
+        doi=base_ctx.doi,
+        sample_id=base_ctx.sample_id,
+        markdown_path=base_ctx.markdown_path,
+        prompt_path=base_ctx.prompt_path,
+        output_dir=output_dir / "fresh-review",
+        task_id=f"{base_ctx.provider}-{REPAIR_MARKDOWN_QUALITY_STEP}",
+    )
+    effective = _effective_markdown_repair_report(
+        persistent_report=base_ctx.persistent_quality_report,
+        fresh_report=fresh.report,
+    )
+    if effective.get("status") == "pass" and not blocking_markdown_quality_issues(effective):
+        raise ToolError(
+            "MARKDOWN_QUALITY_REPAIR_NOT_REQUIRED",
+            "Fresh Markdown quality review and persistent report are already passing.",
+            retryable=False,
+            provider=base_ctx.provider,
+            manifest=default_manifest_path(base_ctx.provider),
+            task_id=f"{base_ctx.provider}-{REPAIR_MARKDOWN_QUALITY_STEP}",
+            details={
+                "doi": base_ctx.doi,
+                "markdown_quality_path": _rel(base_ctx.quality_path),
+                "fresh_markdown_quality_path": _rel(fresh.report_path),
+            },
+        )
+    return base_ctx._replace(
+        quality_report=effective,
+        fresh_quality_path=fresh.report_path,
+    )
+
+
 def _update_review_artifact_hashes(ctx: MarkdownQualityRepairContext) -> bool:
     if not ctx.review_path.is_file():
         return False
@@ -3306,22 +3693,22 @@ def run_repair_markdown_quality(args: argparse.Namespace) -> int:
     state_path = _state_path(args.state)
     state = _load_state(state_path)
     provider_state = _ensure_provider_state(state, provider=provider)
-    ctx = _load_markdown_repair_context(provider, doi)
+    output_dir = Path(args.output_dir or f".paper-fetch-runs/{provider}-markdown-repair")
+    if not output_dir.is_absolute():
+        output_dir = _repo_root() / output_dir
+    repair_dir = output_dir / "markdown-quality" / _doi_slug(doi)
+    ctx = _load_markdown_repair_context(
+        provider,
+        doi,
+        allow_passing_report=True,
+        allow_pending_report=True,
+    )
     argv = _agent_argv(
         provider=provider,
         task=REPAIR_MARKDOWN_QUALITY_STEP,
         manifest=_rel(ctx.manifest_path),
     )
-    output_dir = Path(args.output_dir or f".paper-fetch-runs/{provider}-markdown-repair")
-    if not output_dir.is_absolute():
-        output_dir = _repo_root() / output_dir
-    repair_dir = output_dir / "markdown-quality" / _doi_slug(doi)
-    initial_issues = _markdown_repair_issues(ctx.quality_report)
-    initial_issue_ids = [
-        str(issue.get("id"))
-        for issue in initial_issues
-        if isinstance(issue.get("id"), str) and issue.get("id")
-    ]
+    initial_issue_ids: list[str] = []
     changed_paths: set[str] = set()
     executed_commands: list[list[str]] = []
     command_details: list[dict[str, Any]] = []
@@ -3331,8 +3718,14 @@ def run_repair_markdown_quality(args: argparse.Namespace) -> int:
 
     for attempt in range(1, max_attempts + 1):
         attempts_run = attempt
-        ctx = _load_markdown_repair_context(provider, doi)
+        ctx = _load_fresh_markdown_repair_context(provider, doi, output_dir=repair_dir)
         issues = _markdown_repair_issues(ctx.quality_report)
+        if not initial_issue_ids:
+            initial_issue_ids = [
+                str(issue.get("id"))
+                for issue in issues
+                if isinstance(issue.get("id"), str) and issue.get("id")
+            ]
         domains = _infer_markdown_repair_domains(issues)
         allowed_scope = _markdown_repair_allowed_scope(ctx, domains)
         attempt_dir = repair_dir / f"attempt-{attempt}"

@@ -1047,12 +1047,71 @@ fixtures:
     )
 
 
+def _write_fake_fresh_quality_agent(
+    root: Path,
+    *,
+    status: str = "pass",
+    issue_id: str = "fresh-broken-table",
+) -> Path:
+    agent = root / f"fake_fresh_quality_{status}.py"
+    issues = []
+    if status == "fail":
+        issues = [
+            {
+                "id": issue_id,
+                "severity": "high",
+                "blocking": True,
+                "summary": "Fresh review found broken Markdown.",
+                "evidence": "| orphan | row |",
+            }
+        ]
+    agent.write_text(
+        f"""
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+prompt = sys.stdin.read()
+match = re.search(r"Fresh report to write: `([^`]+)`", prompt)
+if not match:
+    print("missing fresh report path", file=sys.stderr)
+    sys.exit(2)
+report_path = Path(match.group(1))
+report_path.parent.mkdir(parents=True, exist_ok=True)
+issues = json.loads({json.dumps(json.dumps(issues))})
+report = {{
+    "schema_version": 2,
+    "review_method": "agent_prompt",
+    "provider": "newpub",
+    "doi": "10.1234/sample",
+    "sample_id": "10.1234_sample",
+    "markdown_path": "tests/fixtures/golden_criteria/10.1234_sample/extracted.md",
+    "prompt_path": "tests/fixtures/golden_criteria/10.1234_sample/markdown-quality-prompt.md",
+    "status": "{status}",
+    "issues": issues,
+    "blocking_issue_count": sum(1 for issue in issues if issue.get("blocking") is True),
+    "reviewed_by": "fake-fresh-agent",
+    "reviewed_at": "2026-05-23T00:00:00Z",
+    "fresh_review": True,
+}}
+report_path.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+""",
+        encoding="utf-8",
+    )
+    return agent
+
+
 def test_check_snapshot_requires_prompt_asset_and_agent_pass_report(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     module = load_script_module("onboard_from_manifests")
     monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    fake_agent = _write_fake_fresh_quality_agent(tmp_path)
+    monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
     args = argparse.Namespace(provider="newpub", doi="10.1234/sample")
 
     _write_check_snapshot_fixture(tmp_path)
@@ -1075,6 +1134,25 @@ def test_check_snapshot_requires_prompt_asset_and_agent_pass_report(
         module.run_check_snapshot(args)
     assert failed.value.code == "MARKDOWN_QUALITY_FAILED"
     assert failed.value.details["issues"][0]["id"] == "broken-table"
+
+
+def test_check_snapshot_fresh_review_blocks_stale_pass_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    fake_agent = _write_fake_fresh_quality_agent(tmp_path, status="fail", issue_id="fresh-empty-figures")
+    monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
+    _write_check_snapshot_fixture(tmp_path, quality_status="pass")
+
+    with pytest.raises(module.ToolError) as stale_pass:
+        module.run_check_snapshot(argparse.Namespace(provider="newpub", doi="10.1234/sample"))
+
+    assert stale_pass.value.code == "MARKDOWN_QUALITY_FAILED"
+    assert stale_pass.value.details["markdown_quality_status"] == "pass"
+    assert stale_pass.value.details["fresh_markdown_quality_status"] == "fail"
+    assert stale_pass.value.details["issues"][0]["id"] == "fresh-empty-figures"
 
 
 def _write_repair_fixture(
@@ -1216,7 +1294,7 @@ def test_repair_markdown_quality_brief_includes_issue_scope_and_verification(
     assert brief["required_order"][0].startswith("Add or update a provider-local regression test")
 
 
-def test_repair_markdown_quality_rejects_pending_report(
+def test_repair_markdown_quality_requires_agent_for_fresh_review(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1224,7 +1302,7 @@ def test_repair_markdown_quality_rejects_pending_report(
     monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
     _write_repair_fixture(tmp_path, quality_status="pending_agent_review")
 
-    with pytest.raises(module.ToolError) as pending:
+    with pytest.raises(module.ToolError) as missing_agent:
         module.run_repair_markdown_quality(
             argparse.Namespace(
                 provider="newpub",
@@ -1235,7 +1313,7 @@ def test_repair_markdown_quality_rejects_pending_report(
             )
         )
 
-    assert pending.value.code == "MARKDOWN_QUALITY_REVIEW_PENDING"
+    assert missing_agent.value.code == "WORKER_AGENT_CLI_MISSING"
 
 
 def test_repair_markdown_quality_fake_agent_success_records_state(
@@ -1251,12 +1329,31 @@ def test_repair_markdown_quality_fake_agent_success_records_state(
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 prompt = sys.stdin.read()
 quality = Path("tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json")
-if "Markdown quality repair review" in prompt:
+if "Fresh Markdown Quality Review" in prompt:
+    match = re.search(r"Fresh report to write: `([^`]+)`", prompt)
+    report = json.loads(quality.read_text(encoding="utf-8"))
+    report["status"] = "fail"
+    report["issues"] = [{
+        "id": "broken-table",
+        "severity": "high",
+        "blocking": True,
+        "summary": "Fresh review still sees the broken table.",
+        "evidence": "| orphan | row |"
+    }]
+    report["blocking_issue_count"] = 1
+    report["reviewed_by"] = "fake-fresh-agent"
+    report["reviewed_at"] = "2026-05-23T00:00:00Z"
+    report["fresh_review"] = True
+    Path(match.group(1)).parent.mkdir(parents=True, exist_ok=True)
+    Path(match.group(1)).write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    print("fresh fail")
+elif "Markdown quality repair review" in prompt:
     report = json.loads(quality.read_text(encoding="utf-8"))
     report["status"] = "pass"
     report["issues"] = []
@@ -1303,6 +1400,84 @@ else:
     assert review["fixtures"][0]["markdown_quality_sha256"] != "1" * 64
 
 
+def test_repair_markdown_quality_uses_fresh_failure_when_persistent_report_passes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    _write_repair_fixture(tmp_path, quality_status="pass")
+    fake_agent = tmp_path / "fake_agent.py"
+    fake_agent.write_text(
+        """
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+prompt = sys.stdin.read()
+quality = Path("tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json")
+if "Fresh Markdown Quality Review" in prompt:
+    match = re.search(r"Fresh report to write: `([^`]+)`", prompt)
+    report = json.loads(quality.read_text(encoding="utf-8"))
+    report["status"] = "fail"
+    report["issues"] = [{
+        "id": "fresh-broken-table",
+        "severity": "high",
+        "blocking": True,
+        "summary": "Fresh review found a broken table.",
+        "evidence": "| orphan | row |"
+    }]
+    report["blocking_issue_count"] = 1
+    report["reviewed_by"] = "fake-fresh-agent"
+    report["reviewed_at"] = "2026-05-23T00:00:00Z"
+    report["fresh_review"] = True
+    Path(match.group(1)).parent.mkdir(parents=True, exist_ok=True)
+    Path(match.group(1)).write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+elif "Markdown quality repair review" in prompt:
+    report = json.loads(quality.read_text(encoding="utf-8"))
+    report["status"] = "pass"
+    report["issues"] = []
+    report["blocking_issue_count"] = 0
+    report["reviewed_by"] = "fake-agent"
+    report["reviewed_at"] = "2026-05-23T00:00:00Z"
+    quality.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+else:
+    Path("tests/unit").mkdir(parents=True, exist_ok=True)
+    Path("tests/unit/test_newpub_provider.py").write_text("def test_regression():\\n    assert True\\n", encoding="utf-8")
+print("ok")
+""",
+        encoding="utf-8",
+    )
+
+    monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
+    monkeypatch.setattr(
+        module,
+        "_run_env_command",
+        lambda command: subprocess.CompletedProcess(command, 0, "ok\n", ""),
+    )
+
+    assert (
+        module.run_repair_markdown_quality(
+            argparse.Namespace(
+                provider="newpub",
+                doi="10.1234/sample",
+                state=str(tmp_path / "state.json"),
+                output_dir=str(tmp_path / "run"),
+                max_attempts=3,
+            )
+        )
+        == 0
+    )
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    repair = state["providers"]["newpub"]["repairs"]["markdown_quality"][0]
+
+    assert repair["issue_ids"] == ["fresh-broken-table"]
+    assert repair["status"] == "passed"
+
+
 def test_repair_markdown_quality_rejects_forbidden_agent_change(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -1311,8 +1486,38 @@ def test_repair_markdown_quality_rejects_forbidden_agent_change(
     monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
     _write_repair_fixture(tmp_path)
     fake_agent = tmp_path / "fake_agent.py"
-    fake_agent.write_text("import sys; sys.stdin.read(); print('ok')\n", encoding="utf-8")
-    snapshots = iter([set(), {"docs/providers.md"}])
+    fake_agent.write_text(
+        """
+from __future__ import annotations
+
+import json
+import re
+import sys
+from pathlib import Path
+
+prompt = sys.stdin.read()
+if "Fresh Markdown Quality Review" in prompt:
+    match = re.search(r"Fresh report to write: `([^`]+)`", prompt)
+    report = json.loads(Path("tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json").read_text(encoding="utf-8"))
+    report["status"] = "fail"
+    report["issues"] = [{
+        "id": "broken-table",
+        "severity": "high",
+        "blocking": True,
+        "summary": "Fresh review found broken Markdown.",
+        "evidence": "| orphan | row |"
+    }]
+    report["blocking_issue_count"] = 1
+    report["reviewed_by"] = "fake-fresh-agent"
+    report["reviewed_at"] = "2026-05-23T00:00:00Z"
+    report["fresh_review"] = True
+    Path(match.group(1)).parent.mkdir(parents=True, exist_ok=True)
+    Path(match.group(1)).write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+print("ok")
+""",
+        encoding="utf-8",
+    )
+    snapshots = iter([set(), set(), set(), {"docs/providers.md"}])
     monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
     monkeypatch.setattr(module, "_workspace_changed_paths", lambda: next(snapshots))
 
@@ -1346,12 +1551,30 @@ def test_repair_markdown_quality_fails_after_max_attempts(
 from __future__ import annotations
 
 import json
+import re
 import sys
 from pathlib import Path
 
 prompt = sys.stdin.read()
 quality = Path("tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json")
-if "Markdown quality repair review" in prompt:
+if "Fresh Markdown Quality Review" in prompt:
+    match = re.search(r"Fresh report to write: `([^`]+)`", prompt)
+    report = json.loads(quality.read_text(encoding="utf-8"))
+    report["status"] = "fail"
+    report["issues"] = [{
+        "id": "broken-table",
+        "severity": "high",
+        "blocking": True,
+        "summary": "Fresh review still sees the broken table.",
+        "evidence": "| orphan | row |"
+    }]
+    report["blocking_issue_count"] = 1
+    report["reviewed_by"] = "fake-fresh-agent"
+    report["reviewed_at"] = "2026-05-23T00:00:00Z"
+    report["fresh_review"] = True
+    Path(match.group(1)).parent.mkdir(parents=True, exist_ok=True)
+    Path(match.group(1)).write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+elif "Markdown quality repair review" in prompt:
     report = json.loads(quality.read_text(encoding="utf-8"))
     report["status"] = "fail"
     report["issues"] = [{

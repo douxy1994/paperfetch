@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from paper_fetch.markdown_quality import (
     build_agent_markdown_quality_report,
+    build_fresh_markdown_quality_prompt,
     build_markdown_quality_prompt,
     build_pending_markdown_quality_report,
     validate_markdown_quality_report,
@@ -32,6 +33,20 @@ def test_prompt_contains_review_task_paths_contract_and_semantic_risks() -> None
     assert "Semantic Risks To Check" in prompt
     assert "Broken tables" in prompt
     assert "References" in prompt
+
+
+def test_fresh_prompt_requires_rereading_current_extracted_markdown() -> None:
+    prompt = build_fresh_markdown_quality_prompt(
+        **BASE,
+        report_path=".paper-fetch-runs/demo/fresh-markdown-quality.json",
+        markdown_sha256="a" * 64,
+    )
+
+    assert "Fresh Markdown Quality Review" in prompt
+    assert "Open and read the current Markdown file from disk" in prompt
+    assert "Fresh report to write" in prompt
+    assert BASE["markdown_path"] in prompt
+    assert '"fresh_review": true' in prompt
 
 
 def test_pending_pass_and_fail_report_schema_validation() -> None:

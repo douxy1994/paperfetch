@@ -148,16 +148,16 @@ diagnosis: cleaning proposal gate 发现 Markdown contract 与当前 production 
 action: 若 `details.recovery_task=propose-cleaning-chain`，先重跑 `propose-cleaning-chain` 刷新 proposal；否则重派 `implement-provider`，只允许调和当前 provider manifest 的相关 `markdown_contract` purpose、provider-owned implementation、provider-local tests 或 review artifact。
 retryable: true
 
-## Signal: MARKDOWN_QUALITY_REVIEW_PENDING
+## Signal: MARKDOWN_QUALITY_FAILED
 
-diagnosis: `markdown-quality.json` 仍是 `pending_agent_review`，不能进入自动修复。
-action: 先按同目录 `markdown-quality-prompt.md` 阅读 `extracted.md`，把 quality report 写成 agent-authored pass/fail；只有 fail 或含 blocking issue 的 report 才能运行 `repair-markdown-quality`。
-retryable: false
+diagnosis: `check-snapshot` 发现持久 `markdown-quality.json` pending/fail/blocking，或 fresh Markdown quality worker 重新读取当前 `extracted.md` 后发现 blocking issue。
+action: full runner 会在 `snapshot-expected` 阶段自动运行 `repair-markdown-quality`；手动处理时直接运行 `python3 scripts/onboard_from_manifests.py repair-markdown-quality --provider <provider> --doi <doi>`，查看 fresh report 和 repair logs。
+retryable: true
 
 ## Signal: MARKDOWN_QUALITY_REPAIR_FAILED
 
-diagnosis: `repair-markdown-quality` 最多 3 轮后仍未得到 pass 且无 blocking issue 的 quality report，或修复后的 `check-snapshot` 未通过。
-action: 查看 `.paper-fetch-runs/<provider>-markdown-repair/markdown-quality/<doi-slug>/attempt-N/` 中的 repair brief、agent prompt/stdout/stderr、command logs 和最后 fail report；必要时手动收窄 issue 或调整 provider-owned tests 后重跑。
+diagnosis: `repair-markdown-quality` 最多 3 轮后 fresh review、持久 quality report 或修复后的 `check-snapshot` 仍未通过。
+action: 查看 `.paper-fetch-runs/<provider>-markdown-repair/markdown-quality/<doi-slug>/attempt-N/` 中的 repair brief、agent prompt/stdout/stderr、command logs、fresh report 和最后 fail report；必要时手动收窄 issue 或调整 provider-owned tests 后重跑。
 retryable: false
 
 ## Signal: SHARED_INTEGRATION_FAILED

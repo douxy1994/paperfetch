@@ -15,7 +15,8 @@
 - `scripts/onboard_from_manifests.py run` 会在 `capture-fixtures` 后固定执行 `propose-cleaning-chain`，调用 `scripts/propose_cleaning_chain.py --provider <provider> --write` 生成 compact proposal 和 full evidence。
 - `scripts/onboard_from_manifests.py diagnose` 可只读分诊 blocked state；`resume-blocked --dry-run` 只输出续跑计划；非 dry-run 只在 retryable failure 且 access review 已批准、无 operator-only blocker 时复用现有 runner 续跑。
 - `scripts/onboard_from_manifests.py summarize --provider <provider>` 可从 state、manifest、access review、review artifact 和真实 run records 合成 JSON/Markdown operator digest。
-- `scripts/onboard_from_manifests.py repair-markdown-quality --provider <provider> --doi <doi>` 可把已完成 agent review 的 failing `markdown-quality.json` 转成最多 3 轮修复闭环：派发实现 agent、运行 provider-local 验证和 snapshot、再派发 quality review agent 写回 pass/fail。
+- `scripts/onboard_from_manifests.py check-snapshot --provider <provider> --doi <doi>` 每次通过 `PROVIDER_ONBOARDING_AGENT_CLI` 重新读取当前 `extracted.md`，写入 fresh Markdown quality report；fresh blocking issue 会阻断，即使旧 `markdown-quality.json` 是 pass。
+- `scripts/onboard_from_manifests.py repair-markdown-quality --provider <provider> --doi <doi>` 可把 fresh review 或持久 `markdown-quality.json` 暴露的 blocking issue 转成最多 3 轮修复闭环：派发实现 agent、运行 provider-local 验证和 snapshot、再派发 quality review agent 写回 pass/fail。
 - `scripts/run_provider_drift_report.py` 可本地手动生成 route-source drift report；fake runner 可单测 schema，真实 runner 需要 `PAPER_FETCH_RUN_LIVE=1`。
 - `scripts/manifest_sync_back.py --sync-docs` 从 manifest docs facts 同步 `known-providers.yml`、provider matrix、extraction rules marker row 和 changelog marker entry。
 
@@ -71,7 +72,7 @@ python3 scripts/onboard_from_manifests.py repair-markdown-quality \
 - 日志写入 `<output-dir>/workers/<task>-attempt-N.{prompt.md,stdout.log,stderr.log}`。
 - 调用前后读取 git changed paths；新增 forbidden path 变更会以 `WORKER_MODIFIED_FORBIDDEN_FILE` 失败。
 - worker retry limit 是 3；CLI 非零退出耗尽后返回 `TASK_RETRY_EXHAUSTED`。
-- markdown quality repair 的实现 agent 只能写推断 scope：provider-owned implementation/tests、对应 fixture/review artifact，以及 table/formula/reference/asset 等明确 shared domain 的 shared renderer/test 路径；quality review agent 只能写对应 `markdown-quality.json`。
+- fresh Markdown quality worker 只能写 `.paper-fetch-runs/.../fresh-markdown-quality.json`；markdown quality repair 的实现 agent 只能写推断 scope：provider-owned implementation/tests、对应 fixture/review artifact，以及 table/formula/reference/asset 等明确 shared domain 的 shared renderer/test 路径；quality review agent 只能写对应 `markdown-quality.json`。
 
 ## Live 策略
 
@@ -115,6 +116,6 @@ compact proposal artifact 位于 `onboarding/cleaning-chain-proposals/<provider>
 - `BROWSER_RUNTIME_REQUIRED`：operator 配置合法 browser runtime，或更新 access review / manifest。
 - `WORKER_MODIFIED_FORBIDDEN_FILE`：coordinator 处理 forbidden path diff 后才能重派 worker。
 - `MARKDOWN_CONTRACT_DRIFT`：warning-only sentinel/cross-route findings 不失败；missing include、truly vacuous guard 或 stale `fixtures_digest` 失败。stale proposal 先重跑 `propose-cleaning-chain`，真实 contract drift 回到 `implement-provider` 调和当前 provider 的相关 `markdown_contract` purpose。
-- `MARKDOWN_QUALITY_REVIEW_PENDING`：先按 `markdown-quality-prompt.md` 完成 quality review，再进入 repair。
-- `MARKDOWN_QUALITY_REPAIR_FAILED`：最多 3 轮后仍有 blocking issue 或 `check-snapshot` 未通过，保留最后 fail report 和 repair logs。
+- `MARKDOWN_QUALITY_FAILED`：`check-snapshot` 的 fresh review 或持久 `markdown-quality.json` 发现 blocking/pending/fail；full runner 会在 `snapshot-expected` 阶段自动尝试 `repair-markdown-quality`。
+- `MARKDOWN_QUALITY_REPAIR_FAILED`：最多 3 轮后 fresh review、持久 quality report 或 `check-snapshot` 仍未通过，保留最后 fail report 和 repair logs。
 - `PROVIDER_LOCAL_ACCEPTANCE_FAILED` / `GLOBAL_LINT_FAILED`：回到实现或 shared integration 修复；不靠 narrative waiver 通过。

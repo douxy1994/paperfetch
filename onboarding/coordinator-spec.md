@@ -36,7 +36,7 @@ python3 scripts/onboard_from_manifests.py advance --provider <name> --task <task
 - Task execution is serial inside one provider.
 - One coordinator state file may contain at most one provider with `status: in_progress`.
 - Worker output remains in the workspace; coordinator owns verification, shared-file updates, and commit preparation.
-- Markdown quality repair also uses only `PROVIDER_ONBOARDING_AGENT_CLI`; prompts, stdout/stderr, changed-path snapshots, repair briefs, quality review prompts, and command logs are written under `<output-dir>/markdown-quality/<doi-slug>/attempt-N/`.
+- Markdown quality fresh review and repair also use only `PROVIDER_ONBOARDING_AGENT_CLI`; fresh review logs are written under `.paper-fetch-runs/<provider>-markdown-quality-audit/<doi-slug>/attempt-N/`, and repair prompts/stdout/stderr/changed-path snapshots/briefs/command logs are written under `<output-dir>/markdown-quality/<doi-slug>/attempt-N/`.
 
 ## Task DAG
 
@@ -72,7 +72,7 @@ The provider DAG is ordered:
 - `scaffold`: coordinator runs `scripts/scaffold_provider.py --from-manifest --merge-existing=safe`; existing outputs are reused when safe, otherwise produce a merge plan JSON instead of deleting user work.
 - `implement-provider`: coordinator dispatches implementation worker with access review constraints.
 - `shared-integration`: coordinator integrates shared surfaces after provider-owned implementation, including `provider_catalog`, MCP status/instructions/schema, golden/live review, benchmark samples, shared renderer/workflow gaps, shared docs, and changelog entries. Each shared edit must trace to manifest facts, bundle sync-back, fixture replay, or provider-local test evidence.
-- `snapshot-expected`: coordinator enumerates every non-null manifest DOI sample and `extra_fixtures[].doi`, runs `scripts/snapshot_expected.py --doi <doi> --review`, runs `scripts/snapshot_expected.py --doi <doi>`, and checks fixture directory, `expected.json`, `extracted.md`, `markdown-quality-prompt.md`, agent-authored `markdown-quality.json` pass status, and non-pending `expected_outcome`.
+- `snapshot-expected`: coordinator enumerates every non-null manifest DOI sample and `extra_fixtures[].doi`, runs `scripts/snapshot_expected.py --doi <doi> --review`, runs `scripts/snapshot_expected.py --doi <doi>`, checks fixture directory, `expected.json`, `extracted.md`, `markdown-quality-prompt.md`, agent-authored `markdown-quality.json` pass status, non-pending `expected_outcome`, and dispatches a fresh Markdown quality review that rereads current `extracted.md`.
 - `manifest-sync-back`: coordinator runs `scripts/manifest_sync_back.py --sync-docs`.
 - `provider-local-acceptance`: coordinator first checks compact proposal fixture digest freshness, then runs `scripts/propose_cleaning_chain.py --provider <provider> --check-contract`, provider-local pytest, review artifact validation, hard-constraint grep, and provider subset live review for browser/CDN-risk providers.
 - `global-lint`: coordinator runs manifest sync, owner reuse, bundle completeness, import boundary, and docs validation checks.
@@ -110,7 +110,7 @@ Rules:
 - A second provider cannot become `in_progress` while another provider is active.
 - Retry counters are stored per task.
 - `run --until <task>` executes the same DAG inclusively through `<task>` and leaves the next task in state for continuation.
-- `repair-markdown-quality` accepts only registered DOI fixtures whose `markdown-quality.json` is an agent-prompt schema v2 fail report or contains blocking issues. Pending reports fail with `MARKDOWN_QUALITY_REVIEW_PENDING`. Each attempt writes `repairs.markdown_quality[]` summary entries with provider, DOI, attempts, issue IDs, changed paths, verification commands, quality status, and run directory.
+- `repair-markdown-quality` accepts registered DOI fixtures after running a fresh Markdown quality review. A fresh blocking issue can trigger repair even when the persistent `markdown-quality.json` says pass; if the fresh review passes but the persistent report is pending/fail, repair refreshes the persistent report path through the quality-review worker. Each attempt writes `repairs.markdown_quality[]` summary entries with provider, DOI, attempts, issue IDs, changed paths, verification commands, quality status, and run directory.
 - `diagnose` reads state only and emits stable JSON containing provider status, current step, latest failure code, retryable flag, failure-recovery action, access review state, and whether operator action is required.
 - `resume-blocked --dry-run` reads state only and emits the next task plus blockers. Non dry-run only resumes one provider when the latest failure is retryable, access review is approved, and no operator-only blocker remains.
 - `summarize` reads state plus manifest/access/review artifacts and renders JSON or Markdown without fabricating pass results for commands that are not recorded in state.
@@ -123,7 +123,7 @@ Rules:
 - `resume-blocked` does not auto-resume `UNSUITABLE_DOI_SAMPLE`, `WORKER_MODIFIED_FORBIDDEN_FILE`, `BROWSER_RUNTIME_REQUIRED`, access review failures, challenge/CAPTCHA, or retry exhaustion; these require operator/coordinator action first.
 - Provider-local acceptance failure routes back to `implement-provider`.
 - `MARKDOWN_CONTRACT_DRIFT` is retryable. Digest-stale details name `propose-cleaning-chain` as the immediate refresh task; contract drift routes resume planning back to `implement-provider`.
-- `MARKDOWN_QUALITY_REPAIR_FAILED` means all Markdown quality repair attempts completed but the quality review still failed or check-snapshot did not pass.
+- `MARKDOWN_QUALITY_REPAIR_FAILED` means all Markdown quality repair attempts completed but the fresh review, persistent quality review, or check-snapshot did not pass.
 - Retry count 3 sets provider status to `blocked` and stops the pipeline.
 
 ## Worker Isolation

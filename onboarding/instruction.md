@@ -17,7 +17,7 @@ python3 scripts/onboard_from_manifests.py run --provider <provider> --domain <do
 python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<provider>.yml --until merge-ready
 ```
 
-runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；它不能代替 operator 批准 access review，也不能把最终 Markdown 语义审查自动签为 true。
+runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；它不能代替 operator 批准 access review，也不能把最终 Markdown 语义审查自动签为 true。snapshot gate 会每次重新读取当前 `extracted.md` 做 fresh Markdown quality review，不能只信旧 `markdown-quality.json`。
 
 ## 目标
 
@@ -83,9 +83,11 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
 8. Markdown Review Loop：
    - 对每个 non-null fixture 生成 baseline Markdown；人工语义基准只能是 fixture 目录下的 `extracted.md`，不能用 `expected.json`、`original.html/xml/pdf` 代替。
    - 可先运行 `python3 scripts/bootstrap_review_artifact.py --provider <provider> --manifest onboarding/manifests/<provider>.yml` 生成 review 草稿；草稿默认 `markdown_semantic_reviewed: false`。
-   - agent 按 fixture 目录下的 `markdown-quality-prompt.md` 阅读 `extracted.md`，并把 `markdown-quality.json` 从 `pending_agent_review` 写成真实的 `pass` / `fail` 报告。
+   - agent 按 fixture 目录下的 `markdown-quality-prompt.md` 阅读 `extracted.md`，并把 `markdown-quality.json` 从 `pending_agent_review` 写成真实的 `pass` / `fail` 持久报告。
    - 人工阅读 `extracted.md`，并写入 `onboarding/reviews/<provider>.yml`：`baseline_markdown_path`、`baseline_markdown_sha256`、`markdown_quality_path`、`markdown_quality_sha256`、`review_notes`、`sample_representative`、`markdown_semantic_reviewed`、`issues`、`assertions`、`fixes`。
    - `markdown-quality.json` 必须为 `review_method: agent_prompt`、`status: pass` 且没有 blocking issue；pending 或 fail 都会阻断 `markdown_semantic_reviewed: true`。
+   - `check-snapshot` 还会通过 `PROVIDER_ONBOARDING_AGENT_CLI` 重新读取当前 `extracted.md` 并写入 `.paper-fetch-runs/<provider>-markdown-quality-audit/<doi_slug>/attempt-N/fresh-markdown-quality.json`；fresh review 发现 blocking issue 时，即使旧 `markdown-quality.json` 是 pass 也必须失败。
+   - full runner 在 `snapshot-expected` 阶段遇到 fresh Markdown quality blocking issue 时，会自动进入 `repair-markdown-quality`，修复后再重新运行 fresh review 和 snapshot gate。
    - `issues` 和 `fixes` 使用带稳定 `id` 的对象；每个 fix 必须引用已有 `issue_ids`，并列出至少一个 provider-local `test_names`。
    - 每个 issue 先落 provider-local 断言，再修 provider-owned 实现。
    - 重复到所有 fixture Markdown 干净。
