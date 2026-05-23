@@ -148,12 +148,16 @@ python3 scripts/scaffold_provider.py --name mdpi --doi 10.3390/membranes15030093
 PYTHONPATH=src python3 -m pytest tests/unit -q
 ```
 
-直到 `test_mdpi_provider.py` 全绿，并且每个 non-null fixture purpose 都已经在 provider-local 测试中点名覆盖。然后**第一次为每篇 fixture 写 `expected.json`**：
+直到 `test_mdpi_provider.py` 全绿，并且每个 non-null fixture purpose 都已经在 provider-local 测试中点名覆盖。然后**第一次为每篇 fixture 写四类 snapshot/review 产物**：
 
 ```bash
 PYTHONPATH=src python3 scripts/snapshot_expected.py --doi 10.3390/membranes15030093 --review
 PYTHONPATH=src python3 scripts/snapshot_expected.py --doi 10.3390/membranes15030093
 ```
+
+写入命令会同时更新 `expected.json`、`extracted.md`、`markdown-quality-prompt.md`、pending 状态的 `markdown-quality.json` 和 manifest assets。`expected.json` 只锁 `has` / `counts` / `expected_content_kind` 摘要；Markdown quality 需要 agent 按 `markdown-quality-prompt.md` 阅读 `extracted.md` 后，把 `markdown-quality.json` 写成 `status: pass` 且没有 blocking issue。
+
+如果 quality report 已经是 agent-authored fail，可运行 `python3 scripts/onboard_from_manifests.py repair-markdown-quality --provider <provider> --doi <doi>`。该命令只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 派发实现和复审 agent，最多 3 轮；pending report 会被拒绝，需要先完成初次 quality review。
 
 之后每次改 extraction 都用 provider-local 断言和 `pytest` diff 来审；新增 correction 时继续先写断言再修 provider。
 
@@ -178,7 +182,7 @@ PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contra
 - 自己 hardcode 的 `_doi_pdf_candidate(doi)` → 改成 `ProviderSpec` 模板字段
 - 自己写的 `_render_table_markdown(table)` → 改用 `paper_fetch.extraction.markdown_render`
 
-清理后再跑一遍全量 pytest，确认 `expected.json` 不变。Commit B。
+清理后再跑一遍全量 pytest，确认 `expected.json`、`extracted.md`、`markdown-quality-prompt.md` 和 `markdown-quality.json` 没有非预期变化。Commit B。
 
 ---
 
@@ -247,7 +251,7 @@ git commit -m "docs(mdpi): add provider documentation"
 ## 5 个最容易踩的坑
 
 1. **跳过 Step 0 直接收 fixture**：fixtures 全是 open-access HTML，后期发现没覆盖 paywall 或 abstract-only，要回炉。
-2. **只写 expected.json，不写 Markdown review 断言**：每个 correction 先落 provider-local 断言，再写 / 更新 `expected.json`。
+2. **只写 snapshot，不写 Markdown review 断言**：每个 correction 先落 provider-local 断言，再写 / 更新 `expected.json`、`extracted.md`、`markdown-quality-prompt.md` 和 `markdown-quality.json`。
 3. **在 `_X_html.py` 内重写 canonical owner 已有的能力**（table 渲染、header 查找、access gate 文案）：项目反模式，PR 会被打回。
 4. **prototype 和重构混在一个 commit**：重构发现要改 fixtures 时丢失 prototype 进度。
 5. **改了 `provider_catalog.py` / `provider_rules.py` / `quality/html_signals.py`**：这些现在是禁区，CI lint 会失败。所有 provider 数据走 `ProviderBundle` 自注册。

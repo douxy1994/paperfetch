@@ -451,12 +451,32 @@ class ArxivProviderTests(unittest.TestCase):
             with self.subTest(arxiv_id=arxiv_id):
                 sample = golden_criteria_sample_for_doi(_doi(arxiv_id))
                 self.assertEqual(sample["route_kind"], "html")
-                self.assertEqual(set(sample["assets"]), {"api.json", "original.html"})
+                assets = set(sample["assets"])
+                self.assertTrue({"api.json", "original.html"} <= assets)
+                if "expected.json" in assets:
+                    self.assertTrue(
+                        {
+                            "extracted.md",
+                            "markdown-quality-prompt.md",
+                            "markdown-quality.json",
+                        }
+                        <= assets
+                    )
         for arxiv_id in PDF_FALLBACK_IDS:
             with self.subTest(arxiv_id=arxiv_id):
                 sample = golden_criteria_sample_for_doi(_doi(arxiv_id))
                 self.assertEqual(sample["route_kind"], "pdf_fallback")
-                self.assertEqual(set(sample["assets"]), {"api.json", "original.pdf"})
+                assets = set(sample["assets"])
+                self.assertTrue({"api.json", "original.pdf"} <= assets)
+                if "expected.json" in assets:
+                    self.assertTrue(
+                        {
+                            "extracted.md",
+                            "markdown-quality-prompt.md",
+                            "markdown-quality.json",
+                        }
+                        <= assets
+                    )
 
     def test_arxiv_ar5iv_chrome_selectors_share_base_script_style_rules(self) -> None:
         self.assertEqual(

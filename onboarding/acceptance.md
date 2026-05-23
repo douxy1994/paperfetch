@@ -41,7 +41,7 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 
 - `onboarding/reviews/<provider>.yml` exists and passes `onboarding/provider-review.schema.json`.
 - `scripts/bootstrap_review_artifact.py` output is only a draft gate helper; acceptance still requires `markdown_semantic_reviewed: true` after real semantic review.
-- Every non-null `fixtures.doi_samples.<purpose>` and every `extra_fixtures` item has a review artifact entry with `baseline_markdown_path`, `baseline_markdown_sha256`, `review_notes`, `sample_representative: true`, `markdown_semantic_reviewed: true`, `issues`, `assertions`, and `fixes`.
+- Every non-null `fixtures.doi_samples.<purpose>` and every `extra_fixtures` item has a review artifact entry with `baseline_markdown_path` pointing to `extracted.md`, `baseline_markdown_sha256`, `markdown_quality_path`, `markdown_quality_sha256`, `review_notes`, `sample_representative: true`, `markdown_semantic_reviewed: true`, `issues`, `assertions`, and `fixes`.
 - `issues` and `fixes` use stable object ids; every fix references existing `issue_ids` and names at least one provider-local test.
 - Review artifact values must not contain `TODO`, `TBD`, or `unknown` placeholders.
 - Every non-null `fixtures.doi_samples.<purpose>` is represented in `tests/unit/test_<provider>_provider.py` by purpose name or DOI slug.

@@ -34,6 +34,7 @@
 | `ieee` | 依赖 Crossref merge + landing metadata | `CloakBrowser clean-browser HTML -> CloakBrowser-seeded PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | 现代 IEEE Xplore 文章优先公开为 `ieee_html`；REST 直连不可用时会用干净 CloakBrowser context 捕获同一全文 HTML；无动态 HTML 的老文献可经真实 PDF payload 返回 `ieee_pdf`；不处理 CAPTCHA、登录自动化或权限绕过 |
 | `arxiv` | arXiv ID + 默认 Atom API enrichment | `ID 解析 -> arXiv official HTML -> direct HTTP PDF -> metadata fallback` | HTML 路线支持正文 figure 资产下载；official HTML 只给缺失图片占位符时，会尝试从 arXiv e-print source 包恢复图资产；PDF fallback 当前 text-only | 中 | HTML front matter 在主路径内合并；默认使用内部 arXiv Atom API client 在 HTML/PDF 主链结束后补齐 metadata，失败只追加 warning、不影响已得到的 fulltext payload；HTML 成功公开为 `arxiv_html`，PDF fallback 公开为 `arxiv_pdf`；可识别的 ID 形态（含 `vN` 版本、`10.48550/arXiv.*` 等）见后文 arXiv 小节 |
 | `copernicus` | 依赖 Crossref merge + landing metadata | `landing HTML / DOI-derived URL -> NLM/JATS XML -> direct HTTP PDF -> metadata fallback` | XML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | 开放获取 direct HTTP 路线，不需要登录态或本地浏览器运行时；XML 成功公开为 `copernicus_xml`，PDF fallback 公开为 `copernicus_pdf` |
+| `royalsocietypublishing` | Direct DOI HTML metadata merge | `direct HTTP DOI HTML -> direct HTTP PDF -> metadata fallback` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | Royal Society Publishing 通过 `10.1098/` DOI 和 `royalsocietypublishing.org` 路由；HTML 成功公开为 `royalsocietypublishing_html`，PDF fallback 公开为 `royalsocietypublishing_pdf`；显式不把 `citation_xml_url` 当作 XML/JATS 路线 |
 
 说明：
 
@@ -839,6 +840,14 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 
 - `wiley` / `science` / `pnas` / `ams` 的 HTML fetch 会先等待 provider 正文 DOM 命中并连续两次轮询稳定，再执行 pre-extraction challenge / paywall 判定。
 - 如果稳定正文 DOM 已出现，即使页面 shell 仍残留 Cloudflare / challenge 文案，也会继续进入 Markdown 抽取和 availability 判定；只有等待超时仍无可抽取正文 DOM 时，才把 challenge / paywall 作为 HTML route fallback 条件。
+
+<a id="royalsocietypublishing"></a>
+### Royal Society Publishing
+
+- routing: 通过 `10.1098/` DOI prefix、`royalsocietypublishing.org` domain 和 Royal Society publisher alias 命中。
+- waterfall: direct `/doi/{doi}` HTML 跟随 Silverchair article redirect；HTML 不可用时尝试 `citation_pdf_url` 或 `/doi/pdf/{doi}`；两条全文路线都失败时交给 metadata-only fallback。
+- asset_profile: HTML 路线使用 article-scoped body assets，`all` 额外保留 `/article-supplement/` supplementary 链接；PDF fallback 是 text-only。
+- status: 不需要 Playwright、CloakBrowser 或 provider credential；`citation_xml_url` 会回到 HTML/站点路由，不作为 XML route 使用。
 
 <!-- SCAFFOLD: provider-docs -->
 

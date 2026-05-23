@@ -2,17 +2,20 @@
 
 本文记录 provider onboarding 中可以由脚本 / agent 自动完成的部分，以及必须由 operator 保留的人工边界。它补充 [`README.md`](./README.md)、[`coordinator-spec.md`](./coordinator-spec.md) 和 [`acceptance.md`](./acceptance.md)，不替代 manifest、access review 或 provider review schema。
 
+不同使用场景下如何选择 `/goal` 入口和 coordinator 命令，见 [`runbook.md`](./runbook.md)。
+
 ## 可自动化项
 
 - `scripts/onboard_from_manifests.py run` 串行执行 provider DAG，并持久化 state、DAG、worker brief、worker stdout/stderr/prompt 日志。
 - `scripts/capture_fixture.py --auto-via` 根据 manifest `probe.requires_browser_runtime` / `probe.requires_playwright` 和 access review `allowed_runtimes` 选择 `http` 或 `browser`。
 - fixture capture 对 `HTTP_FORBIDDEN`、`HTTP_RATE_LIMITED`、`CHALLENGE_DETECTED` 可在 access review 允许 browser runtime 时自动 retry 到 browser route；否则返回 structured JSON。
 - `scripts/scaffold_provider.py --from-manifest --merge-existing=safe` 复用相同内容，保留完整已有 provider 文件，并继续生成 fixture/capture/scaffold summary。
-- `scripts/bootstrap_review_artifact.py` 从 manifest non-null fixtures 和 `extra_fixtures` 生成 review 草稿，填入 `expected.json` 路径、sha256、manifest assertions 和初始问题分类。
+- `scripts/bootstrap_review_artifact.py` 从 manifest non-null fixtures 和 `extra_fixtures` 生成 review 草稿，填入 `extracted.md` 路径/sha256、agent-authored `markdown-quality.json` 路径/sha256、manifest assertions 和初始问题分类；pending quality report 会进入草稿 issue。
 - `scripts/backfill_access_reviews.py --all --write` 可为已实现 provider 回填 blocked access review 草稿；草稿只来自 manifest、known-providers、bundle capabilities 和本地 fixture evidence。
 - `scripts/onboard_from_manifests.py run` 会在 `capture-fixtures` 后固定执行 `propose-cleaning-chain`，调用 `scripts/propose_cleaning_chain.py --provider <provider> --write` 生成 compact proposal 和 full evidence。
 - `scripts/onboard_from_manifests.py diagnose` 可只读分诊 blocked state；`resume-blocked --dry-run` 只输出续跑计划；非 dry-run 只在 retryable failure 且 access review 已批准、无 operator-only blocker 时复用现有 runner 续跑。
 - `scripts/onboard_from_manifests.py summarize --provider <provider>` 可从 state、manifest、access review、review artifact 和真实 run records 合成 JSON/Markdown operator digest。
+- `scripts/onboard_from_manifests.py repair-markdown-quality --provider <provider> --doi <doi>` 可把已完成 agent review 的 failing `markdown-quality.json` 转成最多 3 轮修复闭环：派发实现 agent、运行 provider-local 验证和 snapshot、再派发 quality review agent 写回 pass/fail。
 - `scripts/run_provider_drift_report.py` 可本地手动生成 route-source drift report；fake runner 可单测 schema，真实 runner 需要 `PAPER_FETCH_RUN_LIVE=1`。
 - `scripts/manifest_sync_back.py --sync-docs` 从 manifest docs facts 同步 `known-providers.yml`、provider matrix、extraction rules marker row 和 changelog marker entry。
 
@@ -23,6 +26,7 @@
 - CAPTCHA、paywall、challenge、登录和权限不确定时，脚本不得绕过；只能按 access review 和 [`failure-recovery.md`](./failure-recovery.md) stop / retry / report。
 - `markdown_semantic_reviewed: true` 不能由 bootstrap 自动设置；最终 Markdown 语义审查签字必须来自 worker/operator 的真实阅读结论。
 - cleaning proposal 只能生成建议和风险报告，不直接修改 provider implementation，也不更新 `markdown_semantic_reviewed`。Implementation worker 只接收 compact proposal；full evidence artifact 留给 coordinator/operator 复核。
+- markdown quality repair 可以更新 `markdown_quality_sha256` / snapshot hash，但不得把 `markdown_semantic_reviewed` 自动改为 true；最终语义签字仍归 operator。
 - worker 不得修改 shared docs、central provider logic 或未授权路径；runner 会用 git changed-path diff 检测 forbidden writes。
 - GitHub CI 不由 onboarding runner 触发；本地 gate 只运行 repo-local commands。
 
@@ -49,9 +53,16 @@ python3 scripts/onboard_from_manifests.py summarize \
   --provider mdpi \
   --format markdown \
   --output .paper-fetch-runs/mdpi-onboarding/summary.md
+
+python3 scripts/onboard_from_manifests.py repair-markdown-quality \
+  --provider mdpi \
+  --doi 10.3390/su12072826 \
+  --output-dir .paper-fetch-runs/mdpi-markdown-repair
 ```
 
 `--until <task>` 是 inclusive cutoff；完成该 task 后停止，并把下一步保留在 state 中。`--state` 默认写 `onboarding/onboarding-state.json`。
+
+从零实现、已有 manifest 继续、查漏补缺、单 DOI quality repair 和 blocked state 恢复的场景化命令组合，统一见 [`runbook.md`](./runbook.md)。
 
 ## Worker Dispatch 契约
 
@@ -60,6 +71,7 @@ python3 scripts/onboard_from_manifests.py summarize \
 - 日志写入 `<output-dir>/workers/<task>-attempt-N.{prompt.md,stdout.log,stderr.log}`。
 - 调用前后读取 git changed paths；新增 forbidden path 变更会以 `WORKER_MODIFIED_FORBIDDEN_FILE` 失败。
 - worker retry limit 是 3；CLI 非零退出耗尽后返回 `TASK_RETRY_EXHAUSTED`。
+- markdown quality repair 的实现 agent 只能写推断 scope：provider-owned implementation/tests、对应 fixture/review artifact，以及 table/formula/reference/asset 等明确 shared domain 的 shared renderer/test 路径；quality review agent 只能写对应 `markdown-quality.json`。
 
 ## Live 策略
 
@@ -103,4 +115,6 @@ compact proposal artifact 位于 `onboarding/cleaning-chain-proposals/<provider>
 - `BROWSER_RUNTIME_REQUIRED`：operator 配置合法 browser runtime，或更新 access review / manifest。
 - `WORKER_MODIFIED_FORBIDDEN_FILE`：coordinator 处理 forbidden path diff 后才能重派 worker。
 - `MARKDOWN_CONTRACT_DRIFT`：warning-only sentinel/cross-route findings 不失败；missing include、truly vacuous guard 或 stale `fixtures_digest` 失败。stale proposal 先重跑 `propose-cleaning-chain`，真实 contract drift 回到 `implement-provider` 调和当前 provider 的相关 `markdown_contract` purpose。
+- `MARKDOWN_QUALITY_REVIEW_PENDING`：先按 `markdown-quality-prompt.md` 完成 quality review，再进入 repair。
+- `MARKDOWN_QUALITY_REPAIR_FAILED`：最多 3 轮后仍有 blocking issue 或 `check-snapshot` 未通过，保留最后 fail report 和 repair logs。
 - `PROVIDER_LOCAL_ACCEPTANCE_FAILED` / `GLOBAL_LINT_FAILED`：回到实现或 shared integration 修复；不靠 narrative waiver 通过。

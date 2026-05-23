@@ -3,10 +3,14 @@ from __future__ import annotations
 import json
 import subprocess
 import sys
+import argparse
 from pathlib import Path
 
+import pytest
 import yaml
 from jsonschema import Draft202012Validator
+
+from tests.script_modules import load_script_module
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -48,6 +52,7 @@ def test_help_includes_discover() -> None:
     assert "next" in result.stdout
     assert "verify" in result.stdout
     assert "run-checks" in result.stdout
+    assert "repair-markdown-quality" in result.stdout
     assert "check-cleaning-proposal" in result.stdout
     assert "advance" in result.stdout
 
@@ -888,6 +893,25 @@ def test_summarize_outputs_json_and_markdown_without_fabricated_passes(tmp_path:
     state_path = tmp_path / "state.json"
     markdown_path = tmp_path / "summary.md"
     _write_blocked_state(state_path, code="NETWORK_TRANSIENT")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    state["providers"]["mdpi"]["repairs"] = {
+        "markdown_quality": [
+            {
+                "provider": "mdpi",
+                "doi": "10.3390/su12072826",
+                "sample_id": "10.3390_su12072826",
+                "attempts": 2,
+                "status": "failed",
+                "issue_ids": ["broken-table"],
+                "changed_paths": ["tests/unit/test_mdpi_provider.py"],
+                "commands": [],
+                "quality_status": "fail",
+                "run_dir": ".paper-fetch-runs/mdpi-markdown-repair/markdown-quality/10.3390_su12072826",
+                "failure": {"code": "MARKDOWN_QUALITY_REPAIR_FAILED"},
+            }
+        ]
+    }
+    state_path.write_text(json.dumps(state), encoding="utf-8")
 
     result = run_cli(
         "summarize",
@@ -897,11 +921,15 @@ def test_summarize_outputs_json_and_markdown_without_fabricated_passes(tmp_path:
         str(state_path),
     )
     payload = json.loads(result.stdout)
+    diagnosis_result = run_cli("diagnose", "--provider", "mdpi", "--state", str(state_path))
+    diagnosis = json.loads(diagnosis_result.stdout)["providers"][0]
 
     assert payload["provider"] == "mdpi"
     assert payload["status"] == "blocked"
     assert payload["access_review"]["status"] == "approved"
     assert payload["fixture_coverage"]
+    assert payload["markdown_quality_repairs"][0]["issue_ids"] == ["broken-table"]
+    assert diagnosis["recent_markdown_quality_repair"]["status"] == "failed"
     assert payload["run_checks"][0]["result"] == "failed"
     assert payload["run_checks"][0]["failure_code"] == "NETWORK_TRANSIENT"
 
@@ -922,6 +950,8 @@ def test_summarize_outputs_json_and_markdown_without_fabricated_passes(tmp_path:
     assert "failure_recovery_action:" in markdown
     assert "## Review Artifact" in markdown
     assert "onboarding/reviews/mdpi.yml" in markdown
+    assert "## Markdown Quality Repairs" in markdown
+    assert "doi=10.3390/su12072826 status=failed attempts=2 quality=fail" in markdown
     assert "tests/fixtures/golden_criteria/10.3390_membranes15030093/structure" in markdown
     assert "issue_ids=[] fix_ids=[] tests=[]" in markdown
     assert "## Run Checks" in markdown
@@ -930,6 +960,439 @@ def test_summarize_outputs_json_and_markdown_without_fabricated_passes(tmp_path:
     assert "- provider-local-acceptance: result=planned" in markdown
     assert "- command: `python3 -m pytest tests/unit/test_mdpi_provider.py -q`" in markdown
     assert "no recorded run-check results" not in markdown
+
+
+def _agent_quality_report(
+    *,
+    status: str,
+    issue: dict[str, object] | None = None,
+) -> dict[str, object]:
+    issues = [issue] if issue is not None else []
+    report: dict[str, object] = {
+        "schema_version": 2,
+        "review_method": "agent_prompt",
+        "provider": "newpub",
+        "doi": "10.1234/sample",
+        "sample_id": "10.1234_sample",
+        "markdown_path": "tests/fixtures/golden_criteria/10.1234_sample/extracted.md",
+        "prompt_path": "tests/fixtures/golden_criteria/10.1234_sample/markdown-quality-prompt.md",
+        "status": status,
+        "issues": issues,
+        "blocking_issue_count": sum(1 for item in issues if item.get("blocking") is True),
+    }
+    if status != "pending_agent_review":
+        report["reviewed_by"] = "codex-agent"
+        report["reviewed_at"] = "2026-05-23T00:00:00Z"
+    return report
+
+
+def _write_check_snapshot_fixture(
+    root: Path,
+    *,
+    quality_status: str = "pass",
+    include_prompt_asset: bool = True,
+) -> None:
+    manifest_path = root / "onboarding" / "manifests" / "newpub.yml"
+    fixture_dir = root / "tests" / "fixtures" / "golden_criteria" / "10.1234_sample"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        """
+name: newpub
+fixtures:
+  doi_samples:
+    structure:
+      doi: 10.1234/sample
+""",
+        encoding="utf-8",
+    )
+    (fixture_dir / "expected.json").write_text('{"expected_content_kind":"fulltext"}\n', encoding="utf-8")
+    (fixture_dir / "extracted.md").write_text("# Demo\n", encoding="utf-8")
+    (fixture_dir / "markdown-quality-prompt.md").write_text("Review prompt\n", encoding="utf-8")
+    issue = None
+    if quality_status == "fail":
+        issue = {
+            "id": "broken-table",
+            "severity": "high",
+            "blocking": True,
+            "summary": "Broken table.",
+        }
+    (fixture_dir / "markdown-quality.json").write_text(
+        json.dumps(_agent_quality_report(status=quality_status, issue=issue)) + "\n",
+        encoding="utf-8",
+    )
+    assets = {
+        "expected.json": "tests/fixtures/golden_criteria/10.1234_sample/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1234_sample/extracted.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json",
+    }
+    if include_prompt_asset:
+        assets["markdown-quality-prompt.md"] = (
+            "tests/fixtures/golden_criteria/10.1234_sample/markdown-quality-prompt.md"
+        )
+    golden_manifest = {
+        "samples": {
+            "10.1234_sample": {
+                "doi": "10.1234/sample",
+                "publisher": "newpub",
+                "fixture_family": "golden",
+                "expected_outcome": "fulltext",
+                "assets": assets,
+            }
+        }
+    }
+    (fixture_dir.parent / "manifest.json").write_text(
+        json.dumps(golden_manifest, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+def test_check_snapshot_requires_prompt_asset_and_agent_pass_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    args = argparse.Namespace(provider="newpub", doi="10.1234/sample")
+
+    _write_check_snapshot_fixture(tmp_path)
+    assert module.run_check_snapshot(args) == 0
+
+    _write_check_snapshot_fixture(tmp_path, include_prompt_asset=False)
+    with pytest.raises(module.ToolError) as prompt_missing:
+        module.run_check_snapshot(args)
+    assert prompt_missing.value.code == "EXPECTED_SNAPSHOT_FAILED"
+    assert prompt_missing.value.details["missing_assets"] == ["markdown-quality-prompt.md"]
+
+    _write_check_snapshot_fixture(tmp_path, quality_status="pending_agent_review")
+    with pytest.raises(module.ToolError) as pending:
+        module.run_check_snapshot(args)
+    assert pending.value.code == "MARKDOWN_QUALITY_FAILED"
+    assert pending.value.details["status"] == "pending_agent_review"
+
+    _write_check_snapshot_fixture(tmp_path, quality_status="fail")
+    with pytest.raises(module.ToolError) as failed:
+        module.run_check_snapshot(args)
+    assert failed.value.code == "MARKDOWN_QUALITY_FAILED"
+    assert failed.value.details["issues"][0]["id"] == "broken-table"
+
+
+def _write_repair_fixture(
+    root: Path,
+    *,
+    quality_status: str = "fail",
+    issue_id: str = "broken-table",
+    summary: str = "Table rows are semantically unusable.",
+    evidence: str = "| orphan | row |",
+) -> None:
+    manifest_path = root / "onboarding" / "manifests" / "newpub.yml"
+    review_path = root / "onboarding" / "reviews" / "newpub.yml"
+    fixture_dir = root / "tests" / "fixtures" / "golden_criteria" / "10.1234_sample"
+    manifest_path.parent.mkdir(parents=True, exist_ok=True)
+    review_path.parent.mkdir(parents=True, exist_ok=True)
+    fixture_dir.mkdir(parents=True, exist_ok=True)
+    manifest_path.write_text(
+        """
+name: newpub
+markdown_contract:
+  structure:
+    doi: 10.1234/sample
+    must_include:
+    - "## Abstract"
+    must_not_include:
+    - Download PDF
+fixtures:
+  doi_samples:
+    structure:
+      doi: 10.1234/sample
+""",
+        encoding="utf-8",
+    )
+    (fixture_dir / "expected.json").write_text('{"expected_content_kind":"fulltext"}\n', encoding="utf-8")
+    (fixture_dir / "extracted.md").write_text("# Demo\n\n## Abstract\n\n| orphan | row |\n", encoding="utf-8")
+    (fixture_dir / "markdown-quality-prompt.md").write_text("Review prompt\n", encoding="utf-8")
+    issue = None
+    if quality_status == "fail":
+        issue = {
+            "id": issue_id,
+            "severity": "high",
+            "blocking": True,
+            "summary": summary,
+            "evidence": evidence,
+        }
+    (fixture_dir / "markdown-quality.json").write_text(
+        json.dumps(_agent_quality_report(status=quality_status, issue=issue), indent=2) + "\n",
+        encoding="utf-8",
+    )
+    (fixture_dir.parent / "manifest.json").write_text(
+        json.dumps(
+            {
+                "samples": {
+                    "10.1234_sample": {
+                        "doi": "10.1234/sample",
+                        "publisher": "newpub",
+                        "fixture_family": "golden",
+                        "expected_outcome": "fulltext",
+                        "assets": {
+                            "expected.json": "tests/fixtures/golden_criteria/10.1234_sample/expected.json",
+                            "extracted.md": "tests/fixtures/golden_criteria/10.1234_sample/extracted.md",
+                            "markdown-quality-prompt.md": (
+                                "tests/fixtures/golden_criteria/10.1234_sample/markdown-quality-prompt.md"
+                            ),
+                            "markdown-quality.json": (
+                                "tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json"
+                            ),
+                        },
+                    }
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    review_path.write_text(
+        yaml.safe_dump(
+            {
+                "schema_version": 2,
+                "provider": "newpub",
+                "reviewed_at": "2026-05-23T00:00:00Z",
+                "reviewed_by": "operator",
+                "fixtures": [
+                    {
+                        "fixture": "tests/fixtures/golden_criteria/10.1234_sample",
+                        "purpose": "structure",
+                        "doi": "10.1234/sample",
+                        "baseline_markdown_path": (
+                            "tests/fixtures/golden_criteria/10.1234_sample/extracted.md"
+                        ),
+                        "baseline_markdown_sha256": "0" * 64,
+                        "markdown_quality_path": (
+                            "tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json"
+                        ),
+                        "markdown_quality_sha256": "1" * 64,
+                        "review_notes": "Pending repair.",
+                        "sample_representative": True,
+                        "markdown_semantic_reviewed": False,
+                        "issues": [],
+                        "assertions": [],
+                        "fixes": [],
+                    }
+                ],
+            },
+            sort_keys=False,
+        ),
+        encoding="utf-8",
+    )
+
+
+def test_repair_markdown_quality_brief_includes_issue_scope_and_verification(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    _write_repair_fixture(tmp_path)
+
+    ctx = module._load_markdown_repair_context("newpub", "10.1234/sample")
+    issues = module._markdown_repair_issues(ctx.quality_report)
+    domains = module._infer_markdown_repair_domains(issues)
+    allowed = module._markdown_repair_allowed_scope(ctx, domains)
+    brief = module._markdown_repair_brief(
+        ctx,
+        attempt=1,
+        max_attempts=3,
+        domains=domains,
+        allowed_scope=allowed,
+    )
+
+    assert "table" in brief["repair_domains"]
+    assert brief["quality_issues"][0]["evidence"] == "| orphan | row |"
+    assert "tests/fixtures/golden_criteria/10.1234_sample/**" in brief["files_allowed_to_modify"]
+    assert "tests/unit/test_newpub_provider.py" in brief["files_allowed_to_modify"]
+    assert "src/paper_fetch/extraction/markdown_render.py" in brief["files_allowed_to_modify"]
+    assert "onboarding/known-providers.yml" in brief["files_must_not_modify"]
+    assert any("scripts/snapshot_expected.py" in command for command in brief["verification_commands"][1])
+    assert brief["required_order"][0].startswith("Add or update a provider-local regression test")
+
+
+def test_repair_markdown_quality_rejects_pending_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    _write_repair_fixture(tmp_path, quality_status="pending_agent_review")
+
+    with pytest.raises(module.ToolError) as pending:
+        module.run_repair_markdown_quality(
+            argparse.Namespace(
+                provider="newpub",
+                doi="10.1234/sample",
+                state=str(tmp_path / "state.json"),
+                output_dir=str(tmp_path / "run"),
+                max_attempts=3,
+            )
+        )
+
+    assert pending.value.code == "MARKDOWN_QUALITY_REVIEW_PENDING"
+
+
+def test_repair_markdown_quality_fake_agent_success_records_state(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    _write_repair_fixture(tmp_path)
+    fake_agent = tmp_path / "fake_agent.py"
+    fake_agent.write_text(
+        """
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+prompt = sys.stdin.read()
+quality = Path("tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json")
+if "Markdown quality repair review" in prompt:
+    report = json.loads(quality.read_text(encoding="utf-8"))
+    report["status"] = "pass"
+    report["issues"] = []
+    report["blocking_issue_count"] = 0
+    report["reviewed_by"] = "fake-agent"
+    report["reviewed_at"] = "2026-05-23T00:00:00Z"
+    quality.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+    print("quality pass")
+else:
+    Path("tests/unit").mkdir(parents=True, exist_ok=True)
+    Path("tests/unit/test_newpub_provider.py").write_text("def test_regression():\\n    assert True\\n", encoding="utf-8")
+    print("repair ok")
+""",
+        encoding="utf-8",
+    )
+
+    def fake_run_env(command: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "ok\n", "")
+
+    monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
+    monkeypatch.setattr(module, "_run_env_command", fake_run_env)
+
+    result = module.run_repair_markdown_quality(
+        argparse.Namespace(
+            provider="newpub",
+            doi="10.1234/sample",
+            state=str(tmp_path / "state.json"),
+            output_dir=str(tmp_path / "run"),
+            max_attempts=3,
+        )
+    )
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    repair = state["providers"]["newpub"]["repairs"]["markdown_quality"][0]
+    review = yaml.safe_load((tmp_path / "onboarding" / "reviews" / "newpub.yml").read_text(encoding="utf-8"))
+
+    assert result == 0
+    assert repair["status"] == "passed"
+    assert repair["attempts"] == 1
+    assert repair["issue_ids"] == ["broken-table"]
+    assert repair["quality_status"] == "pass"
+    assert repair["review_artifact_updated"] is True
+    assert (tmp_path / "run" / "markdown-quality" / "10.1234_sample" / "attempt-1" / "repair-brief.yml").is_file()
+    assert review["fixtures"][0]["markdown_semantic_reviewed"] is False
+    assert review["fixtures"][0]["markdown_quality_sha256"] != "1" * 64
+
+
+def test_repair_markdown_quality_rejects_forbidden_agent_change(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    _write_repair_fixture(tmp_path)
+    fake_agent = tmp_path / "fake_agent.py"
+    fake_agent.write_text("import sys; sys.stdin.read(); print('ok')\n", encoding="utf-8")
+    snapshots = iter([set(), {"docs/providers.md"}])
+    monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
+    monkeypatch.setattr(module, "_workspace_changed_paths", lambda: next(snapshots))
+
+    with pytest.raises(module.ToolError) as forbidden:
+        module.run_repair_markdown_quality(
+            argparse.Namespace(
+                provider="newpub",
+                doi="10.1234/sample",
+                state=str(tmp_path / "state.json"),
+                output_dir=str(tmp_path / "run"),
+                max_attempts=3,
+            )
+        )
+
+    assert forbidden.value.code == "WORKER_MODIFIED_FORBIDDEN_FILE"
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    repair = state["providers"]["newpub"]["repairs"]["markdown_quality"][0]
+    assert repair["failure"]["forbidden_paths"] == ["docs/providers.md"]
+
+
+def test_repair_markdown_quality_fails_after_max_attempts(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    _write_repair_fixture(tmp_path)
+    fake_agent = tmp_path / "fake_agent.py"
+    fake_agent.write_text(
+        """
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+prompt = sys.stdin.read()
+quality = Path("tests/fixtures/golden_criteria/10.1234_sample/markdown-quality.json")
+if "Markdown quality repair review" in prompt:
+    report = json.loads(quality.read_text(encoding="utf-8"))
+    report["status"] = "fail"
+    report["issues"] = [{
+        "id": "broken-table",
+        "severity": "high",
+        "blocking": True,
+        "summary": "Still broken.",
+        "evidence": "| orphan | row |"
+    }]
+    report["blocking_issue_count"] = 1
+    report["reviewed_by"] = "fake-agent"
+    report["reviewed_at"] = "2026-05-23T00:00:00Z"
+    quality.write_text(json.dumps(report, indent=2, sort_keys=True) + "\\n", encoding="utf-8")
+print("done")
+""",
+        encoding="utf-8",
+    )
+
+    def fake_run_env(command: list[str]) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, "ok\n", "")
+
+    monkeypatch.setenv("PROVIDER_ONBOARDING_AGENT_CLI", f"{sys.executable} {fake_agent}")
+    monkeypatch.setattr(module, "_run_env_command", fake_run_env)
+
+    with pytest.raises(module.ToolError) as failed:
+        module.run_repair_markdown_quality(
+            argparse.Namespace(
+                provider="newpub",
+                doi="10.1234/sample",
+                state=str(tmp_path / "state.json"),
+                output_dir=str(tmp_path / "run"),
+                max_attempts=3,
+            )
+        )
+
+    assert failed.value.code == "MARKDOWN_QUALITY_REPAIR_FAILED"
+    state = json.loads((tmp_path / "state.json").read_text(encoding="utf-8"))
+    repair = state["providers"]["newpub"]["repairs"]["markdown_quality"][0]
+    assert repair["status"] == "failed"
+    assert repair["attempts"] == 3
+    assert repair["quality_status"] == "fail"
 
 
 def test_onboard_script_does_not_import_llm_sdks() -> None:

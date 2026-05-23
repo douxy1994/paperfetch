@@ -150,6 +150,18 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         fixture_name=golden_criteria_fixture("10.5194/acp-24-1-2024", "original.xml"),
         fixture_kind="xml",
     ),
+    "royalsocietypublishing": ProviderBenchmarkSample(
+        provider="royalsocietypublishing",
+        doi="10.1098/rsta.2019.0558",
+        year=2020,
+        title="Creation and application of virtual patient cohorts of heart models",
+        landing_url="https://royalsocietypublishing.org/doi/10.1098/rsta.2019.0558",
+        expected_source="royalsocietypublishing_html",
+        accepted_live_source_trail_groups=(("fulltext:royalsocietypublishing_html_ok",),),
+        required_env=("CROSSREF_MAILTO",),
+        fixture_name=golden_criteria_fixture("10.1098/rsta.2019.0558", "original.html"),
+        fixture_kind="html",
+    ),
 }
 
 

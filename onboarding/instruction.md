@@ -1,6 +1,8 @@
 # /goal 通用执行说明：添加 Provider
 
-本文是 provider onboarding 的通用执行入口。推荐直接运行：
+本文是 provider onboarding 的通用执行入口，适合从零添加 provider，或基于已有 `onboarding/manifests/<provider>.yml` 继续实现到 merge-ready。不同场景该选哪条 runbook，先看 [`runbook.md`](./runbook.md)。
+
+推荐直接运行：
 
 ```text
 /goal follow onboarding/instruction.md 添加 <provider> provider
@@ -79,9 +81,11 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
    - 先把每个 `markdown_contract.<purpose>` 写成 provider-local Markdown 断言，marker 用 `markdown-review: purpose=<purpose> doi=<doi>`。
    - 再实现 waterfall、typed payload、HTML/XML/PDF 转换、资产和 status。
 8. Markdown Review Loop：
-   - 对每个 non-null fixture 生成 baseline Markdown。
+   - 对每个 non-null fixture 生成 baseline Markdown；人工语义基准只能是 fixture 目录下的 `extracted.md`，不能用 `expected.json`、`original.html/xml/pdf` 代替。
    - 可先运行 `python3 scripts/bootstrap_review_artifact.py --provider <provider> --manifest onboarding/manifests/<provider>.yml` 生成 review 草稿；草稿默认 `markdown_semantic_reviewed: false`。
-   - 人工阅读 Markdown，并写入 `onboarding/reviews/<provider>.yml`：`baseline_markdown_path`、`baseline_markdown_sha256`、`review_notes`、`sample_representative`、`markdown_semantic_reviewed`、`issues`、`assertions`、`fixes`。
+   - agent 按 fixture 目录下的 `markdown-quality-prompt.md` 阅读 `extracted.md`，并把 `markdown-quality.json` 从 `pending_agent_review` 写成真实的 `pass` / `fail` 报告。
+   - 人工阅读 `extracted.md`，并写入 `onboarding/reviews/<provider>.yml`：`baseline_markdown_path`、`baseline_markdown_sha256`、`markdown_quality_path`、`markdown_quality_sha256`、`review_notes`、`sample_representative`、`markdown_semantic_reviewed`、`issues`、`assertions`、`fixes`。
+   - `markdown-quality.json` 必须为 `review_method: agent_prompt`、`status: pass` 且没有 blocking issue；pending 或 fail 都会阻断 `markdown_semantic_reviewed: true`。
    - `issues` 和 `fixes` 使用带稳定 `id` 的对象；每个 fix 必须引用已有 `issue_ids`，并列出至少一个 provider-local `test_names`。
    - 每个 issue 先落 provider-local 断言，再修 provider-owned 实现。
    - 重复到所有 fixture Markdown 干净。
@@ -91,6 +95,7 @@ runner 只通过 `PROVIDER_ONBOARDING_AGENT_CLI` 调用本地外部 agent CLI；
 10. 生成 expected snapshots：
    - `PYTHONPATH=src python3 scripts/snapshot_expected.py --doi "<doi>" --review`
    - `PYTHONPATH=src python3 scripts/snapshot_expected.py --doi "<doi>"`
+   - 写入模式会同时生成 `expected.json`、`extracted.md`、`markdown-quality-prompt.md`、pending `markdown-quality.json` 并同步 manifest assets；`expected.json` 只锁摘要期望，不是人工 Markdown baseline。
    - 或用 `python3 scripts/onboard_from_manifests.py verify --provider <provider> --task snapshot-expected` 枚举 manifest 中所有 non-null DOI 的 review/write/check 命令。
 11. Sync-back manifest：
    - `PYTHONPATH=src python3 scripts/manifest_sync_back.py --provider <provider> --manifest onboarding/manifests/<provider>.yml --sync-docs`

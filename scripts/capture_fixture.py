@@ -7,6 +7,7 @@ import json
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.parse import urljoin
 
 import yaml
 
@@ -19,6 +20,7 @@ if SRC_PATH.is_dir() and str(SRC_PATH) not in sys.path:
     sys.path.insert(0, str(SRC_PATH))
 
 from _structured_errors import ToolError, emit_error, error_payload  # noqa: E402
+from paper_fetch.config import build_user_agent  # noqa: E402
 from paper_fetch.extraction.html.signals import CHALLENGE_PATTERNS, contains_access_gate_text, summarize_html  # noqa: E402
 from paper_fetch.http import (  # noqa: E402
     HttpTransport,
@@ -30,6 +32,8 @@ from paper_fetch.publisher_identity import infer_provider_from_doi, normalize_do
 from paper_fetch.utils import normalize_text  # noqa: E402
 
 
+HTTP_REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+MAX_HTTP_CAPTURE_REDIRECTS = 8
 GOLDEN_PURPOSES = {
     "structure",
     "table",
@@ -364,6 +368,21 @@ def _content_type(response: dict[str, Any]) -> str:
     return str(headers.get("content-type") or headers.get("Content-Type") or "text/html")
 
 
+def _header_value(headers: dict[str, Any] | None, key: str) -> str:
+    if not headers:
+        return ""
+    target = key.lower()
+    for header_key, value in headers.items():
+        if str(header_key).lower() == target:
+            return str(value or "")
+    return ""
+
+
+def _response_url(response: dict[str, Any], request_url: str) -> str:
+    raw_url = str(response.get("url") or "").strip()
+    return urljoin(request_url, raw_url) if raw_url else request_url
+
+
 def _body_bytes(response: dict[str, Any]) -> bytes:
     body = response.get("body", b"")
     if isinstance(body, bytes):
@@ -427,11 +446,40 @@ def _manifest_entry(
 
 
 def _capture_http(url: str) -> dict[str, Any]:
-    return HttpTransport().request(
-        "GET",
-        url,
-        headers={"Accept": "text/html,application/xhtml+xml,application/xml,application/pdf;q=0.9,*/*;q=0.8"},
-        retry_on_transient=True,
+    headers = {
+        "Accept": "text/html,application/xhtml+xml,application/xml,application/pdf;q=0.9,*/*;q=0.8",
+        "User-Agent": build_user_agent({}),
+    }
+    transport = HttpTransport()
+    current_url = url
+    for redirect_count in range(MAX_HTTP_CAPTURE_REDIRECTS + 1):
+        response = transport.request(
+            "GET",
+            current_url,
+            headers=headers,
+            retry_on_transient=True,
+        )
+        response["url"] = _response_url(response, current_url)
+        status_code = int(response.get("status_code") or 200)
+        location = _header_value(
+            response.get("headers") if isinstance(response.get("headers"), dict) else {},
+            "location",
+        )
+        if status_code in HTTP_REDIRECT_STATUS_CODES and location:
+            if redirect_count >= MAX_HTTP_CAPTURE_REDIRECTS:
+                raise RequestFailure(
+                    status_code,
+                    f"Exceeded HTTP redirect limit while capturing fixture for {url}",
+                    headers=response.get("headers") if isinstance(response.get("headers"), dict) else {},
+                    url=response["url"],
+                )
+            current_url = urljoin(response["url"], location)
+            continue
+        return response
+    raise RequestFailure(
+        None,
+        f"Exceeded HTTP redirect limit while capturing fixture for {url}",
+        url=current_url,
     )
 
 

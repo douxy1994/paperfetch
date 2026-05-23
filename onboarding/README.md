@@ -9,7 +9,8 @@
 - `onboarding/provider-manifest.schema.json` 定义 provider manifest schema。
 - `onboarding/manifests/<name>.yml` 是单 provider 的 routing、fixture、probe、asset profile、sync-back 和 docs fact base。
 - `onboarding/reviews/<name>.yml` 是 fixture 代表性和最终 Markdown 语义审查 artifact；acceptance 不接受只写在 worker 回复里的审查结果。
-- `onboarding/instruction.md` 是可复用 `/goal` provider onboarding 入口，按 manifest contract 驱动新增 provider。
+- `onboarding/instruction.md` 是可复用 `/goal` provider onboarding 执行入口，按 manifest contract 驱动从零新增或继续实现 provider。
+- `onboarding/runbook.md` 是不同使用场景的入口索引，说明从零实现、已有 manifest 继续、查漏补缺、单 DOI quality repair 和 blocked state 恢复该用哪条命令。
 - `scripts/capture_fixture.py --from-manifest <manifest> --all` 批量捕获所有 non-null DOI sample 和 `extra_fixtures`，自动跳过 null DOI purpose，并用 structured JSON error code 报告不可用样本。
 - `scripts/capture_fixture.py --from-manifest <manifest> --all --auto-via --fail-fast` 是 coordinator capture 默认入口，按 manifest probe 和 access review 选择 `http` / `browser`。
 - `scripts/scaffold_provider.py --from-manifest --merge-existing=safe` 负责从 manifest 生成 provider-owned skeleton；已有输出时复用安全内容或返回 JSON merge plan 和 diff preview。
@@ -27,7 +28,7 @@
 S14/S17 coordinator:
 
 - local entrypoint: `python3 scripts/onboard_from_manifests.py`
-- supported actions: `start`, `run`, `diagnose`, `resume-blocked`, `summarize`, `next`, `verify`, `advance`
+- supported actions: `start`, `run`, `diagnose`, `resume-blocked`, `summarize`, `next`, `verify`, `run-checks`, `check-snapshot`, `repair-markdown-quality`, `advance`
 - provider execution model: one active provider, serial task DAG, retry counters per task
 - worker dispatch input: generated task brief plus manifest/hard-constraints material
 - full automation entrypoint: `python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<name>.yml --until merge-ready`
@@ -97,6 +98,7 @@ Provider-local acceptance commands must come from the generated task brief. They
 | [`failure-recovery.md`](./failure-recovery.md) | Structured JSON error `code` to deterministic recovery action |
 | [`hard-constraints.md`](./hard-constraints.md) | Worker scope, provider logic boundary, pytest and grep acceptance |
 | [`instruction.md`](./instruction.md) | 通用 `/goal follow onboarding/instruction.md 添加 <provider> provider` 执行入口 |
+| [`runbook.md`](./runbook.md) | 场景化入口索引：从零实现、继续已有 manifest、查漏补缺、quality repair 和 blocked 恢复 |
 | [`manifest-discovery.md`](./manifest-discovery.md) | Discovery worker input, evidence requirements, schema output and retry rules |
 | [`acceptance.md`](./acceptance.md) | Machine-verifiable merge-ready definition |
 | [`access-review.schema.json`](./access-review.schema.json) | Operator access preflight JSON Schema |

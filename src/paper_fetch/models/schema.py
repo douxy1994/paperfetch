@@ -19,6 +19,8 @@ SourceKind = Literal[
     "pnas",
     "mdpi_html",
     "mdpi_pdf",
+    "royalsocietypublishing_html",
+    "royalsocietypublishing_pdf",
     "ieee_html",
     "ieee_pdf",
     "arxiv_html",

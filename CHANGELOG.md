@@ -6,6 +6,8 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+- Add Royal Society Publishing direct HTTP HTML provider with strict PDF fallback.
+
 ### Fixed
 
 - Derived DOI values for known MDPI numeric article URLs before generic landing-page fetches, and derived MDPI article landing URLs from known MDPI DOI suffixes before falling back to `doi.org`.

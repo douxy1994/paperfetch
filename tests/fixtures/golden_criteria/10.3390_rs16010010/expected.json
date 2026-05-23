@@ -1,11 +1,11 @@
 {
   "counts": {
     "abstract_sections": 1,
-    "body_sections": 40,
+    "body_sections": 10,
     "figures": 0,
-    "references": 0,
-    "sections": 40,
-    "tables": 1
+    "references": 24,
+    "sections": 11,
+    "tables": 0
   },
   "expected_content_kind": "fulltext",
   "has": {
@@ -15,7 +15,7 @@
     "code_availability": false,
     "data_availability": false,
     "figures": false,
-    "references": false,
+    "references": true,
     "title": true
   }
 }

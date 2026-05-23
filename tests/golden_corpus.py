@@ -20,16 +20,20 @@ from paper_fetch.providers import (
     _science_html,
     _ams_html,
     _atypon_browser_workflow_profiles as atypon_browser_workflow_profiles,
+    _arxiv_html,
     _ieee_html,
     _ieee_metadata,
     _mdpi_html,
+    _royalsocietypublishing_html,
     _wiley_html,
     copernicus as copernicus_provider,
     elsevier as elsevier_provider,
+    arxiv as arxiv_provider,
     pnas as pnas_provider,
     science as science_provider,
     ams as ams_provider,
     mdpi as mdpi_provider,
+    royalsocietypublishing as royalsocietypublishing_provider,
     springer as springer_provider,
     _springer_html as springer_html,
     wiley as wiley_provider,
@@ -94,9 +98,12 @@ class GoldenCorpusFixture:
         xml_path = golden_criteria_asset(self.doi, "original.xml")
         if xml_path.exists():
             return xml_path
+        article_path = golden_criteria_asset(self.doi, "article.html")
+        if article_path.exists():
+            return article_path
         if pdf_path.exists():
             return pdf_path
-        raise FileNotFoundError(f"Golden fixture is missing canonical original.html/original.xml/original.pdf: {self.doi}")
+        raise FileNotFoundError(f"Golden fixture is missing canonical original.html/original.xml/original.pdf/article.html: {self.doi}")
 
     @property
     def expected_path(self) -> Path:
@@ -110,14 +117,19 @@ def iter_golden_corpus_fixtures() -> tuple[GoldenCorpusFixture, ...]:
     fixtures = [
         GoldenCorpusFixture(sample_id=str(sample["sample_id"]), sample=sample)
         for sample in iter_manifest_samples(fixture_family="golden")
-        if "expected.json" in sample.get("assets", {})
+        if "expected.json" in sample.get("assets", {}) and _has_replay_asset(sample)
     ]
     return tuple(sorted(fixtures, key=lambda item: (item.provider, item.doi)))
 
 
+def _has_replay_asset(sample: dict[str, Any]) -> bool:
+    assets = sample.get("assets") if isinstance(sample.get("assets"), dict) else {}
+    return any(name in assets for name in ("original.html", "original.xml", "original.pdf", "article.html"))
+
+
 def golden_corpus_fixture_for_doi(doi: str) -> GoldenCorpusFixture:
     sample = golden_criteria_sample_for_doi(doi)
-    if "expected.json" not in sample.get("assets", {}):
+    if "expected.json" not in sample.get("assets", {}) or not _has_replay_asset(sample):
         raise FileNotFoundError(f"Golden corpus fixture is missing expected.json: {doi}")
     return GoldenCorpusFixture(sample_id=str(sample["sample_id"]), sample=sample)
 
@@ -459,6 +471,166 @@ def _build_copernicus_article(fixture: GoldenCorpusFixture):
     return client.to_article_model(metadata, raw_payload)
 
 
+def _build_royalsocietypublishing_article(fixture: GoldenCorpusFixture):
+    metadata = _base_metadata(fixture)
+    client = royalsocietypublishing_provider.RoyalsocietypublishingClient(HttpTransport(), {})
+    if fixture.route_kind == "pdf_fallback":
+        body = fixture.raw_path.read_bytes()
+        if not metadata.get("doi"):
+            metadata["doi"] = fixture.doi
+        pdf_result = pdf_fetch_result_from_bytes(
+            artifact_dir=None,
+            source_url=fixture.source_url,
+            final_url=fixture.source_url,
+            pdf_bytes=body,
+        )
+        raw_payload = RawFulltextPayload(
+            provider="royalsocietypublishing",
+            source_url=fixture.source_url,
+            content_type=fixture.content_type or "application/pdf",
+            body=body,
+            content=ProviderContent(
+                route_kind="pdf_fallback",
+                source_url=fixture.source_url,
+                content_type=fixture.content_type or "application/pdf",
+                body=body,
+                markdown_text=pdf_result.markdown_text,
+                merged_metadata=metadata,
+                diagnostics={"pdf_fallback": {"fixture": "golden_corpus"}},
+                reason="Loaded Royal Society Publishing PDF fallback golden fixture.",
+            ),
+            trace=trace_from_markers(
+                [
+                    "fulltext:royalsocietypublishing_html_fail",
+                    "fulltext:royalsocietypublishing_pdf_fallback_ok",
+                ]
+            ),
+            merged_metadata=metadata,
+            warnings=[
+                "Full text was extracted from Royal Society Publishing PDF fallback after the HTML route was not usable.",
+            ],
+        )
+        return client.to_article_model(metadata, raw_payload)
+
+    html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+    extraction = _royalsocietypublishing_html.extract_markdown(
+        html_text,
+        fixture.source_url,
+        metadata=metadata,
+        asset_profile="all",
+    )
+    raw_payload = RawFulltextPayload(
+        provider="royalsocietypublishing",
+        source_url=fixture.source_url,
+        content_type=fixture.content_type or "text/html",
+        body=extraction.html_text.encode("utf-8"),
+        content=ProviderContent(
+            route_kind="html",
+            source_url=fixture.source_url,
+            content_type=fixture.content_type or "text/html",
+            body=extraction.html_text.encode("utf-8"),
+            markdown_text=extraction.markdown_text,
+            merged_metadata=extraction.metadata,
+            diagnostics={
+                "extraction": {
+                    "abstract_sections": extraction.abstract_sections,
+                    "section_hints": extraction.section_hints,
+                }
+            },
+            reason="Loaded Royal Society Publishing real HTML fixture.",
+            extracted_assets=extraction.extracted_assets,
+        ),
+        trace=trace_from_markers(["fulltext:royalsocietypublishing_html_ok"]),
+        merged_metadata=extraction.metadata,
+    )
+    return client.to_article_model(extraction.metadata, raw_payload)
+
+
+def _load_arxiv_fixture_metadata(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    api_path = golden_criteria_asset(fixture.doi, "api.json")
+    payload = json.loads(api_path.read_text(encoding="utf-8"))
+    metadata = payload.get("provider_metadata") if isinstance(payload, dict) else None
+    if not isinstance(metadata, dict):
+        return _base_metadata(fixture)
+    return dict(metadata)
+
+
+def _build_arxiv_article(fixture: GoldenCorpusFixture):
+    metadata = _load_arxiv_fixture_metadata(fixture)
+    client = arxiv_provider.ArxivClient(HttpTransport(), {})
+    if fixture.route_kind == "pdf_fallback":
+        body = fixture.raw_path.read_bytes()
+        pdf_result = pdf_fetch_result_from_bytes(
+            artifact_dir=None,
+            source_url=fixture.source_url,
+            final_url=fixture.source_url,
+            pdf_bytes=body,
+        )
+        raw_payload = RawFulltextPayload(
+            provider="arxiv",
+            source_url=fixture.source_url,
+            content_type=fixture.content_type or "application/pdf",
+            body=body,
+            content=ProviderContent(
+                route_kind="pdf_fallback",
+                source_url=fixture.source_url,
+                content_type=fixture.content_type or "application/pdf",
+                body=body,
+                markdown_text=pdf_result.markdown_text,
+                merged_metadata=metadata,
+                diagnostics={"pdf_fallback": {"fixture": "golden_corpus"}},
+                reason="Loaded arXiv PDF fallback golden fixture.",
+            ),
+            trace=trace_from_markers(
+                [
+                    "fulltext:arxiv_html_fail",
+                    "fulltext:arxiv_pdf_fallback_ok",
+                ]
+            ),
+            merged_metadata=metadata,
+            warnings=[
+                "Full text was extracted from arXiv PDF fallback after the HTML route was not usable.",
+            ],
+        )
+        return client.to_article_model(metadata, raw_payload)
+
+    html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+    extraction = _arxiv_html._extract_arxiv_html_markdown(
+        html_text,
+        fixture.source_url,
+        metadata=metadata,
+    )
+    raw_payload = RawFulltextPayload(
+        provider="arxiv",
+        source_url=fixture.source_url,
+        content_type=fixture.content_type or "text/html",
+        body=html_text.encode("utf-8"),
+        content=ProviderContent(
+            route_kind="html",
+            source_url=fixture.source_url,
+            content_type=fixture.content_type or "text/html",
+            body=html_text.encode("utf-8"),
+            markdown_text=extraction.markdown_text,
+            merged_metadata=extraction.merged_metadata,
+            diagnostics={
+                "availability_diagnostics": extraction.diagnostics,
+                "extraction": extraction.diagnostics.get("extraction"),
+                "semantic_losses": extraction.diagnostics.get("semantic_losses"),
+            },
+            reason="Loaded arXiv official HTML golden fixture.",
+            extracted_assets=extraction.extracted_assets,
+        ),
+        trace=trace_from_markers(["fulltext:arxiv_html_ok"]),
+        merged_metadata=extraction.merged_metadata,
+        warnings=extraction.warnings,
+    )
+    return client.to_article_model(extraction.merged_metadata, raw_payload)
+
+
+def _lightweight_arxiv_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    return _article_model_positive_summary(_build_arxiv_article(fixture), fixture)
+
+
 def _article_model_positive_summary(article, fixture: GoldenCorpusFixture) -> dict[str, Any]:
     abstract_sections = [section for section in article.sections if section.kind == "abstract"]
     body_sections = [section for section in article.sections if section.kind == "body"]
@@ -602,6 +774,10 @@ def _lightweight_ieee_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
 
 def _lightweight_copernicus_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
     return _article_model_positive_summary(_build_copernicus_article(fixture), fixture)
+
+
+def _lightweight_royalsocietypublishing_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    return _article_model_positive_summary(_build_royalsocietypublishing_article(fixture), fixture)
 
 
 def lightweight_positive_summary_from_fixture(fixture: GoldenCorpusFixture) -> dict[str, Any]:
@@ -761,6 +937,51 @@ def _register_golden_corpus_adapters() -> None:
                 ),
             },
             representative_doi="10.3390/membranes15030093",
+            representative_count_fields=("sections", "abstract_sections", "body_sections"),
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="arxiv",
+            build_article=_build_arxiv_article,
+            lightweight_summary=_lightweight_arxiv_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="arxiv_html",
+                primary_marker="fulltext:arxiv_html_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="arxiv_pdf",
+                    primary_marker="fulltext:arxiv_pdf_fallback_ok",
+                ),
+            },
+            representative_doi="10.48550/arxiv.2605.06663v1",
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="royalsocietypublishing",
+            build_article=_build_royalsocietypublishing_article,
+            lightweight_summary=_lightweight_royalsocietypublishing_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="royalsocietypublishing_html",
+                primary_marker="fulltext:royalsocietypublishing_html_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="royalsocietypublishing_pdf",
+                    primary_marker="fulltext:royalsocietypublishing_pdf_fallback_ok",
+                ),
+            },
+            representative_doi="10.1098/rsta.2019.0558",
             representative_count_fields=("sections", "abstract_sections", "body_sections"),
         )
     )

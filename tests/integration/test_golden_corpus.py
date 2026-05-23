@@ -29,18 +29,20 @@ def _fixture_id(fixture: GoldenCorpusFixture) -> str:
 
 
 def test_golden_corpus_is_balanced_across_publishers() -> None:
-    assert len(GOLDEN_CORPUS_FIXTURES) == 91
+    assert len(GOLDEN_CORPUS_FIXTURES) == 109
     assert Counter(fixture.provider for fixture in GOLDEN_CORPUS_FIXTURES) == Counter(
         {
             "ams": 11,
+            "arxiv": 4,
             "copernicus": 12,
-            "elsevier": 10,
-            "ieee": 7,
+            "elsevier": 11,
+            "ieee": 8,
             "mdpi": 9,
-            "pnas": 10,
-            "science": 11,
-            "springer": 11,
-            "wiley": 10,
+            "pnas": 11,
+            "royalsocietypublishing": 7,
+            "science": 12,
+            "springer": 13,
+            "wiley": 11,
         }
     )
 
@@ -70,15 +72,17 @@ def test_golden_corpus_lightweight_contracts_hold_across_full_corpus(fixture: Go
 
 
 def test_golden_corpus_representative_fixtures_cover_primary_fulltext_paths_by_provider() -> None:
-    assert len(REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES) == 9
+    assert len(REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES) == 11
     assert Counter(fixture.provider for fixture in REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES) == Counter(
         {
             "ams": 1,
+            "arxiv": 1,
             "copernicus": 1,
             "elsevier": 1,
             "ieee": 1,
             "mdpi": 1,
             "pnas": 1,
+            "royalsocietypublishing": 1,
             "science": 1,
             "springer": 1,
             "wiley": 1,
@@ -113,7 +117,7 @@ def test_golden_corpus_representative_fixture_matches_primary_fulltext_path(fixt
 
 @pytest.mark.skipif(
     os.environ.get(FULL_GOLDEN_ENV) != "1",
-    reason=f"Set {FULL_GOLDEN_ENV}=1 to run full 91-fixture golden corpus regression.",
+    reason=f"Set {FULL_GOLDEN_ENV}=1 to run full 109-fixture golden corpus regression.",
 )
 @pytest.mark.parametrize("fixture", GOLDEN_CORPUS_FIXTURES, ids=_fixture_id)
 def test_golden_corpus_expected_summary_matches_current_extractor(fixture: GoldenCorpusFixture) -> None:

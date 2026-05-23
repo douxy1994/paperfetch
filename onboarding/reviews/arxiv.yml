@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 provider: arxiv
 reviewed_at: '2026-05-20T00:00:00Z'
 reviewed_by: operator
@@ -13,9 +13,11 @@ fixtures:
   - 'must include ## Abstract'
   - must not include Download PDF
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/original.html
-  baseline_markdown_sha256: 1d5690e06e66fc71ef1c765cba12b7759fb963b16a6087265d3ac18d5a7380ad
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/extracted.md
+  baseline_markdown_sha256: a5407daf1159366d5129f95f86e320ce10cc073dd54cc8da2c5a1bdc75788ebd
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/markdown-quality.json
+  markdown_quality_sha256: dd3578b53f5a200479427f7df3fa8f15ad0a292a5d7e4010d4c81be4b331b1c8
 - fixture: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1
   purpose: table
   doi: 10.48550/arxiv.2605.06663v1
@@ -27,9 +29,11 @@ fixtures:
   - must not include Google Scholar
   - must match (?m)^\|.+\|$
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/original.html
-  baseline_markdown_sha256: 1d5690e06e66fc71ef1c765cba12b7759fb963b16a6087265d3ac18d5a7380ad
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/extracted.md
+  baseline_markdown_sha256: a5407daf1159366d5129f95f86e320ce10cc073dd54cc8da2c5a1bdc75788ebd
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/markdown-quality.json
+  markdown_quality_sha256: dd3578b53f5a200479427f7df3fa8f15ad0a292a5d7e4010d4c81be4b331b1c8
 - fixture: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06653v1
   purpose: formula
   doi: 10.48550/arxiv.2605.06653v1
@@ -41,9 +45,11 @@ fixtures:
   - must not include [Formula unavailable]
   - must match (?:\$\$|!\[Formula\]|Equation)
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06653v1/original.html
-  baseline_markdown_sha256: baed7117a865c381408442d7ad80838bf70b71d06fa5fdae756bcc9e00ef4b69
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06653v1/extracted.md
+  baseline_markdown_sha256: 9f841cc9b6d0137a92722b4394f6077e70cc1138df0b1cb399842e7b340fbde8
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06653v1/markdown-quality.json
+  markdown_quality_sha256: 01cdb3dd09f39cc46fbf1cf5fbed8a80bcdae78f9031c7dbcb805ac56fda91b3
 - fixture: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06667v1
   purpose: figure
   doi: 10.48550/arxiv.2605.06667v1
@@ -55,9 +61,11 @@ fixtures:
   - must not include Article Metrics
   - must match (?:!\[Figure|\*\*Figure)
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06667v1/original.html
-  baseline_markdown_sha256: 22dd7e7fcc07d24d5a906223423501dd90f11b1b270751d25f3adc12637778fc
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06667v1/extracted.md
+  baseline_markdown_sha256: fb607b9b18d6c7a71c959cea3012bbe1db70277b8f7fe32650956a66a203317a
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06667v1/markdown-quality.json
+  markdown_quality_sha256: 2f722b0b8ac918c2cefc17f75fe9d86c415b1d4ff00be6ab09055568ba40314a
 - fixture: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1
   purpose: references
   doi: 10.48550/arxiv.2605.06663v1
@@ -68,9 +76,11 @@ fixtures:
   - must include Reference
   - must not include Google Scholar
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/original.html
-  baseline_markdown_sha256: 1d5690e06e66fc71ef1c765cba12b7759fb963b16a6087265d3ac18d5a7380ad
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/extracted.md
+  baseline_markdown_sha256: a5407daf1159366d5129f95f86e320ce10cc073dd54cc8da2c5a1bdc75788ebd
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.48550_arxiv.2605.06663v1/markdown-quality.json
+  markdown_quality_sha256: dd3578b53f5a200479427f7df3fa8f15ad0a292a5d7e4010d4c81be4b331b1c8
 - fixture: tests/fixtures/golden_criteria/10.48550_arxiv.1406.2661v1
   purpose: pdf_fallback
   doi: 10.48550/arxiv.1406.2661v1
@@ -81,6 +91,8 @@ fixtures:
   - 'must include #'
   - must not include Access Denied
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.1406.2661v1/original.pdf
-  baseline_markdown_sha256: ff5819e3a7b713c3bd3107b7de3d51fe0a347aa5d8444f0efdcf2345ef0a8b63
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.48550_arxiv.1406.2661v1/extracted.md
+  baseline_markdown_sha256: 9df795f0d03010424565d4e913813fc2e396527748be411a79aaad379cc2ee56
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.48550_arxiv.1406.2661v1/markdown-quality.json
+  markdown_quality_sha256: 593d3861ea94674dd218a16a303971c156e504a41345693608feedff3887bf3d

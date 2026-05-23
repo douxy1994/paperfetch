@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+from fnmatch import fnmatchcase
 import json
 import os
 import re
@@ -18,8 +19,16 @@ import yaml
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+SRC_DIR = SCRIPT_DIR.parent / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from _structured_errors import ToolError, emit_error, error_payload  # noqa: E402
+from paper_fetch.markdown_quality import (  # noqa: E402
+    PENDING_STATUS,
+    blocking_markdown_quality_issues,
+    validate_markdown_quality_report,
+)
 
 
 PROVIDER_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
@@ -36,6 +45,7 @@ IMPLEMENT_STEP = "implement-provider"
 PROPOSE_CLEANING_STEP = "propose-cleaning-chain"
 SHARED_INTEGRATION_STEP = "shared-integration"
 SNAPSHOT_EXPECTED_STEP = "snapshot-expected"
+REPAIR_MARKDOWN_QUALITY_STEP = "repair-markdown-quality"
 CLEANING_PROPOSAL_DIR = "onboarding/cleaning-chain-proposals"
 MAX_WORKER_RETRIES = 3
 ROUTING_REQUIREMENTS = [
@@ -73,6 +83,32 @@ CENTRAL_PROVIDER_LOGIC_PATHS = [
     "src/paper_fetch/quality/html_signals.py",
     "src/paper_fetch/quality/html_availability.py",
 ]
+SHARED_MARKDOWN_REPAIR_SCOPES = {
+    "table": [
+        "src/paper_fetch/extraction/markdown_render.py",
+        "tests/unit/test_markdown_render.py",
+    ],
+    "formula": [
+        "src/paper_fetch/extraction/markdown_render.py",
+        "src/paper_fetch/extraction/html/formula_rules.py",
+        "src/paper_fetch/providers/_article_markdown_math.py",
+        "tests/unit/test_markdown_render.py",
+        "tests/unit/test_article_markdown_math.py",
+        "tests/unit/test_formula_rules.py",
+    ],
+    "figure/asset": [
+        "src/paper_fetch/extraction/markdown_render.py",
+        "src/paper_fetch/markdown/images.py",
+        "tests/unit/test_markdown_render.py",
+        "tests/unit/test_markdown_images.py",
+    ],
+    "references": [
+        "src/paper_fetch/markdown/citations.py",
+        "src/paper_fetch/extraction/html/citation_anchors.py",
+        "tests/unit/test_markdown_citations.py",
+        "tests/unit/test_citation_anchors.py",
+    ],
+}
 
 
 class CoordinatorArgumentParser(argparse.ArgumentParser):
@@ -135,6 +171,24 @@ class OnboardingSource(NamedTuple):
     manifest: str
     include_discovery: bool
     manifest_yaml: str | None
+
+
+class MarkdownQualityRepairContext(NamedTuple):
+    provider: str
+    doi: str
+    sample_id: str
+    fixture_root: Path
+    expected_path: Path
+    markdown_path: Path
+    prompt_path: Path
+    quality_path: Path
+    manifest_path: Path
+    review_path: Path
+    manifest: dict[str, Any]
+    golden_sample: dict[str, Any]
+    purpose: str | None
+    markdown_contract: dict[str, Any]
+    quality_report: dict[str, Any]
 
 
 def _provider_slug(provider: str) -> str:
@@ -1159,8 +1213,423 @@ def _golden_sample_for_doi(doi: str, manifest: dict[str, Any]) -> tuple[str, dic
 def _fixture_root_for_sample(sample_id: str, sample: dict[str, Any]) -> Path:
     family = str(sample.get("fixture_family") or "golden")
     if family == "block":
-        return _repo_root() / "tests" / "fixtures" / "block" / sample_id
+        assets = sample.get("assets") if isinstance(sample.get("assets"), dict) else {}
+        for value in assets.values():
+            path = _repo_root() / str(value)
+            if "tests/fixtures/block/" in path.as_posix():
+                return path.parent
+        return _repo_root() / "tests" / "fixtures" / "block" / sample_id.removesuffix("__block")
     return _repo_root() / "tests" / "fixtures" / "golden_criteria" / sample_id
+
+
+def _rel(path: Path) -> str:
+    try:
+        return path.relative_to(_repo_root()).as_posix()
+    except ValueError:
+        return path.as_posix()
+
+
+def _read_json_object(path: Path, *, code: str, task_id: str, provider: str | None = None) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ToolError(
+            code,
+            f"JSON file cannot be loaded: {_rel(path)}",
+            retryable=True,
+            provider=provider,
+            task_id=task_id,
+            details={"path": _rel(path), "reason": str(exc)},
+        ) from exc
+    if not isinstance(data, dict):
+        raise ToolError(
+            code,
+            f"JSON file root must be an object: {_rel(path)}",
+            retryable=True,
+            provider=provider,
+            task_id=task_id,
+            details={"path": _rel(path)},
+        )
+    return data
+
+
+def _manifest_fixture_for_doi(
+    manifest: dict[str, Any],
+    doi: str,
+) -> tuple[str | None, dict[str, Any]]:
+    normalized = _normalized_doi(doi)
+    manifest_contract = manifest.get("markdown_contract")
+    manifest_contract = manifest_contract if isinstance(manifest_contract, dict) else {}
+    fixtures = manifest.get("fixtures") if isinstance(manifest.get("fixtures"), dict) else {}
+    doi_samples = fixtures.get("doi_samples") if isinstance(fixtures.get("doi_samples"), dict) else {}
+    for purpose, sample in doi_samples.items():
+        if not isinstance(sample, dict):
+            continue
+        if _normalized_doi(str(sample.get("doi") or "")) != normalized:
+            continue
+        contract = manifest_contract.get(purpose)
+        return str(purpose), contract if isinstance(contract, dict) else {}
+    extra_fixtures = manifest.get("extra_fixtures")
+    if isinstance(extra_fixtures, list):
+        for index, sample in enumerate(extra_fixtures):
+            if not isinstance(sample, dict):
+                continue
+            if _normalized_doi(str(sample.get("doi") or "")) != normalized:
+                continue
+            contract = sample.get("markdown_contract")
+            purpose = sample.get("purpose") or f"extra_fixtures[{index}]"
+            return str(purpose), contract if isinstance(contract, dict) else {}
+    return None, {}
+
+
+def _load_markdown_repair_context(provider: str, doi: str) -> MarkdownQualityRepairContext:
+    provider_name = _provider_slug(provider)
+    normalized_doi = _normalized_doi(doi)
+    task_id = f"{provider_name}-{REPAIR_MARKDOWN_QUALITY_STEP}"
+    manifest_path = _manifest_path_for_provider(provider_name)
+    manifest = _read_manifest(manifest_path)
+    if normalized_doi not in _manifest_dois(manifest):
+        raise ToolError(
+            "FIXTURE_NOT_FOUND",
+            "DOI is not registered in provider manifest fixtures.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id,
+            details={"doi": normalized_doi},
+        )
+
+    golden_manifest = _load_golden_manifest()
+    sample_entry = _golden_sample_for_doi(normalized_doi, golden_manifest)
+    if sample_entry is None:
+        raise ToolError(
+            "FIXTURE_NOT_FOUND",
+            "DOI is missing from golden criteria manifest.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id,
+            details={"doi": normalized_doi, "sample_id": _doi_slug(normalized_doi)},
+        )
+    sample_id, sample = sample_entry
+    fixture_root = _fixture_root_for_sample(sample_id, sample)
+    expected_path = fixture_root / "expected.json"
+    markdown_path = fixture_root / "extracted.md"
+    prompt_path = fixture_root / "markdown-quality-prompt.md"
+    quality_path = fixture_root / "markdown-quality.json"
+    for path, error_code, message in (
+        (expected_path, "EXPECTED_SNAPSHOT_FAILED", "expected snapshot file is missing."),
+        (markdown_path, "EXPECTED_SNAPSHOT_FAILED", "extracted Markdown baseline is missing."),
+        (prompt_path, "MARKDOWN_QUALITY_FAILED", "Markdown quality agent prompt is missing."),
+        (quality_path, "MARKDOWN_QUALITY_FAILED", "Markdown quality report is missing."),
+    ):
+        if not path.is_file():
+            raise ToolError(
+                error_code,
+                message,
+                retryable=True,
+                provider=provider_name,
+                manifest=default_manifest_path(provider_name),
+                task_id=task_id,
+                details={"doi": normalized_doi, "path": _rel(path)},
+            )
+
+    quality = _read_json_object(
+        quality_path,
+        code="MARKDOWN_QUALITY_FAILED",
+        task_id=task_id,
+        provider=provider_name,
+    )
+    validation_errors = validate_markdown_quality_report(quality)
+    expected_markdown_rel = _rel(markdown_path)
+    expected_prompt_rel = _rel(prompt_path)
+    if quality.get("markdown_path") != expected_markdown_rel:
+        validation_errors.append("markdown_path must point to extracted.md")
+    if quality.get("prompt_path") != expected_prompt_rel:
+        validation_errors.append("prompt_path must point to markdown-quality-prompt.md")
+    if validation_errors:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report must use the agent_prompt schema v2 contract.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id,
+            details={
+                "doi": normalized_doi,
+                "markdown_quality_path": _rel(quality_path),
+                "validation_errors": validation_errors,
+            },
+        )
+    if quality.get("status") == PENDING_STATUS:
+        raise ToolError(
+            "MARKDOWN_QUALITY_REVIEW_PENDING",
+            "Markdown quality report is pending agent review; complete the quality review before repair.",
+            retryable=False,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id,
+            details={
+                "doi": normalized_doi,
+                "markdown_quality_prompt_path": _rel(prompt_path),
+                "markdown_quality_path": _rel(quality_path),
+                "status": quality.get("status"),
+            },
+        )
+    blocking_issues = blocking_markdown_quality_issues(quality)
+    if quality.get("status") == "pass" and not blocking_issues:
+        raise ToolError(
+            "MARKDOWN_QUALITY_REPAIR_NOT_REQUIRED",
+            "Markdown quality report is already passing.",
+            retryable=False,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id,
+            details={"doi": normalized_doi, "markdown_quality_path": _rel(quality_path)},
+        )
+    if quality.get("status") != "fail" and not blocking_issues:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report must be fail or contain blocking issues before repair.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id,
+            details={
+                "doi": normalized_doi,
+                "markdown_quality_path": _rel(quality_path),
+                "status": quality.get("status"),
+            },
+        )
+
+    purpose, contract = _manifest_fixture_for_doi(manifest, normalized_doi)
+    return MarkdownQualityRepairContext(
+        provider=provider_name,
+        doi=normalized_doi,
+        sample_id=sample_id,
+        fixture_root=fixture_root,
+        expected_path=expected_path,
+        markdown_path=markdown_path,
+        prompt_path=prompt_path,
+        quality_path=quality_path,
+        manifest_path=manifest_path,
+        review_path=_repo_root() / "onboarding" / "reviews" / f"{provider_name}.yml",
+        manifest=manifest,
+        golden_sample=sample,
+        purpose=purpose,
+        markdown_contract=contract,
+        quality_report=quality,
+    )
+
+
+def _markdown_repair_issues(report: dict[str, Any]) -> list[dict[str, Any]]:
+    blocking = blocking_markdown_quality_issues(report)
+    if blocking:
+        return blocking
+    issues = report.get("issues")
+    return [issue for issue in issues if isinstance(issue, dict)] if isinstance(issues, list) else []
+
+
+def _infer_markdown_repair_domains(issues: list[dict[str, Any]]) -> list[str]:
+    matches: list[str] = []
+
+    def add(domain: str) -> None:
+        if domain not in matches:
+            matches.append(domain)
+
+    for issue in issues:
+        text = " ".join(
+            str(issue.get(field) or "")
+            for field in ("id", "summary", "evidence")
+        ).lower()
+        if re.search(r"\b(table|row|column|cell|header)\b|\|", text):
+            add("table")
+        if re.search(r"\b(formula|equation|math|latex|tex)\b", text):
+            add("formula")
+        if re.search(r"\b(figure|fig\.|image|caption|asset|media|supplementary)\b", text):
+            add("figure/asset")
+        if re.search(r"\b(reference|references|citation|bibliography|doi-only|scholar)\b", text):
+            add("references")
+        if re.search(r"\b(chrome|boilerplate|navigation|cookie|license|download|toolbar|metrics)\b", text):
+            add("chrome/boilerplate")
+        if re.search(r"javascript|template|placeholder|unresolved|\{\{|ocr|noise", text):
+            add("javascript/unresolved text")
+        if re.search(r"\b(duplicate|duplicated|missing|section|abstract|title|body|empty)\b", text):
+            add("duplicate/missing section")
+    if not matches:
+        matches.append("generic markdown corruption")
+    return matches
+
+
+def _provider_owned_repair_scope(ctx: MarkdownQualityRepairContext) -> list[str]:
+    provider = ctx.provider
+    return [
+        f"src/paper_fetch/providers/{provider}.py",
+        f"src/paper_fetch/providers/_{provider}_*.py",
+        f"tests/unit/test_{provider}_provider.py",
+        f"{_rel(ctx.fixture_root)}/**",
+        f"onboarding/reviews/{provider}.yml",
+    ]
+
+
+def _markdown_repair_allowed_scope(ctx: MarkdownQualityRepairContext, domains: list[str]) -> list[str]:
+    allowed = _provider_owned_repair_scope(ctx)
+    for domain in domains:
+        for path in SHARED_MARKDOWN_REPAIR_SCOPES.get(domain, []):
+            if path not in allowed:
+                allowed.append(path)
+    return allowed
+
+
+def _markdown_repair_forbidden_scope(ctx: MarkdownQualityRepairContext) -> list[str]:
+    return [
+        "onboarding/access-reviews/",
+        "onboarding/known-providers.yml",
+        "docs/providers.md",
+        "docs/extraction-rules.md",
+        "CHANGELOG.md",
+        _rel(ctx.manifest_path),
+    ]
+
+
+def _markdown_repair_commands(ctx: MarkdownQualityRepairContext) -> list[list[str]]:
+    return [
+        [
+            "PYTHONPATH=src",
+            "python3",
+            "-m",
+            "pytest",
+            f"tests/unit/test_{ctx.provider}_provider.py",
+            "tests/unit/test_provider_markdown_review_contract.py",
+            "-q",
+        ],
+        [
+            "PYTHONPATH=src",
+            "python3",
+            "scripts/snapshot_expected.py",
+            "--doi",
+            ctx.doi,
+        ],
+        [
+            "PYTHONPATH=src",
+            "python3",
+            "scripts/onboard_from_manifests.py",
+            "check-snapshot",
+            "--provider",
+            ctx.provider,
+            "--doi",
+            ctx.doi,
+        ],
+    ]
+
+
+def _markdown_repair_brief(
+    ctx: MarkdownQualityRepairContext,
+    *,
+    attempt: int,
+    max_attempts: int,
+    domains: list[str],
+    allowed_scope: list[str],
+) -> dict[str, Any]:
+    assets = ctx.golden_sample.get("assets") if isinstance(ctx.golden_sample.get("assets"), dict) else {}
+    issues = _markdown_repair_issues(ctx.quality_report)
+    issue_payload = [
+        {
+            "id": issue.get("id"),
+            "severity": issue.get("severity"),
+            "blocking": issue.get("blocking"),
+            "summary": issue.get("summary"),
+            "evidence": issue.get("evidence"),
+            "domain": domain,
+        }
+        for issue, domain in zip(issues, domains + [domains[-1]] * max(0, len(issues) - len(domains)))
+    ]
+    return {
+        "task_id": f"{ctx.provider}-{REPAIR_MARKDOWN_QUALITY_STEP}-{ctx.sample_id}",
+        "current_step": REPAIR_MARKDOWN_QUALITY_STEP,
+        "attempt": attempt,
+        "max_attempts": max_attempts,
+        "runtime": "coding-agent-subagent",
+        "provider": ctx.provider,
+        "provider_manifest": _rel(ctx.manifest_path),
+        "review_artifact": _rel(ctx.review_path),
+        "doi": ctx.doi,
+        "sample_id": ctx.sample_id,
+        "purpose": ctx.purpose,
+        "fixture": {
+            "root": _rel(ctx.fixture_root),
+            "expected": _rel(ctx.expected_path),
+            "markdown": _rel(ctx.markdown_path),
+            "markdown_sha256": _sha256_file(ctx.markdown_path),
+            "quality_prompt": _rel(ctx.prompt_path),
+            "quality_report": _rel(ctx.quality_path),
+            "assets": assets,
+        },
+        "markdown_contract": ctx.markdown_contract,
+        "repair_domains": domains,
+        "quality_issues": issue_payload,
+        "required_order": [
+            "Add or update a provider-local regression test for each issue before changing implementation.",
+            "Prefer provider-owned implementation files; use shared renderer paths only when the inferred domain explicitly allows them.",
+            "Regenerate the DOI snapshot with scripts/snapshot_expected.py --doi after the implementation fix.",
+            "Do not mark markdown_semantic_reviewed true; semantic signoff remains operator controlled.",
+        ],
+        "files_allowed_to_modify": allowed_scope,
+        "files_must_not_modify": _markdown_repair_forbidden_scope(ctx),
+        "verification_commands": _markdown_repair_commands(ctx),
+        "no_commit": True,
+    }
+
+
+def _markdown_excerpt(path: Path, *, limit: int = 6000) -> str:
+    text = path.read_text(encoding="utf-8", errors="replace")
+    if len(text) <= limit:
+        return text
+    head = text[: limit // 2].rstrip()
+    tail = text[-limit // 2 :].lstrip()
+    return f"{head}\n\n[... markdown excerpt truncated ...]\n\n{tail}"
+
+
+def _markdown_repair_worker_prompt(
+    ctx: MarkdownQualityRepairContext,
+    brief: dict[str, Any],
+) -> str:
+    return (
+        f"# Markdown quality repair worker: {ctx.provider} / {ctx.doi}\n"
+        "\n"
+        "Fix the failing Markdown baseline by changing implementation and tests, not by editing the quality report.\n"
+        "Do not commit changes.\n"
+        "\n"
+        "## Repair Brief\n"
+        "```yaml\n"
+        f"{to_yaml(brief)}\n"
+        "```\n"
+        "\n"
+        "## Current Markdown Quality Report\n"
+        "```json\n"
+        f"{json.dumps(ctx.quality_report, indent=2, sort_keys=True)}\n"
+        "```\n"
+        "\n"
+        "## Extracted Markdown Excerpt\n"
+        "```markdown\n"
+        f"{_markdown_excerpt(ctx.markdown_path)}\n"
+        "```\n"
+    )
+
+
+def _markdown_quality_review_prompt(ctx: MarkdownQualityRepairContext) -> str:
+    prompt_text = ctx.prompt_path.read_text(encoding="utf-8", errors="replace")
+    return (
+        f"# Markdown quality repair review: {ctx.provider} / {ctx.doi}\n"
+        "\n"
+        "Read the current extracted Markdown and write the pass/fail report requested below.\n"
+        f"You may modify only `{_rel(ctx.quality_path)}`. Do not modify code, tests, expected snapshots, or extracted Markdown.\n"
+        "\n"
+        "## Existing Review Prompt\n"
+        "```markdown\n"
+        f"{prompt_text}\n"
+        "```\n"
+    )
 
 
 def _run_env_command(command: list[str]) -> subprocess.CompletedProcess[str]:
@@ -1483,6 +1952,17 @@ OPERATOR_REQUIRED_FAILURE_CODES = {
 }
 
 
+def _latest_markdown_quality_repair(provider_state: dict[str, Any]) -> dict[str, Any] | None:
+    repairs = provider_state.get("repairs")
+    if not isinstance(repairs, dict):
+        return None
+    markdown_repairs = repairs.get("markdown_quality")
+    if not isinstance(markdown_repairs, list) or not markdown_repairs:
+        return None
+    latest = markdown_repairs[-1]
+    return latest if isinstance(latest, dict) else None
+
+
 def diagnose_provider_state(provider_state: dict[str, Any]) -> dict[str, Any]:
     provider = _provider_slug(str(provider_state.get("provider") or "unknown"))
     recovery_entries = _load_failure_recovery_entries()
@@ -1510,6 +1990,7 @@ def diagnose_provider_state(provider_state: dict[str, Any]) -> dict[str, Any]:
             "action": recovery.get("action"),
         },
         "access_review": access,
+        "recent_markdown_quality_repair": _latest_markdown_quality_repair(provider_state),
         "operator_required": operator_required,
     }
 
@@ -1797,6 +2278,62 @@ def _matches_forbidden(path: str, forbidden: list[str]) -> bool:
 
 def _forbidden_changes(before: set[str], after: set[str], forbidden: list[str]) -> list[str]:
     return sorted(path for path in after - before if _matches_forbidden(path, forbidden))
+
+
+def _matches_scope(path: str, scope: list[str]) -> bool:
+    normalized = path.strip("/")
+    for item in scope:
+        pattern = item.strip().strip("/")
+        if not pattern:
+            continue
+        if fnmatchcase(normalized, pattern):
+            return True
+        if pattern.endswith("/**"):
+            base = pattern[:-3].strip("/")
+            if normalized == base or normalized.startswith(base + "/"):
+                return True
+        if pattern.endswith("/"):
+            base = pattern.strip("/")
+            if normalized == base or normalized.startswith(base + "/"):
+                return True
+        elif normalized == pattern or normalized.startswith(pattern + "/"):
+            return True
+    return False
+
+
+def _disallowed_changes(before: set[str], after: set[str], allowed: list[str]) -> list[str]:
+    return sorted(path for path in after - before if not _matches_scope(path, allowed))
+
+
+def _agent_argv(
+    *,
+    provider: str,
+    task: str,
+    manifest: str | None = None,
+) -> list[str]:
+    agent_cli = os.environ.get(AGENT_CLI_ENV)
+    if not agent_cli:
+        raise ToolError(
+            "WORKER_AGENT_CLI_MISSING",
+            f"{AGENT_CLI_ENV} is required to dispatch onboarding worker tasks.",
+            retryable=False,
+            provider=provider,
+            manifest=manifest,
+            task_id=f"{provider}-{task}",
+            details={"env": AGENT_CLI_ENV},
+        )
+    argv = shlex.split(agent_cli)
+    if not argv:
+        raise ToolError(
+            "WORKER_AGENT_CLI_MISSING",
+            f"{AGENT_CLI_ENV} did not contain an executable command.",
+            retryable=False,
+            provider=provider,
+            manifest=manifest,
+            task_id=f"{provider}-{task}",
+            details={"env": AGENT_CLI_ENV},
+        )
+    return argv
 
 
 def _load_brief(path: Path) -> dict[str, Any]:
@@ -2340,6 +2877,9 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
     sample_id, sample = sample_entry
     fixture_root = _fixture_root_for_sample(sample_id, sample)
     expected_path = fixture_root / "expected.json"
+    markdown_path = fixture_root / "extracted.md"
+    prompt_path = fixture_root / "markdown-quality-prompt.md"
+    quality_path = fixture_root / "markdown-quality.json"
     if not fixture_root.is_dir():
         raise ToolError(
             "FIXTURE_NOT_FOUND",
@@ -2360,6 +2900,127 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
             task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
             details={"doi": doi, "expected_path": expected_path.relative_to(_repo_root()).as_posix()},
         )
+    if not markdown_path.is_file():
+        raise ToolError(
+            "EXPECTED_SNAPSHOT_FAILED",
+            "extracted Markdown baseline is missing.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={"doi": doi, "baseline_markdown_path": markdown_path.relative_to(_repo_root()).as_posix()},
+        )
+    if not prompt_path.is_file():
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality agent prompt is missing.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={"doi": doi, "markdown_quality_prompt_path": prompt_path.relative_to(_repo_root()).as_posix()},
+        )
+    if not quality_path.is_file():
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report is missing.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={"doi": doi, "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix()},
+        )
+    try:
+        quality = json.loads(quality_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report cannot be loaded.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={
+                "doi": doi,
+                "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "reason": str(exc),
+            },
+        ) from exc
+    validation_errors = validate_markdown_quality_report(quality)
+    expected_markdown_rel = markdown_path.relative_to(_repo_root()).as_posix()
+    expected_prompt_rel = prompt_path.relative_to(_repo_root()).as_posix()
+    if isinstance(quality, dict):
+        if quality.get("markdown_path") != expected_markdown_rel:
+            validation_errors.append("markdown_path must point to extracted.md")
+        if quality.get("prompt_path") != expected_prompt_rel:
+            validation_errors.append("prompt_path must point to markdown-quality-prompt.md")
+    if validation_errors:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report must use the agent_prompt schema v2 contract.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={
+                "doi": doi,
+                "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "validation_errors": validation_errors,
+            },
+        )
+    if isinstance(quality, dict) and quality.get("status") == PENDING_STATUS:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report is pending agent review; run the prompt and write a pass/fail report.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={
+                "doi": doi,
+                "markdown_quality_prompt_path": prompt_path.relative_to(_repo_root()).as_posix(),
+                "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "status": quality.get("status"),
+            },
+        )
+    blocking_issues = blocking_markdown_quality_issues(quality)
+    if not isinstance(quality, dict) or quality.get("status") != "pass" or blocking_issues:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report contains blocking issues.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={
+                "doi": doi,
+                "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "status": quality.get("status") if isinstance(quality, dict) else None,
+                "issues": blocking_issues,
+            },
+        )
+    assets = sample.get("assets") if isinstance(sample.get("assets"), dict) else {}
+    expected_assets = {
+        "expected.json": expected_path,
+        "extracted.md": markdown_path,
+        "markdown-quality-prompt.md": prompt_path,
+        "markdown-quality.json": quality_path,
+    }
+    missing_asset_entries = [
+        name
+        for name, path in expected_assets.items()
+        if assets.get(name) != path.relative_to(_repo_root()).as_posix()
+    ]
+    if missing_asset_entries:
+        raise ToolError(
+            "EXPECTED_SNAPSHOT_FAILED",
+            "fixture manifest assets do not register all snapshot artifacts.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=f"{provider}-{SNAPSHOT_EXPECTED_STEP}",
+            details={"doi": doi, "missing_assets": missing_asset_entries},
+        )
     if sample.get("expected_outcome") == "pending":
         raise ToolError(
             "EXPECTED_OUTCOME_PENDING",
@@ -2377,6 +3038,10 @@ def run_check_snapshot(args: argparse.Namespace) -> int:
                 "doi": doi,
                 "sample_id": sample_id,
                 "expected_path": expected_path.relative_to(_repo_root()).as_posix(),
+                "baseline_markdown_path": markdown_path.relative_to(_repo_root()).as_posix(),
+                "markdown_quality_prompt_path": prompt_path.relative_to(_repo_root()).as_posix(),
+                "markdown_quality_path": quality_path.relative_to(_repo_root()).as_posix(),
+                "markdown_quality_status": quality.get("status"),
                 "expected_outcome": sample.get("expected_outcome"),
                 "result": "passed",
             },
@@ -2493,6 +3158,393 @@ def run_run_checks(args: argparse.Namespace) -> int:
     return 0
 
 
+def _record_markdown_quality_repair(
+    provider_state: dict[str, Any],
+    entry: dict[str, Any],
+) -> None:
+    repairs = provider_state.setdefault("repairs", {})
+    if not isinstance(repairs, dict):
+        repairs = {}
+        provider_state["repairs"] = repairs
+    markdown_repairs = repairs.setdefault("markdown_quality", [])
+    if not isinstance(markdown_repairs, list):
+        markdown_repairs = []
+        repairs["markdown_quality"] = markdown_repairs
+    markdown_repairs.append(entry)
+
+
+def _run_agent_with_scope(
+    *,
+    argv: list[str],
+    prompt: str,
+    attempt_dir: Path,
+    prefix: str,
+    allowed_scope: list[str],
+) -> tuple[subprocess.CompletedProcess[str], set[str], set[str]]:
+    write_text(attempt_dir / f"{prefix}.prompt.md", prompt)
+    before = _workspace_changed_paths()
+    completed = subprocess.run(
+        argv,
+        cwd=_repo_root(),
+        input=prompt,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    after = _workspace_changed_paths()
+    write_text(attempt_dir / f"{prefix}.stdout.log", completed.stdout)
+    write_text(attempt_dir / f"{prefix}.stderr.log", completed.stderr)
+    write_text(
+        attempt_dir / f"{prefix}.changed-before.json",
+        json.dumps(sorted(before), indent=2, sort_keys=True) + "\n",
+    )
+    write_text(
+        attempt_dir / f"{prefix}.changed-after.json",
+        json.dumps(sorted(after), indent=2, sort_keys=True) + "\n",
+    )
+    disallowed = _disallowed_changes(before, after, allowed_scope)
+    if disallowed:
+        write_text(
+            attempt_dir / f"{prefix}.forbidden-paths.json",
+            json.dumps(disallowed, indent=2, sort_keys=True) + "\n",
+        )
+    return completed, before, after
+
+
+def _run_repair_command(
+    command: list[str],
+    *,
+    attempt_dir: Path,
+    index: int,
+) -> tuple[bool, dict[str, Any]]:
+    completed = _run_env_command(command)
+    command_dir = attempt_dir / "commands"
+    command_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{index:02d}"
+    write_text(command_dir / f"{stem}.command.txt", _markdown_command(command) + "\n")
+    write_text(command_dir / f"{stem}.stdout.log", completed.stdout)
+    write_text(command_dir / f"{stem}.stderr.log", completed.stderr)
+    failed = _command_failed(command, completed)
+    details = {
+        "command": command,
+        "returncode": completed.returncode,
+        "stdout_tail": _tail(completed.stdout),
+        "stderr_tail": _tail(completed.stderr),
+    }
+    structured = _payload_from_stderr(completed.stderr)
+    if structured:
+        details["structured_error"] = structured
+    return not failed, details
+
+
+def _load_quality_after_review(ctx: MarkdownQualityRepairContext) -> tuple[dict[str, Any] | None, list[str]]:
+    try:
+        quality = json.loads(ctx.quality_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return None, [f"Markdown quality report cannot be loaded: {exc}"]
+    errors = validate_markdown_quality_report(quality)
+    if isinstance(quality, dict):
+        if quality.get("markdown_path") != _rel(ctx.markdown_path):
+            errors.append("markdown_path must point to extracted.md")
+        if quality.get("prompt_path") != _rel(ctx.prompt_path):
+            errors.append("prompt_path must point to markdown-quality-prompt.md")
+    else:
+        errors.append("markdown quality report root must be an object")
+        quality = None
+    return quality, errors
+
+
+def _update_review_artifact_hashes(ctx: MarkdownQualityRepairContext) -> bool:
+    if not ctx.review_path.is_file():
+        return False
+    try:
+        review = yaml.safe_load(ctx.review_path.read_text(encoding="utf-8"))
+    except yaml.YAMLError:
+        return False
+    if not isinstance(review, dict):
+        return False
+    fixtures = review.get("fixtures")
+    if not isinstance(fixtures, list):
+        return False
+    quality_rel = _rel(ctx.quality_path)
+    markdown_rel = _rel(ctx.markdown_path)
+    changed = False
+    for fixture in fixtures:
+        if not isinstance(fixture, dict):
+            continue
+        fixture_doi = _normalized_doi(str(fixture.get("doi") or ""))
+        matches_doi = fixture_doi == ctx.doi
+        matches_quality = fixture.get("markdown_quality_path") == quality_rel
+        matches_markdown = fixture.get("baseline_markdown_path") == markdown_rel
+        if not (matches_doi or matches_quality or matches_markdown):
+            continue
+        fixture["markdown_quality_sha256"] = _sha256_file(ctx.quality_path)
+        if ctx.markdown_path.is_file():
+            fixture["baseline_markdown_sha256"] = _sha256_file(ctx.markdown_path)
+        changed = True
+    if changed:
+        write_text(
+            ctx.review_path,
+            yaml.safe_dump(review, sort_keys=False, allow_unicode=True),
+        )
+    return changed
+
+
+def run_repair_markdown_quality(args: argparse.Namespace) -> int:
+    provider = _provider_slug(args.provider)
+    doi = _normalized_doi(args.doi)
+    max_attempts = int(args.max_attempts)
+    if max_attempts < 1:
+        raise ToolError(
+            "TASK_BRIEF_INVALID",
+            "--max-attempts must be at least 1.",
+            retryable=False,
+            provider=provider,
+            task_id=f"{provider}-{REPAIR_MARKDOWN_QUALITY_STEP}",
+            details={"max_attempts": max_attempts},
+        )
+    state_path = _state_path(args.state)
+    state = _load_state(state_path)
+    provider_state = _ensure_provider_state(state, provider=provider)
+    ctx = _load_markdown_repair_context(provider, doi)
+    argv = _agent_argv(
+        provider=provider,
+        task=REPAIR_MARKDOWN_QUALITY_STEP,
+        manifest=_rel(ctx.manifest_path),
+    )
+    output_dir = Path(args.output_dir or f".paper-fetch-runs/{provider}-markdown-repair")
+    if not output_dir.is_absolute():
+        output_dir = _repo_root() / output_dir
+    repair_dir = output_dir / "markdown-quality" / _doi_slug(doi)
+    initial_issues = _markdown_repair_issues(ctx.quality_report)
+    initial_issue_ids = [
+        str(issue.get("id"))
+        for issue in initial_issues
+        if isinstance(issue.get("id"), str) and issue.get("id")
+    ]
+    changed_paths: set[str] = set()
+    executed_commands: list[list[str]] = []
+    command_details: list[dict[str, Any]] = []
+    last_failure: dict[str, Any] | None = None
+    attempts_run = 0
+    quality_status = ctx.quality_report.get("status")
+
+    for attempt in range(1, max_attempts + 1):
+        attempts_run = attempt
+        ctx = _load_markdown_repair_context(provider, doi)
+        issues = _markdown_repair_issues(ctx.quality_report)
+        domains = _infer_markdown_repair_domains(issues)
+        allowed_scope = _markdown_repair_allowed_scope(ctx, domains)
+        attempt_dir = repair_dir / f"attempt-{attempt}"
+        attempt_dir.mkdir(parents=True, exist_ok=True)
+        brief = _markdown_repair_brief(
+            ctx,
+            attempt=attempt,
+            max_attempts=max_attempts,
+            domains=domains,
+            allowed_scope=allowed_scope,
+        )
+        write_text(attempt_dir / "repair-brief.yml", to_yaml(brief) + "\n")
+        worker_prompt = _markdown_repair_worker_prompt(ctx, brief)
+        completed, before, after = _run_agent_with_scope(
+            argv=argv,
+            prompt=worker_prompt,
+            attempt_dir=attempt_dir,
+            prefix="repair-agent",
+            allowed_scope=allowed_scope,
+        )
+        changed_paths.update(after - before)
+        disallowed = _disallowed_changes(before, after, allowed_scope)
+        if disallowed:
+            last_failure = {
+                "code": "WORKER_MODIFIED_FORBIDDEN_FILE",
+                "attempt": attempt,
+                "forbidden_paths": disallowed,
+                "stdout_tail": _tail(completed.stdout),
+                "stderr_tail": _tail(completed.stderr),
+            }
+            entry = {
+                "provider": provider,
+                "doi": doi,
+                "sample_id": ctx.sample_id,
+                "attempts": attempts_run,
+                "status": "failed",
+                "issue_ids": initial_issue_ids,
+                "changed_paths": sorted(changed_paths),
+                "commands": executed_commands,
+                "command_results": command_details,
+                "quality_status": quality_status,
+                "run_dir": _rel(repair_dir),
+                "failure": last_failure,
+            }
+            _record_markdown_quality_repair(provider_state, entry)
+            _write_json(state_path, state)
+            raise ToolError(
+                "WORKER_MODIFIED_FORBIDDEN_FILE",
+                "repair worker modified files outside the inferred allowed scope.",
+                retryable=True,
+                provider=provider,
+                manifest=_rel(ctx.manifest_path),
+                task_id=f"{provider}-{REPAIR_MARKDOWN_QUALITY_STEP}",
+                details=last_failure,
+            )
+        if completed.returncode != 0:
+            last_failure = {
+                "code": "WORKER_AGENT_FAILED",
+                "attempt": attempt,
+                "returncode": completed.returncode,
+                "stdout_tail": _tail(completed.stdout),
+                "stderr_tail": _tail(completed.stderr),
+            }
+            continue
+
+        commands = _markdown_repair_commands(ctx)
+        pre_review_commands = commands[:2]
+        post_review_command = commands[2]
+        command_failed = False
+        for index, command in enumerate(pre_review_commands, start=1):
+            ok, details = _run_repair_command(command, attempt_dir=attempt_dir, index=index)
+            executed_commands.append(command)
+            command_details.append(details)
+            if not ok:
+                command_failed = True
+                last_failure = {
+                    "code": "LOCAL_CHECK_FAILED",
+                    "attempt": attempt,
+                    **details,
+                }
+                break
+        if command_failed:
+            continue
+
+        review_prompt = _markdown_quality_review_prompt(ctx)
+        review_completed, review_before, review_after = _run_agent_with_scope(
+            argv=argv,
+            prompt=review_prompt,
+            attempt_dir=attempt_dir,
+            prefix="quality-review-agent",
+            allowed_scope=[_rel(ctx.quality_path)],
+        )
+        changed_paths.update(review_after - review_before)
+        review_disallowed = _disallowed_changes(review_before, review_after, [_rel(ctx.quality_path)])
+        if review_disallowed:
+            last_failure = {
+                "code": "WORKER_MODIFIED_FORBIDDEN_FILE",
+                "attempt": attempt,
+                "forbidden_paths": review_disallowed,
+                "stdout_tail": _tail(review_completed.stdout),
+                "stderr_tail": _tail(review_completed.stderr),
+            }
+            entry = {
+                "provider": provider,
+                "doi": doi,
+                "sample_id": ctx.sample_id,
+                "attempts": attempts_run,
+                "status": "failed",
+                "issue_ids": initial_issue_ids,
+                "changed_paths": sorted(changed_paths),
+                "commands": executed_commands,
+                "command_results": command_details,
+                "quality_status": quality_status,
+                "run_dir": _rel(repair_dir),
+                "failure": last_failure,
+            }
+            _record_markdown_quality_repair(provider_state, entry)
+            _write_json(state_path, state)
+            raise ToolError(
+                "WORKER_MODIFIED_FORBIDDEN_FILE",
+                "quality review worker modified files outside markdown-quality.json.",
+                retryable=True,
+                provider=provider,
+                manifest=_rel(ctx.manifest_path),
+                task_id=f"{provider}-{REPAIR_MARKDOWN_QUALITY_STEP}",
+                details=last_failure,
+            )
+        if review_completed.returncode != 0:
+            last_failure = {
+                "code": "WORKER_AGENT_FAILED",
+                "attempt": attempt,
+                "returncode": review_completed.returncode,
+                "stdout_tail": _tail(review_completed.stdout),
+                "stderr_tail": _tail(review_completed.stderr),
+            }
+            continue
+
+        ok, details = _run_repair_command(post_review_command, attempt_dir=attempt_dir, index=3)
+        executed_commands.append(post_review_command)
+        command_details.append(details)
+        quality, quality_errors = _load_quality_after_review(ctx)
+        quality_status = quality.get("status") if isinstance(quality, dict) else "invalid"
+        write_text(
+            attempt_dir / "quality-status.json",
+            json.dumps(
+                {
+                    "status": quality_status,
+                    "errors": quality_errors,
+                    "blocking_issues": blocking_markdown_quality_issues(quality) if isinstance(quality, dict) else [],
+                },
+                indent=2,
+                sort_keys=True,
+            )
+            + "\n",
+        )
+        if ok and isinstance(quality, dict) and not quality_errors and quality.get("status") == "pass" and not blocking_markdown_quality_issues(quality):
+            review_updated = _update_review_artifact_hashes(ctx)
+            if review_updated:
+                changed_paths.add(_rel(ctx.review_path))
+            entry = {
+                "provider": provider,
+                "doi": doi,
+                "sample_id": ctx.sample_id,
+                "attempts": attempts_run,
+                "status": "passed",
+                "issue_ids": initial_issue_ids,
+                "changed_paths": sorted(changed_paths),
+                "commands": executed_commands,
+                "command_results": command_details,
+                "quality_status": quality_status,
+                "run_dir": _rel(repair_dir),
+                "review_artifact_updated": review_updated,
+            }
+            _record_markdown_quality_repair(provider_state, entry)
+            _write_json(state_path, state)
+            print(json.dumps({**entry, "state": str(state_path)}, indent=2, sort_keys=True))
+            return 0
+        last_failure = {
+            "code": "MARKDOWN_QUALITY_FAILED",
+            "attempt": attempt,
+            "quality_status": quality_status,
+            "quality_errors": quality_errors,
+            "check_snapshot": details,
+        }
+
+    entry = {
+        "provider": provider,
+        "doi": doi,
+        "sample_id": ctx.sample_id,
+        "attempts": attempts_run,
+        "status": "failed",
+        "issue_ids": initial_issue_ids,
+        "changed_paths": sorted(changed_paths),
+        "commands": executed_commands,
+        "command_results": command_details,
+        "quality_status": quality_status,
+        "run_dir": _rel(repair_dir),
+        "failure": last_failure or {"code": "MARKDOWN_QUALITY_REPAIR_FAILED"},
+    }
+    _record_markdown_quality_repair(provider_state, entry)
+    _write_json(state_path, state)
+    raise ToolError(
+        "MARKDOWN_QUALITY_REPAIR_FAILED",
+        f"Markdown quality repair did not pass after {max_attempts} attempts.",
+        retryable=False,
+        provider=provider,
+        manifest=_rel(ctx.manifest_path),
+        task_id=f"{provider}-{REPAIR_MARKDOWN_QUALITY_STEP}",
+        details=entry,
+    )
+
+
 def _fixture_path_for_doi(doi: str) -> str | None:
     try:
         golden_manifest = _load_golden_manifest()
@@ -2572,6 +3624,19 @@ def _review_artifact_summary(provider: str) -> dict[str, Any]:
                 continue
             fixes = fixture.get("fixes") if isinstance(fixture.get("fixes"), list) else []
             issues = fixture.get("issues") if isinstance(fixture.get("issues"), list) else []
+            quality_status = None
+            quality_path_value = fixture.get("markdown_quality_path")
+            if isinstance(quality_path_value, str) and quality_path_value:
+                quality_path = _repo_root() / quality_path_value
+                if quality_path.is_file():
+                    try:
+                        quality = json.loads(quality_path.read_text(encoding="utf-8"))
+                    except (OSError, json.JSONDecodeError):
+                        quality_status = "invalid"
+                    else:
+                        quality_status = quality.get("status") if isinstance(quality, dict) else "invalid"
+                else:
+                    quality_status = "missing"
             summaries.append(
                 {
                     "fixture": fixture.get("fixture"),
@@ -2596,11 +3661,34 @@ def _review_artifact_summary(provider: str) -> dict[str, Any]:
                         }
                     ),
                     "markdown_semantic_reviewed": fixture.get("markdown_semantic_reviewed"),
+                    "markdown_quality_status": quality_status,
                 }
             )
+    reviewed_values = [
+        item.get("markdown_semantic_reviewed")
+        for item in summaries
+        if "markdown_semantic_reviewed" in item
+    ]
+    quality_values = [
+        item.get("markdown_quality_status")
+        for item in summaries
+        if item.get("markdown_quality_status") is not None
+    ]
     return {
         "status": "present",
         "path": path.relative_to(_repo_root()).as_posix(),
+        "semantic_review_status": (
+            "complete"
+            if reviewed_values and all(value is True for value in reviewed_values)
+            else "pending"
+        ),
+        "markdown_quality_status": (
+            "pass"
+            if quality_values and all(value == "pass" for value in quality_values)
+            else "pending"
+            if not quality_values or any(value == PENDING_STATUS for value in quality_values)
+            else "fail"
+        ),
         "fixtures": summaries,
     }
 
@@ -2630,6 +3718,12 @@ def build_provider_summary(
         if isinstance(provider_state.get("verifications"), dict)
         else {}
     )
+    repairs = provider_state.get("repairs") if isinstance(provider_state.get("repairs"), dict) else {}
+    markdown_quality_repairs = (
+        repairs.get("markdown_quality")
+        if isinstance(repairs.get("markdown_quality"), list)
+        else []
+    )
     diagnosis = diagnose_provider_state(provider_state)
     summary: dict[str, Any] = {
         "provider": provider_name,
@@ -2647,6 +3741,11 @@ def build_provider_summary(
         },
         "fixture_coverage": _manifest_fixture_summary(manifest) if manifest else [],
         "review_artifact": _review_artifact_summary(provider_name),
+        "markdown_quality_repairs": [
+            repair
+            for repair in markdown_quality_repairs
+            if isinstance(repair, dict)
+        ][-5:],
         "run_checks": [
             {
                 "task": task,
@@ -2747,6 +3846,8 @@ def render_provider_summary_markdown(summary: dict[str, Any]) -> str:
     else:
         lines.append(f"- status: {review.get('status')}")
         lines.append(f"- path: {review.get('path')}")
+        lines.append(f"- semantic_review_status: {review.get('semantic_review_status')}")
+        lines.append(f"- markdown_quality_status: {review.get('markdown_quality_status')}")
         fixtures = review.get("fixtures") if isinstance(review.get("fixtures"), list) else []
         if not fixtures:
             lines.append("- no review fixture summaries")
@@ -2758,10 +3859,29 @@ def render_provider_summary_markdown(summary: dict[str, Any]) -> str:
                 f"{fixture.get('fixture')}/{fixture.get('purpose')}: "
                 f"doi={fixture.get('doi')} "
                 f"reviewed={fixture.get('markdown_semantic_reviewed')} "
+                f"quality={fixture.get('markdown_quality_status')} "
                 f"issue_ids={_markdown_scalar(fixture.get('issue_ids') or [])} "
                 f"fix_ids={_markdown_scalar(fixture.get('fix_ids') or [])} "
                 f"tests={_markdown_scalar(fixture.get('test_names') or [])}"
             )
+
+    lines.extend(["", "## Markdown Quality Repairs", ""])
+    repairs = summary.get("markdown_quality_repairs") or []
+    if not repairs:
+        lines.append("- no recorded markdown quality repairs")
+    for repair in repairs:
+        if not isinstance(repair, dict):
+            continue
+        failure = repair.get("failure") if isinstance(repair.get("failure"), dict) else {}
+        lines.append(
+            "- "
+            f"doi={repair.get('doi')} "
+            f"status={repair.get('status')} "
+            f"attempts={repair.get('attempts')} "
+            f"quality={repair.get('quality_status')} "
+            f"failure={failure.get('code')} "
+            f"run_dir={repair.get('run_dir')}"
+        )
 
     lines.extend(["", "## Run Checks", ""])
     run_checks = summary.get("run_checks") or []
@@ -3126,6 +4246,29 @@ def build_parser() -> argparse.ArgumentParser:
         help="coordinator state JSON path",
     )
     run_checks.set_defaults(func=run_run_checks)
+
+    repair_markdown_quality = subparsers.add_parser(
+        REPAIR_MARKDOWN_QUALITY_STEP,
+        help="repair a failing markdown-quality.json report through the onboarding agent CLI",
+    )
+    repair_markdown_quality.add_argument("--provider", required=True, help="provider name")
+    repair_markdown_quality.add_argument("--doi", required=True, help="DOI to repair")
+    repair_markdown_quality.add_argument(
+        "--state",
+        default=DEFAULT_STATE_PATH,
+        help="coordinator state JSON path",
+    )
+    repair_markdown_quality.add_argument(
+        "--output-dir",
+        help="directory for repair briefs, prompts, and logs",
+    )
+    repair_markdown_quality.add_argument(
+        "--max-attempts",
+        type=int,
+        default=MAX_WORKER_RETRIES,
+        help="maximum repair attempts; defaults to 3",
+    )
+    repair_markdown_quality.set_defaults(func=run_repair_markdown_quality)
 
     check_snapshot = subparsers.add_parser(
         "check-snapshot",

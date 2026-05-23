@@ -68,11 +68,23 @@ def test_snapshot_expected_writes_existing_golden_schema_and_updates_manifest(tm
     expected, wrote = module.snapshot_expected(_args(tmp_path))
 
     expected_path = fixture_dir / "expected.json"
+    markdown_path = fixture_dir / "extracted.md"
+    prompt_path = fixture_dir / "markdown-quality-prompt.md"
+    quality_path = fixture_dir / "markdown-quality.json"
     manifest = json.loads((tmp_path / "tests" / "fixtures" / "golden_criteria" / "manifest.json").read_text())
     written = json.loads(expected_path.read_text(encoding="utf-8"))
+    quality = json.loads(quality_path.read_text(encoding="utf-8"))
 
     assert wrote is True
     assert expected == written
+    assert markdown_path.read_text(encoding="utf-8").startswith("# Recorded fixture\n")
+    assert prompt_path.is_file()
+    assert "Markdown Quality Agent Review" in prompt_path.read_text(encoding="utf-8")
+    assert quality["schema_version"] == 2
+    assert quality["review_method"] == "agent_prompt"
+    assert quality["status"] == "pending_agent_review"
+    assert quality["markdown_path"] == "tests/fixtures/golden_criteria/10.1234_example/extracted.md"
+    assert quality["prompt_path"] == "tests/fixtures/golden_criteria/10.1234_example/markdown-quality-prompt.md"
     assert set(written) == {"has", "counts", "expected_content_kind"}
     assert written["has"]["title"] is True
     assert written["has"]["authors"] is True
@@ -83,6 +95,15 @@ def test_snapshot_expected_writes_existing_golden_schema_and_updates_manifest(tm
     assert manifest["samples"]["10.1234_example"]["expected_outcome"] == "fulltext"
     assert manifest["samples"]["10.1234_example"]["assets"]["expected.json"] == (
         "tests/fixtures/golden_criteria/10.1234_example/expected.json"
+    )
+    assert manifest["samples"]["10.1234_example"]["assets"]["extracted.md"] == (
+        "tests/fixtures/golden_criteria/10.1234_example/extracted.md"
+    )
+    assert manifest["samples"]["10.1234_example"]["assets"]["markdown-quality-prompt.md"] == (
+        "tests/fixtures/golden_criteria/10.1234_example/markdown-quality-prompt.md"
+    )
+    assert manifest["samples"]["10.1234_example"]["assets"]["markdown-quality.json"] == (
+        "tests/fixtures/golden_criteria/10.1234_example/markdown-quality.json"
     )
 
 
@@ -113,10 +134,15 @@ def test_snapshot_expected_review_print_shape_without_writing(tmp_path: Path) ->
 
     after = (tmp_path / "tests" / "fixtures" / "golden_criteria" / "manifest.json").read_text(encoding="utf-8")
     assert wrote is False
-    assert set(payload) == {"expected", "review"}
+    assert set(payload) == {"expected", "review", "markdown_quality_prompt", "markdown_quality_report"}
     assert set(payload["expected"]) == {"has", "counts", "expected_content_kind"}
     assert payload["review"]["title"] == "T"
+    assert "Markdown Quality Agent Review" in payload["markdown_quality_prompt"]
+    assert payload["markdown_quality_report"]["status"] == "pending_agent_review"
     assert not (fixture_dir / "expected.json").exists()
+    assert not (fixture_dir / "extracted.md").exists()
+    assert not (fixture_dir / "markdown-quality-prompt.md").exists()
+    assert not (fixture_dir / "markdown-quality.json").exists()
     assert after == before
 
 

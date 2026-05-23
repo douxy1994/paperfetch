@@ -70,6 +70,9 @@ def test_capture_fixture_writes_fixture_manifest_and_summary(tmp_path: Path, mon
         def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
             assert method == "GET"
             assert url == "https://doi.org/10.1234/example"
+            headers = kwargs.get("headers")
+            assert isinstance(headers, dict)
+            assert headers["User-Agent"].startswith("paper-fetch-skill/")
             return {
                 "headers": {"content-type": "text/html; charset=utf-8"},
                 "body": b"<html><title>Fixture</title></html>",
@@ -92,6 +95,40 @@ def test_capture_fixture_writes_fixture_manifest_and_summary(tmp_path: Path, mon
     assert manifest["samples"]["10.1234_example"]["expected_outcome"] == "pending"
     assert manifest["samples"]["10.1234_example"]["purpose"] == "structure"
     assert manifest["samples"]["10.1234_example"]["assets"]["original.html"] == summary["fixture_path"]
+
+
+def test_capture_fixture_http_follows_location_redirects(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("capture_fixture")
+    seen_urls: list[str] = []
+
+    class RedirectTransport:
+        def request(self, method: str, url: str, **kwargs: object) -> dict[str, object]:
+            assert method == "GET"
+            seen_urls.append(url)
+            if url == "https://doi.org/10.1234/example":
+                return {
+                    "headers": {"Location": "/article"},
+                    "body": b"<html>moved</html>",
+                    "url": "https://publisher.test/doi/10.1234/example",
+                    "status_code": 302,
+                }
+            assert url == "https://publisher.test/article"
+            return {
+                "headers": {"content-type": "text/html"},
+                "body": b"<html><title>Fixture</title></html>",
+                "url": "",
+                "status_code": 200,
+            }
+
+    monkeypatch.setattr(module, "HttpTransport", RedirectTransport)
+
+    summary = module.capture_fixture(_args(tmp_path))
+
+    assert seen_urls == ["https://doi.org/10.1234/example", "https://publisher.test/article"]
+    assert summary["manifest_entry"]["source_url"] == "https://publisher.test/article"
 
 
 def test_capture_fixture_dry_run_does_not_fetch_or_write(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

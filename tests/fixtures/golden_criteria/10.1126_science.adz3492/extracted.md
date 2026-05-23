@@ -1,19 +1,15 @@
 ---
 title: "New demand goals for energy and climate resilience"
 authors: "N. Bento, A. Grubler, N. Nakicenovic"
-journal: "Science"
 doi: "10.1126/science.adz3492"
-published: "2026-4-23"
 source: "science"
 has_fulltext: true
 content_kind: "fulltext"
-has_abstract: true
-token_estimate: 4658
+has_abstract: false
+token_estimate: 4633
 ---
 
 # New demand goals for energy and climate resilience
-
-**Abstract.** Current climate goals, largely focused on energy supply, should be complemented by targeting demand
 
 Current climate goals, insufficient to deliver net-zero emissions by 2050, overlook an underutilized lever of climate action: energy demand<sup>1</sup>. Traditional energy goals tend to focus on energy supply—primary inputs harnessed from nature—rather than final energy, such as the electricity and fuels delivered to provide services including mobility and thermal comfort. The issue is not lack of interest in demand but the absence of operational, politically legible goals and simple metrics for final energy use and services and for the direct economic and social benefits that they provide. Yet demand is changing: Electrification of end uses (e.g., electric vehicles and heat pumps) is reshaping final energy demand, and electricity-intensive services (e.g., data centers) are boosting loads in some regions. Demand is no longer a passive scenario outcome but a policy variable to steer. We propose integrated demand-side goals to complement supply pledges and advance efficiency, sustainability, and equity by 2035.
 
@@ -67,14 +63,7 @@ Overall, the three proposed goals are consistent with established decarbonizatio
 
 Pursuing these goals in combination unlocks powerful synergies. Enhancing final energy efficiency helps contain demand growth, making it easier to increase the share of electricity in final energy use. Improving efficiency in high-intensity applications with limited direct benefits for well-being—such as Bitcoin mining or data centers—can drive innovation toward more resource-efficient technologies, reduce overconsumption, and prevent crowding out socially vital sectors such as food production. Electrifying services (e.g., mobility, heat, and power for industrial processes) would further enhance efficiency and affordability, particularly by helping to electrify poor households. Including very high personal energy use (above 300 GJ per capita per year) in fiscal contribution reduces overconsumption, improves fiscal fairness, and offers critical support for both the energy efficiency and electrification goals, thereby amplifying the impact of the existing targets on clean energy deployment. A coordinated mix of fiscal, regulatory, and structural measures could meaningfully reduce excessive energy use, opening a decisive window in the coming decade to more fairly realign energy systems with human well-being, economic opportunity, and a safe planetary boundary, while also helping to overcome political challenges<sup>12</sup>. Researchers, policy analysts, and national and international statistical agencies are invited to join forces to develop and communicate operational concepts for quantification, translation, and monitoring of the proposed goals.
 
-## Figures
-
-![Figure](body_assets/science.adz3492-f1.svg)
-
-Inequalities in final energy consumption This area chart reflects the distribution of final energy consumption across the global population. Each segment corresponds to a group sharing the same level of per-capita consumption, with segment width proportional to group size. The area of each segment (size of population × per-capita energy consumption) reflects total energy consumed by that group. Segments are sorted by decreasing per-capita consumption. Estimates of consumption from ( 13 ) were augmented by data from ( 14 ) to adjust for sample omission bias, particularly at the highest consumption levels, for five Annex 1 and four non–Annex 1 countries. “Unclassified” reflects similar estimates to account for omission bias among the highest consumption levels in all other countries except the nine mentioned above. This combination of data from ( 13 ) and ( 14 ) yields a dataset representing 6.1 billion people (~78% of the world population in 2019) and 309 EJ (~74% of the global final energy in 2019). See supplementary materials for details.
-
-
-## References (15 total, showing 10)
+## References (15 total, showing 15)
 
 1. N. Bento et al., Science 383 , 946 (2024).
 2. IEA, “World Energy Outlook 2024” (2024); https://www.iea.org/reports/worldenergy-outlook-2024 .
@@ -86,3 +75,8 @@ Inequalities in final energy consumption This area chart reflects the distributi
 8. A. Khalfan et al., Climate Equality: A planet for the 99% (Oxfam International, 2023); https://doi.org/10.21201/2023.000001 .
 9. M. J. Burke, Energies 13 , 2444 (2020).
 10. M. L. Ross, C. Hazlett, P. Mahdavi, Nat. Energy 2 , 16201 (2017).
+11. S. Black, A. A. Liu, I. W. H. Parry, “IMF fossil fuel subsidies data: 2023 update” (International Monetary Fund, working paper no. 2023/169, 2023); https://doi.org/10.5089/9798400249006.001 .
+12. I. Stoddard et al., Annu. Rev. Environ. Resour. 46 , 653 (2021).
+13. Y. Oswald, A. Owen, J. K. Steinberger, Nat. Energy 5 , 231 (2020).
+14. L. Chancel, Nat. Sustain. 5 , 931 (2022).
+15. N. Bento, A. Grubler, N. Nakicenovic, Data and Supplementary Materials for “New demand goals for energy and climate resilience,” Zenodo (2026); https://doi.org/10.5281/zenodo.19397167 .

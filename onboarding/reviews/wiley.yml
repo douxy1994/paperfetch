@@ -1,4 +1,4 @@
-schema_version: 1
+schema_version: 2
 provider: wiley
 reviewed_at: '2026-05-20T00:00:00Z'
 reviewed_by: operator
@@ -14,8 +14,10 @@ fixtures:
   - must not include Download PDF
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.16414/extracted.md
-  baseline_markdown_sha256: 05a4b8153a01ae607d860f4e5e0775bc1d7705b9b2dbed513556f36c84b53616
+  baseline_markdown_sha256: 97adb16451670fbb1526aff8cadcb7fef3d43dd6f308c0779c7bfce612e50205
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1111_gcb.16414/markdown-quality.json
+  markdown_quality_sha256: 8bf12e4223c5db3437917063063dd9a365bc57eb199598778ac43b391cb7df5d
 - fixture: tests/fixtures/golden_criteria/10.1111_cas.16395
   purpose: table
   doi: 10.1111/cas.16395
@@ -28,8 +30,10 @@ fixtures:
   - must match (?m)^\|.+\|$
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_cas.16395/extracted.md
-  baseline_markdown_sha256: d151187e202e883eec767d5d6e34d503a259f2e3c30b24cb1dd96cc8e5ca233e
+  baseline_markdown_sha256: b52741125a25db0c2a2502ba0375c8f92b09b7adbab9b8c18681d6a135f10ea1
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1111_cas.16395/markdown-quality.json
+  markdown_quality_sha256: 12840090e6cee8dd0344ed85d72aa6ed6f3bf7a51f8ee27a3b558468502d6b9a
 - fixture: tests/fixtures/golden_criteria/10.1111_gcb.15322
   purpose: formula
   doi: 10.1111/gcb.15322
@@ -41,9 +45,11 @@ fixtures:
   - must not include [Formula unavailable]
   - must match (?:\$\$|!\[Formula\]|Equation)
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.15322/expected.json
-  baseline_markdown_sha256: 250f900be0dde64a9dbadcd11d006ed1e0f1d043ff91e3bc58f8873c22d69a17
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.15322/extracted.md
+  baseline_markdown_sha256: ad628f5274c8fca67fcf0cb9cf19801cc522481b79d7d148b42399b6b2536df3
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1111_gcb.15322/markdown-quality.json
+  markdown_quality_sha256: 5064c0db971bc9bf149379ae1b774f03595e51c5000a4a8534e9a95be06063e8
 - fixture: tests/fixtures/golden_criteria/10.1111_gcb.16414
   purpose: figure
   doi: 10.1111/gcb.16414
@@ -56,8 +62,10 @@ fixtures:
   - must match (?:!\[Figure|\*\*Figure)
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.16414/extracted.md
-  baseline_markdown_sha256: 05a4b8153a01ae607d860f4e5e0775bc1d7705b9b2dbed513556f36c84b53616
+  baseline_markdown_sha256: 97adb16451670fbb1526aff8cadcb7fef3d43dd6f308c0779c7bfce612e50205
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1111_gcb.16414/markdown-quality.json
+  markdown_quality_sha256: 8bf12e4223c5db3437917063063dd9a365bc57eb199598778ac43b391cb7df5d
 - fixture: tests/fixtures/golden_criteria/10.1111_gcb.16414
   purpose: supplementary
   doi: 10.1111/gcb.16414
@@ -69,8 +77,10 @@ fixtures:
   - must not include Supporting Information
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.16414/extracted.md
-  baseline_markdown_sha256: 05a4b8153a01ae607d860f4e5e0775bc1d7705b9b2dbed513556f36c84b53616
+  baseline_markdown_sha256: 97adb16451670fbb1526aff8cadcb7fef3d43dd6f308c0779c7bfce612e50205
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1111_gcb.16414/markdown-quality.json
+  markdown_quality_sha256: 8bf12e4223c5db3437917063063dd9a365bc57eb199598778ac43b391cb7df5d
 - fixture: tests/fixtures/golden_criteria/10.1111_gcb.16998
   purpose: references
   doi: 10.1111/gcb.16998
@@ -81,9 +91,11 @@ fixtures:
   - must include Reference
   - must not include Google Scholar
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.16998/expected.json
-  baseline_markdown_sha256: 75e0e26024eb4868a70ce64ceb18e0785e374ada10d7aa552355561104e8b572
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.16998/extracted.md
+  baseline_markdown_sha256: ac7bf54c5aaf0bd39181ec671a7bb07249d318061ba575a350229092b3764b6f
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1111_gcb.16998/markdown-quality.json
+  markdown_quality_sha256: 72ef8bc444bb77497846fbabf8562ee30f0f4f0c96ec512303235f6191fb5f88
 - fixture: tests/fixtures/golden_criteria/10.1111_cas.16395
   purpose: pdf_fallback
   doi: 10.1111/cas.16395
@@ -95,8 +107,10 @@ fixtures:
   - must not include Access Denied
   fixes: []
   baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_cas.16395/extracted.md
-  baseline_markdown_sha256: d151187e202e883eec767d5d6e34d503a259f2e3c30b24cb1dd96cc8e5ca233e
+  baseline_markdown_sha256: b52741125a25db0c2a2502ba0375c8f92b09b7adbab9b8c18681d6a135f10ea1
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1111_cas.16395/markdown-quality.json
+  markdown_quality_sha256: 12840090e6cee8dd0344ed85d72aa6ed6f3bf7a51f8ee27a3b558468502d6b9a
 - fixture: tests/fixtures/golden_criteria/10.1111_gcb.16998
   purpose: abstract_only
   doi: 10.1111/gcb.16998
@@ -107,6 +121,8 @@ fixtures:
   - 'must include ## Abstract'
   - must not include Download PDF
   fixes: []
-  baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.16998/expected.json
-  baseline_markdown_sha256: 75e0e26024eb4868a70ce64ceb18e0785e374ada10d7aa552355561104e8b572
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1111_gcb.16998/extracted.md
+  baseline_markdown_sha256: ac7bf54c5aaf0bd39181ec671a7bb07249d318061ba575a350229092b3764b6f
   review_notes: Semantic review completed against committed fixture evidence.
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1111_gcb.16998/markdown-quality.json
+  markdown_quality_sha256: 72ef8bc444bb77497846fbabf8562ee30f0f4f0c96ec512303235f6191fb5f88

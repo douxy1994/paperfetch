@@ -169,6 +169,74 @@
               }
             }
           }
+        },
+        "repairs": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "markdown_quality": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": [
+                  "provider",
+                  "doi",
+                  "attempts",
+                  "status",
+                  "issue_ids",
+                  "changed_paths",
+                  "commands",
+                  "quality_status",
+                  "run_dir"
+                ],
+                "properties": {
+                  "provider": {
+                    "$ref": "#/$defs/provider_name"
+                  },
+                  "doi": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "sample_id": {
+                    "type": "string"
+                  },
+                  "attempts": {
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "status": {
+                    "enum": ["passed", "failed"]
+                  },
+                  "issue_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "changed_paths": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "commands": {
+                    "type": "array"
+                  },
+                  "quality_status": {
+                    "type": ["string", "null"]
+                  },
+                  "run_dir": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "failure": {
+                    "type": "object"
+                  }
+                }
+              }
+            }
+          }
         }
       }
     }

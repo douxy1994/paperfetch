@@ -43,3 +43,7 @@ providers:
     display_source: mdpi_html
     status: implemented
     manifest_path: onboarding/manifests/mdpi.yml
+  - name: royalsocietypublishing
+    display_source: royalsocietypublishing_html
+    status: implemented
+    manifest_path: onboarding/manifests/royalsocietypublishing.yml

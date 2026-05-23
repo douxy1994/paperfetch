@@ -133,7 +133,7 @@ retryable: true
 ## Signal: EXPECTED_OUTCOME_PENDING
 
 diagnosis: fixture manifest 的 expected outcome 仍为 `pending`，不能进入 acceptance。
-action: 运行 `scripts/snapshot_expected.py` 为该 DOI 写入 `expected.json` 并同步 manifest outcome。
+action: 运行 `scripts/snapshot_expected.py` 为该 DOI 写入 `expected.json`、`extracted.md`、`markdown-quality-prompt.md`、pending `markdown-quality.json` 并同步 manifest outcome/assets；随后按 prompt 完成 agent review，把质量报告写成 pass/fail。
 retryable: true
 
 ## Signal: PROVIDER_LOCAL_ACCEPTANCE_FAILED
@@ -147,6 +147,18 @@ retryable: true
 diagnosis: cleaning proposal gate 发现 Markdown contract 与当前 production baseline 不一致，或 compact proposal 的 `fixtures_digest` 已过期。
 action: 若 `details.recovery_task=propose-cleaning-chain`，先重跑 `propose-cleaning-chain` 刷新 proposal；否则重派 `implement-provider`，只允许调和当前 provider manifest 的相关 `markdown_contract` purpose、provider-owned implementation、provider-local tests 或 review artifact。
 retryable: true
+
+## Signal: MARKDOWN_QUALITY_REVIEW_PENDING
+
+diagnosis: `markdown-quality.json` 仍是 `pending_agent_review`，不能进入自动修复。
+action: 先按同目录 `markdown-quality-prompt.md` 阅读 `extracted.md`，把 quality report 写成 agent-authored pass/fail；只有 fail 或含 blocking issue 的 report 才能运行 `repair-markdown-quality`。
+retryable: false
+
+## Signal: MARKDOWN_QUALITY_REPAIR_FAILED
+
+diagnosis: `repair-markdown-quality` 最多 3 轮后仍未得到 pass 且无 blocking issue 的 quality report，或修复后的 `check-snapshot` 未通过。
+action: 查看 `.paper-fetch-runs/<provider>-markdown-repair/markdown-quality/<doi-slug>/attempt-N/` 中的 repair brief、agent prompt/stdout/stderr、command logs 和最后 fail report；必要时手动收窄 issue 或调整 provider-owned tests 后重跑。
+retryable: false
 
 ## Signal: SHARED_INTEGRATION_FAILED
 

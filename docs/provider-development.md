@@ -18,7 +18,7 @@
 | 1 | 按正交能力清单收 fixtures：≥9 篇 HTML/XML + 1-2 篇 PDF fallback + 1-2 篇 block | §8 + 附录 A | 1-3 天 |
 | 2 | Scaffold 起步：跑生成脚本生成 provider bundle / fixture / manifest / starter test 骨架 | §1.5 | 10 min |
 | 3 | 实现 extraction 与客户端，并执行 Markdown Review Loop：baseline Markdown → 阅读审查 → correction 写断言 → 修 provider | §2–§8 | 2-5 天 |
-| 4 | Prototype 通过（Commit A）：所有 non-null fixture purpose 的 Markdown 干净、provider-local 断言覆盖、第一次写 `expected.json` | §8 | 1 天 |
+| 4 | Prototype 通过（Commit A）：所有 non-null fixture purpose 的 Markdown 干净、provider-local 断言覆盖、第一次写 snapshot 三产物 | §8 | 1 天 |
 | 5 | 重构对齐 canonical owner（Commit B）：grep 自己代码删 local helper | §5 + 附录 B | 半天 |
 | 6 | 端到端收尾：实现 `probe_status()` + 同步 `docs/providers.md` / `extraction-rules.md` / `CHANGELOG.md` | §9 | 半天 |
 
@@ -28,7 +28,7 @@
 
 - **先设计后写代码**（Step 0 不可省）：决定 fixture 选择策略与主链顺序，跳过会导致 Step 1 收偏「快乐路径」、Step 3 重写客户端。
 - **fixtures 用真实 DOI 文献，不接受脑补 DOM**（Step 1）：项目把真实文献 replay 当作行为契约的"源"，不是「跑通了再说」的辅助。
-- **Markdown Review Loop 强制执行**（Step 3/4）：每篇 non-null fixture 先生成 baseline Markdown，人工阅读审查，把每个 correction 写成 provider-local 断言，再修 provider 清洗 / 转换并重复到全部 fixture 干净；之后才写 `expected.json`。
+- **Markdown Review Loop 强制执行**（Step 3/4）：每篇 non-null fixture 先生成 baseline Markdown，人工阅读 `extracted.md` 审查，把每个 correction 写成 provider-local 断言，再修 provider 清洗 / 转换并重复到全部 fixture 干净；之后才写 snapshot 三产物。
 - **Prototype 和重构分两次 commit**（Step 4 / Step 5）：先固化「跑通」状态，再做 canonical owner 对齐，避免重构发现要回退 fixtures 时连带丢失 prototype 进度。
 - **中心模块零编辑**（S1-S6 落地后）：新 provider PR 不应触动 `provider_catalog.py` / `provider_rules.py` / `quality/html_signals.py` / `quality/html_availability.py`——全部走 `ProviderBundle` 自注册。详见附录 D。
 
@@ -349,12 +349,14 @@ Fixtures 规则：
 - 新 fixture 必须同步 `tests/fixtures/golden_criteria/manifest.json` 和 fixture catalog。
 - 不从 `live-downloads/`、临时目录或散落 top-level 文件读取测试样本。
 - Step 1 录制真实 DOI replay 时优先使用 `python3 scripts/capture_fixture.py --doi <doi> --purpose <purpose>`，脚本会写 canonical fixture 路径并把 manifest 条目置为 `expected_outcome="pending"`；需要先看写入计划时加 `--dry-run`。
-- Step 4 第一次固化预期前，必须完成 Markdown Review Loop：所有 non-null fixture purpose 都已有 provider-local 断言，主成功路径同时有 Markdown 正断言和站点 chrome 负断言；随后使用 `python3 scripts/snapshot_expected.py --doi <doi> --review` 审核用户可见摘要，再运行不带 `--review` 的命令写入兼容 golden corpus 的 `expected.json`（`has` / `counts` / `expected_content_kind`）并同步 manifest outcome。
+- Step 4 第一次固化预期前，必须完成 Markdown Review Loop：所有 non-null fixture purpose 都已有 provider-local 断言，主成功路径同时有 Markdown 正断言和站点 chrome 负断言；随后使用 `python3 scripts/snapshot_expected.py --doi <doi> --review` 审核用户可见摘要、agent review prompt 和 pending quality report，再运行不带 `--review` 的命令写入 `expected.json`（只含 `has` / `counts` / `expected_content_kind` 摘要）、`extracted.md`（唯一人工 golden Markdown baseline）、`markdown-quality-prompt.md` 和 pending `markdown-quality.json`，并同步 manifest outcome/assets。
 
 Golden corpus 规则：
 
-- provider 稳定后，补 representative fixture 和 `expected.json`。
-- `expected.json` 应锁用户可见 summary，不锁无意义格式噪声。
+- provider 稳定后，补 representative fixture 和 snapshot 产物。
+- `expected.json` 应锁用户可见 summary，不锁无意义格式噪声；Markdown 语义基准只看 `extracted.md`。
+- agent 必须按 `markdown-quality-prompt.md` 阅读 `extracted.md` 并写回 `markdown-quality.json`；该报告必须 `review_method: agent_prompt`、`status: pass` 且没有 blocking issue，人工 review 才能把 `markdown_semantic_reviewed` 标为 true。
+- 如果 agent-authored report 为 fail，可用 `repair-markdown-quality --provider <provider> --doi <doi>` 进入自动修复闭环；该命令仍要求先补/更新 provider-local regression test，再修实现并重新 snapshot/review，不会自动把 `markdown_semantic_reviewed` 改为 true。
 - live-only 样本放入 live sample 集合，并受 `PAPER_FETCH_RUN_LIVE=1` 保护。
 - 预期 metadata-only 或当前不支持的样本，要在 manifest 标注 expected outcome，避免进入 provider bug 队列。
 
@@ -541,7 +543,7 @@ Fixtures（按附录 A 11 维清单）
 - [ ] abstract-only / access-gate / 空壳：各 1 篇 block fixture
 - [ ] PDF fallback：1-2 篇
 - [ ] manifest.json 条目已填充（expected_outcome 不再是 pending）
-- [ ] expected.json 锁了用户可见 summary
+- [ ] `expected.json` 锁了用户可见 summary，`extracted.md` 是人工 Markdown baseline，`markdown-quality-prompt.md` 存在，`markdown-quality.json` 是 agent-authored pass 报告
 
 实现
 - [ ] ProviderClient 子类只覆盖必要 hook，未绕过 fetch_result() template

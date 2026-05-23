@@ -1,21 +1,21 @@
 {
-  "has": {
-    "title": true,
-    "authors": true,
-    "abstract": true,
-    "body": true,
-    "figures": false,
-    "references": true,
-    "data_availability": false,
-    "code_availability": false
-  },
   "counts": {
-    "sections": 19,
     "abstract_sections": 1,
     "body_sections": 17,
-    "figures": 0,
-    "tables": 1,
-    "references": 59
+    "figures": 7,
+    "references": 59,
+    "sections": 19,
+    "tables": 1
   },
-  "expected_content_kind": "fulltext"
+  "expected_content_kind": "fulltext",
+  "has": {
+    "abstract": true,
+    "authors": true,
+    "body": true,
+    "code_availability": false,
+    "data_availability": false,
+    "figures": true,
+    "references": true,
+    "title": true
+  }
 }

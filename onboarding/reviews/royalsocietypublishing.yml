@@ -1,0 +1,126 @@
+schema_version: 2
+provider: royalsocietypublishing
+reviewed_at: '2026-05-22T10:58:54Z'
+reviewed_by: operator
+fixtures:
+- fixture: tests/fixtures/golden_criteria/10.1098_rsta.2019.0558
+  purpose: structure
+  doi: 10.1098/rsta.2019.0558
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsta.2019.0558/extracted.md
+  baseline_markdown_sha256: 389002d5acaeb5d2e04767367f61d96d74d1f19963913ea6d4a3d56dc428f4e6
+  review_notes: Semantic review completed against committed fixture evidence.
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## Abstract'
+  - must include virtual patient cohorts
+  - must not include Close navigation menu
+  - must not include Open figure viewer
+  fixes: []
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsta.2019.0558/markdown-quality.json
+  markdown_quality_sha256: c67dd15f5569bcfc25475c2ee345dcc59db84faff6e5e799432d61647b9248f8
+- fixture: tests/fixtures/golden_criteria/10.1098_rspb.2020.0097
+  purpose: table
+  doi: 10.1098/rspb.2020.0097
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rspb.2020.0097/extracted.md
+  baseline_markdown_sha256: d784998e5c2f5d705020087f29b8951d31f88b5d5a78451597ce03d2825c6a96
+  review_notes: Semantic review completed against committed fixture evidence.
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include table 1
+  - must include male reproductive success
+  - must not include Download slide
+  - must not include Article navigation
+  - must match (?m)^\|.+\|$
+  fixes: []
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rspb.2020.0097/markdown-quality.json
+  markdown_quality_sha256: 207549db5bc74b9777dc7c070ea3b8380ca6cda67c7369b9ea0e9a67255f410d
+- fixture: tests/fixtures/golden_criteria/10.1098_rsos.201188
+  purpose: formula
+  doi: 10.1098/rsos.201188
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsos.201188/extracted.md
+  baseline_markdown_sha256: 684ec2abcd937901c9ed6acf3fb5dd3200dd19345c0a5fdee5391649b0d8d218
+  review_notes: Semantic review completed against committed fixture evidence.
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include Black
+  - must include Scholes
+  - must not include Open figure viewer
+  - must not include Download slide
+  - must match (?:\$|Equation|BS)
+  fixes: []
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsos.201188/markdown-quality.json
+  markdown_quality_sha256: 44bf1ff3270f17343f23ab4b4396f236e6c14902010abbe9f93169e34376fb7e
+- fixture: tests/fixtures/golden_criteria/10.1098_rsos.150470
+  purpose: figure
+  doi: 10.1098/rsos.150470
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsos.150470/extracted.md
+  baseline_markdown_sha256: 019fc9629d5a14125c6c266b13ddb16006b6aed8cc91212e5d991b9e5e294e4f
+  review_notes: Semantic review completed against committed fixture evidence.
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include figures 1
+  - must include Plesiochelys
+  - must not include Download slide
+  - must not include Article navigation
+  - must match (?:figure|figures 1)
+  fixes: []
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsos.150470/markdown-quality.json
+  markdown_quality_sha256: 0f10d93ea8118cf0c6f2a297e34c1df9cb4879baa260d6ff464ff0a573db348e
+- fixture: tests/fixtures/golden_criteria/10.1098_rsif.2019.0334
+  purpose: supplementary
+  doi: 10.1098/rsif.2019.0334
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsif.2019.0334/extracted.md
+  baseline_markdown_sha256: 2a76732d9efddfaf73309cfe897802cdf6a1917310765036b6b39d6847fef52b
+  review_notes: Semantic review completed against committed fixture evidence.
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - must include electronic supplementary material
+  - must include hepatitis C virus
+  - must not include Download citation
+  - must not include Article navigation
+  fixes: []
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsif.2019.0334/markdown-quality.json
+  markdown_quality_sha256: ade96beaa0007f9ba0fefd00b932d3112efda8e4afd9fa79a6f505b72a26f37e
+- fixture: tests/fixtures/golden_criteria/10.1098_rsos.201200
+  purpose: references
+  doi: 10.1098/rsos.201200
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsos.201200/extracted.md
+  baseline_markdown_sha256: 25b76e3b21b4175930e2422fb5dde060d7411e7bb86f3abd312d44d3c7231647
+  review_notes: Semantic review completed against committed fixture evidence.
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include ## References'
+  - must include Reference
+  - must not include Google Scholar
+  - must not include Download citation
+  fixes: []
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsos.201200/markdown-quality.json
+  markdown_quality_sha256: c6c9c3b0f09252ba112ccd31a2fbb89aebb17ca2122d5616f5d0edbb81bcd599
+- fixture: tests/fixtures/golden_criteria/10.1098_rsta.2020.0108
+  purpose: pdf_fallback
+  doi: 10.1098/rsta.2020.0108
+  baseline_markdown_path: tests/fixtures/golden_criteria/10.1098_rsta.2020.0108/extracted.md
+  baseline_markdown_sha256: 39cac044fc543ed1709bdf8fe70e68f856278e47cd0641deaa737eaa095aef6c
+  review_notes: Semantic review completed against committed fixture evidence.
+  sample_representative: true
+  markdown_semantic_reviewed: true
+  issues: []
+  assertions:
+  - 'must include #'
+  - must include Royal Society
+  - must not include Access Denied
+  fixes: []
+  markdown_quality_path: tests/fixtures/golden_criteria/10.1098_rsta.2020.0108/markdown-quality.json
+  markdown_quality_sha256: 4b5fd2c77a96ead284dda89736e8ef998d32f0efbca60283c79a83c1a5d751a5

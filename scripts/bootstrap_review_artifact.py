@@ -15,8 +15,16 @@ import yaml
 SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
+SRC_DIR = SCRIPT_DIR.parent / "src"
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 from _structured_errors import ToolError, emit_error, error_payload  # noqa: E402
+from paper_fetch.markdown_quality import (  # noqa: E402
+    PENDING_STATUS,
+    blocking_markdown_quality_issues,
+    validate_markdown_quality_report,
+)
 
 
 PROVIDER_RE = re.compile(r"^[a-z][a-z0-9]*(?:_[a-z0-9]+)*$")
@@ -167,12 +175,102 @@ def _classifier_issues(contract: dict[str, Any], baseline_text: str) -> list[dic
     return issues
 
 
+def _load_golden_manifest(root: Path) -> dict[str, Any]:
+    path = root / "tests" / "fixtures" / "golden_criteria" / "manifest.json"
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"samples": {}}
+    return data if isinstance(data, dict) else {"samples": {}}
+
+
+def _artifact_path(root: Path, doi: str, asset_name: str) -> Path:
+    slug = _doi_slug(doi)
+    manifest = _load_golden_manifest(root)
+    samples = manifest.get("samples") if isinstance(manifest.get("samples"), dict) else {}
+    sample = samples.get(slug)
+    if not isinstance(sample, dict):
+        for sample_id, item in samples.items():
+            if isinstance(item, dict) and _normalized_doi(str(item.get("doi") or "")) == doi:
+                slug = str(sample_id)
+                sample = item
+                break
+    if isinstance(sample, dict):
+        assets = sample.get("assets") if isinstance(sample.get("assets"), dict) else {}
+        asset_path = assets.get(asset_name)
+        if isinstance(asset_path, str) and asset_path:
+            return root / asset_path
+        family = str(sample.get("fixture_family") or "golden")
+        if family == "block":
+            return root / "tests" / "fixtures" / "block" / slug.removesuffix("__block") / asset_name
+    return root / "tests" / "fixtures" / "golden_criteria" / slug / asset_name
+
+
 def _baseline_path(root: Path, doi: str) -> Path:
-    return root / "tests" / "fixtures" / "golden_criteria" / _doi_slug(doi) / "expected.json"
+    return _artifact_path(root, doi, "extracted.md")
+
+
+def _quality_path(root: Path, doi: str) -> Path:
+    return _artifact_path(root, doi, "markdown-quality.json")
 
 
 def _sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _load_quality_report(path: Path) -> dict[str, Any]:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report cannot be loaded.",
+            retryable=True,
+            task_id="bootstrap-review-artifact",
+            details={"path": path.as_posix(), "reason": str(exc)},
+        ) from exc
+    if not isinstance(data, dict):
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report root must be an object.",
+            retryable=True,
+            task_id="bootstrap-review-artifact",
+            details={"path": path.as_posix()},
+        )
+    validation_errors = validate_markdown_quality_report(data)
+    if validation_errors:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report must use the agent_prompt schema v2 contract.",
+            retryable=True,
+            task_id="bootstrap-review-artifact",
+            details={"path": path.as_posix(), "validation_errors": validation_errors},
+        )
+    return data
+
+
+def _review_issues_from_quality(quality: dict[str, Any]) -> list[dict[str, str]]:
+    if quality.get("status") == PENDING_STATUS:
+        return [
+            {
+                "id": "agent-markdown-review-pending",
+                "severity": "high",
+                "summary": (
+                    "Markdown quality report is pending agent review; "
+                    "run markdown-quality-prompt.md and write pass/fail JSON."
+                ),
+            }
+        ]
+    issues: list[dict[str, str]] = []
+    for issue in blocking_markdown_quality_issues(quality):
+        issues.append(
+            {
+                "id": str(issue.get("id") or "markdown-quality-failed"),
+                "severity": str(issue.get("severity") or "high"),
+                "summary": str(issue.get("summary") or "Markdown quality check failed."),
+            }
+        )
+    return issues
 
 
 def build_review(
@@ -201,16 +299,28 @@ def build_review(
         if not baseline.is_file():
             raise ToolError(
                 "EXPECTED_SNAPSHOT_FAILED",
-                "Review artifact bootstrap requires an expected snapshot.",
+                "Review artifact bootstrap requires an extracted Markdown snapshot.",
                 retryable=True,
                 provider=provider,
                 manifest=manifest_path.as_posix(),
                 task_id=f"{provider}-bootstrap-review-artifact",
-                details={"doi": doi, "expected_path": baseline.relative_to(root).as_posix()},
+                details={"doi": doi, "baseline_markdown_path": baseline.relative_to(root).as_posix()},
             )
+        quality_report = _quality_path(root, doi)
+        if not quality_report.is_file():
+            raise ToolError(
+                "MARKDOWN_QUALITY_FAILED",
+                "Review artifact bootstrap requires a Markdown quality report.",
+                retryable=True,
+                provider=provider,
+                manifest=manifest_path.as_posix(),
+                task_id=f"{provider}-bootstrap-review-artifact",
+                details={"doi": doi, "markdown_quality_path": quality_report.relative_to(root).as_posix()},
+            )
+        quality = _load_quality_report(quality_report)
         contract = _contract_for_sample(manifest, sample)
         baseline_text = baseline.read_text(encoding="utf-8", errors="replace")
-        issues = _classifier_issues(contract, baseline_text)
+        issues = _classifier_issues(contract, baseline_text) + _review_issues_from_quality(quality)
         fixture_reviews.append(
             {
                 "fixture": f"tests/fixtures/golden_criteria/{slug}",
@@ -218,6 +328,8 @@ def build_review(
                 "doi": doi,
                 "baseline_markdown_path": baseline.relative_to(root).as_posix(),
                 "baseline_markdown_sha256": _sha256(baseline),
+                "markdown_quality_path": quality_report.relative_to(root).as_posix(),
+                "markdown_quality_sha256": _sha256(quality_report),
                 "review_notes": (
                     "Automated bootstrap found contract issues; semantic signoff pending."
                     if issues
@@ -241,7 +353,7 @@ def build_review(
             details={"manifest": manifest_path.as_posix()},
         )
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "provider": provider,
         "reviewed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "reviewed_by": "bootstrap_review_artifact.py",
