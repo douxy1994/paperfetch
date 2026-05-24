@@ -59,7 +59,6 @@ def _marker_block(text: str, marker: str, *, line_count: int = 90) -> str:
 def test_provider_manifests_define_figure_asset_contracts() -> None:
     for manifest_path in _manifest_paths():
         manifest = _load_yaml(manifest_path)
-        provider = str(manifest["name"])
         contract = manifest.get("asset_contract")
         assert isinstance(contract, dict), f"{manifest_path}: asset_contract is required"
         figures = contract.get("figures")
