@@ -6,6 +6,8 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 1.7.0 - 2026-05-24
+
 ### Added
 
 - Add Annual Reviews (`annualreviews`) provider for `10.1146/` DOI routing, CloakBrowser-rendered HTML full text, seeded-browser PDF fallback, provider-managed abstract-only degradation, fixture replay, golden corpus coverage, and HTML body figure extraction.
@@ -21,6 +23,7 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 - Avoid classifying publisher access UI as an access gate during fixture capture when the captured page has a populated full-text container.
 - Preserved Royal Society Publishing Silverchair figure captions and stripped Royal Society PDF fallback watermark/page placeholder noise from Markdown.
 - Derived DOI values for known MDPI numeric article URLs before generic landing-page fetches, and derived MDPI article landing URLs from known MDPI DOI suffixes before falling back to `doi.org`.
+- Synced the bundled formula Node workspace to `katex` 0.17.0 so root and formula package lockfiles stay aligned.
 - Replaced invalid UTF-8 bytes from external formula converter subprocess output instead of letting Windows reader threads raise `UnicodeDecodeError`.
 - Replaced invalid UTF-8 bytes from PyMuPDF's Windows Tesseract-probe subprocess output during PDF fallback Markdown conversion.
 
