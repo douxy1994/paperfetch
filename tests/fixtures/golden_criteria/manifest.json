@@ -2740,7 +2740,12 @@
         "expected.json": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/expected.json",
         "extracted.md": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/extracted.md",
         "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/markdown-quality-prompt.md",
-        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/markdown-quality.json"
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/markdown-quality.json",
+        "body_assets/annualreviews-figure-1.png": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/body_assets/annualreviews-figure-1.png",
+        "body_assets/annualreviews-figure-2.png": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/body_assets/annualreviews-figure-2.png",
+        "body_assets/annualreviews-figure-3.png": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/body_assets/annualreviews-figure-3.png",
+        "body_assets/annualreviews-figure-4.png": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/body_assets/annualreviews-figure-4.png",
+        "body_assets/annualreviews-figure-5.png": "tests/fixtures/golden_criteria/10.1146_annurev-control-030123-013355/body_assets/annualreviews-figure-5.png"
       }
     },
     "10.1146_annurev-med-120811-171056": {
@@ -2780,7 +2785,11 @@
         "expected.json": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/expected.json",
         "extracted.md": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/extracted.md",
         "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/markdown-quality-prompt.md",
-        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/markdown-quality.json"
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/markdown-quality.json",
+        "body_assets/annualreviews-figure-1.gif": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/body_assets/annualreviews-figure-1.gif",
+        "body_assets/annualreviews-figure-2.gif": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/body_assets/annualreviews-figure-2.gif",
+        "body_assets/annualreviews-figure-3.gif": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/body_assets/annualreviews-figure-3.gif",
+        "body_assets/annualreviews-figure-4.gif": "tests/fixtures/golden_criteria/10.1146_annurev-environ-102511-084654/body_assets/annualreviews-figure-4.gif"
       }
     },
     "10.1146_annurev-neuro-062111-150343": {
