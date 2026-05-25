@@ -23,6 +23,8 @@ SourceKind = Literal[
     "royalsocietypublishing_pdf",
     "annualreviews_html",
     "annualreviews_pdf",
+    "oxfordacademic_html",
+    "oxfordacademic_pdf",
     "plos_xml",
     "plos_pdf",
     "ieee_html",

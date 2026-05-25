@@ -16,6 +16,20 @@ EXTRACTION_RULES_MARKER = "<!-- SCAFFOLD: extraction-rules-unstable-doi -->"
 CHANGELOG_UNRELEASED_MARKER = "<!-- SCAFFOLD: changelog-unreleased -->"
 
 
+class _IndentedSafeDumper(yaml.SafeDumper):
+    def increase_indent(self, flow: bool = False, indentless: bool = False):
+        return super().increase_indent(flow, False)
+
+
+def _dump_yaml(data: Any) -> str:
+    return yaml.dump(
+        data,
+        Dumper=_IndentedSafeDumper,
+        allow_unicode=True,
+        sort_keys=False,
+    )
+
+
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[1]
 
@@ -320,7 +334,7 @@ def _sync_known_providers(
         changed.append(f"known-providers.{provider}")
     if changed:
         known_path.write_text(
-            yaml.safe_dump(data, allow_unicode=True, sort_keys=False),
+            _dump_yaml(data),
             encoding="utf-8",
         )
     return changed
@@ -443,7 +457,7 @@ def sync_manifest(path: Path, *, provider: str, sync_docs: bool = False, root: P
             changed_fields.append(f"success_criteria.{step}")
 
     path.write_text(
-        yaml.safe_dump(manifest, allow_unicode=True, sort_keys=False),
+        _dump_yaml(manifest),
         encoding="utf-8",
     )
     if sync_docs:

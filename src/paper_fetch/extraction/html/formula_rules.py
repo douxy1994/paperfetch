@@ -48,6 +48,14 @@ MATHML_SCRIPT_TYPES = frozenset(
         "text/mml",
     }
 )
+SILVERCHAIR_FIGURE_CLASS_TOKENS = frozenset(
+    {
+        "fig",
+        "fig-section",
+        "js-fig-section",
+        "graphic-wrap",
+    }
+)
 
 
 def display_formula_identity_tokens_for_profile(noise_profile: str | None) -> tuple[str, ...]:
@@ -119,6 +127,61 @@ def formula_ancestor_identity_text(node: Any, *, max_depth: int = 6) -> str:
         current = current.parent if isinstance(getattr(current, "parent", None), Tag) else None
         depth += 1
     return " ".join(part for part in parts if part)
+
+
+def _class_tokens(node: Any) -> set[str]:
+    if not isinstance(node, Tag):
+        return set()
+    raw_classes = (getattr(node, "attrs", None) or {}).get("class") or []
+    if isinstance(raw_classes, str):
+        return {normalize_text(value).lower() for value in raw_classes.split() if normalize_text(value)}
+    return {normalize_text(str(value)).lower() for value in raw_classes if normalize_text(str(value))}
+
+
+def _has_formula_container_identity(node: Any, *, noise_profile: str | None = None, max_depth: int = 6) -> bool:
+    identity = formula_ancestor_identity_text(node, max_depth=max_depth)
+    return any(token in identity for token in formula_container_tokens_for_profile(noise_profile))
+
+
+def _silverchair_content_id_looks_like_figure(node: Any) -> bool:
+    if not isinstance(node, Tag):
+        return False
+    for key in ("data-content-id", "data-id", "content-id", "id"):
+        value = normalize_text(str(node.get(key) or "")).lower()
+        if "-f" in value:
+            return True
+    return False
+
+
+def html_node_is_figure_asset_context(
+    node: Any,
+    *,
+    noise_profile: str | None = None,
+    max_depth: int = 8,
+) -> bool:
+    if not isinstance(node, Tag):
+        return False
+    if _has_formula_container_identity(node, noise_profile=noise_profile, max_depth=max_depth):
+        return False
+
+    current: Any = node
+    depth = 0
+    while isinstance(current, Tag) and depth < max_depth:
+        if normalize_text(current.name or "").lower() == "figure":
+            return True
+        classes = _class_tokens(current)
+        if {"fig", "fig-section"} <= classes or "js-fig-section" in classes:
+            return True
+        if _silverchair_content_id_looks_like_figure(current):
+            return True
+        if "graphic-wrap" in classes and (
+            current.select_one(".fig-label, .fig-caption, .caption") is not None
+            or _silverchair_content_id_looks_like_figure(current.parent)
+        ):
+            return True
+        current = current.parent if isinstance(getattr(current, "parent", None), Tag) else None
+        depth += 1
+    return False
 
 
 def is_formula_container(node: Any, *, noise_profile: str | None = None) -> bool:
@@ -194,14 +257,17 @@ def looks_like_formula_image(node: Any, url: str | None = None, *, noise_profile
     candidate_url = normalize_text(url or formula_image_url_from_node(node))
     if not candidate_url:
         return False
+    if FORMULA_IMAGE_URL_PATTERN.search(candidate_url):
+        return True
+    if html_node_is_figure_asset_context(node, noise_profile=noise_profile):
+        return False
     identity = formula_ancestor_identity_text(node)
     alt_blob = " ".join(
         normalize_text(str(node.get(attr) or "")).lower()
         for attr in ("alt", "title", "aria-label")
     )
     return (
-        bool(FORMULA_IMAGE_URL_PATTERN.search(candidate_url))
-        or bool(FORMULA_IMAGE_URL_PATTERN.search(alt_blob))
+        bool(FORMULA_IMAGE_URL_PATTERN.search(alt_blob))
         or any(token in identity for token in formula_container_tokens_for_profile(noise_profile))
     )
 

@@ -186,6 +186,16 @@ def _raw_fixture_path(sample_id: str, sample: dict[str, Any]) -> Path | None:
     return None
 
 
+def _skip_cleaning_inventory_item(purpose: str, sample: dict[str, Any], raw_path: Path | None) -> bool:
+    # Oxford Academic PDF fallback is a text-only route; HTML cleaning evidence comes from article fixtures.
+    return (
+        purpose == "pdf_fallback"
+        and raw_path is not None
+        and raw_path.suffix == ".pdf"
+        and str(sample.get("publisher") or "").lower() == "oxfordacademic"
+    )
+
+
 def collect_fixture_inventory(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     golden_manifest = _load_golden_manifest()
     inventory: list[dict[str, Any]] = []
@@ -210,6 +220,8 @@ def collect_fixture_inventory(manifest: dict[str, Any]) -> list[dict[str, Any]]:
             return
         sample_id, golden_sample = sample_entry
         raw_path = _raw_fixture_path(sample_id, golden_sample)
+        if _skip_cleaning_inventory_item(purpose, golden_sample, raw_path):
+            return
         inventory.append(
             {
                 "purpose": purpose,
@@ -233,8 +245,51 @@ def collect_fixture_inventory(manifest: dict[str, Any]) -> list[dict[str, Any]]:
     if isinstance(extra_fixtures, list):
         for index, sample in enumerate(extra_fixtures):
             if isinstance(sample, dict):
-                add_sample(str(sample.get("purpose") or f"extra_fixtures[{index}]"), sample, extra=True)
+                add_sample(
+                    str(sample.get("purpose") or f"extra_fixtures[{index}]"),
+                    sample,
+                    extra=True,
+                )
     return inventory
+
+
+def collect_skipped_cleaning_inventory_items(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    golden_manifest = _load_golden_manifest()
+    skipped: list[dict[str, Any]] = []
+
+    def add_sample(purpose: str, sample: dict[str, Any], *, extra: bool = False) -> None:
+        doi = sample.get("doi")
+        if not doi:
+            return
+        sample_entry = _sample_for_doi(str(doi), golden_manifest)
+        if sample_entry is None:
+            return
+        sample_id, golden_sample = sample_entry
+        raw_path = _raw_fixture_path(sample_id, golden_sample)
+        if not _skip_cleaning_inventory_item(purpose, golden_sample, raw_path):
+            return
+        skipped.append(
+            {
+                "purpose": purpose,
+                "doi": normalize_doi(str(doi)),
+                "sample_id": sample_id,
+                "raw_path": _repo_rel(raw_path) if raw_path else None,
+                "extra_fixture": extra,
+                "reason": "route is excluded from HTML cleaning-chain evidence",
+            }
+        )
+
+    fixtures = manifest.get("fixtures") if isinstance(manifest.get("fixtures"), dict) else {}
+    doi_samples = fixtures.get("doi_samples") if isinstance(fixtures.get("doi_samples"), dict) else {}
+    for purpose, sample in doi_samples.items():
+        if isinstance(sample, dict):
+            add_sample(str(purpose), sample)
+    extra_fixtures = manifest.get("extra_fixtures")
+    if isinstance(extra_fixtures, list):
+        for index, sample in enumerate(extra_fixtures):
+            if isinstance(sample, dict):
+                add_sample(str(sample.get("purpose") or f"extra_fixtures[{index}]"), sample, extra=True)
+    return skipped
 
 
 def _content_type_for_path(path: Path | None) -> str | None:
@@ -801,18 +856,24 @@ def calibrate_markdown_contract(
     manifest: dict[str, Any],
     baselines: dict[str, dict[str, Any]],
     anchors: list[dict[str, Any]],
+    *,
+    skip_purposes: set[str] | None = None,
 ) -> dict[str, Any]:
     markdown_contract = manifest.get("markdown_contract") if isinstance(manifest.get("markdown_contract"), dict) else {}
+    skipped = {str(purpose) for purpose in (skip_purposes or set())}
     anchor_by_purpose: dict[str, list[str]] = defaultdict(list)
     for anchor in anchors:
         anchor_by_purpose[str(anchor["purpose"])].append(str(anchor["text"]))
     deltas: dict[str, Any] = {}
     all_raw = "\n".join(str(item.get("raw_text") or "") for item in baselines.values()).lower()
     for purpose, contract in markdown_contract.items():
+        purpose_key = str(purpose)
+        if purpose_key in skipped:
+            continue
         if not isinstance(contract, dict):
             continue
         doi = normalize_doi(str(contract.get("doi") or ""))
-        baseline = baselines.get(f"{purpose}:{doi}")
+        baseline = baselines.get(f"{purpose_key}:{doi}")
         markdown = str((baseline or {}).get("markdown") or "")
         missing_include = [
             token
@@ -832,10 +893,10 @@ def calibrate_markdown_contract(
         }
         suggested = [
             token
-            for token in _dedupe_normalized_tokens(anchor_by_purpose.get(str(purpose), []))
+            for token in _dedupe_normalized_tokens(anchor_by_purpose.get(purpose_key, []))
             if _token_key(token) not in current_includes
         ][:10]
-        deltas[str(purpose)] = {
+        deltas[purpose_key] = {
             "doi": doi,
             "missing_must_include": missing_include,
             "dead_must_not_include": classified_dead,
@@ -948,12 +1009,19 @@ def token_conflict_report(
 def build_cleaning_chain_proposal(manifest: dict[str, Any], *, manifest_path: str) -> dict[str, Any]:
     provider = _provider_slug(str(manifest["name"]))
     inventory = collect_fixture_inventory(manifest)
+    skipped_inventory_items = collect_skipped_cleaning_inventory_items(manifest)
     baselines = collect_baselines(inventory)
     fixtures_digest = collect_fixtures_digest(inventory)
     boilerplate = mine_boilerplate_candidates(inventory, baselines)
     selectors = mine_selector_candidates(inventory)
     anchors = mine_content_anchors(inventory, baselines)
-    contract_delta = calibrate_markdown_contract(manifest, baselines, anchors)
+    skipped_purposes = {str(item.get("purpose")) for item in skipped_inventory_items}
+    contract_delta = calibrate_markdown_contract(
+        manifest,
+        baselines,
+        anchors,
+        skip_purposes=skipped_purposes,
+    )
     overcleaning = detect_overcleaning_risks(inventory, baselines)
     conflicts = token_conflict_report(boilerplate, baselines)
     sanitized_baselines = {
@@ -972,6 +1040,7 @@ def build_cleaning_chain_proposal(manifest: dict[str, Any], *, manifest_path: st
         "evidence_artifact": f"{DEFAULT_OUTPUT_DIR}/{provider}.evidence.yml",
         "fixtures_digest": fixtures_digest,
         "raw_fixture_inventory": inventory,
+        "skipped_cleaning_inventory": skipped_inventory_items,
         "raw_baselines": sanitized_baselines,
         "repeated_boilerplate_candidates": boilerplate,
         "selector_candidates": selectors,
@@ -1024,6 +1093,7 @@ def build_compact_proposal(proposal: dict[str, Any]) -> dict[str, Any]:
         "evidence_artifact": proposal["evidence_artifact"],
         "fixtures_digest": proposal["fixtures_digest"],
         "proposed_markdown_contract_delta": proposal["proposed_markdown_contract_delta"],
+        "skipped_cleaning_inventory": proposal.get("skipped_cleaning_inventory") or [],
         "selected_drop_tokens": selected_drop_tokens,
         "selected_drop_selectors": selected_drop_selectors,
         "overcleaning_probe_summary": {

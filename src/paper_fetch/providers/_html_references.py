@@ -19,16 +19,22 @@ YEAR_PATTERN = re.compile(r"\((?P<year>(?:18|19|20)\d{2})\)")
 REFERENCE_LINKOUT_LABELS = (
     "Article",
     "ADS",
+    "COPAC",
     "Crossref",
-    "PubMed",
-    "Web of Science",
     "Google Scholar",
+    "Google Preview",
+    "OpenURL",
+    "PubMed",
+    "Search ADS",
+    "Web of Science",
+    "WorldCat",
     "CAS",
 )
 REFERENCE_LINKOUT_LABEL_PATTERN = re.compile(
     rf"\b(?:{'|'.join(re.escape(label) for label in REFERENCE_LINKOUT_LABELS)})\b(?:\s*\|?\s*)*$"
 )
 NUMBERED_BIBLIOGRAPHY_SELECTORS = (
+    ".ref-list .js-splitview-ref-item",
     "section[role='doc-bibliography'] [role='listitem'][data-has='label']",
     "#bibliography [role='listitem'][data-has='label']",
     "section[data-title='References'] li[data-counter]",
@@ -40,20 +46,42 @@ NUMBERED_BIBLIOGRAPHY_SELECTORS = (
 REFERENCE_CONTENT_SELECTORS = (
     ".c-article-references__text",
     ".citation-content",
+    ".mixed-citation",
     ".citation",
+    ".ref-content",
     ".reference",
     "p",
 )
 REFERENCE_NOISE_SELECTORS = (
+    ".citation-links",
     ".extra-links",
     ".getFTR",
     ".citedBySection",
     ".related-links",
     ".reference-links",
     ".article__reference-links",
+    ".refLink-parent",
+    ".google-scholar-ref-link",
+    ".google-preview-ref-link",
+    ".crossref-ref-link",
+    ".pubmed-ref-link",
+    ".xslopenurl",
+    ".openurl",
+    "script",
+    "noscript",
     "[aria-hidden='true']",
     ".visually-hidden",
     ".sr-only",
+)
+REFERENCE_CONTENT_CLASS_TOKENS = frozenset(
+    {
+        "c-article-references__text",
+        "citation-content",
+        "mixed-citation",
+        "citation",
+        "ref-content",
+        "reference",
+    }
 )
 
 
@@ -79,17 +107,44 @@ def _reference_label(node: Any, *, fallback_index: int) -> str | None:
         return f"{fallback_index}."
     if normalize_text(str(node.get("data-bib-id") or "")):
         return f"{fallback_index}."
+    class_values = getattr(node, "attrs", {}).get("class") or []
+    if isinstance(class_values, str):
+        classes = {item.lower() for item in class_values.split()}
+    else:
+        classes = {normalize_text(str(item)).lower() for item in class_values}
+    if "js-splitview-ref-item" in classes:
+        return f"{fallback_index}."
     return None
+
+
+def _node_matches_reference_content(node: Tag) -> bool:
+    class_values = getattr(node, "attrs", {}).get("class") or []
+    if isinstance(class_values, str):
+        classes = {normalize_text(item).lower() for item in class_values.split() if normalize_text(item)}
+    else:
+        classes = {normalize_text(str(item)).lower() for item in class_values if normalize_text(str(item))}
+    return bool(classes & REFERENCE_CONTENT_CLASS_TOKENS)
 
 
 def _reference_content_node(node: Any) -> Any:
     if not isinstance(node, Tag):
         return None
+    if _node_matches_reference_content(node):
+        return node
     for selector in REFERENCE_CONTENT_SELECTORS:
         match = node.select_one(selector)
         if isinstance(match, Tag):
             return match
     return node
+
+
+def _clean_reference_text(text: str) -> str:
+    text = REFERENCE_LINKOUT_LABEL_PATTERN.sub("", text)
+    text = re.sub(r"\s+([,.;:])", r"\1", text)
+    text = re.sub(r"([(\[])\s+", r"\1", text)
+    text = re.sub(r"\s+([)\]])", r"\1", text)
+    text = re.sub(r"\s+([–-])\s+", r"\1", text)
+    return normalize_text(text)
 
 
 def _reference_text(node: Any) -> str:
@@ -105,8 +160,7 @@ def _reference_text(node: Any) -> str:
                 match.decompose()
         active_node = clone
     text = normalize_text(active_node.get_text(" ", strip=True))
-    text = REFERENCE_LINKOUT_LABEL_PATTERN.sub("", text)
-    return normalize_text(text)
+    return _clean_reference_text(text)
 
 
 def _reference_doi(node: Any) -> str | None:

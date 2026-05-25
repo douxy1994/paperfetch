@@ -55,3 +55,7 @@ providers:
     display_source: plos_xml
     status: implemented
     manifest_path: onboarding/manifests/plos.yml
+  - name: oxfordacademic
+    display_source: oxfordacademic_html
+    status: implemented
+    manifest_path: onboarding/manifests/oxfordacademic.yml

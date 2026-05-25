@@ -2984,6 +2984,72 @@
         "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1371_journal.pcbi.1003118/markdown-quality-prompt.md",
         "markdown-quality.json": "tests/fixtures/golden_criteria/10.1371_journal.pcbi.1003118/markdown-quality.json"
       }
+    },
+    "10.1093_bioinformatics_btaa823": {
+      "doi": "10.1093/bioinformatics/btaa823",
+      "publisher": "oxfordacademic",
+      "source_url": "https://academic.oup.com/bioinformatics/article/37/4/497/5909988",
+      "fetched_at": "2026-05-25T07:15:20Z",
+      "purpose": "figure",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html; charset=utf-8",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa823/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa823/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa823/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa823/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa823/markdown-quality.json"
+      }
+    },
+    "10.1093_bioinformatics_btaa161": {
+      "doi": "10.1093/bioinformatics/btaa161",
+      "publisher": "oxfordacademic",
+      "source_url": "https://academic.oup.com/bioinformatics/article/36/11/3409/5802463",
+      "fetched_at": "2026-05-25T07:15:22Z",
+      "purpose": "formula",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html; charset=utf-8",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa161/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa161/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa161/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa161/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa161/markdown-quality.json"
+      }
+    },
+    "10.1093_bioinformatics_btaa153": {
+      "doi": "10.1093/bioinformatics/btaa153",
+      "publisher": "oxfordacademic",
+      "title": "MIXnorm: normalizing RNA-seq data from formalin-fixed paraffin-embedded samples",
+      "source_url": "https://academic.oup.com/bioinformatics/article-pdf/36/11/3401/50670770/bioinformatics_36_11_3401.pdf",
+      "fetched_at": "2026-05-25T09:01:32Z",
+      "purpose": "pdf_fallback",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "application/pdf",
+      "route_kind": "pdf_fallback",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.pdf": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa153/original.pdf",
+        "expected.json": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa153/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa153/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa153/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1093_bioinformatics_btaa153/markdown-quality.json"
+      },
+      "diagnostics": {
+        "browser_final_url": "https://watermark02.silverchair.com/bioinformatics_36_11_3401.pdf",
+        "browser_final_url_redacted": true,
+        "capture_source_url": "https://academic.oup.com/bioinformatics/article-pdf/36/11/3401/50670770/bioinformatics_36_11_3401.pdf"
+      }
     }
   },
   "tests": [

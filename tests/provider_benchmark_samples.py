@@ -177,6 +177,18 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         fixture_name=golden_criteria_fixture("10.1146/annurev-control-030123-013355", "original.html"),
         fixture_kind="html",
     ),
+    "oxfordacademic": ProviderBenchmarkSample(
+        provider="oxfordacademic",
+        doi="10.1093/bioinformatics/btaa161",
+        year=2020,
+        title="Unified methods for feature selection in large-scale genomic studies with censored survival outcomes",
+        landing_url="https://academic.oup.com/bioinformatics/article/36/11/3409/5802463",
+        expected_source="oxfordacademic_html",
+        accepted_live_source_trail_groups=(("fulltext:oxfordacademic_html_ok",),),
+        required_env=("CROSSREF_MAILTO",),
+        fixture_name=golden_criteria_fixture("10.1093/bioinformatics/btaa161", "original.html"),
+        fixture_kind="html",
+    ),
     "plos": ProviderBenchmarkSample(
         provider="plos",
         doi="10.1371/journal.pone.0263725",

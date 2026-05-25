@@ -14,6 +14,7 @@ from ..formula_rules import (
     formula_container_tokens_for_profile,
     formula_heading_for_image,
     formula_image_url_from_node,
+    html_node_is_figure_asset_context,
     looks_like_formula_image,
 )
 from ..parsing import choose_parser
@@ -27,12 +28,14 @@ def _looks_like_formula_image(
     *,
     noise_profile: str | None = None,
 ) -> bool:
+    if FORMULA_IMAGE_URL_PATTERN.search(url):
+        return True
+    if html_node_is_figure_asset_context(tag, noise_profile=noise_profile):
+        return False
     if looks_like_formula_image(tag, url, noise_profile=noise_profile):
         return True
     if not isinstance(tag, Tag):
         return False
-    if FORMULA_IMAGE_URL_PATTERN.search(url):
-        return True
     identity = formula_ancestor_identity_text(tag)
     return any(token in identity for token in formula_container_tokens_for_profile(noise_profile))
 

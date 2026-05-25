@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import urllib.parse
 from html.parser import HTMLParser
+import re
 from typing import Any, Callable, Mapping
 
 from ....http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
@@ -24,6 +25,25 @@ from bs4 import BeautifulSoup, Tag
 
 FigurePageFetcher = Callable[[str], tuple[str, str] | None]
 NOISY_IMAGE_ALT_TEXTS = frozenset({"refer to caption"})
+SILVERCHAIR_FIGURE_CONTAINER_SELECTORS = (
+    ".fig.fig-section",
+    ".js-fig-section",
+    "[data-content-id*='-f']",
+    ".graphic-wrap",
+)
+SILVERCHAIR_FIGURE_LABEL_SELECTORS = (
+    ".fig-label",
+    ".figcaption .title",
+    ".label.title-label",
+)
+SILVERCHAIR_FIGURE_CAPTION_SELECTORS = (
+    ".fig-caption",
+    ".caption",
+)
+FIGURE_BASENAME_NUMBER_PATTERN = re.compile(
+    r"(?:^|[-_/])(?:m_)?[A-Za-z0-9]+f(\d+[A-Za-z]?)\.(?:jpe?g|png|gif|webp|tiff?|svg)(?:[?#]|$)",
+    flags=re.IGNORECASE,
+)
 
 
 def clean_noisy_image_alt_text(value: str | None) -> str:
@@ -131,6 +151,76 @@ def _figure_caption_from_soup(node: Any, soup: Any) -> str:
                 if caption:
                     return caption
     return ""
+
+
+def _tag_class_tokens(node: Any) -> set[str]:
+    if not isinstance(node, Tag):
+        return set()
+    raw_classes = (getattr(node, "attrs", None) or {}).get("class") or []
+    if isinstance(raw_classes, str):
+        return {normalize_text(value).lower() for value in raw_classes.split() if normalize_text(value)}
+    return {normalize_text(str(value)).lower() for value in raw_classes if normalize_text(str(value))}
+
+
+def _silverchair_figure_heading_texts_from_soup(node: Any) -> list[str]:
+    if not isinstance(node, Tag):
+        return []
+    headings: list[str] = []
+    for selector in SILVERCHAIR_FIGURE_LABEL_SELECTORS:
+        for label in node.select(selector):
+            if not isinstance(label, Tag):
+                continue
+            heading = normalize_text(label.get_text(" ", strip=True))
+            if heading and heading not in headings:
+                headings.append(heading)
+    return headings
+
+
+def _silverchair_figure_caption_texts_from_soup(node: Any) -> list[str]:
+    if not isinstance(node, Tag):
+        return []
+    captions: list[str] = []
+    for selector in SILVERCHAIR_FIGURE_CAPTION_SELECTORS:
+        for caption_node in node.select(selector):
+            if not isinstance(caption_node, Tag):
+                continue
+            caption = normalize_text(caption_node.get_text(" ", strip=True))
+            if caption and caption not in captions:
+                captions.append(caption)
+    return captions
+
+
+def _figure_heading_from_image_url(url: str) -> str:
+    match = FIGURE_BASENAME_NUMBER_PATTERN.search(normalize_text(url))
+    if match is None:
+        return ""
+    return f"Figure {match.group(1)}"
+
+
+def _is_silverchair_figure_node(node: Any) -> bool:
+    if not isinstance(node, Tag):
+        return False
+    classes = _tag_class_tokens(node)
+    if {"fig", "fig-section"} <= classes or "js-fig-section" in classes:
+        return True
+    if "graphic-wrap" in classes:
+        return True
+    data_content_id = normalize_text(str(node.get("data-content-id") or ""))
+    return "-f" in data_content_id.lower()
+
+
+def _append_candidate_node(candidates: list[Any], seen_nodes: set[int], node: Any) -> None:
+    if not isinstance(node, Tag):
+        return
+    current = node.parent if isinstance(getattr(node, "parent", None), Tag) else None
+    while isinstance(current, Tag):
+        if id(current) in seen_nodes:
+            return
+        current = current.parent if isinstance(getattr(current, "parent", None), Tag) else None
+    node_id = id(node)
+    if node_id not in seen_nodes:
+        seen_nodes.add(node_id)
+        candidates.append(node)
 
 
 def _figure_page_url_from_soup(node: Any, source_url: str) -> str:
@@ -256,6 +346,9 @@ def _figure_caption_texts_from_soup(node: Any) -> list[str]:
         caption = normalize_text(figcaption.get_text(" ", strip=True))
         if caption:
             captions.append(caption)
+    if captions:
+        return captions
+    captions.extend(_silverchair_figure_caption_texts_from_soup(node))
     return captions
 
 
@@ -265,16 +358,20 @@ def _figure_assets_from_soup_node(node: Any, soup: Any, source_url: str) -> list
 
     figure_page_url = _figure_page_url_from_soup(node, source_url)
     dom_id = normalize_text(str(node.get("id") or ""))
+    if not dom_id:
+        dom_id = normalize_text(str(node.get("data-content-id") or node.get("data-id") or ""))
+    figure_headings = _silverchair_figure_heading_texts_from_soup(node)
     captions = _figure_caption_texts_from_soup(node)
     images = [image for image in node.find_all("img") if isinstance(image, Tag)]
     if not images:
         caption = _figure_caption_from_soup(node, soup)
         if not caption:
             return []
+        heading = _caption_for_image_index(figure_headings, 0) or caption[:80] or "Figure"
         return [
             {
                 "kind": "figure",
-                "heading": caption[:80] or "Figure",
+                "heading": heading,
                 "caption": caption,
                 "url": "",
                 "section": "body",
@@ -304,7 +401,13 @@ def _figure_assets_from_soup_node(node: Any, soup: Any, source_url: str) -> list
 
         caption = _caption_for_image_index(captions, index)
         alt_text = clean_noisy_image_alt_text(str(image.get("alt") or ""))
-        heading = caption[:80] or alt_text or "Figure"
+        heading = (
+            _caption_for_image_index(figure_headings, index)
+            or caption[:80]
+            or alt_text
+            or _figure_heading_from_image_url(absolute_full_size_url or absolute_preview_url)
+            or "Figure"
+        )
         if not caption and alt_text:
             caption = alt_text
 
@@ -343,10 +446,13 @@ def _extract_figure_assets_with_soup(html_text: str, source_url: str) -> list[di
     for node in soup.find_all("figure"):
         if node.find("figure") is not None:
             continue
-        node_id = id(node)
-        if node_id not in seen_nodes:
-            seen_nodes.add(node_id)
-            candidates.append(node)
+        _append_candidate_node(candidates, seen_nodes, node)
+
+    for selector in SILVERCHAIR_FIGURE_CONTAINER_SELECTORS:
+        for node in soup.select(selector):
+            if not _is_silverchair_figure_node(node):
+                continue
+            _append_candidate_node(candidates, seen_nodes, node)
 
     assets_by_key: dict[tuple[str, str, str], dict[str, str]] = {}
     for node in candidates:

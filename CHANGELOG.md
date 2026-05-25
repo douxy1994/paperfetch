@@ -6,6 +6,8 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+- Add Oxford Academic discovery manifest for public HTTP article HTML and validated article-pdf fallback.
+- Fix Oxford Academic HTML extraction to keep Silverchair formula paragraphs intact and render references from visible reference-list text instead of raw `citation_reference` meta keys.
 - Add PLOS public JATS XML provider manifest and fixture evidence for XML, PDF fallback, tables, formulas, figures, supplementary materials, and references.
 - Follow PLOS signed figure-image redirects during asset downloads and refresh the PLOS figure golden replay with local `body_assets` Markdown rewrites.
 - Render PLOS graphic-only JATS formulas as inline formula image assets instead of `Formula unavailable` placeholders.

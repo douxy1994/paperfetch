@@ -26,6 +26,7 @@ from paper_fetch.providers import (
     _ieee_html,
     _ieee_metadata,
     _mdpi_html,
+    _oxfordacademic_html,
     _royalsocietypublishing_html,
     _wiley_html,
     copernicus as copernicus_provider,
@@ -449,6 +450,60 @@ def _build_ieee_article(fixture: GoldenCorpusFixture):
     with tempfile.TemporaryDirectory() as tmpdir:
         downloaded_assets = _ieee_downloaded_body_assets(extraction.extracted_assets, Path(tmpdir))
         return client.to_article_model({"doi": fixture.doi}, raw_payload, downloaded_assets=downloaded_assets)
+
+
+def _build_oxfordacademic_article(fixture: GoldenCorpusFixture):
+    base_metadata = _base_metadata(fixture)
+    if normalize_text(str(base_metadata.get("title") or "")) == fixture.doi:
+        base_metadata.pop("title", None)
+    if fixture.route_kind == "pdf_fallback":
+        body = fixture.raw_path.read_bytes()
+        if not base_metadata.get("doi"):
+            base_metadata["doi"] = fixture.doi
+        pdf_result = pdf_fetch_result_from_bytes(
+            artifact_dir=None,
+            source_url=fixture.source_url,
+            final_url=fixture.source_url,
+            pdf_bytes=body,
+        )
+        return article_from_markdown(
+            source="oxfordacademic_pdf",
+            metadata=base_metadata,
+            doi=fixture.doi,
+            markdown_text=pdf_result.markdown_text,
+            trace=trace_from_markers(
+                [
+                    "fulltext:oxfordacademic_html_fail",
+                    "fulltext:oxfordacademic_pdf_fallback_ok",
+                ]
+            ),
+            warnings=[
+                "Full text was extracted from Oxford Academic PDF fallback after the HTML route was not usable.",
+            ],
+        )
+
+    html_text = fixture.raw_path.read_text(encoding="utf-8", errors="ignore")
+    metadata = _oxfordacademic_html.merge_metadata_with_html(
+        base_metadata,
+        html_text,
+        fixture.source_url,
+        doi=fixture.doi,
+    )
+    extraction = _oxfordacademic_html.extract_markdown(
+        html_text,
+        fixture.source_url,
+        metadata=metadata,
+    )
+    return article_from_markdown(
+        source="oxfordacademic_html",
+        metadata=extraction.metadata,
+        doi=fixture.doi,
+        markdown_text=extraction.markdown_text,
+        abstract_sections=[],
+        section_hints=extraction.section_hints,
+        assets=extraction.extracted_assets,
+        trace=trace_from_markers(["fulltext:oxfordacademic_html_ok"]),
+    )
 
 
 def _build_copernicus_article(fixture: GoldenCorpusFixture):
@@ -970,6 +1025,10 @@ def _lightweight_plos_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
     return _article_model_positive_summary(_build_plos_article(fixture), fixture)
 
 
+def _lightweight_oxfordacademic_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    return _article_model_positive_summary(_build_oxfordacademic_article(fixture), fixture)
+
+
 def lightweight_positive_summary_from_fixture(fixture: GoldenCorpusFixture) -> dict[str, Any]:
     return golden_corpus_adapter(fixture.provider).lightweight_summary(fixture)
 
@@ -1196,6 +1255,29 @@ def _register_golden_corpus_adapters() -> None:
             },
             representative_doi="10.1098/rsta.2019.0558",
             representative_count_fields=("sections", "abstract_sections", "body_sections"),
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="oxfordacademic",
+            build_article=_build_oxfordacademic_article,
+            lightweight_summary=_lightweight_oxfordacademic_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="oxfordacademic_html",
+                primary_marker="fulltext:oxfordacademic_html_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="oxfordacademic_pdf",
+                    primary_marker="fulltext:oxfordacademic_pdf_fallback_ok",
+                ),
+            },
+            representative_doi="10.1093/bioinformatics/btaa161",
+            representative_count_fields=("sections", "abstract_sections", "body_sections", "references"),
         )
     )
     register_golden_corpus_adapter(

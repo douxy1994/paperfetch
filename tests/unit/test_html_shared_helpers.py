@@ -41,6 +41,7 @@ from paper_fetch.extraction.html.provider_rules import (
     provider_supplementary_text_tokens,
 )
 from paper_fetch.extraction.html.inline import normalize_html_inline_text
+from paper_fetch.extraction.markdown_render.figures import is_html_figure_container
 from paper_fetch.extraction.html.tables import render_table_markdown
 from paper_fetch.http import HttpTransport
 from paper_fetch.providers._html_section_markdown import (
@@ -208,6 +209,153 @@ class SharedHtmlHelperTests(unittest.TestCase):
         self.assertEqual(assets[0]["heading"], "Figure 1. Overview figure.")
         self.assertEqual(assets[0]["caption"], "Figure 1. Overview figure.")
         self.assertEqual(assets[0]["url"], "https://example.test/fig1.png")
+
+    def test_extract_figure_assets_reads_silverchair_figure_sections(self) -> None:
+        html = """
+<html>
+  <body>
+    <div data-content-id="btaa823-f4" class="fig fig-section js-fig-section">
+      <div class="graphic-wrap">
+        <img class="content-image" src="/content/m_btaa823f4.jpeg" alt="Basic TM on abstracts and full-texts. Equation 1." />
+        <div class="graphic-bottom">
+          <div class="label fig-label">Fig. 4.</div>
+          <div class="caption fig-caption">
+            <p>Basic TM on abstracts and full-texts. The performance was calculated by Equation 1.</p>
+          </div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
+"""
+
+        assets = html_assets.extract_figure_assets(html, "https://academic.oup.com/article")
+
+        self.assertEqual(len(assets), 1)
+        self.assertEqual(assets[0]["kind"], "figure")
+        self.assertEqual(assets[0]["heading"], "Fig. 4.")
+        self.assertIn("Basic TM on abstracts and full-texts", assets[0]["caption"])
+        self.assertEqual(assets[0]["url"], "https://academic.oup.com/content/m_btaa823f4.jpeg")
+
+    def test_silverchair_figure_section_images_are_not_formula_assets(self) -> None:
+        html = """
+<html>
+  <body>
+    <div data-content-id="btaa823-f4" class="fig fig-section js-fig-section">
+      <div class="graphic-wrap">
+        <img class="content-image" src="/content/m_btaa823f4.jpeg" alt="Basic TM on abstracts and full-texts. Equation 1." />
+        <div class="graphic-bottom">
+          <div class="label fig-label">Fig. 4.</div>
+          <div class="caption fig-caption">Basic TM on abstracts and full-texts.</div>
+        </div>
+      </div>
+    </div>
+  </body>
+</html>
+"""
+
+        formula_assets = html_assets.extract_formula_assets(
+            html,
+            "https://academic.oup.com/article",
+        )
+        scoped_assets = html_assets.extract_scoped_html_assets(
+            html,
+            "https://academic.oup.com/article",
+            asset_profile="body",
+        )
+
+        self.assertEqual(formula_assets, [])
+        self.assertEqual([asset["kind"] for asset in scoped_assets], ["figure"])
+
+    def test_shared_figure_container_rules_do_not_promote_article_wrappers(
+        self,
+    ) -> None:
+        soup = BeautifulSoup(
+            """
+<article id="html-foods-10-01757">
+  <div id="article-contents">
+    <section id="sec2-foods-10-01757">
+      <h2>2. Materials</h2>
+      <p>Body text.</p>
+      <img src="/foods-10-01757-g001.png" alt="Figure 1" />
+    </section>
+  </div>
+</article>
+<div id="itemFullTextId" class="articleBody">
+  <div id="section-future" class="articleSection">
+    <h2>Future Directions</h2>
+    <div class="image">
+      <a class="media-link"
+         href="/docserver/fulltext/energy/38/1/eg380001.f1.gif"
+         id="/content/figure/10.1146/example.f1">
+        <img src="/docserver/ahah/fulltext/energy/38/1/eg380001.f1_thmb.gif" alt="Figure 1" />
+      </a>
+    </div>
+  </div>
+</div>
+""",
+            "html.parser",
+        )
+
+        self.assertFalse(is_html_figure_container(soup.select_one("article")))
+        self.assertFalse(is_html_figure_container(soup.select_one("#article-contents")))
+        self.assertFalse(is_html_figure_container(soup.select_one("#sec2-foods-10-01757")))
+        self.assertFalse(is_html_figure_container(soup.select_one("#itemFullTextId")))
+        self.assertFalse(is_html_figure_container(soup.select_one("#section-future")))
+        self.assertFalse(is_html_figure_container(soup.select_one("a.media-link")))
+
+    def test_silverchair_figure_container_rules_remain_explicit(self) -> None:
+        soup = BeautifulSoup(
+            """
+<div data-content-id="btaa823-f4" class="fig fig-section js-fig-section">
+  <div class="graphic-wrap">
+    <img class="content-image" src="/content/m_btaa823f4.jpeg" alt="Calculated by Equation 1." />
+    <div class="graphic-bottom">
+      <div class="label fig-label">Fig. 4.</div>
+      <div class="caption fig-caption">Caption text.</div>
+    </div>
+  </div>
+</div>
+""",
+            "html.parser",
+        )
+        figure = soup.select_one(".fig-section")
+        graphic = soup.select_one(".graphic-wrap")
+        image = soup.select_one("img")
+
+        self.assertTrue(is_html_figure_container(figure))
+        self.assertTrue(is_html_figure_container(graphic))
+        self.assertFalse(looks_like_formula_image(image))
+
+    def test_explicit_generic_figure_class_still_renders_as_figure(self) -> None:
+        soup = BeautifulSoup(
+            """
+<div class="figure figure-full" id="fig1">
+  <a href="/large.gif"><img src="/small.gif" alt="System overview" /></a>
+  <div class="figcaption"><span class="title">Fig. 1.</span> Example system overview.</div>
+</div>
+<div class="figure-links-panel">
+  <a href="/figures/1"><img src="/thumbnail.gif" alt="Figure link" /></a>
+</div>
+""",
+            "html.parser",
+        )
+
+        self.assertTrue(is_html_figure_container(soup.select_one(".figure-full")))
+        self.assertFalse(is_html_figure_container(soup.select_one(".figure-links-panel")))
+
+    def test_formula_image_url_signal_precedes_figure_context_exclusion(self) -> None:
+        soup = BeautifulSoup(
+            """
+<figure>
+  <img src="//media.springernature.com/lw14/springer-static/image/art%3A10.1038%2Fnature13376/MediaObjects/41586_2014_BFnature13376_IEq3_HTML.jpg"
+       alt="Equation 3" />
+</figure>
+""",
+            "html.parser",
+        )
+
+        self.assertTrue(looks_like_formula_image(soup.select_one("img")))
 
     def test_extract_figure_assets_reads_multi_image_multi_caption_figure_blocks(
         self,

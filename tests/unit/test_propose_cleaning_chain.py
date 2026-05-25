@@ -180,6 +180,37 @@ def test_ieee_landing_only_fallback_fixtures_render_provider_managed_baselines()
     assert "## Abstract" in abstract_baseline["markdown"]
 
 
+def test_oxfordacademic_pdf_fallback_is_excluded_from_html_cleaning_inventory() -> None:
+    manifest = yaml.safe_load(
+        (REPO_ROOT / "onboarding" / "manifests" / "oxfordacademic.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    doi_samples = manifest["fixtures"]["doi_samples"]
+    manifest["fixtures"]["doi_samples"] = {
+        "structure": doi_samples["structure"],
+        "pdf_fallback": doi_samples["pdf_fallback"],
+    }
+    manifest["markdown_contract"] = {
+        "structure": manifest["markdown_contract"]["structure"],
+        "pdf_fallback": manifest["markdown_contract"]["pdf_fallback"],
+    }
+
+    inventory = cleaning.collect_fixture_inventory(manifest)
+    skipped = cleaning.collect_skipped_cleaning_inventory_items(manifest)
+    proposal = cleaning.build_cleaning_chain_proposal(
+        manifest,
+        manifest_path="onboarding/manifests/oxfordacademic.yml",
+    )
+
+    assert [item["purpose"] for item in inventory] == ["structure"]
+    assert all(item["raw_path"].endswith("original.html") for item in inventory)
+    assert [item["purpose"] for item in skipped] == ["pdf_fallback"]
+    assert "pdf_fallback" not in proposal["proposed_markdown_contract_delta"]
+    assert proposal["skipped_cleaning_inventory"] == skipped
+    assert cleaning.contract_check_result(proposal)["status"] == "pass"
+
+
 def test_cleaning_risk_and_token_conflict_helpers_report_risks() -> None:
     manifest = _mdpi_subset_manifest()
     inventory = cleaning.collect_fixture_inventory(manifest)
