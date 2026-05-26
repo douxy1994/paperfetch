@@ -201,6 +201,16 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         fixture_name=golden_criteria_fixture("10.1371/journal.pone.0263725", "original.xml"),
         fixture_kind="xml",
     ),
+    "acs": ProviderBenchmarkSample(
+        provider="acs",
+        doi="10.1021/acsomega.4c03987",
+        year=2024,
+        title="Functionalized Metal-Free Carbon Nanosphere Catalyst for the Selective C-N Bond Formation under Open-Air Conditions",
+        landing_url="https://pubs.acs.org/doi/10.1021/acsomega.4c03987",
+        expected_source="acs",
+        accepted_live_source_trail_groups=(("fulltext:acs_html_ok",),),
+        required_env=("CROSSREF_MAILTO",),
+    ),
 }
 
 

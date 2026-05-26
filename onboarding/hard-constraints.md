@@ -20,7 +20,7 @@ Worker 和 coordinator 必须满足下列机器可判约束。
 - Provider-specific tests belong under `tests/unit/test_<provider>_provider.py`.
 - Provider tests must not keep scaffold skipped placeholders or Markdown review-loop placeholders.
 - Every non-null `fixtures.doi_samples.<purpose>` from the provider manifest must be named or asserted in `tests/unit/test_<provider>_provider.py`.
-- Every non-null fixture and `extra_fixtures` item must be recorded in `onboarding/reviews/<provider>.yml` with `sample_representative: true` and `markdown_semantic_reviewed: true`.
+- Every non-null fixture and `extra_fixtures` item must be recorded in `onboarding/reviews/<provider>.yml` with `sample_representative: true` and `markdown_semantic_reviewed: true`; the preferred path is final batch signoff through `scripts/onboard_from_manifests.py finalize-review-artifact --confirmed-final-quality`, not manual per-fixture YAML editing.
 - Every non-null `markdown_contract.<purpose>` from the provider manifest must be represented by provider-local Markdown assertions before extraction cleanup is changed.
 - Every `main_path` step must have `route_contract.<step>` and provider-local success / rejection coverage before that route is accepted as implemented.
 - Provider-local route coverage is checked by `tests/unit/test_provider_route_contract.py`; exact markers should use `route-contract: step=<step> condition=<condition>` when a route condition cannot be proven by an existing step/source/DOI assertion.

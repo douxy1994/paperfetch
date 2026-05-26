@@ -40,6 +40,11 @@ from ._pdf_common import (
 PdfFallbackResult = PdfFetchResult
 PdfFallbackFailure = PdfFetchFailure
 
+DEFAULT_BROWSER_NAVIGATION_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
+)
+
 
 @dataclass(frozen=True)
 class PdfFallbackStrategy:
@@ -177,6 +182,58 @@ def _request_with_opener(
             f"Failed to download PDF fallback candidate: {exc.reason or exc}",
             url=url,
         ) from exc
+
+
+def _same_origin(left: str | None, right: str | None) -> bool:
+    left_url = normalize_text(left)
+    right_url = normalize_text(right)
+    if not left_url or not right_url:
+        return False
+    left_parsed = urllib.parse.urlparse(left_url)
+    right_parsed = urllib.parse.urlparse(right_url)
+    return (
+        left_parsed.scheme.lower() == right_parsed.scheme.lower()
+        and normalize_text(left_parsed.hostname).lower()
+        == normalize_text(right_parsed.hostname).lower()
+        and (left_parsed.port or _default_port(left_parsed.scheme))
+        == (right_parsed.port or _default_port(right_parsed.scheme))
+    )
+
+
+def _default_port(scheme: str | None) -> int | None:
+    normalized = normalize_text(scheme).lower()
+    if normalized == "http":
+        return 80
+    if normalized == "https":
+        return 443
+    return None
+
+
+def _browser_navigation_pdf_headers(
+    *,
+    user_agent: str | None,
+    referer: str | None,
+    target_url: str | None,
+) -> dict[str, str]:
+    """Return browser-navigation headers for direct public PDF requests."""
+
+    active_user_agent = normalize_text(user_agent) or DEFAULT_BROWSER_NAVIGATION_USER_AGENT
+    headers = {
+        "User-Agent": active_user_agent,
+        "Accept-Language": "en-US,en;q=0.9",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Dest": "document",
+        "Upgrade-Insecure-Requests": "1",
+    }
+    active_referer = normalize_text(referer)
+    if active_referer:
+        headers["Referer"] = active_referer
+        headers["Sec-Fetch-Site"] = (
+            "same-origin" if _same_origin(target_url, active_referer) else "cross-site"
+        )
+    else:
+        headers["Sec-Fetch-Site"] = "none"
+    return headers
 
 
 def _response_to_pdf_result(
@@ -337,9 +394,19 @@ def fetch_pdf_with_browser(
     last_failure: PdfFallbackFailure | None = None
     sanitized_storage_state_path: Path | None = None
     active_user_agent = normalize_text(browser_user_agent)
+    normalized_seed_urls = [
+        normalize_text(url) for url in seed_urls or [] if normalize_text(url)
+    ]
+    seeded_referer = normalize_text(referer) or (
+        normalized_seed_urls[0] if normalized_seed_urls else ""
+    )
 
-    if browser_cookies:
-        http_headers = {"User-Agent": active_user_agent} if active_user_agent else {}
+    if browser_cookies or normalized_seed_urls:
+        http_headers = _browser_navigation_pdf_headers(
+            user_agent=active_user_agent,
+            referer=seeded_referer,
+            target_url=candidate_urls[0] if candidate_urls else None,
+        )
         try:
             return fetch_pdf_over_http(
                 context.transport if context is not None and context.transport is not None else HttpTransport(),
@@ -347,7 +414,8 @@ def fetch_pdf_with_browser(
                 headers=http_headers,
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 artifact_dir=artifact_dir,
-                browser_cookies=list(browser_cookies),
+                seed_urls=normalized_seed_urls,
+                browser_cookies=list(browser_cookies or []),
             )
         except PdfFallbackFailure as exc:
             last_failure = exc
@@ -442,10 +510,12 @@ def fetch_pdf_with_browser(
                         context_cookies = browser_context.cookies()
                     except Exception:
                         context_cookies = list(browser_cookies or [])
-                    http_headers = {"User-Agent": active_user_agent} if active_user_agent else {}
                     http_referer = normalize_text(referer) or normalize_text(html_base_url)
-                    if http_referer:
-                        http_headers["Referer"] = http_referer
+                    http_headers = _browser_navigation_pdf_headers(
+                        user_agent=active_user_agent,
+                        referer=http_referer,
+                        target_url=http_retry_candidates[0],
+                    )
                     try:
                         return fetch_pdf_over_http(
                             context.transport if context is not None and context.transport is not None else HttpTransport(),

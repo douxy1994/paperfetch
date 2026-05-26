@@ -264,6 +264,10 @@ class ProviderCatalogTests(unittest.TestCase):
             ),
         )
         self.assertEqual(provider_pdf_path_templates("ams"), ())
+        self.assertEqual(provider_base_domains("acs"), ("pubs.acs.org",))
+        self.assertEqual(
+            provider_html_path_templates("acs"), ("/doi/full/{doi}", "/doi/{doi}")
+        )
         self.assertEqual(provider_crossref_pdf_position("wiley"), 1)
 
     def test_springer_pdf_templates_are_catalog_derived(self) -> None:
@@ -402,6 +406,10 @@ class ProviderCatalogTests(unittest.TestCase):
             "ams",
         )
         self.assertEqual(
+            publisher_identity.infer_provider_from_doi("10.1021/acsomega.4c03987"),
+            "acs",
+        )
+        self.assertEqual(
             publisher_identity.infer_provider_from_doi("10.48550/arXiv.2605.06663"),
             "arxiv",
         )
@@ -427,6 +435,12 @@ class ProviderCatalogTests(unittest.TestCase):
                 "Institute of Electrical and Electronics Engineers"
             ),
             "ieee",
+        )
+        self.assertEqual(
+            publisher_identity.infer_provider_from_publisher(
+                "American Chemical Society"
+            ),
+            "acs",
         )
         self.assertEqual(
             publisher_identity.infer_provider_from_url(
@@ -480,6 +494,12 @@ class ProviderCatalogTests(unittest.TestCase):
                 "https://journals.ametsoc.org/view/journals/clim/37/24/JCLI-D-23-0738.1.xml"
             ),
             "ams",
+        )
+        self.assertEqual(
+            publisher_identity.infer_provider_from_url(
+                "https://pubs.acs.org/doi/10.1021/acsomega.4c03987"
+            ),
+            "acs",
         )
         self.assertEqual(
             publisher_identity.ordered_provider_candidates(

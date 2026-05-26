@@ -1,4 +1,4 @@
-"""Shared browser-workflow runtime helpers for Wiley/Science/PNAS/AMS."""
+"""Shared browser-workflow runtime helpers for provider browser routes."""
 
 from __future__ import annotations
 

@@ -17,6 +17,7 @@ from paper_fetch.http import HttpTransport
 from paper_fetch.models import article_from_markdown
 from paper_fetch.publisher_identity import normalize_doi
 from paper_fetch.providers import (
+    _acs_html,
     _pnas_html,
     _science_html,
     _ams_html,
@@ -32,6 +33,7 @@ from paper_fetch.providers import (
     copernicus as copernicus_provider,
     elsevier as elsevier_provider,
     arxiv as arxiv_provider,
+    acs as acs_provider,
     pnas as pnas_provider,
     science as science_provider,
     ams as ams_provider,
@@ -230,6 +232,7 @@ def _build_springer_article(fixture: GoldenCorpusFixture):
 def _build_browser_workflow_article(fixture: GoldenCorpusFixture):
     metadata = _base_metadata(fixture)
     client_map = {
+        "acs": acs_provider.AcsClient,
         "ams": ams_provider.AmsClient,
         "annualreviews": annualreviews_provider.AnnualreviewsClient,
         "mdpi": mdpi_provider.MdpiClient,
@@ -902,6 +905,10 @@ def _lightweight_atypon_browser_workflow_summary(fixture: GoldenCorpusFixture) -
             _ams_html.extract_authors,
             _ams_html.blocking_fallback_signals,
         ),
+        "acs": (
+            _acs_html.extract_authors,
+            lambda _html_text: (),
+        ),
         "science": (
             _science_html.extract_authors,
             _science_html.blocking_fallback_signals,
@@ -1038,6 +1045,28 @@ def golden_contract_for_fixture(fixture: GoldenCorpusFixture) -> ProviderGoldenC
 
 
 def _register_golden_corpus_adapters() -> None:
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="acs",
+            build_article=_build_browser_workflow_article,
+            lightweight_summary=_lightweight_atypon_browser_workflow_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="acs",
+                primary_marker="fulltext:acs_html_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="acs",
+                    primary_marker="fulltext:acs_pdf_fallback_ok",
+                ),
+            },
+            representative_doi="10.1021/acsomega.4c03987",
+        )
+    )
     register_golden_corpus_adapter(
         GoldenCorpusAdapter(
             provider="ams",

@@ -85,6 +85,8 @@ def test_help_includes_discover() -> None:
 
     assert "discover" in result.stdout
     assert "prepare-discovery" in result.stdout
+    assert "prepare-human-preflight" in result.stdout
+    assert "finalize-review-artifact" in result.stdout
     assert "autofix-manifest" in result.stdout
     assert "inspect-discovery" in result.stdout
     assert "run" in result.stdout
@@ -136,6 +138,16 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     ]
     assert dag["manifest"] == "onboarding/manifests/mdpi.yml"
     assert dag["runtime"] == "coding-agent-subagent"
+    assert [gate["id"] for gate in dag["human_gates"]] == [
+        "waterfall-preflight-review",
+        "final-markdown-quality-review",
+    ]
+    assert dag["human_gates"][0]["operator_must_edit"] == (
+        "onboarding/access-reviews/mdpi.yml"
+    )
+    assert "finalize-review-artifact --provider mdpi --confirmed-final-quality" in (
+        dag["human_gates"][1]["command"]
+    )
     assert discover_brief_path.is_file()
     assert implement_brief_path.is_file()
     assert "current_step: discover-manifest" in discover_brief
@@ -170,9 +182,23 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
         ),
         "route_contract_source": "provider_manifest.route_contract",
         "markdown_contract_source": "provider_manifest.markdown_contract",
+        "operator_review_granularity": "final_batch_only",
+        "worker_prepares_review_artifact": True,
         "require_each_non_null_purpose_asserted": True,
         "require_positive_and_negative_markdown_assertions": True,
         "forbid_skipped_scaffold_placeholder": True,
+    }
+    assert implement_brief["human_review_policy"] == {
+        "required_gates": [
+            "waterfall-preflight-review",
+            "final-markdown-quality-review",
+        ],
+        "fixture_level_operator_review": False,
+        "operator_reviews_final_markdown_batch": True,
+        "finalize_command": (
+            "python3 scripts/onboard_from_manifests.py "
+            "finalize-review-artifact --provider mdpi --confirmed-final-quality"
+        ),
     }
     assert implement_brief["coordinator_integration_scope"] == {
         "route_sources": (
@@ -195,12 +221,16 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
             "one entry per non-null provider_manifest.fixtures.doi_samples "
             "purpose and per provider_manifest.extra_fixtures item"
         ),
+        "human_signoff": (
+            "final batch signoff is written only by finalize-review-artifact "
+            "after --confirmed-final-quality"
+        ),
         "reviewed_fixture_fields": [
             "fixture",
             "purpose",
-            "issue",
+            "current_quality_status",
             "assertion",
-            "fix",
+            "final_signoff_state",
         ],
     }
     assert implement_brief["failure_recovery"]["policy"] == (
@@ -240,6 +270,8 @@ def test_start_provider_dry_run_writes_dag_and_worker_briefs(tmp_path: Path) -> 
     assert "files_allowed_to_modify" in implement_brief
     assert "files_must_not_modify" in implement_brief
     assert "onboarding/manifests/mdpi.yml" in implement_brief["files_allowed_to_modify"]
+    assert "src/paper_fetch/providers/_mdpi_*.py" in implement_brief["files_allowed_to_modify"]
+    assert "tests/unit/test_mdpi_*.py" in implement_brief["files_allowed_to_modify"]
     assert implement_brief["manifest_adjustment_policy"]["allowed_only_for_failure_code"] == (
         "MARKDOWN_CONTRACT_DRIFT"
     )
@@ -267,6 +299,28 @@ def test_discover_prints_brief_with_requested_output_manifest() -> None:
     assert "output_manifest: onboarding/manifests/mdpi.yml" in result.stdout
     assert "access_review: onboarding/access-reviews/mdpi.yml" in result.stdout
     assert "producer: prepare-discovery" in result.stdout
+
+
+def test_prepare_human_preflight_summarizes_access_waterfall_and_purposes() -> None:
+    result = run_cli(
+        "prepare-human-preflight",
+        "--provider",
+        "mdpi",
+        "--domain",
+        "mdpi.com",
+        "--doi-prefix",
+        "10.3390/",
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["gate"] == "waterfall-preflight-review"
+    assert payload["access_review"]["path"] == "onboarding/access-reviews/mdpi.yml"
+    assert payload["seed"] == {"domain": "mdpi.com", "doi_prefix": "10.3390/"}
+    assert payload["manifest"]["status"] == "present"
+    assert payload["waterfall"]
+    assert "structure" in payload["purpose_coverage"]["purposes"]
+    assert payload["operator_checklist"]
+    assert payload["next_prompt"] == "确认预检后对 agent 说：继续 mdpi provider"
 
 
 def test_prepare_discovery_cli_no_network_writes_evidence_pack(tmp_path: Path) -> None:
@@ -1353,6 +1407,115 @@ def test_summarize_outputs_json_and_markdown_without_fabricated_passes(tmp_path:
     assert "no recorded run-check results" not in markdown
 
 
+def test_agent_summary_maps_provider_local_acceptance_to_local_ready(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    _write_blocked_state(state_path, task="global-lint", code="GLOBAL_LINT_FAILED")
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    provider_state = state["providers"]["mdpi"]
+    provider_state["status"] = "in_progress"
+    provider_state["current_step"] = "global-lint"
+    provider_state["task_statuses"]["provider-local-acceptance"] = "completed"
+    provider_state["task_statuses"]["global-lint"] = "in_progress"
+    provider_state["completed_steps"] = provider_state["steps"][
+        : provider_state["steps"].index("global-lint")
+    ]
+    provider_state["runs"].pop("global-lint")
+    state_path.write_text(json.dumps(state), encoding="utf-8")
+
+    result = run_cli(
+        "summarize",
+        "--provider",
+        "mdpi",
+        "--format",
+        "agent-json",
+        "--target",
+        "local-ready",
+        "--state",
+        str(state_path),
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["phase"] == "local-ready"
+    assert payload["target_step"] == "provider-local-acceptance"
+    assert "最小 provider-local 验证通过" in payload["completed"]
+
+
+def test_agent_summary_translates_access_gate_to_user_action(tmp_path: Path) -> None:
+    state_path = tmp_path / "state.json"
+    _write_blocked_state(
+        state_path,
+        provider="newpub",
+        task="operator-access-preflight",
+        code="ACCESS_REVIEW_NOT_APPROVED",
+    )
+
+    result = run_cli(
+        "summarize",
+        "--provider",
+        "newpub",
+        "--format",
+        "agent-json",
+        "--state",
+        str(state_path),
+    )
+    payload = json.loads(result.stdout)
+
+    assert payload["phase"] == "user-gate"
+    assert "access review" in payload["why_stopped"]
+    assert "继续 newpub provider" in payload["next_user_action"]
+
+
+def test_dispatch_worker_rejects_changes_outside_allowed_scope(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    fake_agent = tmp_path / "fake_agent.py"
+    fake_agent.write_text("print('ok')\n", encoding="utf-8")
+    brief_path = tmp_path / "brief.yml"
+    brief_path.write_text(
+        yaml.safe_dump(
+            {
+                "files_allowed_to_modify": ["src/paper_fetch/providers/newpub.py"],
+                "files_must_not_modify": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+    provider_state = {
+        "manifest": "onboarding/manifests/newpub.yml",
+        "retry_counts": {"implement-provider": 0},
+        "runs": {},
+    }
+    snapshots = iter([set(), {"docs/providers.md"}])
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    monkeypatch.setattr(module, "_workspace_changed_paths", lambda: next(snapshots))
+    monkeypatch.setattr(
+        module,
+        "_worker_dispatcher",
+        lambda **_kwargs: module.WorkerDispatcher(
+            argv=[sys.executable, str(fake_agent)],
+            agent_cli=str(fake_agent),
+            source="test",
+        ),
+    )
+
+    with pytest.raises(module.ToolError) as exc:
+        module._dispatch_worker(
+            provider="newpub",
+            task="implement-provider",
+            brief_path=brief_path,
+            output_dir=tmp_path / "run",
+            provider_state=provider_state,
+        )
+
+    assert exc.value.code == "WORKER_MODIFIED_FORBIDDEN_FILE"
+    assert exc.value.details["disallowed_paths"] == ["docs/providers.md"]
+    assert provider_state["runs"]["implement-provider"]["failure"]["disallowed_paths"] == [
+        "docs/providers.md"
+    ]
+
+
 def _agent_quality_report(
     *,
     status: str,
@@ -1394,6 +1557,13 @@ fixtures:
   doi_samples:
     structure:
       doi: 10.1234/sample
+markdown_contract:
+  structure:
+    doi: 10.1234/sample
+    must_include:
+      - "# Demo"
+    must_not_include:
+      - "Download PDF"
 """,
         encoding="utf-8",
     )
@@ -1568,6 +1738,76 @@ def test_check_snapshot_fresh_review_blocks_stale_pass_report(
     assert stale_pass.value.details["markdown_quality_status"] == "pass"
     assert stale_pass.value.details["fresh_markdown_quality_status"] == "fail"
     assert stale_pass.value.details["issues"][0]["id"] == "fresh-empty-figures"
+
+
+def test_finalize_review_artifact_requires_confirmation_and_writes_batch_signoff(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    _write_check_snapshot_fixture(tmp_path, quality_status="pass")
+
+    def fake_fresh_review(**kwargs: object) -> object:
+        report_path = tmp_path / ".paper-fetch-runs" / "fresh.json"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report = _agent_quality_report(status="pass")
+        report["fresh_review"] = True
+        report_path.write_text(json.dumps(report) + "\n", encoding="utf-8")
+        return module.FreshMarkdownQualityReview(
+            report=report,
+            report_path=report_path,
+            attempt_dir=report_path.parent,
+        )
+
+    monkeypatch.setattr(module, "_run_fresh_markdown_quality_review", fake_fresh_review)
+
+    with pytest.raises(module.ToolError) as missing_confirmation:
+        module.finalize_review_artifact(
+            provider="newpub",
+            reviewed_by="operator",
+            confirmed_final_quality=False,
+        )
+    assert missing_confirmation.value.code == "FINAL_MARKDOWN_REVIEW_NOT_CONFIRMED"
+
+    payload = module.finalize_review_artifact(
+        provider="newpub",
+        reviewed_by="operator",
+        confirmed_final_quality=True,
+    )
+    review_path = tmp_path / payload["review_path"]
+    review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
+
+    assert payload["result"] == "finalized"
+    assert review["final_markdown_quality_review"]["method"] == (
+        "final-markdown-quality-review"
+    )
+    assert review["final_markdown_quality_review"]["confirmed_by"] == "operator"
+    assert review["fixtures"][0]["sample_representative"] is True
+    assert review["fixtures"][0]["markdown_semantic_reviewed"] is True
+    assert review["fixtures"][0]["review_notes"].startswith(
+        "Final batch Markdown quality review confirmed"
+    )
+
+
+def test_finalize_review_artifact_blocks_failing_quality_report(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(module, "_repo_root", lambda: tmp_path)
+    _write_check_snapshot_fixture(tmp_path, quality_status="fail")
+
+    with pytest.raises(module.ToolError) as failed:
+        module.finalize_review_artifact(
+            provider="newpub",
+            reviewed_by="operator",
+            confirmed_final_quality=True,
+            run_fresh_review=False,
+        )
+
+    assert failed.value.code == "MARKDOWN_QUALITY_FAILED"
+    assert failed.value.details["status"] == "fail"
 
 
 def _write_repair_fixture(

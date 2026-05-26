@@ -810,6 +810,22 @@ def _browser_capture_error(
     )
 
 
+def _pdf_seed_url(url: str) -> str | None:
+    parsed = urlsplit(url)
+    path = parsed.path
+    if "/doi/pdf/" in path:
+        seed_path = path.replace("/doi/pdf/", "/doi/", 1)
+    elif "/doi/epdf/" in path:
+        seed_path = path.replace("/doi/epdf/", "/doi/", 1)
+    elif path.rstrip("/").endswith("/pdf"):
+        seed_path = path.rstrip("/")[: -len("/pdf")]
+    else:
+        return None
+    if not seed_path:
+        return None
+    return urlunsplit((parsed.scheme, parsed.netloc, seed_path, "", ""))
+
+
 def _capture_browser(
     doi: str,
     *,
@@ -823,7 +839,7 @@ def _capture_browser(
         from paper_fetch.providers._pdf_fallback import PdfFallbackFailure, fetch_pdf_with_browser
 
         artifact_dir = root / ".paper-fetch-runs" / "fixture-capture" / doi_slug(doi) / purpose
-        seed_url = url.removesuffix("/pdf") if url.rstrip("/").endswith("/pdf") else ""
+        seed_url = _pdf_seed_url(url)
         try:
             result = fetch_pdf_with_browser(
                 [url],

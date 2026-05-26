@@ -1,4 +1,4 @@
-"""Atypon asset scope selection for Science, PNAS, Wiley, and AMS browser workflows."""
+"""Atypon asset scope selection for provider browser workflows."""
 
 from __future__ import annotations
 

@@ -3050,6 +3050,71 @@
         "browser_final_url_redacted": true,
         "capture_source_url": "https://academic.oup.com/bioinformatics/article-pdf/36/11/3401/50670770/bioinformatics_36_11_3401.pdf"
       }
+    },
+    "10.1021_acsomega.4c03987": {
+      "doi": "10.1021/acsomega.4c03987",
+      "publisher": "acs",
+      "title": "Functionalized Metal-Free Carbon Nanosphere Catalyst for the Selective C-N Bond Formation under Open-Air Conditions",
+      "source_url": "https://pubs.acs.org/doi/10.1021/acsomega.4c03987",
+      "fetched_at": "2026-05-26T04:59:09Z",
+      "purpose": "structure",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html;charset=UTF-8",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.1021_acsomega.4c03987/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.1021_acsomega.4c03987/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1021_acsomega.4c03987/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1021_acsomega.4c03987/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1021_acsomega.4c03987/markdown-quality.json"
+      }
+    },
+    "10.1021_acsomega.3c06992": {
+      "doi": "10.1021/acsomega.3c06992",
+      "publisher": "acs",
+      "title": "General Equation to Estimate the Physicochemical Properties of Aliphatic Amines",
+      "source_url": "https://pubs.acs.org/doi/full/10.1021/acsomega.3c06992",
+      "landing_url": "https://pubs.acs.org/doi/10.1021/acsomega.3c06992",
+      "fetched_at": "2026-05-26T10:50:41Z",
+      "purpose": "formula",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html;charset=UTF-8",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.1021_acsomega.3c06992/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.1021_acsomega.3c06992/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1021_acsomega.3c06992/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1021_acsomega.3c06992/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1021_acsomega.3c06992/markdown-quality.json"
+      }
+    },
+    "10.1021_acsomega.2c02828": {
+      "doi": "10.1021/acsomega.2c02828",
+      "publisher": "acs",
+      "title": "General Equation to Express Changes in the Physicochemical Properties of Organic Homologues",
+      "source_url": "https://pubs.acs.org/doi/pdf/10.1021/acsomega.2c02828",
+      "landing_url": "https://pubs.acs.org/doi/10.1021/acsomega.2c02828",
+      "fetched_at": "2026-05-26T10:50:47Z",
+      "purpose": "pdf_fallback",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "application/pdf",
+      "route_kind": "pdf_fallback",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.pdf": "tests/fixtures/golden_criteria/10.1021_acsomega.2c02828/original.pdf",
+        "expected.json": "tests/fixtures/golden_criteria/10.1021_acsomega.2c02828/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1021_acsomega.2c02828/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1021_acsomega.2c02828/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1021_acsomega.2c02828/markdown-quality.json"
+      }
     }
   },
   "tests": [

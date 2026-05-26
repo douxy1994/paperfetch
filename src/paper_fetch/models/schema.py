@@ -35,6 +35,7 @@ SourceKind = Literal[
     "copernicus_pdf",
     "ams_html",
     "ams_pdf",
+    "acs",
     "crossref_meta",
 ]
 

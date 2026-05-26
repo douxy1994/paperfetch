@@ -288,6 +288,15 @@
             },
             "supplementary": {
               "$ref": "#/$defs/discovery_proof_entry"
+            },
+            "abstract_only": {
+              "$ref": "#/$defs/discovery_proof_entry"
+            },
+            "access_gate": {
+              "$ref": "#/$defs/discovery_proof_entry"
+            },
+            "empty_shell": {
+              "$ref": "#/$defs/discovery_proof_entry"
             }
           }
         }

@@ -355,7 +355,7 @@ Golden corpus 规则：
 
 - provider 稳定后，补 representative fixture 和 snapshot 产物。
 - `expected.json` 应锁用户可见 summary，不锁无意义格式噪声；Markdown 语义基准只看 `extracted.md`。
-- agent 必须按 `markdown-quality-prompt.md` 阅读 `extracted.md` 并写回 `markdown-quality.json`；该报告必须 `review_method: agent_prompt`、`status: pass` 且没有 blocking issue，人工 review 才能把 `markdown_semantic_reviewed` 标为 true。
+- agent 必须按 `markdown-quality-prompt.md` 阅读 `extracted.md` 并写回 `markdown-quality.json`；该报告必须 `review_method: agent_prompt`、`status: pass` 且没有 blocking issue，最终批量人工 review 才能通过 `finalize-review-artifact --confirmed-final-quality` 把 `markdown_semantic_reviewed` 标为 true。
 - 如果 agent-authored report 为 fail，可用 `repair-markdown-quality --provider <provider> --doi <doi>` 进入自动修复闭环；该命令仍要求先补/更新 provider-local regression test，再修实现并重新 snapshot/review，不会自动把 `markdown_semantic_reviewed` 改为 true。
 - live-only 样本放入 live sample 集合，并受 `PAPER_FETCH_RUN_LIVE=1` 保护。
 - 预期 metadata-only 或当前不支持的样本，要在 manifest 标注 expected outcome，避免进入 provider bug 队列。

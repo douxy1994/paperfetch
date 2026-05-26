@@ -54,11 +54,13 @@ DEFAULT_CODEX_AGENT_CLI = (
     "-c approval_policy=\"never\" -"
 )
 ACCESS_PREFLIGHT_STEP = "operator-access-preflight"
+HUMAN_PREFLIGHT_REVIEW_GATE = "waterfall-preflight-review"
 DISCOVER_STEP = "discover-manifest"
 IMPLEMENT_STEP = "implement-provider"
 PROPOSE_CLEANING_STEP = "propose-cleaning-chain"
 SHARED_INTEGRATION_STEP = "shared-integration"
 SNAPSHOT_EXPECTED_STEP = "snapshot-expected"
+FINAL_MARKDOWN_QUALITY_REVIEW_GATE = "final-markdown-quality-review"
 REPAIR_MARKDOWN_QUALITY_STEP = "repair-markdown-quality"
 CLEANING_PROPOSAL_DIR = "onboarding/cleaning-chain-proposals"
 MAX_WORKER_RETRIES = 3
@@ -1969,7 +1971,10 @@ def _implementation_allowed_files(provider: str, manifest: str) -> list[str]:
         manifest,
         f"src/paper_fetch/providers/{provider_name}.py",
         f"src/paper_fetch/providers/_{provider_name}_html.py",
+        f"src/paper_fetch/providers/_{provider_name}_*.py",
+        f"src/paper_fetch/providers/{provider_name}/**",
         f"tests/unit/test_{provider_name}_provider.py",
+        f"tests/unit/test_{provider_name}_*.py",
         f"onboarding/reviews/{provider_name}.yml",
     ]
 
@@ -2046,6 +2051,19 @@ def build_implementation_brief(
         },
         "cleaning_proposal": _compact_cleaning_proposal_for_brief(provider_name),
         "hard_constraints": HARD_CONSTRAINTS_PATH,
+        "human_review_policy": {
+            "required_gates": [
+                HUMAN_PREFLIGHT_REVIEW_GATE,
+                FINAL_MARKDOWN_QUALITY_REVIEW_GATE,
+            ],
+            "fixture_level_operator_review": False,
+            "operator_reviews_final_markdown_batch": True,
+            "finalize_command": (
+                "python3 scripts/onboard_from_manifests.py "
+                f"finalize-review-artifact --provider {provider_name} "
+                "--confirmed-final-quality"
+            ),
+        },
         "markdown_review_loop": {
             "required": True,
             "fixture_source": (
@@ -2054,6 +2072,8 @@ def build_implementation_brief(
             ),
             "route_contract_source": "provider_manifest.route_contract",
             "markdown_contract_source": "provider_manifest.markdown_contract",
+            "operator_review_granularity": "final_batch_only",
+            "worker_prepares_review_artifact": True,
             "require_each_non_null_purpose_asserted": True,
             "require_positive_and_negative_markdown_assertions": True,
             "forbid_skipped_scaffold_placeholder": True,
@@ -2079,12 +2099,16 @@ def build_implementation_brief(
                 "one entry per non-null provider_manifest.fixtures.doi_samples "
                 "purpose and per provider_manifest.extra_fixtures item"
             ),
+            "human_signoff": (
+                "final batch signoff is written only by finalize-review-artifact "
+                "after --confirmed-final-quality"
+            ),
             "reviewed_fixture_fields": [
                 "fixture",
                 "purpose",
-                "issue",
+                "current_quality_status",
                 "assertion",
-                "fix",
+                "final_signoff_state",
             ],
         },
         "acceptance": {
@@ -2195,6 +2219,41 @@ def build_dag(
         "manifest": manifest,
         "dry_run": dry_run,
         "runtime": "coding-agent-subagent",
+        "human_gates": [
+            {
+                "id": HUMAN_PREFLIGHT_REVIEW_GATE,
+                "purpose": "operator reviews access policy, route waterfall, runtime constraints, and purpose coverage plan before automated fixture work",
+                "command": (
+                    "python3 scripts/onboard_from_manifests.py "
+                    f"prepare-human-preflight --provider {provider_name}"
+                    if provider_name is not None
+                    else None
+                ),
+                "blocks": DISCOVER_STEP,
+                "operator_must_edit": default_access_review_path(provider_name)
+                if provider_name is not None
+                else None,
+            },
+            {
+                "id": FINAL_MARKDOWN_QUALITY_REVIEW_GATE,
+                "purpose": "operator reviews final extracted.md quality summary once automated quality checks pass",
+                "command": (
+                    "python3 scripts/onboard_from_manifests.py "
+                    f"finalize-review-artifact --provider {provider_name} "
+                    "--confirmed-final-quality"
+                    if provider_name is not None
+                    else None
+                ),
+                "blocks": "merge-ready",
+                "operator_must_review": [
+                    "tests/fixtures/**/extracted.md",
+                    "tests/fixtures/**/markdown-quality.json",
+                    f"onboarding/reviews/{provider_name}.yml"
+                    if provider_name is not None
+                    else "onboarding/reviews/<provider>.yml",
+                ],
+            },
+        ],
         "agent_cli_env": AGENT_CLI_ENV,
         "worker_dispatch": {
             "default": DEFAULT_CODEX_AGENT_CLI,
@@ -2482,6 +2541,460 @@ def _snapshot_expected_commands(provider: str, manifest_path: str | None = None)
             ]
         )
     return commands
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+
+
+def _manifest_review_samples(manifest: dict[str, Any]) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    contracts = manifest.get("markdown_contract") if isinstance(manifest.get("markdown_contract"), dict) else {}
+    fixtures = manifest.get("fixtures") if isinstance(manifest.get("fixtures"), dict) else {}
+    doi_samples = fixtures.get("doi_samples") if isinstance(fixtures.get("doi_samples"), dict) else {}
+    for purpose, sample in doi_samples.items():
+        if not isinstance(sample, dict) or not sample.get("doi"):
+            continue
+        contract = contracts.get(purpose)
+        samples.append(
+            {
+                "purpose": str(purpose),
+                "doi": _normalized_doi(str(sample["doi"])),
+                "contract": contract if isinstance(contract, dict) else {},
+                "fixture_family": "golden",
+            }
+        )
+    extra_fixtures = manifest.get("extra_fixtures")
+    if isinstance(extra_fixtures, list):
+        for index, sample in enumerate(extra_fixtures):
+            if not isinstance(sample, dict) or not sample.get("doi"):
+                continue
+            contract = sample.get("markdown_contract")
+            samples.append(
+                {
+                    "purpose": str(sample.get("purpose") or f"extra_fixtures[{index}]"),
+                    "doi": _normalized_doi(str(sample["doi"])),
+                    "contract": contract if isinstance(contract, dict) else {},
+                    "fixture_family": "golden",
+                }
+            )
+    return samples
+
+
+def _assertions_from_markdown_contract(contract: dict[str, Any]) -> list[str]:
+    assertions: list[str] = []
+    for value in contract.get("must_include") or ():
+        assertions.append(f"must include {value}")
+    for value in contract.get("must_not_include") or ():
+        assertions.append(f"must not include {value}")
+    for value in contract.get("must_match") or ():
+        assertions.append(f"must match {value}")
+    count_equals = contract.get("count_equals")
+    if isinstance(count_equals, dict):
+        for key, value in sorted(count_equals.items()):
+            assertions.append(f"count {key} equals {value}")
+    return assertions or ["baseline Markdown passed final batch review"]
+
+
+def _contract_issues_for_markdown(contract: dict[str, Any], markdown_text: str) -> list[dict[str, str]]:
+    issues: list[dict[str, str]] = []
+    for index, value in enumerate(contract.get("must_include") or (), start=1):
+        if str(value) not in markdown_text:
+            issues.append(
+                {
+                    "id": f"missing-include-{index}",
+                    "severity": "high",
+                    "summary": f"extracted Markdown is missing required text: {value}",
+                }
+            )
+    for index, value in enumerate(contract.get("must_not_include") or (), start=1):
+        if str(value) in markdown_text:
+            issues.append(
+                {
+                    "id": f"forbidden-text-{index}",
+                    "severity": "high",
+                    "summary": f"extracted Markdown contains forbidden text: {value}",
+                }
+            )
+    for index, pattern in enumerate(contract.get("must_match") or (), start=1):
+        try:
+            matched = re.search(str(pattern), markdown_text) is not None
+        except re.error:
+            matched = False
+        if not matched:
+            issues.append(
+                {
+                    "id": f"missing-pattern-{index}",
+                    "severity": "high",
+                    "summary": f"extracted Markdown does not match required pattern: {pattern}",
+                }
+            )
+    count_equals = contract.get("count_equals")
+    if isinstance(count_equals, dict):
+        for index, (text, expected) in enumerate(sorted(count_equals.items()), start=1):
+            try:
+                expected_count = int(expected)
+            except (TypeError, ValueError):
+                expected_count = -1
+            actual_count = markdown_text.count(str(text))
+            if actual_count != expected_count:
+                issues.append(
+                    {
+                        "id": f"count-mismatch-{index}",
+                        "severity": "high",
+                        "summary": (
+                            f"extracted Markdown count for {text} is {actual_count}, "
+                            f"expected {expected_count}"
+                        ),
+                    }
+                )
+    return issues
+
+
+def _review_fixture_assets(
+    *,
+    provider: str,
+    doi: str,
+    task_id: str,
+) -> dict[str, Any]:
+    golden_manifest = _load_golden_manifest()
+    sample_entry = _golden_sample_for_doi(doi, golden_manifest)
+    if sample_entry is None:
+        raise ToolError(
+            "FIXTURE_NOT_FOUND",
+            "DOI is missing from golden criteria manifest.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=task_id,
+            details={"doi": doi, "sample_id": _doi_slug(doi)},
+        )
+    sample_id, sample = sample_entry
+    fixture_root = _fixture_root_for_sample(sample_id, sample)
+    paths = {
+        "expected": fixture_root / "expected.json",
+        "markdown": fixture_root / "extracted.md",
+        "prompt": fixture_root / "markdown-quality-prompt.md",
+        "quality": fixture_root / "markdown-quality.json",
+    }
+    for key, path in paths.items():
+        if not path.is_file():
+            code = "MARKDOWN_QUALITY_FAILED" if key in {"prompt", "quality"} else "EXPECTED_SNAPSHOT_FAILED"
+            raise ToolError(
+                code,
+                f"final review requires fixture artifact {path.name}.",
+                retryable=True,
+                provider=provider,
+                manifest=default_manifest_path(provider),
+                task_id=task_id,
+                details={"doi": doi, "path": _rel(path)},
+            )
+    return {
+        "sample_id": sample_id,
+        "sample": sample,
+        "fixture_root": fixture_root,
+        **paths,
+    }
+
+
+def _quality_report_for_final_review(
+    *,
+    provider: str,
+    doi: str,
+    quality_path: Path,
+    markdown_path: Path,
+    prompt_path: Path,
+    task_id: str,
+) -> dict[str, Any]:
+    quality = _read_json_object(
+        quality_path,
+        code="MARKDOWN_QUALITY_FAILED",
+        task_id=task_id,
+        provider=provider,
+    )
+    validation_errors = _markdown_quality_report_errors(
+        quality,
+        markdown_path=markdown_path,
+        prompt_path=prompt_path,
+    )
+    if validation_errors:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Markdown quality report must use the agent_prompt schema v2 contract.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=task_id,
+            details={
+                "doi": doi,
+                "markdown_quality_path": _rel(quality_path),
+                "validation_errors": validation_errors,
+            },
+        )
+    blocking = blocking_markdown_quality_issues(quality)
+    if quality.get("status") != "pass" or blocking:
+        raise ToolError(
+            "MARKDOWN_QUALITY_FAILED",
+            "Final review cannot be signed while markdown-quality.json is not pass.",
+            retryable=True,
+            provider=provider,
+            manifest=default_manifest_path(provider),
+            task_id=task_id,
+            details={
+                "doi": doi,
+                "markdown_quality_path": _rel(quality_path),
+                "status": quality.get("status"),
+                "issues": blocking,
+            },
+        )
+    return quality
+
+
+def build_human_preflight_digest(
+    *,
+    provider: str,
+    domain: str | None = None,
+    doi_prefix: str | None = None,
+) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    manifest_path = _manifest_path_for_provider(provider_name)
+    manifest: dict[str, Any] = {}
+    manifest_status = "missing"
+    if manifest_path.exists():
+        manifest = _read_manifest(manifest_path)
+        manifest_status = "present"
+    access = _access_review_summary(provider_name)
+    fixtures = _manifest_fixture_summary(manifest) if manifest else []
+    purpose_status = {
+        str(item.get("purpose")): {
+            "doi": item.get("doi"),
+            "proof_status": item.get("proof_status"),
+            "confidence": item.get("confidence"),
+            "null_reason": item.get("null_reason"),
+            "discovery_proof": item.get("discovery_proof"),
+        }
+        for item in fixtures
+        if isinstance(item, dict)
+    }
+    missing_purposes = [
+        purpose
+        for purpose in DOI_SAMPLE_PURPOSES
+        if purpose not in purpose_status
+    ]
+    route_contract = manifest.get("route_contract") if isinstance(manifest.get("route_contract"), dict) else {}
+    route_sources = manifest.get("route_sources") if isinstance(manifest.get("route_sources"), dict) else {}
+    main_path = manifest.get("main_path") if isinstance(manifest.get("main_path"), list) else []
+    waterfall = [
+        {
+            "step": step,
+            "source": route_sources.get(step) or manifest.get("display_source"),
+            "success_requires": (
+                route_contract.get(step, {}).get("success_requires")
+                if isinstance(route_contract.get(step), dict)
+                else []
+            ),
+            "reject_if_any": (
+                route_contract.get(step, {}).get("reject_if_any")
+                if isinstance(route_contract.get(step), dict)
+                else []
+            ),
+        }
+        for step in main_path
+    ]
+    return {
+        "provider": provider_name,
+        "gate": HUMAN_PREFLIGHT_REVIEW_GATE,
+        "manifest": {
+            "path": default_manifest_path(provider_name),
+            "status": manifest_status,
+            "display_source": manifest.get("display_source"),
+            "routing": manifest.get("routing"),
+            "main_path": main_path,
+            "route_sources": route_sources,
+        },
+        "seed": {
+            "domain": domain,
+            "doi_prefix": doi_prefix,
+        },
+        "access_review": access,
+        "waterfall": waterfall,
+        "purpose_coverage": {
+            "purposes": purpose_status,
+            "missing_purposes": missing_purposes,
+            "mandatory_discovery_proof_purposes": MANDATORY_DISCOVERY_PROOF_PURPOSES,
+        },
+        "asset_contract": manifest.get("asset_contract"),
+        "operator_checklist": [
+            "access review reflects legal access and allowed runtime",
+            "waterfall order and route success/rejection rules are plausible",
+            "table/formula/supplementary are either selected or have exhausted discovery proof",
+            "strong local fixture signals are promoted or rejected with concrete reasons",
+            "figure asset contract is body/download unless a concrete exception applies",
+        ],
+        "next_prompt": f"确认预检后对 agent 说：继续 {provider_name} provider",
+    }
+
+
+def finalize_review_artifact(
+    *,
+    provider: str,
+    reviewed_by: str,
+    confirmed_final_quality: bool,
+    run_fresh_review: bool = True,
+) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    task_id = f"{provider_name}-{FINAL_MARKDOWN_QUALITY_REVIEW_GATE}"
+    if not confirmed_final_quality:
+        raise ToolError(
+            "FINAL_MARKDOWN_REVIEW_NOT_CONFIRMED",
+            "Final Markdown review requires explicit --confirmed-final-quality.",
+            retryable=False,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id,
+            details={"required_flag": "--confirmed-final-quality"},
+        )
+    manifest_path = _manifest_path_for_provider(provider_name)
+    manifest = _read_manifest(manifest_path)
+    samples = _manifest_review_samples(manifest)
+    if not samples:
+        raise ToolError(
+            "FIXTURE_NOT_FOUND",
+            "Manifest does not contain non-null DOI fixtures for final review.",
+            retryable=True,
+            provider=provider_name,
+            manifest=default_manifest_path(provider_name),
+            task_id=task_id,
+            details={"manifest": default_manifest_path(provider_name)},
+        )
+    review_path = _repo_root() / "onboarding" / "reviews" / f"{provider_name}.yml"
+    if review_path.exists():
+        review = yaml.safe_load(review_path.read_text(encoding="utf-8"))
+        if not isinstance(review, dict):
+            raise ToolError(
+                "REVIEW_ARTIFACT_INVALID",
+                "Review artifact root must be a mapping.",
+                retryable=True,
+                provider=provider_name,
+                manifest=default_manifest_path(provider_name),
+                task_id=task_id,
+                details={"path": _rel(review_path)},
+            )
+    else:
+        review = {
+            "schema_version": 2,
+            "provider": provider_name,
+            "fixtures": [],
+        }
+    existing_items = review.get("fixtures") if isinstance(review.get("fixtures"), list) else []
+    existing = {
+        (str(item.get("purpose")), _normalized_doi(str(item.get("doi") or ""))): item
+        for item in existing_items
+        if isinstance(item, dict)
+    }
+    finalized: list[dict[str, Any]] = []
+    fresh_reports: list[str] = []
+    for sample in samples:
+        purpose = str(sample["purpose"])
+        doi = str(sample["doi"])
+        assets = _review_fixture_assets(provider=provider_name, doi=doi, task_id=task_id)
+        quality = _quality_report_for_final_review(
+            provider=provider_name,
+            doi=doi,
+            quality_path=assets["quality"],
+            markdown_path=assets["markdown"],
+            prompt_path=assets["prompt"],
+            task_id=task_id,
+        )
+        if run_fresh_review:
+            fresh = _run_fresh_markdown_quality_review(
+                provider=provider_name,
+                doi=doi,
+                sample_id=str(assets["sample_id"]),
+                purpose=purpose,
+                markdown_path=assets["markdown"],
+                prompt_path=assets["prompt"],
+                task_id=task_id,
+            )
+            fresh_blocking = _fresh_markdown_quality_blocking_issues(fresh.report)
+            if fresh.report.get("status") != "pass" or fresh_blocking:
+                raise ToolError(
+                    "MARKDOWN_QUALITY_FAILED",
+                    "Fresh Markdown quality review found blocking issues before final signoff.",
+                    retryable=True,
+                    provider=provider_name,
+                    manifest=default_manifest_path(provider_name),
+                    task_id=task_id,
+                    details={
+                        "doi": doi,
+                        "fresh_markdown_quality_path": _rel(fresh.report_path),
+                        "fresh_markdown_quality_status": fresh.report.get("status"),
+                        "issues": fresh_blocking,
+                    },
+                )
+            fresh_reports.append(_rel(fresh.report_path))
+        markdown_text = assets["markdown"].read_text(encoding="utf-8", errors="replace")
+        contract_issues = _contract_issues_for_markdown(sample["contract"], markdown_text)
+        if contract_issues:
+            raise ToolError(
+                "MARKDOWN_CONTRACT_DRIFT",
+                "Final review cannot be signed while markdown_contract does not match extracted.md.",
+                retryable=True,
+                provider=provider_name,
+                manifest=default_manifest_path(provider_name),
+                task_id=task_id,
+                details={
+                    "doi": doi,
+                    "purpose": purpose,
+                    "baseline_markdown_path": _rel(assets["markdown"]),
+                    "issues": contract_issues,
+                },
+            )
+        current = existing.get((purpose, doi), {})
+        finalized.append(
+            {
+                "fixture": _rel(assets["fixture_root"]),
+                "purpose": purpose,
+                "doi": doi,
+                "baseline_markdown_path": _rel(assets["markdown"]),
+                "baseline_markdown_sha256": _sha256_file(assets["markdown"]),
+                "markdown_quality_path": _rel(assets["quality"]),
+                "markdown_quality_sha256": _sha256_file(assets["quality"]),
+                "review_notes": (
+                    f"Final batch Markdown quality review confirmed by {reviewed_by}; "
+                    f"persistent quality status={quality.get('status')}."
+                ),
+                "sample_representative": True,
+                "markdown_semantic_reviewed": True,
+                "issues": [],
+                "assertions": current.get("assertions")
+                if isinstance(current.get("assertions"), list) and current.get("assertions")
+                else _assertions_from_markdown_contract(sample["contract"]),
+                "fixes": [],
+            }
+        )
+    now = _utc_now_iso()
+    review["schema_version"] = 2
+    review["provider"] = provider_name
+    review["reviewed_at"] = now
+    review["reviewed_by"] = reviewed_by
+    review["final_markdown_quality_review"] = {
+        "confirmed": True,
+        "confirmed_by": reviewed_by,
+        "confirmed_at": now,
+        "method": FINAL_MARKDOWN_QUALITY_REVIEW_GATE,
+        "fixture_count": len(finalized),
+        "fresh_markdown_quality_reports": fresh_reports,
+    }
+    review["fixtures"] = finalized
+    write_text(review_path, yaml.safe_dump(review, allow_unicode=True, sort_keys=False))
+    return {
+        "provider": provider_name,
+        "review_path": _rel(review_path),
+        "fixture_count": len(finalized),
+        "fresh_markdown_quality_reports": fresh_reports,
+        "result": "finalized",
+    }
 
 
 def _verify_commands(provider: str, task: str, *, include_live: bool = True) -> list[list[str]]:
@@ -3726,6 +4239,77 @@ OPERATOR_REQUIRED_FAILURE_CODES = {
     "TASK_RETRY_EXHAUSTED",
 }
 
+AGENT_TARGET_STEPS = {
+    "local-ready": "provider-local-acceptance",
+    "merge-ready": "merge-ready",
+}
+
+AGENT_FAILURE_USER_ACTIONS = {
+    "ACCESS_REVIEW_NOT_FOUND": (
+        "我需要生成或定位 access review 草稿；你稍后只需确认访问策略。"
+    ),
+    "ACCESS_REVIEW_NOT_APPROVED": (
+        "我停在访问批准点；请人工确认 access review 后告诉我继续。"
+    ),
+    "ACCESS_REVIEW_SCHEMA_INVALID": (
+        "access review 文件结构不合法；我会指出字段，用户只需确认真实访问策略。"
+    ),
+    "BROWSER_RUNTIME_REQUIRED": (
+        "当前路线需要 browser runtime；请决定是否允许，不能默认绕过。"
+    ),
+    "HTTP_FORBIDDEN": (
+        "当前样本被拒绝；若 access review 允许 browser 我会重试，否则我会换 DOI 或停下说明。"
+    ),
+    "HTTP_RATE_LIMITED": (
+        "这是暂态或限流；我会按 retry budget 重试，耗尽后给出等待或换样本建议。"
+    ),
+    "NETWORK_TRANSIENT": (
+        "这是暂态网络失败；我会按 retry budget 重试，耗尽后给出等待或换样本建议。"
+    ),
+    "CHALLENGE_DETECTED": (
+        "遇到 challenge/CAPTCHA；我不会绕过，只能按 access review 重试或换样本。"
+    ),
+    "UNSUITABLE_DOI_SAMPLE": (
+        "这个 DOI 不适合当前 purpose；我会只替换这个 purpose 的样本。"
+    ),
+    "NON_PDF_FALLBACK_CONTENT": (
+        "PDF fallback 样本不是 PDF；我会重新找 pdf_fallback 样本。"
+    ),
+    "ACCESS_GATE_CAPTURED": (
+        "样本捕获到 access gate；我会替换失败 purpose 的 DOI。"
+    ),
+    "EMPTY_ARTICLE_SHELL": (
+        "样本捕获到空文章壳；我会替换失败 purpose 的 DOI。"
+    ),
+    "MARKDOWN_CONTRACT_DRIFT": (
+        "Markdown contract 与当前 fixture 不一致；我会先刷新 cleaning proposal 或回到实现修复。"
+    ),
+    "MARKDOWN_QUALITY_FAILED": (
+        "当前 Markdown 还有 blocking issue；我会运行 repair loop，失败后给出具体 artifact。"
+    ),
+    "MARKDOWN_QUALITY_REPAIR_FAILED": (
+        "自动修复预算耗尽；需要人工看最后一轮 quality report 和 repair logs。"
+    ),
+    "PROVIDER_LOCAL_ACCEPTANCE_FAILED": (
+        "provider-local 验证失败；我会修 provider-owned 实现或测试，并汇报失败命令。"
+    ),
+    "SHARED_INTEGRATION_FAILED": (
+        "shared integration 验证失败；我会只修有 manifest/fixture/test 证据支持的 shared surface。"
+    ),
+    "GLOBAL_LINT_FAILED": (
+        "全局本地检查失败；我只修当前 provider 引入的问题。"
+    ),
+    "WORKER_MODIFIED_FORBIDDEN_FILE": (
+        "worker 修改了不该改的文件；我会停下保护工作区并说明越界路径。"
+    ),
+    "DISCOVERY_RETRY_EXHAUSTED": (
+        "自动 discovery 重试耗尽；我会列出失败 task、最近命令、artifact 路径和需要的新事实。"
+    ),
+    "TASK_RETRY_EXHAUSTED": (
+        "自动重试耗尽；我会列出失败 task、最近命令、artifact 路径和需要的新事实。"
+    ),
+}
+
 
 def _latest_markdown_quality_repair(provider_state: dict[str, Any]) -> dict[str, Any] | None:
     repairs = provider_state.get("repairs")
@@ -4380,6 +4964,7 @@ def _dispatch_worker(
     )
     brief = _load_brief(brief_path)
     prompt = _worker_prompt(provider=provider, task=task, brief=brief)
+    allowed = [str(value) for value in brief.get("files_allowed_to_modify") or ()]
     forbidden = [str(value) for value in brief.get("files_must_not_modify") or ()]
     worker_dir = output_dir / "workers"
     worker_dir.mkdir(parents=True, exist_ok=True)
@@ -4411,6 +4996,33 @@ def _dispatch_worker(
                 "code": "WORKER_MODIFIED_FORBIDDEN_FILE",
                 "attempt": attempt,
                 "forbidden_paths": forbidden_paths,
+                "stdout_tail": _tail(completed.stdout),
+                "stderr_tail": _tail(completed.stderr),
+            }
+            _record_run(
+                provider_state,
+                task=task,
+                commands=commands,
+                result="failed",
+                failure=last_failure,
+            )
+            raise ToolError(
+                "WORKER_MODIFIED_FORBIDDEN_FILE",
+                "worker modified files outside its allowed scope.",
+                retryable=True,
+                provider=provider,
+                manifest=provider_state.get("manifest"),
+                task_id=f"{provider}-{task}",
+                details=last_failure,
+            )
+        disallowed_paths = _disallowed_changes(before, after, allowed) if allowed else []
+        if disallowed_paths:
+            retry_counts[task] = attempt
+            last_failure = {
+                "code": "WORKER_MODIFIED_FORBIDDEN_FILE",
+                "attempt": attempt,
+                "disallowed_paths": disallowed_paths,
+                "allowed_scope": allowed,
                 "stdout_tail": _tail(completed.stdout),
                 "stderr_tail": _tail(completed.stderr),
             }
@@ -6085,6 +6697,341 @@ def build_provider_summary(
     return summary
 
 
+def normalize_agent_target(target: str | None) -> str:
+    normalized = str(target or "local-ready").strip().lower().replace("_", "-")
+    if normalized not in AGENT_TARGET_STEPS:
+        raise ValueError(
+            "target must be one of: " + ", ".join(sorted(AGENT_TARGET_STEPS))
+        )
+    return normalized
+
+
+def agent_target_step(target: str | None) -> str:
+    return AGENT_TARGET_STEPS[normalize_agent_target(target)]
+
+
+def _provider_state_for_agent_summary(
+    provider: str,
+    state: dict[str, Any],
+) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    providers = state.get("providers") if isinstance(state.get("providers"), dict) else {}
+    provider_state = providers.get(provider_name) if isinstance(providers, dict) else None
+    if isinstance(provider_state, dict):
+        return provider_state
+    return {
+        "provider": provider_name,
+        "manifest": default_manifest_path(provider_name),
+        "status": "not_started",
+        "current_step": None,
+        "steps": list(_dag_step_ids(include_discovery=True)),
+        "completed_steps": [],
+        "task_statuses": {},
+        "retry_counts": {},
+        "verifications": {},
+    }
+
+
+def _step_completed(provider_state: dict[str, Any], step: str) -> bool:
+    task_statuses = (
+        provider_state.get("task_statuses")
+        if isinstance(provider_state.get("task_statuses"), dict)
+        else {}
+    )
+    completed_steps = (
+        provider_state.get("completed_steps")
+        if isinstance(provider_state.get("completed_steps"), list)
+        else []
+    )
+    return task_statuses.get(step) == "completed" or step in completed_steps
+
+
+def _agent_target_complete(provider_state: dict[str, Any], target: str) -> bool:
+    target_name = normalize_agent_target(target)
+    if target_name == "local-ready":
+        return (
+            provider_state.get("status") != "blocked"
+            and _step_completed(provider_state, AGENT_TARGET_STEPS[target_name])
+        )
+    return provider_state.get("status") == "merge_ready" or _step_completed(
+        provider_state,
+        AGENT_TARGET_STEPS[target_name],
+    )
+
+
+def _semantic_review_gate_pending(
+    summary: dict[str, Any],
+    provider_state: dict[str, Any],
+    target: str,
+) -> bool:
+    if normalize_agent_target(target) != "merge-ready":
+        return False
+    review = summary.get("review_artifact")
+    if not isinstance(review, dict) or review.get("status") != "present":
+        return False
+    if review.get("semantic_review_status") == "complete":
+        return False
+    return any(
+        _step_completed(provider_state, step)
+        for step in (
+            SNAPSHOT_EXPECTED_STEP,
+            "manifest-sync-back",
+            "provider-local-acceptance",
+            "global-lint",
+        )
+    )
+
+
+def _agent_failure_action(summary: dict[str, Any]) -> str | None:
+    code = summary.get("failure_code")
+    if isinstance(code, str) and code in AGENT_FAILURE_USER_ACTIONS:
+        return AGENT_FAILURE_USER_ACTIONS[code]
+    action = summary.get("failure_recovery_action")
+    return str(action) if action else None
+
+
+def _agent_phase(
+    summary: dict[str, Any],
+    provider_state: dict[str, Any],
+    target: str,
+) -> str:
+    status = summary.get("status")
+    failure_code = summary.get("failure_code")
+    access = summary.get("access_review") if isinstance(summary.get("access_review"), dict) else {}
+    if status == "merge_ready":
+        return "merge-ready"
+    if _agent_target_complete(provider_state, target):
+        return normalize_agent_target(target)
+    if _semantic_review_gate_pending(summary, provider_state, target):
+        return "user-gate"
+    if status == "not_started":
+        return "user-gate" if access.get("status") not in {None, "missing"} else "intake"
+    if status == "blocked":
+        if failure_code in OPERATOR_REQUIRED_FAILURE_CODES or not access.get("approved"):
+            return "user-gate"
+        return "blocked"
+    if not access.get("approved") and access.get("status") not in {None, "missing"}:
+        return "user-gate"
+    if summary.get("current_step") == ACCESS_PREFLIGHT_STEP:
+        return "preflight"
+    return "running"
+
+
+def _agent_completed_items(
+    summary: dict[str, Any],
+    provider_state: dict[str, Any],
+) -> list[str]:
+    items: list[str] = []
+    access = summary.get("access_review") if isinstance(summary.get("access_review"), dict) else {}
+    if access.get("approved"):
+        items.append("access review 已批准")
+    manifest = summary.get("manifest") if isinstance(summary.get("manifest"), dict) else {}
+    manifest_path = manifest.get("path")
+    if isinstance(manifest_path, str) and (_repo_root() / manifest_path).exists():
+        items.append("manifest 已生成")
+    if any(item.get("raw_path") for item in summary.get("fixture_coverage", []) if isinstance(item, dict)):
+        items.append("至少一个 fixture 已捕获")
+    if _step_completed(provider_state, "scaffold"):
+        items.append("provider-owned skeleton 已生成")
+    if _step_completed(provider_state, "provider-local-acceptance"):
+        items.append("最小 provider-local 验证通过")
+    if provider_state.get("status") == "merge_ready":
+        items.append("merge-ready 本地 gate 已完成")
+    return items
+
+
+def _compact_agent_samples(summary: dict[str, Any]) -> list[dict[str, Any]]:
+    samples: list[dict[str, Any]] = []
+    for item in summary.get("fixture_coverage", []):
+        if not isinstance(item, dict):
+            continue
+        samples.append(
+            {
+                "purpose": item.get("purpose"),
+                "doi": item.get("doi"),
+                "confidence": item.get("confidence"),
+                "proof_status": item.get("proof_status"),
+                "evidence": item.get("evidence_reason") or item.get("null_reason"),
+                "fixture_path": item.get("fixture_path"),
+                "extracted_markdown_path": item.get("extracted_markdown_path"),
+                "markdown_quality_status": item.get("markdown_quality_status"),
+            }
+        )
+    return samples
+
+
+def _markdown_review_user_summary(summary: dict[str, Any]) -> dict[str, Any]:
+    review = summary.get("review_artifact")
+    if not isinstance(review, dict):
+        return {"status": "missing", "fixtures": []}
+    return {
+        "status": review.get("status"),
+        "path": review.get("path"),
+        "semantic_review_status": review.get("semantic_review_status"),
+        "markdown_quality_status": review.get("markdown_quality_status"),
+        "fixtures": review.get("fixtures") if isinstance(review.get("fixtures"), list) else [],
+    }
+
+
+def _agent_related_files(
+    provider: str,
+    summary: dict[str, Any],
+    state_path: Path,
+) -> list[str]:
+    provider_name = _provider_slug(provider)
+    files: list[str] = []
+    access = summary.get("access_review") if isinstance(summary.get("access_review"), dict) else {}
+    for value in (
+        access.get("path"),
+        summary.get("manifest", {}).get("path")
+        if isinstance(summary.get("manifest"), dict)
+        else None,
+        summary.get("review_artifact", {}).get("path")
+        if isinstance(summary.get("review_artifact"), dict)
+        else None,
+        str(state_path),
+        f".paper-fetch-runs/{provider_name}-onboarding/",
+    ):
+        if isinstance(value, str) and value and value not in files:
+            files.append(value)
+    for sample in _compact_agent_samples(summary):
+        for key in ("extracted_markdown_path", "fixture_path"):
+            value = sample.get(key)
+            if isinstance(value, str) and value and value not in files:
+                files.append(value)
+                break
+        if len(files) >= 8:
+            break
+    return files
+
+
+def build_agent_user_summary(
+    *,
+    provider: str,
+    state: dict[str, Any],
+    target: str | None = None,
+    state_path: str | Path = DEFAULT_STATE_PATH,
+) -> dict[str, Any]:
+    provider_name = _provider_slug(provider)
+    target_name = normalize_agent_target(target)
+    state_ref = _state_path(str(state_path))
+    provider_state = _provider_state_for_agent_summary(provider_name, state)
+    summary = build_provider_summary(provider=provider_name, state=state)
+    phase = _agent_phase(summary, provider_state, target_name)
+    access = summary.get("access_review") if isinstance(summary.get("access_review"), dict) else {}
+    failure_action = _agent_failure_action(summary)
+    review = _markdown_review_user_summary(summary)
+    if phase == "local-ready":
+        why_stopped = "已达到默认目标 local-ready：主路径本地可用，最小 provider-local 验证通过。"
+        next_action = f"如需完整合入标准，请告诉我：继续 {provider_name} provider 到 merge-ready"
+    elif phase == "merge-ready":
+        why_stopped = "已达到 merge-ready：完整本地 acceptance 和人工语义签字均已完成。"
+        next_action = "未发现必需的下一步。"
+    elif phase == "user-gate" and not access.get("approved"):
+        why_stopped = "access review 还没有人工批准，agent 不能替你批准合法访问策略。"
+        next_action = (
+            f"打开 {access.get('path') or default_access_review_path(provider_name)}，"
+            f"确认 allowed_runtimes、challenge_policy、status、may_continue；确认后对我说：继续 {provider_name} provider"
+        )
+    elif phase == "user-gate" and review.get("semantic_review_status") != "complete":
+        why_stopped = "Markdown semantic review 需要人工基于当前 extracted.md 和质量报告签字。"
+        next_action = (
+            "阅读 extracted.md、markdown-quality.json 和 "
+            f"{review.get('path') or f'onboarding/reviews/{provider_name}.yml'}；"
+            f"确认后对我说：继续 {provider_name} provider 到 merge-ready"
+        )
+    elif phase in {"blocked", "user-gate"}:
+        why_stopped = failure_action or "runner 停在需要诊断的 blocked state。"
+        next_action = failure_action or f"查看相关 artifact 后对我说：诊断 {provider_name} provider 为什么卡住"
+    elif phase == "intake":
+        why_stopped = "还没有足够的 provider 启动信息。"
+        next_action = f"请提供 domain，例如：添加 {provider_name} provider，domain 是 example.org"
+    else:
+        why_stopped = "没有停在人工 gate；项目 runner 可以继续推进。"
+        next_action = f"继续运行项目 runner 到下一个人工 gate 或 {target_name}"
+    return {
+        "provider": provider_name,
+        "target": target_name,
+        "target_step": agent_target_step(target_name),
+        "phase": phase,
+        "status": summary.get("status"),
+        "current_step": summary.get("current_step"),
+        "failed_task": summary.get("failed_task"),
+        "failure_code": summary.get("failure_code"),
+        "why_stopped": why_stopped,
+        "completed": _agent_completed_items(summary, provider_state),
+        "next_user_action": next_action,
+        "related_files": _agent_related_files(provider_name, summary, state_ref),
+        "samples": _compact_agent_samples(summary),
+        "markdown_review": review,
+        "operator_action": summary.get("operator_action"),
+    }
+
+
+def render_agent_user_summary_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "当前状态:",
+        f"- provider: {payload.get('provider')}",
+        f"- 目标: {payload.get('target')}",
+        f"- 阶段: {payload.get('phase')}",
+    ]
+    if payload.get("current_step"):
+        lines.append(f"- 当前 task: {payload.get('current_step')}")
+    if payload.get("failure_code"):
+        lines.append(f"- failure code: {payload.get('failure_code')}")
+    lines.extend(["", "为什么停:", f"- {payload.get('why_stopped')}"])
+    completed = payload.get("completed") if isinstance(payload.get("completed"), list) else []
+    lines.extend(["", "已完成:"])
+    if completed:
+        lines.extend(f"- {item}" for item in completed)
+    else:
+        lines.append("- 暂无可确认的完成项")
+    if payload.get("phase") == "local-ready":
+        lines.extend(
+            [
+                "",
+                "尚未承诺:",
+                "- 完整 fixture coverage",
+                "- Markdown semantic review",
+                "- expected snapshots",
+                "- shared docs / changelog",
+                "- global lint / merge-ready acceptance",
+            ]
+        )
+    samples = payload.get("samples") if isinstance(payload.get("samples"), list) else []
+    if samples:
+        lines.extend(["", "样本候选:"])
+        for sample in samples[:8]:
+            if not isinstance(sample, dict):
+                continue
+            evidence = sample.get("evidence")
+            evidence_suffix = f"，证据: {evidence}" if evidence else ""
+            lines.append(
+                "- "
+                f"{sample.get('purpose')}: {sample.get('doi') or 'null'} "
+                f"confidence={sample.get('confidence')} "
+                f"proof={sample.get('proof_status')}"
+                f"{evidence_suffix}"
+            )
+    markdown_review = payload.get("markdown_review")
+    if isinstance(markdown_review, dict) and markdown_review.get("status") != "missing":
+        lines.extend(
+            [
+                "",
+                "Markdown review:",
+                f"- artifact: {markdown_review.get('path')}",
+                f"- semantic: {markdown_review.get('semantic_review_status')}",
+                f"- quality: {markdown_review.get('markdown_quality_status')}",
+            ]
+        )
+    lines.extend(["", "下一步:", f"- {payload.get('next_user_action')}"])
+    related = payload.get("related_files") if isinstance(payload.get("related_files"), list) else []
+    if related:
+        lines.extend(["", "相关文件:"])
+        lines.extend(f"- {path}" for path in related)
+    return "\n".join(lines) + "\n"
+
+
 def _markdown_scalar(value: Any) -> str:
     if value is None:
         return "None"
@@ -6311,9 +7258,19 @@ def run_summarize(args: argparse.Namespace) -> int:
     provider = _provider_slug(args.provider)
     state_path = _state_path(args.state)
     state = _load_state(state_path)
-    summary = build_provider_summary(provider=provider, state=state)
-    if args.format == "json":
+    if args.format in {"agent-json", "agent-markdown"}:
+        summary = build_agent_user_summary(
+            provider=provider,
+            state=state,
+            target=args.target,
+            state_path=state_path,
+        )
+    else:
+        summary = build_provider_summary(provider=provider, state=state)
+    if args.format in {"json", "agent-json"}:
         content = json.dumps(summary, indent=2, sort_keys=True) + "\n"
+    elif args.format == "agent-markdown":
+        content = render_agent_user_summary_markdown(summary)
     else:
         content = render_provider_summary_markdown(summary)
     if args.output:
@@ -6323,6 +7280,35 @@ def run_summarize(args: argparse.Namespace) -> int:
         write_text(output_path, content)
     else:
         print(content, end="")
+    return 0
+
+
+def run_prepare_human_preflight(args: argparse.Namespace) -> int:
+    payload = build_human_preflight_digest(
+        provider=args.provider,
+        domain=args.domain,
+        doi_prefix=args.doi_prefix,
+    )
+    content = json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n"
+    if args.output:
+        output_path = Path(args.output)
+        if not output_path.is_absolute():
+            output_path = _repo_root() / output_path
+        write_text(output_path, content)
+    else:
+        print(content, end="")
+    return 0
+
+
+def run_finalize_review_artifact(args: argparse.Namespace) -> int:
+    reviewed_by = args.reviewed_by or os.environ.get("USER") or "operator"
+    payload = finalize_review_artifact(
+        provider=args.provider,
+        reviewed_by=reviewed_by,
+        confirmed_final_quality=args.confirmed_final_quality,
+        run_fresh_review=True,
+    )
+    print(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True) + "\n", end="")
     return 0
 
 
@@ -6537,9 +7523,15 @@ def build_parser() -> argparse.ArgumentParser:
     summarize.add_argument("--provider", required=True, help="provider name")
     summarize.add_argument(
         "--format",
-        choices=("json", "markdown"),
+        choices=("json", "markdown", "agent-json", "agent-markdown"),
         default="json",
         help="summary output format",
+    )
+    summarize.add_argument(
+        "--target",
+        choices=tuple(AGENT_TARGET_STEPS),
+        default="local-ready",
+        help="agent summary target tier",
     )
     summarize.add_argument("--output", help="optional output path")
     summarize.add_argument(
@@ -6548,6 +7540,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="coordinator state JSON path",
     )
     summarize.set_defaults(func=run_summarize)
+
+    prepare_human_preflight = subparsers.add_parser(
+        "prepare-human-preflight",
+        help="render the compact human review digest for access, waterfall, and purpose coverage",
+    )
+    prepare_human_preflight.add_argument("--provider", required=True, help="provider name")
+    prepare_human_preflight.add_argument("--domain", help="provider domain seed")
+    prepare_human_preflight.add_argument("--doi-prefix", help="DOI prefix seed")
+    prepare_human_preflight.add_argument("--output", help="optional output path")
+    prepare_human_preflight.set_defaults(func=run_prepare_human_preflight)
+
+    finalize_review = subparsers.add_parser(
+        "finalize-review-artifact",
+        help="write final batch Markdown semantic signoff after human confirmation",
+    )
+    finalize_review.add_argument("--provider", required=True, help="provider name")
+    finalize_review.add_argument(
+        "--confirmed-final-quality",
+        action="store_true",
+        help="required: operator confirmed current extracted.md quality summary",
+    )
+    finalize_review.add_argument(
+        "--reviewed-by",
+        help="operator name to record in onboarding/reviews/<provider>.yml",
+    )
+    finalize_review.set_defaults(func=run_finalize_review_artifact)
 
     next_task = subparsers.add_parser(
         "next",

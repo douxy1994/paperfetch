@@ -13,6 +13,7 @@ from paper_fetch.quality.issues import collect_issue_flags
 from paper_fetch.extraction.html import assets as html_assets
 from paper_fetch.extraction.image_payloads import image_mime_type_from_bytes
 from paper_fetch.providers import (
+    acs as acs_provider,
     browser_runtime,
     ams as ams_provider,
     browser_workflow,

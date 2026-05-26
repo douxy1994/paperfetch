@@ -14,6 +14,7 @@ ATYPON_BROWSER_WORKFLOW_MODULES = tuple(sorted(ATYPON_BROWSER_WORKFLOW_PACKAGE.g
 ATYPON_BROWSER_WORKFLOW_MARKDOWN = ATYPON_BROWSER_WORKFLOW_PACKAGE / "markdown.py"
 ATYPON_BROWSER_WORKFLOW_POSTPROCESS = ATYPON_BROWSER_WORKFLOW_PACKAGE / "postprocess.py"
 PROVIDER_RULE_MODULES = (
+    SRC_DIR / "paper_fetch" / "providers" / "_acs_html.py",
     SRC_DIR / "paper_fetch" / "providers" / "_science_html.py",
     SRC_DIR / "paper_fetch" / "providers" / "_pnas_html.py",
     SRC_DIR / "paper_fetch" / "providers" / "_wiley_html.py",
@@ -141,7 +142,7 @@ class AtyponBrowserWorkflowHtmlStaticTests(unittest.TestCase):
 
 
 @pytest.mark.parametrize(
-    "module_name", ["_pnas_html", "_science_html", "_wiley_html", "_ams_html"]
+    "module_name", ["_pnas_html", "_science_html", "_wiley_html", "_ams_html", "_acs_html"]
 )
 def test_no_route_constants(module_name: str) -> None:
     module = importlib.import_module(f"paper_fetch.providers.{module_name}")

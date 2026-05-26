@@ -1,4 +1,4 @@
-"""Atypon browser-workflow HTML extraction package for Science, PNAS, Wiley, and AMS."""
+"""Atypon browser-workflow HTML extraction package for Atypon-style publisher routes."""
 
 from __future__ import annotations
 

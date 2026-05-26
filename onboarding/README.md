@@ -8,20 +8,23 @@
 - `onboarding/access-reviews/<name>.yml` 是 operator 对合法访问、runtime、challenge/CAPTCHA 和临时站点策略的批准记录；未批准时 coordinator 不进入 discovery。
 - `onboarding/provider-manifest.schema.json` 定义 provider manifest schema。
 - `onboarding/manifests/<name>.yml` 是单 provider 的 routing、fixture、probe、asset profile、sync-back 和 docs fact base。
-- `onboarding/manifests/<name>.yml` 中的 `fixtures.discovery_proof` 强制记录 `table`、`formula`、`supplementary` 的候选检索矩阵；`validate-manifest` 会阻断缺失 proof、query 不足、`selected_doi` 不一致，以及与本地 fixture/cleaning evidence 矛盾的 null purpose。
-- `onboarding/reviews/<name>.yml` 是 fixture 代表性和最终 Markdown 语义审查 artifact；acceptance 不接受只写在 worker 回复里的审查结果。
+- `onboarding/manifests/<name>.yml` 中的 `fixtures.discovery_proof` 强制记录 `table`、`formula`、`supplementary` 的候选检索矩阵，也可记录 optional null purpose 的 exhausted proof；`validate-manifest` 会阻断缺失 proof、query 不足、`selected_doi` 不一致，以及与本地 fixture/cleaning evidence 矛盾的 null purpose。
+- `onboarding/reviews/<name>.yml` 是 fixture 代表性和最终 Markdown 语义审查 artifact；acceptance 不接受只写在 worker 回复里的审查结果。Operator 不需要逐 fixture 编辑该文件；最终批量审核当前 `extracted.md` 质量后，通过 `finalize-review-artifact --confirmed-final-quality` 机械写入 signoff。
 - `onboarding/instruction.md` 是可复用 `/goal` provider onboarding 执行入口，按 manifest contract 驱动从零新增或继续实现 provider。
-- `onboarding/runbook.md` 是不同使用场景的入口索引，说明从零实现、已有 manifest 继续、查漏补缺、单 DOI quality repair 和 blocked state 恢复该用哪条命令。
+- `onboarding/runbook.md#agent-对话入口` 是普通用户的 agent self-service 入口，包含自然语言 prompt、简化状态、人工 gate 输出和 failure 翻译；其余段落说明 `/goal` 与 operator runbook。
 - `scripts/capture_fixture.py --from-manifest <manifest> --all` 批量捕获所有 non-null DOI sample 和 `extra_fixtures`，自动跳过 null DOI purpose，并用 structured JSON error code 报告不可用样本。
 - `scripts/capture_fixture.py --from-manifest <manifest> --all --auto-via --fail-fast` 是 coordinator capture 默认入口，按 manifest probe 和 access review 选择 `http` / `browser`。
 - `scripts/onboard_from_manifests.py summarize --provider <name> --format json --output onboarding/fixture-evidence/<name>.json` 生成 fixture 阶段证据总表，汇总每个 purpose 的 DOI、confidence、observed signals、evidence URL/reason、本地 raw / extracted / quality artifact 路径、discovery proof 和人工审核状态。
 - `scripts/scaffold_provider.py --from-manifest --merge-existing=safe` 负责从 manifest 生成 provider-owned skeleton；已有输出时复用安全内容或返回 JSON merge plan 和 diff preview。
 - `scripts/bootstrap_review_artifact.py --provider <name> --manifest <path>` 生成 Markdown review 草稿，但不会把最终语义审查自动签为 true。
+- `scripts/onboard_from_manifests.py prepare-human-preflight --provider <name> [--domain <domain>] [--doi-prefix <prefix>]` 生成 access/waterfall/purpose coverage 预检摘要，供第一个人工 gate 审核。
+- `scripts/onboard_from_manifests.py finalize-review-artifact --provider <name> --confirmed-final-quality` 在最终人工批量审核 Markdown 质量后，校验 persistent/fresh quality、markdown_contract 和 fixture artifact，再写入 `onboarding/reviews/<name>.yml` signoff。
 - `scripts/backfill_access_reviews.py --all --write` 为已实现但缺少 access review 的 provider 生成 blocked 草稿；`--provider <name> --domain <domain> [--doi-prefix <prefix>] --write` 可为尚未登记的新 provider 生成 seed 草稿；草稿不是批准，`status: approved` 和 `may_continue: true` 仍只能由 operator 写入。
 - `scripts/propose_cleaning_chain.py --provider <name> --write` 基于已提交 fixture 生成 `cleaning-chain-proposals/<name>.yml`，用于 capture 后、implement 前的清洗候选、contract delta、过度清洗探针和 token 冲突检查。
   PLOS 这类 access review 已批准 JATS XML 但 runtime provider 尚未实现的 onboarding fixture，可在 proposal / snapshot 阶段复用 shared JATS renderer 和离线 golden replay adapter 生成 production-style baseline；runtime provider 注册仍留到实现收口阶段。
 - `scripts/manifest_sync_back.py --provider <name> --manifest <path> --sync-docs` 是 `extraction_hints`、`success_criteria` 和 manifest docs facts 自动同步入口。
 - `scripts/onboard_from_manifests.py diagnose`、`resume-blocked` 和 `summarize` 读取 coordinator state，分别提供 blocked 分诊、受控续跑和 operator digest；它们不会批准 access review、解决 challenge 或触发 GitHub CI。
+- `scripts/onboard_from_manifests.py summarize --format agent-json|agent-markdown` 和 `scripts/provider_agent.py add|continue|status|doctor` 提供 agent 对话入口：默认推进到 `local-ready`，把 failure code 翻译成用户行动，并在 waterfall/access preflight 或最终 Markdown semantic review 处停下。
 - `scripts/run_provider_drift_report.py` 是本地手动 route-source drift report 入口；真实 live run 必须显式设置 `PAPER_FETCH_RUN_LIVE=1`，不接 CI。
 - `onboarding/failure-recovery.md` 定义 coordinator 对 structured JSON error code 的恢复动作。
 - `onboarding/automation-roadmap.md` 记录 runner、worker dispatch、live gate 和不可自动化边界。
@@ -31,10 +34,13 @@
 S14/S17 coordinator:
 
 - local entrypoint: `python3 scripts/onboard_from_manifests.py`
-- supported actions: `start`, `run`, `diagnose`, `resume-blocked`, `summarize`, `next`, `verify`, `run-checks`, `check-snapshot`, `repair-markdown-quality`, `advance`
+- agent-facing entrypoint: `python3 scripts/provider_agent.py`
+- supported coordinator actions: `start`, `run`, `diagnose`, `resume-blocked`, `summarize`, `prepare-human-preflight`, `finalize-review-artifact`, `next`, `verify`, `run-checks`, `check-snapshot`, `repair-markdown-quality`, `advance`
+- supported agent actions: `add`, `continue`, `status`, `doctor`
 - provider execution model: one active provider, serial task DAG, retry counters per task
 - worker dispatch input: generated task brief plus manifest/hard-constraints material; default dispatcher is local `codex exec`, with `PROVIDER_ONBOARDING_AGENT_CLI` available as an operator override
 - full automation entrypoint: `python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<name>.yml --until merge-ready`
+- default agent target: `local-ready` (`provider-local-acceptance`); use `--target merge-ready` for full merge acceptance
 
 S15 manifest capture/retry:
 
@@ -68,7 +74,7 @@ The provider DAG is fixed:
 12. `global-lint`
 13. `merge-ready`
 
-`operator-access-preflight` validates `onboarding/access-reviews/<name>.yml` before discovery. `validate-manifest` validates schema plus discovery proof sufficiency for `table`、`formula`、`supplementary`; null optional purposes are accepted only after an exhausted candidate search is recorded and local evidence does not contradict it. `propose-cleaning-chain` runs after fixture capture and before scaffold, writing compact proposal/evidence artifacts bound to fixture digests. `start --provider` includes all 13 tasks and writes discovery plus implementation briefs. `start --manifest` skips `discover-manifest`, reads provider identity from manifest YAML, and still starts with the access preflight gate.
+`operator-access-preflight` validates `onboarding/access-reviews/<name>.yml` before discovery. `validate-manifest` validates schema plus discovery proof sufficiency for `table`、`formula`、`supplementary`; null optional purposes are accepted only after an exhausted candidate search is recorded when proof signoff is needed and local evidence does not contradict it. `propose-cleaning-chain` runs after fixture capture and before scaffold, writing compact proposal/evidence artifacts bound to fixture digests. `start --provider` includes all 13 tasks and writes discovery plus implementation briefs. `start --manifest` skips `discover-manifest`, reads provider identity from manifest YAML, and still starts with the access preflight gate.
 
 ## Required Verification
 
@@ -86,7 +92,7 @@ python3 scripts/validate_extraction_rules.py
 
 For local operator execution, `python3 scripts/onboard_from_manifests.py run-checks --provider <name> --all-local` runs the access, manifest, review/provider-local, shared integration, and global lint gates without triggering GitHub CI.
 
-For end-to-end local orchestration, `python3 scripts/onboard_from_manifests.py run --provider <name> --domain <domain> --output-dir .paper-fetch-runs/<name>-onboarding` executes the serial DAG and dispatches worker steps through local `codex exec` by default, or through `PROVIDER_ONBOARDING_AGENT_CLI` when the operator sets an override. It still cannot approve access, solve challenges, or mark semantic review complete.
+For end-to-end local orchestration, `python3 scripts/onboard_from_manifests.py run --provider <name> --domain <domain> --output-dir .paper-fetch-runs/<name>-onboarding` executes the serial DAG and dispatches worker steps through local `codex exec` by default, or through `PROVIDER_ONBOARDING_AGENT_CLI` when the operator sets an override. It still cannot approve access or solve challenges. It also cannot independently decide semantic signoff; after the operator performs the final batch Markdown quality review, `finalize-review-artifact --confirmed-final-quality` writes the durable review artifact.
 
 Provider-local acceptance commands must come from the generated task brief. They include `check-cleaning-proposal` freshness validation and `scripts/propose_cleaning_chain.py --provider <name> --check-contract`; warning-only sentinel/cross-route findings pass, while stale digests or blocking contract drift fail with `MARKDOWN_CONTRACT_DRIFT`. Hard-constraint grep checks must be listed in the brief or `hard-constraints.md`; non-empty forbidden central-provider matches fail acceptance.
 
@@ -101,7 +107,7 @@ Provider-local acceptance commands must come from the generated task brief. They
 | [`failure-recovery.md`](./failure-recovery.md) | Structured JSON error `code` to deterministic recovery action |
 | [`hard-constraints.md`](./hard-constraints.md) | Worker scope, provider logic boundary, pytest and grep acceptance |
 | [`instruction.md`](./instruction.md) | 通用 `/goal follow onboarding/instruction.md 添加 <provider> provider` 执行入口 |
-| [`runbook.md`](./runbook.md) | 场景化入口索引：从零实现、继续已有 manifest、查漏补缺、quality repair 和 blocked 恢复 |
+| [`runbook.md`](./runbook.md) | 普通用户 agent self-service 入口，以及从零实现、继续已有 manifest、查漏补缺、quality repair 和 blocked 恢复的场景化索引 |
 | [`manifest-discovery.md`](./manifest-discovery.md) | Discovery worker input, evidence requirements, schema output and retry rules |
 | [`acceptance.md`](./acceptance.md) | Machine-verifiable merge-ready definition |
 | [`access-review.schema.json`](./access-review.schema.json) | Operator access preflight JSON Schema |
@@ -120,6 +126,7 @@ Provider-local acceptance commands must come from the generated task brief. They
 | [`manifests/arxiv.yml`](./manifests/arxiv.yml) | arXiv provider manifest |
 | [`manifests/copernicus.yml`](./manifests/copernicus.yml) | Copernicus provider manifest |
 | [`manifests/ams.yml`](./manifests/ams.yml) | AMS provider manifest |
+| [`manifests/acs.yml`](./manifests/acs.yml) | ACS provider manifest |
 
 ## Legacy Human References
 

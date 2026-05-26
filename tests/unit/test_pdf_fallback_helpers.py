@@ -264,6 +264,46 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(len(new_context_thread_ids), 1)
         self.assertNotEqual(new_context_thread_ids[0], main_thread_id)
 
+    def test_seeded_browser_pdf_fallback_tries_browser_like_http_first(self) -> None:
+        pdf_url = "https://pubs.acs.org/doi/pdf/10.1021/example"
+        seed_url = "https://pubs.acs.org/doi/10.1021/example"
+        expected = _pdf_common.PdfFetchResult(
+            source_url=pdf_url,
+            final_url=pdf_url,
+            pdf_bytes=b"%PDF-1.7 acs",
+            markdown_text="# Example\n\n## Results\n\nBody text",
+            suggested_filename="article.pdf",
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(
+                    _pdf_fallback,
+                    "fetch_pdf_over_http",
+                    return_value=expected,
+                ) as mocked_http,
+                mock.patch(
+                    "paper_fetch.runtime_browser.BrowserContextManager.new_context",
+                    side_effect=AssertionError("seeded direct PDF should not launch browser"),
+                ),
+            ):
+                result = _pdf_fallback.fetch_pdf_with_browser(
+                    [pdf_url],
+                    artifact_dir=Path(tmpdir),
+                    seed_urls=[seed_url],
+                )
+
+        self.assertIs(result, expected)
+        _, attempted_urls = mocked_http.call_args.args[:2]
+        self.assertEqual(attempted_urls, [pdf_url])
+        headers = mocked_http.call_args.kwargs["headers"]
+        self.assertIn("Chrome/", headers["User-Agent"])
+        self.assertEqual(headers["Referer"], seed_url)
+        self.assertEqual(headers["Sec-Fetch-Site"], "same-origin")
+        self.assertEqual(headers["Sec-Fetch-Mode"], "navigate")
+        self.assertEqual(headers["Sec-Fetch-Dest"], "document")
+        self.assertEqual(mocked_http.call_args.kwargs["seed_urls"], [seed_url])
+
     def test_extract_pdf_candidate_urls_from_html_finds_meta_and_download_links(self) -> None:
         html = """
         <html><head>

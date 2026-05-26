@@ -22,6 +22,7 @@ class PublisherIdentityTests(unittest.TestCase):
         self.assertEqual(publisher_identity.infer_provider_from_doi("10.1111/example"), "wiley")
         self.assertEqual(publisher_identity.infer_provider_from_doi("10.1126/science.ady3136"), "science")
         self.assertEqual(publisher_identity.infer_provider_from_doi("10.1073/pnas.81.23.7500"), "pnas")
+        self.assertEqual(publisher_identity.infer_provider_from_doi("10.1021/acsomega.4c03987"), "acs")
 
     def test_extract_doi_handles_embedded_text_and_trailing_punctuation(self) -> None:
         self.assertEqual(
@@ -45,6 +46,10 @@ class PublisherIdentityTests(unittest.TestCase):
                 "Proceedings of the National Academy of Sciences of the United States of America"
             ),
             "pnas",
+        )
+        self.assertEqual(
+            publisher_identity.infer_provider_from_publisher("American Chemical Society"),
+            "acs",
         )
 
     def test_infer_provider_from_url(self) -> None:
@@ -71,6 +76,10 @@ class PublisherIdentityTests(unittest.TestCase):
         self.assertEqual(
             publisher_identity.infer_provider_from_url("https://www.pnas.org/doi/10.1073/pnas.81.23.7500"),
             "pnas",
+        )
+        self.assertEqual(
+            publisher_identity.infer_provider_from_url("https://pubs.acs.org/doi/10.1021/acsomega.4c03987"),
+            "acs",
         )
         self.assertEqual(
             publisher_identity.infer_provider_from_url("https://newjournal.copernicus.org/articles/1/1/2026/"),

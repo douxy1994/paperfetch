@@ -20,6 +20,7 @@ from paper_fetch.providers._atypon_browser_workflow_profiles import (
 from paper_fetch.providers._pdf_candidates import extract_pdf_candidate_urls_from_html
 from paper_fetch.provider_catalog import PROVIDER_CATALOG
 from paper_fetch.providers.base import RawFulltextPayload
+from paper_fetch.providers.acs import AcsClient
 from paper_fetch.providers.ams import AmsClient
 from paper_fetch.providers.pnas import PnasClient
 from paper_fetch.providers.science import ScienceClient
@@ -30,12 +31,14 @@ from tests.provider_benchmark_samples import provider_benchmark_sample
 SCIENCE_SAMPLE = provider_benchmark_sample("science")
 WILEY_SAMPLE = provider_benchmark_sample("wiley")
 PNAS_SAMPLE = provider_benchmark_sample("pnas")
+ACS_SAMPLE = provider_benchmark_sample("acs")
 
 
 class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
     def test_atypon_profile_scope_is_catalog_aligned(self) -> None:
         self.assertEqual(
-            ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES, ("science", "pnas", "wiley", "ams")
+            ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES,
+            ("science", "pnas", "wiley", "ams", "acs"),
         )
         self.assertTrue(
             set(ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES) <= set(PROVIDER_CATALOG)
@@ -100,6 +103,12 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
                 "drop_keywords": {"download", "rightslink"},
                 "drop_text": {"Check for updates"},
             },
+            "acs": {
+                "candidate_selectors": {".article_content", "[itemprop='articleBody']"},
+                "remove_selectors": {".articleMetrics", ".cookie-banner"},
+                "drop_keywords": {"article-metrics", "rightslink"},
+                "drop_text": {"Download Citation", "Check for updates"},
+            },
         }
 
         for publisher, expectations in cases.items():
@@ -157,6 +166,21 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
             [ams_landing],
         )
         self.assertEqual(build_pdf_candidates("ams", ams_doi, None), [])
+        self.assertEqual(
+            build_html_candidates("acs", ACS_SAMPLE.doi)[:2],
+            [
+                f"https://pubs.acs.org/doi/full/{ACS_SAMPLE.doi}",
+                f"https://pubs.acs.org/doi/{ACS_SAMPLE.doi}",
+            ],
+        )
+        self.assertEqual(
+            build_pdf_candidates("acs", ACS_SAMPLE.doi, None)[:3],
+            [
+                f"https://pubs.acs.org/doi/epdf/{ACS_SAMPLE.doi}",
+                f"https://pubs.acs.org/doi/pdf/{ACS_SAMPLE.doi}",
+                f"https://pubs.acs.org/doi/pdf/{ACS_SAMPLE.doi}?download=true",
+            ],
+        )
 
     def test_provider_profiles_match_candidate_builder_priority(self) -> None:
         crossref_pdf_url = (
@@ -172,6 +196,7 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
                 "10.1175/jcli-d-23-0738.1",
                 "https://journals.ametsoc.org/downloadpdf/journals/clim/37/24/JCLI-D-23-0738.1.xml",
             ),
+            ("acs", AcsClient(None, {}), ACS_SAMPLE.doi, None),
         )
 
         for provider, client, doi, pdf_url in cases:
@@ -255,6 +280,7 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
             PnasClient(None, {}),
             WileyClient(None, {}),
             AmsClient(None, {}),
+            AcsClient(None, {}),
         )
 
         for client in clients:
@@ -276,6 +302,7 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
             (PnasClient(None, {}), None, "PNAS", "pnas"),
             (WileyClient(None, {}), "wiley_browser", "Wiley", "wiley"),
             (AmsClient(None, {}), None, "AMS", "ams"),
+            (AcsClient(None, {}), None, "ACS", "acs"),
         )
 
         for client, article_source_name, label, markdown_publisher in cases:
@@ -323,10 +350,12 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
         pnas_extract_authors = PnasClient(None, {}).profile.fallback_author_extractor
         wiley_extract_authors = WileyClient(None, {}).profile.fallback_author_extractor
         ams_extract_authors = AmsClient(None, {}).profile.fallback_author_extractor
+        acs_extract_authors = AcsClient(None, {}).profile.fallback_author_extractor
         assert science_extract_authors is not None
         assert pnas_extract_authors is not None
         assert wiley_extract_authors is not None
         assert ams_extract_authors is not None
+        assert acs_extract_authors is not None
 
         self.assertEqual(
             science_extract_authors(science_html), ["Ada Lovelace", "Grace Hopper"]
@@ -338,6 +367,7 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
         )
         self.assertEqual(wiley_extract_authors(wiley_html), ["Meta Author"])
         self.assertEqual(ams_extract_authors(wiley_html), ["Meta Author"])
+        self.assertEqual(acs_extract_authors(wiley_html), ["Meta Author"])
 
         wiley_dom_only_html = """
         <html><body>

@@ -1,6 +1,6 @@
 # /goal 通用执行说明：添加 Provider
 
-本文是 provider onboarding 的通用执行入口，适合从零添加 provider，或基于已有 `onboarding/manifests/<provider>.yml` 继续实现到 merge-ready。不同场景该选哪条 runbook，先看 [`runbook.md`](./runbook.md)。
+本文是 provider onboarding 的通用执行入口，适合从零添加 provider，或基于已有 `onboarding/manifests/<provider>.yml` 继续实现到 merge-ready。普通用户的 agent 对话 prompt、状态展示和人工 gate 输出见 [`runbook.md#agent-对话入口`](./runbook.md#agent-对话入口)；本文件只保留执行入口和实现约束。
 
 推荐直接运行：
 
@@ -16,6 +16,17 @@
 python3 scripts/onboard_from_manifests.py run --provider <provider> --domain <domain> --output-dir .paper-fetch-runs/<provider>-onboarding
 python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<provider>.yml --until merge-ready
 ```
+
+当入口来自 agent 对话中的“添加/继续/查看/诊断 provider”自然语言请求时，优先用 agent-facing 包装层翻译意图和输出：
+
+```bash
+PYTHONPATH=src python3 scripts/provider_agent.py add --provider <provider> --domain <domain>
+PYTHONPATH=src python3 scripts/provider_agent.py continue --provider <provider>
+PYTHONPATH=src python3 scripts/provider_agent.py status --provider <provider>
+PYTHONPATH=src python3 scripts/provider_agent.py doctor --provider <provider>
+```
+
+`scripts/provider_agent.py` 不维护独立 DAG 或 state；它只调用 `onboard_from_manifests.py`、access review backfill 和现有 state/manifest/review artifact。默认目标是 `local-ready`，对应 runner cutoff `provider-local-acceptance`；只有明确传 `--target merge-ready` 时才推进完整合入标准。
 
 runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox workspace-write -c approval_policy="never" -`）派发 coding-agent-subagent；`PROVIDER_ONBOARDING_AGENT_CLI` 仅作为 operator override。runner 不能代替 operator 批准 access review，也不能把最终 Markdown 语义审查自动签为 true。snapshot gate 会每次重新读取当前 `extracted.md` 做 fresh Markdown quality review，不能只信旧 `markdown-quality.json`。
 
@@ -66,8 +77,8 @@ runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox wor
    - 如需单独检查 discovery 输入，运行 `python3 scripts/onboard_from_manifests.py prepare-discovery --provider <provider> --domain <domain> --doi-prefix <doi-prefix> --output-dir .paper-fetch-runs/<provider>-onboarding`；离线预检或单测使用 `--no-network`。
    - 可用 `python3 scripts/onboard_from_manifests.py inspect-discovery --manifest onboarding/manifests/<provider>.yml --evidence-pack .paper-fetch-runs/<provider>-onboarding/discovery/evidence-pack.json` 查看候选、低置信度 purpose 和 proof 缺口。
    - 填 `routing`、`main_path`、`route_contract`、`markdown_contract`、`asset_profile`、`asset_contract`、`supplementary_scope`、`probe`、`fixtures.doi_samples`、`fixtures.discovery_proof` 和 docs fact base。
-   - `fixtures.discovery_proof` 对 `table`、`formula`、`supplementary` 强制记录候选检索矩阵；每类至少 3 条 query、候选 DOI、未选候选拒绝原因，并且 `selected_doi` 必须与 `doi_samples` 一致。
-   - `table`、`formula`、`supplementary` 为 `doi: null` 时，`validate-manifest` 会要求 `discovery_proof.<purpose>.exhausted: true` 和具体拒绝理由；如果当前 fixture 或 cleaning evidence 已暴露同类强信号，必须补 DOI sample 或用同 DOI 写明不适合作为该 purpose fixture 的具体原因。
+   - `fixtures.discovery_proof` 对 `table`、`formula`、`supplementary` 强制记录候选检索矩阵；`abstract_only`、`access_gate`、`empty_shell` 等 optional null purpose 可记录同样格式的 exhausted proof，用于关闭人工 proof 状态。每类至少 3 条 query、候选 DOI、未选候选拒绝原因，并且 `selected_doi` 必须与 `doi_samples` 一致。
+   - `table`、`formula`、`supplementary` 为 `doi: null` 时，`validate-manifest` 会要求 `discovery_proof.<purpose>.exhausted: true` 和具体拒绝理由；optional null purpose 若记录 discovery proof，也必须使用 `exhausted: true`、`selected_doi: null` 和具体拒绝理由。如果当前 fixture 或 cleaning evidence 已暴露同类强信号，必须补 DOI sample 或用同 DOI 写明不适合作为该 purpose fixture 的具体原因。
    - 填 `asset_contract.figures`：有可用 figure asset 的 fixture 必须 `inline: body`、`download: required`、`purposes: [figure]`；text-only PDF fallback、无可下载图片或 access/empty-shell 类样本才允许 `not_applicable`，且必须写明原因。
    - `success_criteria` 和 `extraction_hints` 是 sync-back 字段，初稿只放空对象、空数组或 null。
    - `autofix-manifest --write` 只允许补结构容器、proof/source query 同步、contract 模板和 high-confidence DOI sample replacement；低置信候选只能进入 rejection/proof，不能自动替换样本。
@@ -92,7 +103,7 @@ runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox wor
    - 对每个 non-null fixture 生成 baseline Markdown；人工语义基准只能是 fixture 目录下的 `extracted.md`，不能用 `expected.json`、`original.html/xml/pdf` 代替。
    - 可先运行 `python3 scripts/bootstrap_review_artifact.py --provider <provider> --manifest onboarding/manifests/<provider>.yml` 生成 review 草稿；草稿默认 `markdown_semantic_reviewed: false`。
    - agent 按 fixture 目录下的 `markdown-quality-prompt.md` 阅读 `extracted.md`，并把 `markdown-quality.json` 从 `pending_agent_review` 写成真实的 `pass` / `fail` 持久报告。
-   - 人工阅读 `extracted.md`，并写入 `onboarding/reviews/<provider>.yml`：`baseline_markdown_path`、`baseline_markdown_sha256`、`markdown_quality_path`、`markdown_quality_sha256`、`review_notes`、`sample_representative`、`markdown_semantic_reviewed`、`issues`、`assertions`、`fixes`。
+   - 人工最终只批量阅读当前 `extracted.md`、`markdown-quality.json`、fresh review 和 purpose/asset 摘要；确认后运行 `python3 scripts/onboard_from_manifests.py finalize-review-artifact --provider <provider> --confirmed-final-quality`，由脚本写入 `onboarding/reviews/<provider>.yml` 的 `baseline_markdown_path`、`baseline_markdown_sha256`、`markdown_quality_path`、`markdown_quality_sha256`、`review_notes`、`sample_representative`、`markdown_semantic_reviewed`、`issues`、`assertions`、`fixes`。
    - `markdown-quality.json` 必须为 `review_method: agent_prompt`、`status: pass` 且没有 blocking issue；pending 或 fail 都会阻断 `markdown_semantic_reviewed: true`。
    - 若 manifest 声明 `asset_contract.figures.inline: body`，fresh review 必须把缺少正文 `![Figure ...](...)`、仅有文末 `## Figures` caption 作为 blocking issue；若声明 `download: required`，缺少本地 asset path rewrite 也必须 blocking。
    - 若文章应有 References，fresh review 必须把 `## References` 下参考文献列表缺少可识别序号或编号标签（如 `[1]`、`1.`、`1)` 或 publisher 原始编号）作为 blocking issue。
@@ -152,6 +163,12 @@ runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox wor
 
 ```bash
 python3 scripts/onboard_from_manifests.py summarize --provider <provider> --format markdown --output .paper-fetch-runs/<provider>-onboarding/summary.md
+```
+
+agent 对话中应优先生成用户可读 digest：
+
+```bash
+python3 scripts/onboard_from_manifests.py summarize --provider <provider> --format agent-markdown --target local-ready
 ```
 
 目标完成时，最终回复应包含：

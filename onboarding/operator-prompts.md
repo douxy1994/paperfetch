@@ -1,6 +1,6 @@
 # Operator Prompts
 
-本文件给出 operator 在 coding agent CLI 长跑会话里启动 coordinator、派 `discover-manifest` worker 和 `implement-provider` worker 时使用的提示词模板。所有模板只把已在 `onboarding/` 内固化的 brief 字段、schema 和 hard constraints 组装成 prompt；不引入新的权威字段，不复述自然语言导览。
+本文件给出 operator 在 coding agent CLI 长跑会话里启动 coordinator、派 `discover-manifest` worker 和 `implement-provider` worker 时使用的提示词模板。所有模板只把已在 `onboarding/` 内固化的 brief 字段、schema 和 hard constraints 组装成 prompt；不引入新的权威字段，不复述自然语言导览。普通用户 agent self-service 入口见 [`runbook.md#agent-对话入口`](./runbook.md#agent-对话入口)。
 
 模板分三段：
 
@@ -150,13 +150,13 @@ docs/adding-a-provider.md、README、audit 文件或聊天记录推断 provider 
 1. 先把 manifest 中每个 `route_contract.<step>` 转成 provider-local route 成功 / 拒绝测试。
 2. 先把每个 non-null `markdown_contract.<purpose>` 转成 provider-local Markdown 断言，marker 使用 `markdown-review: purpose=<purpose> doi=<doi>`。
 3. 再对 manifest 中每个 non-null `fixtures.doi_samples.<purpose>` 生成 baseline Markdown。
-4. 逐个 fixture 阅读 Markdown，记录 `fixture/purpose -> issue -> assertion -> fix`。
+4. Worker 必须读取每个 fixture Markdown 并把发现的问题转成机器断言；不要要求 operator 逐 fixture 签字。
 5. 每个发现的问题必须先转成 `tests/unit/test_<NAME>_provider.py` 里的 provider-local 断言。
 6. 主成功路径必须同时有 Markdown 正断言和站点 chrome / access noise / boilerplate 负断言。
 7. 优先复用已有 provider 测试断言模式；不要保留 scaffold skipped placeholder 或 review-loop placeholder。
 8. 修复只能写 brief 允许的 provider-owned 文件；不要把清洗规则写到中心模块。
 9. 重复生成 / 阅读 / 写断言 / 修 provider，直到所有 non-null fixture Markdown 干净。
-10. 先按 fixture 目录下的 `markdown-quality-prompt.md` 审查 `extracted.md`，把 `markdown-quality.json` 写成 agent-authored pass/fail 持久报告；`check-snapshot` 还会重新读取当前 `extracted.md` 做 fresh quality review，旧 JSON pass 不能覆盖 fresh blocking issue。再将最终人工语义审查写入 `onboarding/reviews/<NAME>.yml`，每个 non-null fixture 和 `extra_fixtures` 都要有指向 `extracted.md` 的 `baseline_markdown_path`、`baseline_markdown_sha256`、指向 `markdown-quality.json` 的 `markdown_quality_path`、`markdown_quality_sha256`、`review_notes`、`sample_representative: true`、`markdown_semantic_reviewed: true`、`issues`、`assertions`、`fixes`；`fixes[].issue_ids` 必须引用已有 issue，`fixes[].test_names` 至少列出一个 provider-local 测试。
+10. 先按 fixture 目录下的 `markdown-quality-prompt.md` 审查 `extracted.md`，把 `markdown-quality.json` 写成 agent-authored pass/fail 持久报告；`check-snapshot` 还会重新读取当前 `extracted.md` 做 fresh quality review，旧 JSON pass 不能覆盖 fresh blocking issue。不要把最终人工语义审查直接签为 true；operator 最后批量审核所有当前 `extracted.md` 后，由主会话运行 `python3 scripts/onboard_from_manifests.py finalize-review-artifact --provider <NAME> --confirmed-final-quality` 机械写入 `onboarding/reviews/<NAME>.yml`。
 
 # 实现约束 (hard-constraints.md §Provider Logic)
 - Provider routing / asset profile / probe / fixture purpose / docs source name
@@ -197,7 +197,7 @@ brief 中 failure_recovery.max_retries = 3。
 1. 改动文件清单（带 +/- 行数）。
 2. acceptance.pytest 最后几行（含 passed 计数）。
 3. 每条 acceptance.grep_must_be_empty 的命令与实际命中数（必须为 0）。
-4. `onboarding/reviews/<NAME>.yml` 摘要：每个 non-null purpose 的 fixture、发现的问题、对应断言和修复。
+4. 最终 Markdown quality 摘要：每个 non-null purpose 的 fixture、persistent quality、fresh review、asset contract 和是否可由 `finalize-review-artifact` 签字。
 5. 未解决的失败（如有）与对应 error code。
 不要 commit；改动留在工作区。
 ```
@@ -219,10 +219,11 @@ python3 scripts/onboard_from_manifests.py advance --provider <NAME> --task imple
 
 1. 打开主会话；如需覆盖默认本机 Codex CLI，再设定 `PROVIDER_ONBOARDING_AGENT_CLI` 环境变量。
 2. 贴入 §A 模板，替换 `<NAME>` / `<DOMAIN>`。
-3. 完成 `operator-access-preflight`，确保 `onboarding/access-reviews/<NAME>.yml` approved。
+3. 运行 `prepare-human-preflight --provider <NAME>`，审核 access/waterfall/purpose 预案，完成 `operator-access-preflight`，确保 `onboarding/access-reviews/<NAME>.yml` approved。
 4. 在 §B 模板中替换 `<NAME>` 与四处 `<<<...>>>` 占位，派 discover-manifest 子 agent。
 5. 由主会话执行 `validate-manifest` / `capture-fixtures` / `propose-cleaning-chain` / `scaffold` 脚本动作。
 6. 在 §C 模板中替换 `<NAME>` 与五处 `<<<...>>>` 占位，派 implement-provider 子 agent。
-7. 由主会话执行 `shared-integration` / `snapshot-expected` / `manifest-sync-back` / `provider-local-acceptance` / `global-lint` / `merge-ready`；本地收口优先用 `run-checks --provider <NAME> --all-local`。
+7. 由主会话执行 `shared-integration` / `snapshot-expected` / `manifest-sync-back` / `provider-local-acceptance` / `global-lint`；本地收口优先用 `run-checks --provider <NAME> --all-local`。
+8. Operator 批量阅读最终 `extracted.md` / `markdown-quality.json` / fresh review 摘要；确认后运行 `finalize-review-artifact --provider <NAME> --confirmed-final-quality`，再进入 `merge-ready`。
 
 Operator 不得修改模板中已写明的固定字段（`task_id` 形态、`runtime: coding-agent-subagent`、`no_commit: true`、`failure_recovery.max_retries: 3`）。修改这些字段的唯一方式是改 `agent-task-brief.md` 与 `onboard_from_manifests.py` 的 brief 生成逻辑。

@@ -5,6 +5,7 @@ from unittest import mock
 
 from paper_fetch import config
 from paper_fetch.providers import _cloakbrowser
+from paper_fetch.providers.acs import AcsClient
 from paper_fetch.providers.ams import AmsClient
 from paper_fetch.providers.arxiv import ArxivClient
 from paper_fetch.providers.crossref import CrossrefClient
@@ -21,6 +22,8 @@ class DummyTransport:
 
 class ProviderStatusTests(unittest.TestCase):
     def _browser_client(self, provider: str, env: dict[str, str]):
+        if provider == "acs":
+            return AcsClient(DummyTransport(), env)
         if provider == "ams":
             return AmsClient(DummyTransport(), env)
         if provider == "science":
@@ -137,7 +140,7 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertTrue(all(check.status == "ok" for check in checks.values()))
 
     def test_browser_workflow_providers_are_ready_without_extra_env(self) -> None:
-        for provider in ("science", "pnas", "ams"):
+        for provider in ("science", "pnas", "ams", "acs"):
             with (
                 self.subTest(provider=provider),
                 mock.patch.object(_cloakbrowser, "_dependency_available", return_value=True),
@@ -152,7 +155,7 @@ class ProviderStatusTests(unittest.TestCase):
                 self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
 
     def test_browser_workflow_providers_missing_cloakbrowser_are_not_configured(self) -> None:
-        for provider in ("science", "pnas", "ams"):
+        for provider in ("science", "pnas", "ams", "acs"):
             with (
                 self.subTest(provider=provider),
                 mock.patch.object(_cloakbrowser, "_dependency_available", return_value=False),
@@ -178,7 +181,7 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
 
     def test_browser_workflow_providers_ignore_unrelated_rate_limit_env(self) -> None:
-        for provider in ("science", "pnas", "ams"):
+        for provider in ("science", "pnas", "ams", "acs"):
             with self.subTest(provider=provider):
                 env = {"PAPER_FETCH_UNUSED_RATE_LIMIT_SECONDS": "60"}
 
@@ -191,7 +194,7 @@ class ProviderStatusTests(unittest.TestCase):
                 self.assertNotIn("rate_limit_window", checks)
 
     def test_browser_workflow_providers_ready_status_checks_all_pass(self) -> None:
-        for provider in ("science", "pnas", "ams"):
+        for provider in ("science", "pnas", "ams", "acs"):
             with (
                 self.subTest(provider=provider),
                 mock.patch.object(_cloakbrowser, "_dependency_available", return_value=True),

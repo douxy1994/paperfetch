@@ -59,3 +59,7 @@ providers:
     display_source: oxfordacademic_html
     status: implemented
     manifest_path: onboarding/manifests/oxfordacademic.yml
+  - name: acs
+    display_source: acs
+    status: implemented
+    manifest_path: onboarding/manifests/acs.yml

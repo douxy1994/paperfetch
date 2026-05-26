@@ -487,6 +487,8 @@ def should_drop_node(
     *,
     drop_profile: str = HTML_CONTAINER_DROP_AVAILABILITY,
 ) -> bool:
+    if drop_profile == HTML_CONTAINER_DROP_BROWSER_WORKFLOW and _is_figure_media_node(node):
+        return False
     if drop_profile == HTML_CONTAINER_DROP_BROWSER_WORKFLOW:
         return _should_drop_browser_workflow_node(node, publisher)
     rules = availability_rules_for_provider(publisher).container_rules
@@ -517,6 +519,18 @@ def should_drop_node(
         )
     except Exception:
         return False
+
+
+def _is_figure_media_node(node: Tag) -> bool:
+    node_name = normalize_text(getattr(node, "name", "")).lower()
+    if node_name not in {"a", "img", "picture", "source"} and node.find(["img", "picture", "source"]) is None:
+        return False
+    current: Any = node
+    while isinstance(current, Tag):
+        if normalize_text(getattr(current, "name", "")).lower() == "figure":
+            return True
+        current = current.parent
+    return False
 
 
 def clean_container(

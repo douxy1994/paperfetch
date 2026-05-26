@@ -11,6 +11,7 @@ import sys
 from typing import Any
 
 _EXPORTS: dict[str, tuple[str, str]] = {
+    "AcsClient": (".acs", "AcsClient"),
     "AmsClient": (".ams", "AmsClient"),
     "ArxivClient": (".arxiv", "ArxivClient"),
     "CrossrefClient": (".crossref", "CrossrefClient"),

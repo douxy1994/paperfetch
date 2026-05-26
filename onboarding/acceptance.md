@@ -43,8 +43,10 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 
 - `onboarding/reviews/<provider>.yml` exists and passes `onboarding/provider-review.schema.json`.
 - `scripts/bootstrap_review_artifact.py` output is only a draft gate helper; acceptance still requires `markdown_semantic_reviewed: true` after real semantic review.
+- The preferred signoff path is one final batch review: the operator reviews current `extracted.md` / `markdown-quality.json` / fresh review output, then runs `python3 scripts/onboard_from_manifests.py finalize-review-artifact --provider <provider> --confirmed-final-quality`.
+- `finalize-review-artifact` must refuse to sign if any registered fixture has missing snapshot assets, non-pass persistent quality, fresh blocking issues, or `markdown_contract` drift.
 - Every non-null `fixtures.doi_samples.<purpose>` and every `extra_fixtures` item has a review artifact entry with `baseline_markdown_path` pointing to `extracted.md`, `baseline_markdown_sha256`, `markdown_quality_path`, `markdown_quality_sha256`, `review_notes`, `sample_representative: true`, `markdown_semantic_reviewed: true`, `issues`, `assertions`, and `fixes`.
-- `issues` and `fixes` use stable object ids; every fix references existing `issue_ids` and names at least one provider-local test.
+- `issues` and `fixes` use stable object ids when present; every fix references existing `issue_ids` and names at least one provider-local test.
 - Review artifact values must not contain `TODO`, `TBD`, or `unknown` placeholders.
 - Every non-null `fixtures.doi_samples.<purpose>` is represented in `tests/unit/test_<provider>_provider.py` by purpose name or DOI slug.
 - Provider-local tests should prefer exact markers of the form `markdown-review: purpose=<purpose> doi=<doi>` next to the assertions generated from `markdown_contract`.
@@ -53,7 +55,7 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 - For `asset_contract.figures.inline: body`, `extracted.md` must include a body Markdown image before References/Figures/Supplementary tail sections; a caption-only `## Figures` section is blocking.
 - For `asset_contract.figures.download: required`, provider-local tests must include marker `asset-download-contract: provider=<provider>` and assert actual local file path/bytes plus asset result state.
 - When references are expected, the `## References` list must retain recognizable reference numbers or labels such as `[1]`, `1.`, `1)`, or publisher-native labels; unnumbered/unlabeled reference lists are blocking.
-- Worker completion summary is secondary; acceptance uses `onboarding/reviews/<provider>.yml` as the durable source.
+- Worker completion summary is secondary; acceptance uses `onboarding/reviews/<provider>.yml` as the durable source. Operator does not need to hand-edit one review entry per fixture when the final batch signoff command can derive the entries from current artifacts.
 
 ## Live Review Gates
 
