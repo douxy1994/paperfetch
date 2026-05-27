@@ -29,10 +29,10 @@ def _fixture_id(fixture: GoldenCorpusFixture) -> str:
 
 
 def test_golden_corpus_is_balanced_across_publishers() -> None:
-    assert len(GOLDEN_CORPUS_FIXTURES) == 125
+    assert len(GOLDEN_CORPUS_FIXTURES) == 127
     assert Counter(fixture.provider for fixture in GOLDEN_CORPUS_FIXTURES) == Counter(
         {
-            "acs": 1,
+            "acs": 3,
             "ams": 11,
             "annualreviews": 4,
             "arxiv": 4,
@@ -125,7 +125,7 @@ def test_golden_corpus_representative_fixture_matches_primary_fulltext_path(fixt
 
 @pytest.mark.skipif(
     os.environ.get(FULL_GOLDEN_ENV) != "1",
-    reason=f"Set {FULL_GOLDEN_ENV}=1 to run full 125-fixture golden corpus regression.",
+    reason=f"Set {FULL_GOLDEN_ENV}=1 to run full 127-fixture golden corpus regression.",
 )
 @pytest.mark.parametrize("fixture", GOLDEN_CORPUS_FIXTURES, ids=_fixture_id)
 def test_golden_corpus_expected_summary_matches_current_extractor(fixture: GoldenCorpusFixture) -> None:
