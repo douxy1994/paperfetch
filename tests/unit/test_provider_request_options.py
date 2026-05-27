@@ -105,6 +105,47 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertTrue(transport.calls[0]["retry_on_rate_limit"])
         self.assertTrue(transport.calls[0]["retry_on_transient"])
 
+    def test_crossref_bibliographic_search_can_filter_by_doi_prefix(self) -> None:
+        transport = RecordingTransport(
+            {
+                ("GET", "https://api.crossref.org/works"): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
+                    "body": json.dumps(
+                        {
+                            "message": {
+                                "items": [
+                                    {
+                                        "DOI": "10.1088/example",
+                                        "title": ["IOP Example"],
+                                        "container-title": ["Journal"],
+                                        "publisher": "IOP Publishing",
+                                        "URL": "https://iopscience.iop.org/article/10.1088/example",
+                                    }
+                                ]
+                            }
+                        }
+                    ).encode("utf-8"),
+                    "url": "https://api.crossref.org/works",
+                }
+            }
+        )
+
+        client = CrossrefClient(transport, {"CROSSREF_MAILTO": "alice@example.com"})
+        candidates = client.search_bibliographic_candidates(
+            "IOP table article",
+            doi_prefix="10.1088/",
+            rows=3,
+        )
+
+        self.assertEqual(candidates[0]["doi"], "10.1088/example")
+        self.assertEqual(transport.calls[0]["query"]["filter"], "prefix:10.1088")
+        self.assertEqual(transport.calls[0]["query"]["rows"], "3")
+        self.assertEqual(
+            transport.calls[0]["query"]["query.bibliographic"],
+            "IOP table article",
+        )
+
     def test_elsevier_fulltext_uses_extended_timeout(self) -> None:
         doi = "10.1016/test"
         transport = RecordingTransport(
@@ -1786,6 +1827,45 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertEqual(result["assets"][0]["original_url"], large_url)
         self.assertEqual(result["assets"][0]["download_url"], preview_url)
         self.assertEqual(saved_bytes, png_body(b"preview-after-full-size-failure"))
+
+    def test_html_asset_download_preserves_provider_preview_acceptance_hint(self) -> None:
+        preview_url = "https://content.cld.iop.org/journals/example/f1_online.jpg"
+        transport = RecordingTransport(
+            {
+                ("GET", preview_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "image/jpeg"},
+                    "body": b"\xff\xd8\xff\xd9",
+                    "url": preview_url,
+                }
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
+                transport,
+                article_id="10.1088/example",
+                assets=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "caption": "Provider accepted preview figure",
+                        "url": preview_url,
+                        "preview_url": preview_url,
+                        "preview_accepted": True,
+                        "section": "body",
+                    }
+                ],
+                output_dir=Path(tmpdir),
+                user_agent="unit-test",
+                asset_profile="body",
+            )
+
+        self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(len(result["assets"]), 1)
+        self.assertEqual(result["assets"][0]["download_tier"], "preview")
+        self.assertTrue(result["assets"][0]["preview_accepted"])
 
     def test_springer_body_asset_profile_ignores_supplementary_download_pdf_links(self) -> None:
         figure_url = "https://media.springernature.com/full/example-figure-1.png"

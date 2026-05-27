@@ -28,7 +28,13 @@ if str(SRC_DIR) not in sys.path:
     sys.path.insert(0, str(SRC_DIR))
 
 from _structured_errors import ToolError, emit_error, error_payload  # noqa: E402
+from paper_fetch.config import build_browser_user_agent  # noqa: E402
 from paper_fetch.errors import ProviderFailure  # noqa: E402
+from paper_fetch.extraction.html.signals import (  # noqa: E402
+    CHALLENGE_PATTERNS,
+    HtmlExtractionFailure,
+    contains_access_gate_text,
+)
 from paper_fetch.http import HttpTransport, RequestFailure  # noqa: E402
 from paper_fetch.markdown_quality import (  # noqa: E402
     PENDING_STATUS,
@@ -95,6 +101,18 @@ DISCOVERY_PROBE_TIMEOUT_SECONDS = 8
 DISCOVERY_HIGH_CONFIDENCE_SCORE = 0.72
 DISCOVERY_MEDIUM_CONFIDENCE_SCORE = 0.45
 DISCOVERY_NO_NETWORK_ENV = "PAPER_FETCH_DISCOVERY_NO_NETWORK"
+DISCOVERY_BROWSER_FALLBACK_MODES = ("auto", "off")
+DISCOVERY_FULLTEXT_SAMPLE_PURPOSES = frozenset(
+    {
+        "structure",
+        "table",
+        "formula",
+        "figure",
+        "supplementary",
+        "references",
+        "pdf_fallback",
+    }
+)
 PURPOSE_KEYWORDS = {
     "structure": ["structure", "abstract", "sections"],
     "table": ["table"],
@@ -832,6 +850,91 @@ def _decode_response_body(response: Mapping[str, Any]) -> str:
     return str(body)
 
 
+def _load_optional_access_review(provider: str) -> dict[str, Any] | None:
+    try:
+        return _load_access_review(provider)
+    except ToolError:
+        return None
+
+
+def _access_review_allowed_runtimes(review: Mapping[str, Any] | None) -> set[str]:
+    runtimes = review.get("allowed_runtimes") if isinstance(review, Mapping) else None
+    if isinstance(runtimes, list):
+        return {
+            str(runtime).strip().lower()
+            for runtime in runtimes
+            if str(runtime).strip()
+        }
+    return set()
+
+
+def _access_review_allows_browser(review: Mapping[str, Any] | None) -> bool:
+    return bool(_access_review_allowed_runtimes(review) & {"browser", "playwright"})
+
+
+def _manifest_probe_for_provider(provider: str) -> dict[str, Any]:
+    manifest_path = _repo_root() / default_manifest_path(provider)
+    if not manifest_path.exists():
+        return {}
+    try:
+        manifest = _read_manifest(manifest_path)
+    except ToolError:
+        return {}
+    probe = manifest.get("probe") if isinstance(manifest.get("probe"), dict) else {}
+    return dict(probe)
+
+
+def _provider_requires_browser_runtime(provider: str) -> bool:
+    probe = _manifest_probe_for_provider(provider)
+    if bool(probe.get("requires_browser_runtime") or probe.get("requires_playwright")):
+        return True
+    try:
+        from paper_fetch.provider_catalog import PROVIDER_CATALOG
+
+        spec = PROVIDER_CATALOG.get(provider)
+    except Exception:
+        return False
+    return bool(
+        spec
+        and (
+            getattr(spec, "requires_browser_runtime", False)
+            or getattr(spec, "requires_playwright", False)
+        )
+    )
+
+
+def _discovery_browser_fallback_policy(
+    *,
+    provider: str,
+    mode: str,
+    no_network: bool,
+) -> dict[str, Any]:
+    review = _load_optional_access_review(provider)
+    allowed_runtimes = sorted(_access_review_allowed_runtimes(review))
+    provider_requires_browser = _provider_requires_browser_runtime(provider)
+    enabled = (
+        mode == "auto"
+        and not no_network
+        and _access_review_allows_browser(review)
+    )
+    disabled_reason = None
+    if mode == "off":
+        disabled_reason = "cli_disabled"
+    elif no_network:
+        disabled_reason = "no_network"
+    elif not _access_review_allows_browser(review):
+        disabled_reason = "access_review_disallows_browser"
+    return {
+        "mode": mode,
+        "enabled": enabled,
+        "access_review": default_access_review_path(provider),
+        "access_review_present": review is not None,
+        "allowed_runtimes": allowed_runtimes,
+        "provider_requires_browser_runtime": provider_requires_browser,
+        "disabled_reason": disabled_reason,
+    }
+
+
 def _candidate_rejection_hint(purpose: str) -> str:
     keywords = ", ".join(PURPOSE_KEYWORDS.get(purpose, [purpose]))
     return (
@@ -882,11 +985,17 @@ def _crossref_candidate(
     *,
     purpose: str,
     query: str,
+    domain: str | None = None,
 ) -> dict[str, Any] | None:
     doi = _normalize_doi_or_none(metadata.get("doi"))
     if doi is None:
         return None
-    landing_url = _safe_url(metadata.get("landing_page_url")) or _doi_url(doi)
+    landing_url = _preferred_crossref_evidence_url(
+        metadata,
+        purpose=purpose,
+        doi=doi,
+        domain=domain,
+    )
     signals = ["crossref_metadata"]
     if metadata.get("abstract"):
         signals.append("abstract")
@@ -913,6 +1022,99 @@ def _crossref_candidate(
         "observed_signals": sorted(set(signals)),
         "rejection_hint": _candidate_rejection_hint(purpose),
     }
+
+
+def _preferred_crossref_evidence_url(
+    metadata: Mapping[str, Any],
+    *,
+    purpose: str,
+    doi: str,
+    domain: str | None = None,
+) -> str:
+    domain_token = normalize_text(domain).lower()
+    pdf_urls: list[str] = []
+    html_urls: list[str] = []
+    other_urls: list[str] = []
+    for link in metadata.get("fulltext_links") or []:
+        if not isinstance(link, Mapping):
+            continue
+        url = _safe_url(link.get("url"))
+        if url is None:
+            continue
+        normalized_url = url.lower()
+        if domain_token and domain_token not in normalized_url:
+            continue
+        content_type = normalize_text(str(link.get("content_type") or "")).lower()
+        if "pdf" in content_type or normalized_url.rstrip("/").endswith("/pdf"):
+            pdf_urls.append(url)
+        elif "html" in content_type or "/article/" in normalized_url:
+            html_urls.append(url)
+        else:
+            other_urls.append(url)
+    if purpose == "pdf_fallback" and pdf_urls:
+        return pdf_urls[0]
+    if html_urls:
+        return html_urls[0]
+    if pdf_urls:
+        return pdf_urls[0]
+    if other_urls:
+        return other_urls[0]
+    return _safe_url(metadata.get("landing_page_url")) or _doi_url(doi)
+
+
+def _normalized_doi_prefix(value: str | None) -> str | None:
+    normalized = normalize_text(value).lower().rstrip("/")
+    return normalized or None
+
+
+def _candidate_matches_provider_seed(
+    candidate: Mapping[str, Any],
+    *,
+    provider: str,
+    domain: str | None,
+    doi_prefix: str | None,
+) -> bool:
+    normalized_prefix = _normalized_doi_prefix(doi_prefix)
+    doi = normalize_text(str(candidate.get("doi") or "")).lower()
+    if normalized_prefix and not doi.startswith(f"{normalized_prefix}/"):
+        return False
+    domain_token = normalize_text(domain).lower().strip("/")
+    if not domain_token:
+        return True
+    url_text = " ".join(
+        normalize_text(str(candidate.get(key) or "")).lower()
+        for key in ["evidence_url", "landing_page_url"]
+    )
+    if domain_token in url_text:
+        return True
+    identity_text = " ".join(
+        normalize_text(str(candidate.get(key) or "")).lower()
+        for key in ["publisher", "journal_title", "title"]
+    )
+    provider_terms = {provider.replace("_", " "), provider}
+    return any(term and term in identity_text for term in provider_terms)
+
+
+def _search_crossref_discovery_candidates(
+    crossref: Any,
+    query: str,
+    *,
+    doi_prefix: str | None,
+    rows: int,
+) -> list[Mapping[str, Any]]:
+    if doi_prefix:
+        try:
+            return list(
+                crossref.search_bibliographic_candidates(
+                    query,
+                    rows=rows,
+                    doi_prefix=_normalized_doi_prefix(doi_prefix),
+                )
+            )
+        except TypeError as exc:
+            if "doi_prefix" not in str(exc):
+                raise
+    return list(crossref.search_bibliographic_candidates(query, rows=rows))
 
 
 def _openalex_candidates(
@@ -985,6 +1187,76 @@ def _probe_landing_page(
     transport: Any,
     url: str,
     purpose: str,
+    provider: str | None = None,
+    browser_fallback_enabled: bool = False,
+    browser_required: bool = False,
+    browser_probe_func: Any | None = None,
+) -> dict[str, Any]:
+    http_probe = _http_probe_landing_page(transport=transport, url=url, purpose=purpose)
+    fallback_reason = _browser_fallback_reason(
+        http_probe,
+        purpose=purpose,
+        browser_required=browser_required,
+    )
+    if not browser_fallback_enabled or fallback_reason is None:
+        return _decorate_probe_result(
+            http_probe,
+            route="http",
+            browser_attempted=False,
+            fallback_from=None,
+            http_probe=http_probe,
+            browser_probe=None,
+        )
+
+    probe_func = browser_probe_func or _browser_probe_landing_page
+    browser_probe = probe_func(url=url, purpose=purpose, provider=provider)
+    browser_failure_code = _probe_failure_code(browser_probe)
+    if browser_probe.get("status") == "ok":
+        return _decorate_probe_result(
+            browser_probe,
+            route="browser",
+            browser_attempted=True,
+            fallback_from=fallback_reason,
+            http_probe=http_probe,
+            browser_probe=browser_probe,
+        )
+
+    result = _decorate_probe_result(
+        http_probe,
+        route="http",
+        browser_attempted=True,
+        fallback_from=fallback_reason,
+        http_probe=http_probe,
+        browser_probe=browser_probe,
+    )
+    result["browser_failure_code"] = browser_failure_code
+    return result
+
+
+def _decorate_probe_result(
+    probe: Mapping[str, Any],
+    *,
+    route: str,
+    browser_attempted: bool,
+    fallback_from: str | None,
+    http_probe: Mapping[str, Any],
+    browser_probe: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    result = dict(probe)
+    result["route"] = route
+    result["browser_attempted"] = browser_attempted
+    result["fallback_from"] = fallback_from
+    result["http_probe"] = dict(http_probe)
+    if browser_probe is not None:
+        result["browser_probe"] = dict(browser_probe)
+    return result
+
+
+def _http_probe_landing_page(
+    *,
+    transport: Any,
+    url: str,
+    purpose: str,
 ) -> dict[str, Any]:
     try:
         response = transport.request(
@@ -1001,9 +1273,91 @@ def _probe_landing_page(
         return {
             "url": url,
             "status": "request_failed",
+            "route": "http",
             "observed_signals": [],
             "reason": str(exc),
         }
+    return _html_probe_from_response(response, url=url, purpose=purpose, route="http")
+
+
+def _browser_probe_landing_page(
+    *,
+    url: str,
+    purpose: str,
+    provider: str | None = None,
+) -> dict[str, Any]:
+    try:
+        from paper_fetch.providers.browser_workflow.html_extraction import (
+            fetch_html_with_fast_browser,
+        )
+
+        result = fetch_html_with_fast_browser(
+            [url],
+            publisher=provider or "unknown",
+            user_agent=build_browser_user_agent(os.environ),
+            timeout_ms=DISCOVERY_PROBE_TIMEOUT_SECONDS * 1000,
+        )
+    except HtmlExtractionFailure as exc:
+        return _browser_failure_probe(url=url, exc=exc)
+    except Exception as exc:
+        return _browser_failure_probe(url=url, exc=exc)
+
+    headers = {
+        str(key).lower(): str(value)
+        for key, value in (result.response_headers or {}).items()
+    }
+    headers.setdefault("content-type", "text/html")
+    return _html_probe_from_response(
+        {
+            "headers": headers,
+            "body": result.html,
+            "url": result.final_url or url,
+            "status_code": result.response_status or 200,
+        },
+        url=url,
+        purpose=purpose,
+        route="browser",
+    )
+
+
+def _browser_failure_probe(*, url: str, exc: Exception) -> dict[str, Any]:
+    failure_code = (
+        getattr(exc, "reason", None)
+        or getattr(exc, "kind", None)
+        or getattr(exc, "code", None)
+        or exc.__class__.__name__
+    )
+    message = getattr(exc, "message", None) or str(exc)
+    signals = _signals_from_failure_code(str(failure_code))
+    return {
+        "url": url,
+        "status": "request_failed",
+        "route": "browser",
+        "observed_signals": signals,
+        "reason": str(message),
+        "browser_failure_code": str(failure_code),
+    }
+
+
+def _signals_from_failure_code(failure_code: str) -> list[str]:
+    normalized = failure_code.strip().lower()
+    signals: list[str] = []
+    if any(token in normalized for token in ["challenge", "captcha", "cloudflare"]):
+        signals.append("challenge")
+    if any(token in normalized for token in ["access", "paywall", "forbidden", "denied"]):
+        signals.append("access_gate")
+    if "empty" in normalized:
+        signals.append("empty_shell")
+    return signals
+
+
+def _html_probe_from_response(
+    response: Mapping[str, Any],
+    *,
+    url: str,
+    purpose: str,
+    route: str,
+) -> dict[str, Any]:
     content_type = str((response.get("headers") or {}).get("content-type") or "").lower()
     body = _decode_response_body(response)
     signals: list[str] = []
@@ -1012,10 +1366,14 @@ def _probe_landing_page(
         return {
             "url": response.get("url") or url,
             "status": "ok",
+            "route": route,
+            "status_code": response.get("status_code"),
             "content_type": content_type,
             "observed_signals": sorted(set(signals)),
         }
-    soup = BeautifulSoup(body[:250_000], "html.parser")
+    body_fragment = body[:250_000]
+    body_lower = body_fragment.lower()
+    soup = BeautifulSoup(body_fragment, "html.parser")
     text = " ".join(soup.get_text(" ", strip=True).split())
     text_lower = text.lower()
     if soup.find(["article", "main"]) or len(text) >= 1200:
@@ -1024,7 +1382,10 @@ def _probe_landing_page(
         signals.append("abstract")
     if soup.find("table") or re.search(r"\btable\s+\d+\b", text_lower):
         signals.extend(["body_tables", "table"])
-    if soup.find("math") or any(token in body.lower() for token in ["mathjax", "mathml", "<mml:math"]):
+    if soup.find("math") or any(
+        token in body.lower()
+        for token in ["mathjax", "mathml", "<mml:math"]
+    ):
         signals.extend(["formula", "mathml"])
     if re.search(r"\b(equation|formula)\s+\d+\b", text_lower):
         signals.extend(["formula", "equation"])
@@ -1041,21 +1402,92 @@ def _probe_landing_page(
             signals.append("pdf_link")
         if "supplement" in href or "supplement" in label or "supporting information" in label:
             signals.append("supplementary")
-    if any(token in text_lower for token in ["access denied", "sign in", "subscribe", "purchase access"]):
+    status_code = _response_status_code(response)
+    if any(token in body_lower or token in text_lower for token in CHALLENGE_PATTERNS):
+        signals.append("challenge")
+    if status_code in {401, 402, 403}:
+        signals.extend(["access_gate", f"http_{status_code}"])
+    if status_code == 429:
+        signals.extend(["rate_limited", "http_429"])
+    if contains_access_gate_text(text_lower) or any(
+        token in text_lower
+        for token in ["access denied", "sign in", "subscribe", "purchase access"]
+    ):
         signals.append("access_gate")
     if len(text) < 500 and not (set(signals) & {"html_body", "pdf_content"}):
         signals.append("empty_shell")
     if purpose in PURPOSE_SIGNAL_MAP and PURPOSE_SIGNAL_MAP[purpose] & set(signals):
         signals.append(f"{purpose}_evidence")
+    status = "ok"
+    if route == "browser":
+        if "challenge" in signals:
+            status = "challenge"
+        elif "access_gate" in signals:
+            status = "access_gate"
+        elif "empty_shell" in signals:
+            status = "empty_shell"
     return {
         "url": response.get("url") or url,
-        "status": "ok",
-        "status_code": response.get("status_code"),
+        "status": status,
+        "route": route,
+        "status_code": status_code,
         "content_type": content_type,
         "title": soup.title.get_text(" ", strip=True) if soup.title else None,
         "body_chars": len(text),
         "observed_signals": sorted(set(signals)),
     }
+
+
+def _response_status_code(response: Mapping[str, Any]) -> int | None:
+    status_code = response.get("status_code")
+    try:
+        return int(status_code) if status_code is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _probe_failure_code(probe: Mapping[str, Any]) -> str | None:
+    explicit = probe.get("browser_failure_code")
+    if explicit:
+        return str(explicit)
+    status = str(probe.get("status") or "").strip()
+    if status and status != "ok":
+        return status
+    status_code = _response_status_code(probe)
+    if status_code in {401, 402, 403, 429}:
+        return f"http_{status_code}"
+    signals = {str(signal) for signal in probe.get("observed_signals") or []}
+    for signal in ("challenge", "access_gate", "empty_shell"):
+        if signal in signals:
+            return signal
+    return None
+
+
+def _browser_fallback_reason(
+    probe: Mapping[str, Any],
+    *,
+    purpose: str,
+    browser_required: bool,
+) -> str | None:
+    status = str(probe.get("status") or "")
+    if status == "request_failed":
+        return "http_request_failed"
+    status_code = _response_status_code(probe)
+    if status_code in {401, 402, 403, 429}:
+        return "http_access_or_rate_limit"
+    signals = {str(signal) for signal in probe.get("observed_signals") or []}
+    if "challenge" in signals:
+        return "http_challenge"
+    if "empty_shell" in signals:
+        return "http_empty_shell"
+    expected = PURPOSE_SIGNAL_MAP.get(purpose)
+    if expected and not (expected & signals):
+        return (
+            "browser_required_missing_purpose_signal"
+            if browser_required
+            else "http_missing_purpose_signal"
+        )
+    return None
 
 
 def _score_discovery_candidate(
@@ -1098,6 +1530,25 @@ def _score_discovery_candidate(
         score += 0.08
     if "crossref_metadata" in signals or "openalex_metadata" in signals:
         score += 0.06
+    probe = candidate.get("probe")
+    if isinstance(probe, Mapping):
+        score += 0.04
+        failure_code = normalize_text(_probe_failure_code(probe)).lower()
+        if purpose in DISCOVERY_FULLTEXT_SAMPLE_PURPOSES and any(
+            token in failure_code
+            for token in [
+                "access",
+                "captcha",
+                "challenge",
+                "cloudflare",
+                "denied",
+                "empty",
+                "forbidden",
+            ]
+        ):
+            score = min(score, DISCOVERY_MEDIUM_CONFIDENCE_SCORE)
+    elif purpose in DISCOVERY_FULLTEXT_SAMPLE_PURPOSES:
+        score = min(score, DISCOVERY_MEDIUM_CONFIDENCE_SCORE)
     return min(score, 1.0)
 
 
@@ -1132,6 +1583,9 @@ def _prepare_discovery_candidates(
     doi_prefix: str | None,
     query_plan: dict[str, list[str]],
     transport: Any,
+    browser_fallback_enabled: bool = False,
+    browser_required: bool = False,
+    browser_probe_func: Any | None = None,
 ) -> tuple[dict[str, list[dict[str, Any]]], list[dict[str, Any]]]:
     crossref = CrossrefLookupClient(transport, os.environ)
     candidates_by_purpose: dict[str, list[dict[str, Any]]] = {}
@@ -1140,8 +1594,18 @@ def _prepare_discovery_candidates(
         merged: dict[str, dict[str, Any]] = {}
         for query in queries:
             try:
-                for metadata in crossref.search_bibliographic_candidates(query, rows=3):
-                    candidate = _crossref_candidate(metadata, purpose=purpose, query=query)
+                for metadata in _search_crossref_discovery_candidates(
+                    crossref,
+                    query,
+                    doi_prefix=doi_prefix,
+                    rows=3,
+                ):
+                    candidate = _crossref_candidate(
+                        metadata,
+                        purpose=purpose,
+                        query=query,
+                        domain=domain,
+                    )
                     if candidate is not None:
                         _merge_candidate(merged, candidate)
             except Exception as exc:
@@ -1159,12 +1623,42 @@ def _prepare_discovery_candidates(
                 purpose=purpose,
             ):
                 _merge_candidate(merged, candidate)
-        candidates = list(merged.values())[:DISCOVERY_MAX_METADATA_CANDIDATES_PER_PURPOSE]
+        candidates = [
+            candidate
+            for candidate in merged.values()
+            if _candidate_matches_provider_seed(
+                candidate,
+                provider=provider,
+                domain=domain,
+                doi_prefix=doi_prefix,
+            )
+        ]
+        candidates.sort(
+            key=lambda candidate: (
+                -_score_discovery_candidate(
+                    candidate,
+                    purpose=purpose,
+                    provider=provider,
+                    domain=domain,
+                    doi_prefix=doi_prefix,
+                ),
+                str(candidate.get("doi") or ""),
+            )
+        )
+        candidates = candidates[:DISCOVERY_MAX_METADATA_CANDIDATES_PER_PURPOSE]
         for candidate in candidates[:DISCOVERY_MAX_PAGE_PROBES_PER_PURPOSE]:
             url = _safe_url(candidate.get("landing_page_url")) or _doi_url(candidate.get("doi"))
-            probe = _probe_landing_page(transport=transport, url=url, purpose=purpose)
+            probe = _probe_landing_page(
+                transport=transport,
+                url=url,
+                purpose=purpose,
+                provider=provider,
+                browser_fallback_enabled=browser_fallback_enabled,
+                browser_required=browser_required,
+                browser_probe_func=browser_probe_func,
+            )
             candidate["probe"] = probe
-            candidate["evidence_url"] = probe.get("url") or url
+            candidate["evidence_url"] = _safe_url(probe.get("url")) or url
             for signal in probe.get("observed_signals") or []:
                 signals = candidate.setdefault("observed_signals", [])
                 if signal not in signals:
@@ -1191,9 +1685,16 @@ def prepare_manifest_discovery(
     doi_prefix: str | None,
     output_dir: Path | str,
     no_network: bool = False,
+    browser_fallback: str = "auto",
     transport: Any | None = None,
 ) -> dict[str, Any]:
     provider_name = _provider_slug(provider)
+    fallback_mode = str(browser_fallback or "auto").strip().lower()
+    if fallback_mode not in DISCOVERY_BROWSER_FALLBACK_MODES:
+        raise ValueError(
+            "--browser-fallback must be one of: "
+            + ", ".join(DISCOVERY_BROWSER_FALLBACK_MODES)
+        )
     output_path = Path(default_evidence_pack_path(provider_name, output_dir))
     if not output_path.is_absolute():
         output_path = _repo_root() / output_path
@@ -1202,11 +1703,17 @@ def prepare_manifest_discovery(
         domain=domain,
         doi_prefix=doi_prefix,
     )
+    fallback_policy = _discovery_browser_fallback_policy(
+        provider=provider_name,
+        mode=fallback_mode,
+        no_network=no_network,
+    )
     pack: dict[str, Any] = {
         "schema_version": 1,
         "provider": provider_name,
         "generated_at": _utc_now_iso(),
         "network": {"enabled": not no_network},
+        "browser_fallback": fallback_policy,
         "provider_seed": {
             "name": provider_name,
             "domain": domain,
@@ -1236,6 +1743,8 @@ def prepare_manifest_discovery(
             doi_prefix=doi_prefix,
             query_plan=query_plan,
             transport=active_transport,
+            browser_fallback_enabled=bool(fallback_policy.get("enabled")),
+            browser_required=bool(fallback_policy.get("provider_requires_browser_runtime")),
         )
         pack["doi_candidates"] = candidates
         pack["network_errors"] = errors
@@ -1270,6 +1779,12 @@ def _compact_evidence_pack_summary(pack: Mapping[str, Any]) -> dict[str, Any]:
             "confidence": top.get("confidence"),
             "observed_signals": top.get("observed_signals"),
             "evidence_url": top.get("evidence_url"),
+            "probe_route": (top.get("probe") or {}).get("route")
+            if isinstance(top.get("probe"), Mapping)
+            else None,
+            "browser_attempted": (top.get("probe") or {}).get("browser_attempted")
+            if isinstance(top.get("probe"), Mapping)
+            else None,
         }
     summary["top_candidates"] = top_candidates
     return summary
@@ -5384,6 +5899,7 @@ def run_prepare_discovery(args: argparse.Namespace) -> int:
         doi_prefix=args.doi_prefix,
         output_dir=output_dir,
         no_network=args.no_network,
+        browser_fallback=args.browser_fallback,
     )
     payload = {
         "provider": _provider_slug(args.provider),
@@ -5391,6 +5907,7 @@ def run_prepare_discovery(args: argparse.Namespace) -> int:
         "network_enabled": bool(pack.get("network", {}).get("enabled"))
         if isinstance(pack.get("network"), dict)
         else None,
+        "browser_fallback": pack.get("browser_fallback"),
         "query_plan_purposes": sorted((pack.get("query_plan") or {}).keys()),
     }
     print(json.dumps(payload, indent=2, sort_keys=True))
@@ -7412,6 +7929,12 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-network",
         action="store_true",
         help="only write query plans and routing seed evidence",
+    )
+    prepare_discovery.add_argument(
+        "--browser-fallback",
+        choices=DISCOVERY_BROWSER_FALLBACK_MODES,
+        default="auto",
+        help="whether discovery may fall back from HTTP landing probes to browser probes",
     )
     prepare_discovery.set_defaults(func=run_prepare_discovery)
 

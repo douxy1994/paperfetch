@@ -498,6 +498,14 @@ def test_atypon_body_ready_selectors_include_annualreviews_fulltext_containers()
     assert ".articleSection" in selectors
 
 
+def test_atypon_body_ready_selectors_include_iop_article_body_containers() -> None:
+    selectors = atypon_body_ready_selectors("iop")
+
+    assert "[itemprop='articleBody']" in selectors
+    assert "[property='articleBody']" in selectors
+    assert ".article-content" in selectors
+
+
 def test_atypon_body_dom_readiness_waits_for_annualreviews_dynamic_body() -> None:
     body_text = "Annual Reviews article body text with enough substance. " * 12
     page = _ReadinessFakePage(

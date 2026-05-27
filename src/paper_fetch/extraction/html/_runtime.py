@@ -149,10 +149,10 @@ class _FallbackMarkdownParser(HTMLParser):
             return
         class_attr = attributes.get("class", "").lower()
         id_attr = attributes.get("id", "").lower()
-        if any(
-            token in f"{class_attr} {id_attr}"
-            for token in ("cookie", "nav", "footer", "header", "share", "signin")
-        ):
+        skip_attr_tokens = ("cookie", "nav", "footer", "share", "signin")
+        if lowered_tag not in self.HEADING_TAGS:
+            skip_attr_tokens = (*skip_attr_tokens, "header")
+        if any(token in f"{class_attr} {id_attr}" for token in skip_attr_tokens):
             self._skip_depth += 1
             return
         if lowered_tag in self.HEADING_TAGS:

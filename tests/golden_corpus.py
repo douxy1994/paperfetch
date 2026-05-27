@@ -26,6 +26,7 @@ from paper_fetch.providers import (
     _arxiv_html,
     _ieee_html,
     _ieee_metadata,
+    _iop_html,
     _mdpi_html,
     _oxfordacademic_html,
     _royalsocietypublishing_html,
@@ -38,6 +39,7 @@ from paper_fetch.providers import (
     science as science_provider,
     ams as ams_provider,
     annualreviews as annualreviews_provider,
+    iop as iop_provider,
     mdpi as mdpi_provider,
     plos as plos_provider,
     royalsocietypublishing as royalsocietypublishing_provider,
@@ -235,6 +237,7 @@ def _build_browser_workflow_article(fixture: GoldenCorpusFixture):
         "acs": acs_provider.AcsClient,
         "ams": ams_provider.AmsClient,
         "annualreviews": annualreviews_provider.AnnualreviewsClient,
+        "iop": iop_provider.IopClient,
         "mdpi": mdpi_provider.MdpiClient,
         "science": science_provider.ScienceClient,
         "pnas": pnas_provider.PnasClient,
@@ -921,6 +924,10 @@ def _lightweight_atypon_browser_workflow_summary(fixture: GoldenCorpusFixture) -
             _wiley_html.extract_authors,
             _wiley_html.blocking_fallback_signals,
         ),
+        "iop": (
+            _iop_html.extract_authors,
+            lambda _html_text: (),
+        ),
     }
     extract_authors, blocking_fallback_signals = browser_helpers[fixture.provider]
     candidate_urls = atypon_browser_workflow_profiles.build_html_candidates(
@@ -1194,6 +1201,29 @@ def _register_golden_corpus_adapters() -> None:
                 primary_marker="fulltext:ieee_html_ok",
             ),
             representative_doi="10.1109/TIM.2024.3509573",
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="iop",
+            build_article=_build_browser_workflow_article,
+            lightweight_summary=_lightweight_atypon_browser_workflow_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="iop_html",
+                primary_marker="fulltext:iop_html_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="iop_pdf",
+                    primary_marker="fulltext:iop_pdf_fallback_ok",
+                ),
+            },
+            representative_doi="10.1088/1748-9326/ab7d02",
+            representative_count_fields=("sections", "abstract_sections", "body_sections"),
         )
     )
     register_golden_corpus_adapter(

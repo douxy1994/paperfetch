@@ -60,6 +60,7 @@ from .formulas import (
     _looks_like_formula_image_node,
     _mathml_element_from_node,
     _normalize_display_formula_blocks,
+    _normalize_iop_inline_tex_formula_nodes,
     _normalize_inline_formula_image_nodes,
     _normalize_inline_math_nodes,
     _split_paragraph_display_formula_blocks,
@@ -638,6 +639,8 @@ def _normalize_special_blocks(container: Tag, publisher: str) -> list[dict[str, 
         hook(container)
     _normalize_abstract_blocks(container)
     _normalize_display_formula_blocks(container)
+    if normalize_text(publisher).lower() == "iop":
+        _normalize_iop_inline_tex_formula_nodes(container)
     _normalize_inline_math_nodes(container)
     _normalize_inline_formula_image_nodes(container)
     _normalize_boxed_text_blocks(container)
@@ -685,6 +688,7 @@ __all__ = [
     "_normalize_display_formula_blocks",
     "_is_display_formula_math",
     "_inline_math_replacement_target",
+    "_normalize_iop_inline_tex_formula_nodes",
     "_normalize_inline_math_nodes",
     "_normalize_inline_formula_image_nodes",
     "_caption_label",

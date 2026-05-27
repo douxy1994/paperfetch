@@ -70,7 +70,14 @@ class PublisherProfile:
     is_front_matter_teaser_figure: Callable[..., bool] | None = None
 
 
-ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES = ("science", "pnas", "wiley", "ams", "acs")
+ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES = (
+    "science",
+    "pnas",
+    "wiley",
+    "ams",
+    "acs",
+    "iop",
+)
 
 
 def _unsupported_atypon_publisher_message(route_kind: str, publisher: str) -> str:

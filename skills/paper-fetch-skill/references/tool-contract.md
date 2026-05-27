@@ -50,6 +50,9 @@
 - `wiley` 使用 CloakBrowser HTML 路径，并可在配置 `WILEY_TDM_CLIENT_TOKEN` 时启用官方 TDM API PDF 通道；公开 source 为 `wiley_browser`。
 - `science` 与 `pnas` 使用 provider-managed CloakBrowser HTML 加 CloakBrowser-seeded publisher PDF/ePDF workflow，并保持现有公开 source 名称。
 - `ams` 使用 provider-managed CloakBrowser HTML 加 CloakBrowser-seeded publisher PDF fallback；HTML 成功公开 `ams_html`，PDF fallback 成功公开 `ams_pdf`。
+- `acs` 使用 provider-managed CloakBrowser HTML 加 seeded-browser publisher PDF/ePDF fallback；成功公开 `acs`。
+- `iop` 使用 provider-managed CloakBrowser article HTML 加 seeded-browser IOP PDF fallback；HTML 成功公开 `iop_html`，PDF fallback 成功公开 `iop_pdf`，Radware/hCaptcha challenge 页面必须 fail closed。
+- `mdpi` 使用 provider-managed CloakBrowser HTML 加 seeded-browser article PDF fallback；HTML 成功公开 `mdpi_html`，PDF fallback 成功公开 `mdpi_pdf`。
 - `ieee` 使用 landing metadata / article number、Xplore dynamic HTML endpoint、direct HTTP PDF fallback 和 seeded-browser PDF fallback；HTML 成功公开 `ieee_html`，PDF fallback 成功公开 `ieee_pdf`，非 PDF wrapper/access/challenge 页面必须 fail closed 到 abstract-only / metadata-only。
-- Wiley / Science / PNAS / AMS 在 HTML 成功路径下支持 `asset_profile="body"` / `"all"` 资源下载；PDF/ePDF 回退路径仍然只返回文本。
+- Wiley / Science / PNAS / AMS / ACS / IOP / MDPI 在 HTML 成功路径下支持 `asset_profile="body"` / `"all"` 资源下载；PDF/ePDF 回退路径仍然只返回文本。
 - Elsevier PDF fallback、Springer PDF fallback 和 IEEE PDF fallback 在当前版本也保持 text-only。

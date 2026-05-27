@@ -27,6 +27,10 @@ CHALLENGE_PATTERNS = (
     "challenge-error-text",
     "attention required",
     "cloudflare",
+    "radware bot manager",
+    "perfdrive",
+    "confirm you are a human",
+    "h-captcha",
 )
 CLOUDFLARE_CHALLENGE_TITLE_TOKENS = tuple(
     token

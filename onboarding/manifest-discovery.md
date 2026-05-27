@@ -86,18 +86,22 @@ python3 scripts/onboard_from_manifests.py prepare-discovery \
   --provider <provider> \
   --domain <domain> \
   --doi-prefix <doi-prefix> \
-  --output-dir .paper-fetch-runs/<provider>-onboarding
+  --output-dir .paper-fetch-runs/<provider>-onboarding \
+  --browser-fallback auto
 ```
 
-输出固定写入 `<output-dir>/discovery/evidence-pack.json`。需要离线或单测时加 `--no-network`，此时只写 routing seed 和 query plan，不访问 Crossref、OpenAlex 或 publisher 页面。
+输出固定写入 `<output-dir>/discovery/evidence-pack.json`。需要离线或单测时加 `--no-network`，此时只写 routing seed 和 query plan，不访问 Crossref、OpenAlex、publisher 页面或 browser runtime。`--browser-fallback off` 可显式禁用 browser fallback；默认 `auto`。
 
 Evidence pack 包含：
 
 - routing seed evidence、provider/domain/DOI prefix identity terms。
 - 每个 fixture purpose 的 query plan。
-- Crossref/OpenAlex DOI metadata candidates。
-- publisher landing page 的轻量探测信号：table、formula、figure、supplementary、references、PDF、access gate、empty shell 等。
-- 每个 candidate 的 `score`、`confidence`、`observed_signals`、`evidence_url` 和 rejection hint。
+- Crossref/OpenAlex DOI metadata candidates。传入 `--doi-prefix` 时，Crossref 查询会带 `filter=prefix:<prefix>`，候选合并后还会按 DOI prefix、provider identity 和 domain seed 过滤，避免把其他 publisher 的 DOI 混入 fixture discovery。
+- publisher landing page 的轻量探测信号：table、formula、figure、supplementary、references、PDF、access gate、empty shell 等。页面探测是 HTTP-first；当 HTTP request failed、401/402/403/429、challenge、empty shell，或没有当前 purpose 需要的正文/table/formula/supplementary/reference 等信号时，且 access review 允许 `browser`/`playwright`，才会按候选执行一次 browser fallback。
+- 每个 candidate 的 `score`、`confidence`、`observed_signals`、`evidence_url` 和 rejection hint。全文类 purpose 的未探测候选、challenge/access/empty-shell probe 结果不能升为 high confidence；它们只能作为 rejected candidate evidence，而不能作为可收录 fixture。
+- 每个 probed candidate 的路线证据：`probe.route`、`probe.browser_attempted`、`probe.fallback_from`、`probe.http_probe`、可选 `probe.browser_probe` 和 `probe.browser_failure_code`。browser 成功提取的 `body_tables`、`formula`、`figures`、`supplementary`、`references` 等信号会参与评分和 purpose 覆盖判断。
+
+Browser fallback 只复用项目已有 browser workflow 抓取能力，不登录、不解 CAPTCHA、不绕过 paywall/challenge。若 browser 仍返回 challenge、access gate、空壳或 runtime failure，discovery 只记录失败证据，不把它当作成功全文样本；后续 fixture 写入仍由 `capture-fixtures --auto-via` 和 `scripts/capture_fixture.py` 负责。
 
 Worker 仍是 manifest 作者。Coordinator 只把 evidence pack 摘要放进 worker prompt，并提供 contract/proof 模板，禁止把初稿完全替换成确定性脚本生成。
 
@@ -283,6 +287,6 @@ Discovery 输出完成后必须满足：
 - `scripts/onboard_from_manifests.py start --provider <name> --domain <domain> --dry-run` 生成的 DAG 含 `discover-manifest`
 - DAG 中 `operator-access-preflight` 位于 `discover-manifest` 之前
 - `scripts/onboard_from_manifests.py start --provider <name> --domain <domain> --dry-run` 写 `briefs/discover-manifest.yml` 和 `briefs/implement-provider.yml`
-- `scripts/onboard_from_manifests.py prepare-discovery --provider <name> --domain <domain> --doi-prefix <prefix> --output-dir <dir> --no-network` 写 `discovery/evidence-pack.json`
+- `scripts/onboard_from_manifests.py prepare-discovery --provider <name> --domain <domain> --doi-prefix <prefix> --output-dir <dir> --no-network` 写 `discovery/evidence-pack.json`，且 `browser_fallback.enabled=false`
 - `run --provider ...` 在 worker prompt 中包含 evidence pack 摘要，并在 validate 前后自动尝试 `autofix-manifest`
 - `scripts/onboard_from_manifests.py start --manifest <manifest> --dry-run` 跳过 `discover-manifest`，并从 manifest YAML 读取 provider name

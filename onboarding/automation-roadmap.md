@@ -7,13 +7,14 @@
 ## 可自动化项
 
 - `scripts/onboard_from_manifests.py run` 串行执行 provider DAG，并持久化 state、DAG、worker brief、worker stdout/stderr/prompt 日志。
-- `scripts/onboard_from_manifests.py prepare-discovery` 可在 discovery worker 前生成 `<output-dir>/discovery/evidence-pack.json`，包含 query plan、Crossref/OpenAlex candidate、轻量 publisher 页面信号、score/confidence 和 rejection hint；`--no-network` 只生成 query plan，供默认单测和离线预检使用。
+- `scripts/onboard_from_manifests.py prepare-discovery` 可在 discovery worker 前生成 `<output-dir>/discovery/evidence-pack.json`，包含 query plan、Crossref/OpenAlex candidate、HTTP-first publisher 页面信号、score/confidence、probe route 证据和 rejection hint；当 HTTP probe request failed、403/429/challenge、empty shell 或缺少当前 purpose 信号时，默认 `--browser-fallback auto` 会在 access review 允许 `browser`/`playwright` 的前提下复用现有 browser workflow 做一次候选 fallback。`--no-network` 只生成 query plan 并禁用 browser，供默认单测和离线预检使用。
 - `scripts/onboard_from_manifests.py run --provider ...` 会在派发 `discover-manifest` 前自动写 evidence pack，把摘要加入 worker prompt，并在 `validate-manifest` 前自动执行一次 `autofix-manifest --write`。
 - `validate-manifest` 若以 `MANIFEST_SCHEMA_INVALID` 失败，runner 会再执行一次 targeted manifest autofix 并重跑 validate；仍失败才按既有 retry/blocked 流程处理。
 - `scripts/onboard_from_manifests.py inspect-discovery` 可只读列出候选、低置信度 purpose 和 discovery proof 缺口。
 - `scripts/onboard_from_manifests.py prepare-human-preflight --provider <name>` 可只读生成第一个人工 gate 摘要：access review、waterfall、route contract、asset contract、purpose coverage、null proof 和 operator checklist。
 - `scripts/capture_fixture.py --auto-via` 根据 manifest `probe.requires_browser_runtime` / `probe.requires_playwright` 和 access review `allowed_runtimes` 选择 `http` 或 `browser`。
 - fixture capture 对 `HTTP_FORBIDDEN`、`HTTP_RATE_LIMITED`、`CHALLENGE_DETECTED` 可在 access review 允许 browser runtime 时自动 retry 到 browser route；否则返回 structured JSON。
+- Discovery browser fallback 不写 fixture，也不绕过 CAPTCHA、paywall、login 或 challenge；browser 失败只写 `probe.browser_failure_code` 和 nested probe 证据，后续仍由 `capture-fixtures --auto-via` 统一捕获。
 - `scripts/scaffold_provider.py --from-manifest --merge-existing=safe` 复用相同内容，保留完整已有 provider 文件，并继续生成 fixture/capture/scaffold summary。
 - `scripts/bootstrap_review_artifact.py` 从 manifest non-null fixtures 和 `extra_fixtures` 生成 review 草稿，填入 `extracted.md` 路径/sha256、agent-authored `markdown-quality.json` 路径/sha256、manifest assertions 和初始问题分类；pending quality report 会进入草稿 issue。
 - `scripts/backfill_access_reviews.py --all --write` 可为已实现 provider 回填 blocked access review 草稿；`--provider <name> --domain <domain> [--doi-prefix <prefix>] --write` 可为尚未登记的新 provider 生成 seed 草稿。已实现 provider 草稿只来自 manifest、known-providers、bundle capabilities 和本地 fixture evidence；seed 草稿只来自显式 provider/domain/DOI prefix 输入，仍不批准 access。
@@ -54,7 +55,8 @@ python3 scripts/onboard_from_manifests.py prepare-discovery \
   --provider mdpi \
   --domain mdpi.com \
   --doi-prefix 10.3390 \
-  --output-dir .paper-fetch-runs/mdpi-onboarding
+  --output-dir .paper-fetch-runs/mdpi-onboarding \
+  --browser-fallback auto
 
 python3 scripts/onboard_from_manifests.py inspect-discovery \
   --manifest onboarding/manifests/mdpi.yml \
@@ -101,7 +103,7 @@ python3 scripts/onboard_from_manifests.py repair-markdown-quality \
 
 `--until <task>` 是 inclusive cutoff；完成该 task 后停止，并把下一步保留在 state 中。`--state` 默认写 `onboarding/onboarding-state.json`。
 
-真实网络 discovery 是 runner 默认行为；默认 CI/单元测试使用 fake transport 或 `prepare-discovery --no-network`，不把 live discovery 纳入常规 gate。
+真实网络 discovery 是 runner 默认行为；默认 CI/单元测试使用 fake transport 或 `prepare-discovery --no-network`，不把 live discovery/browser probe 纳入常规 gate。
 
 从零实现、已有 manifest 继续、查漏补缺、单 DOI quality repair 和 blocked state 恢复的场景化命令组合，统一见 [`runbook.md`](./runbook.md)。
 

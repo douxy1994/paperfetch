@@ -17,6 +17,7 @@ from ...quality.html_availability import (
     clean_container,
     select_best_container,
 )
+from ...publisher_identity import normalize_doi
 from ...utils import normalize_text
 from .._atypon_browser_workflow_profiles import publisher_profile as _publisher_profile
 from .normalization import (
@@ -52,6 +53,7 @@ def extract_browser_workflow_markdown(
 ) -> tuple[str, dict[str, Any]]:
     soup = BeautifulSoup(html_text, choose_parser())
     title = extract_page_title(soup)
+    title = _preferred_title_from_metadata(title, metadata)
     container = select_best_container(
         soup, publisher, policy=_container_selection_policy(publisher)
     )
@@ -159,6 +161,35 @@ def extract_browser_workflow_markdown(
             metadata=metadata,
         )
     return markdown, extraction_payload
+
+
+def _preferred_title_from_metadata(
+    title: str | None,
+    metadata: ProviderMetadata | Mapping[str, Any] | None,
+) -> str | None:
+    metadata_map = dict(metadata or {})
+    metadata_title = normalize_text(str(metadata_map.get("title") or ""))
+    if not metadata_title or _title_is_doi(metadata_title, metadata_map):
+        return title
+    normalized_title = normalize_text(title)
+    if not normalized_title or _title_is_doi(normalized_title, metadata_map):
+        return metadata_title
+    lowered_title = normalized_title.casefold()
+    lowered_metadata_title = metadata_title.casefold()
+    if lowered_title != lowered_metadata_title and (
+        lowered_title.startswith(lowered_metadata_title)
+        or lowered_title.endswith(lowered_metadata_title)
+    ):
+        return metadata_title
+    return title
+
+
+def _title_is_doi(title: str | None, metadata: Mapping[str, Any]) -> bool:
+    normalized_title = normalize_text(title)
+    if not normalized_title:
+        return False
+    doi = normalize_doi(str(metadata.get("doi") or ""))
+    return bool(doi and normalize_doi(normalized_title) == doi)
 
 
 def extract_atypon_browser_workflow_markdown(

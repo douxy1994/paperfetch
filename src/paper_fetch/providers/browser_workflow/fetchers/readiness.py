@@ -36,6 +36,14 @@ ATYPON_BODY_READY_SELECTORS: Mapping[str, tuple[str, ...]] = {
         ".component-content-html",
         ".article__fulltext",
     ),
+    "iop": (
+        "[itemprop='articleBody']",
+        "[property='articleBody']",
+        ".article-content",
+        ".article-body",
+        ".article-full-text",
+        ".article-text",
+    ),
 }
 
 _BODY_READY_POLL_INTERVAL_MS = 750

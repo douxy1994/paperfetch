@@ -3115,6 +3115,73 @@
         "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1021_acsomega.2c02828/markdown-quality-prompt.md",
         "markdown-quality.json": "tests/fixtures/golden_criteria/10.1021_acsomega.2c02828/markdown-quality.json"
       }
+    },
+    "10.1088_1748-9326_ab7d02": {
+      "doi": "10.1088/1748-9326/ab7d02",
+      "publisher": "iop",
+      "title": "Quantifying the role of internal variability in the temperature we expect to observe in the coming decades",
+      "source_url": "https://iopscience.iop.org/article/10.1088/1748-9326/ab7d02",
+      "fetched_at": "2026-05-27T05:05:00Z",
+      "purpose": "structure",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html;charset=UTF-8",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.1088_1748-9326_ab7d02/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.1088_1748-9326_ab7d02/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1088_1748-9326_ab7d02/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1088_1748-9326_ab7d02/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1088_1748-9326_ab7d02/markdown-quality.json"
+      }
+    },
+    "10.1088_2058-9565_ac3460": {
+      "doi": "10.1088/2058-9565/ac3460",
+      "publisher": "iop",
+      "source_url": "https://iopscience.iop.org/article/10.1088/2058-9565/ac3460",
+      "title": "Quantum pattern recognition in photonic circuits",
+      "fetched_at": "2026-05-27T07:17:37Z",
+      "purpose": "table",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/html;charset=UTF-8",
+      "route_kind": "html",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.html": "tests/fixtures/golden_criteria/10.1088_2058-9565_ac3460/original.html",
+        "expected.json": "tests/fixtures/golden_criteria/10.1088_2058-9565_ac3460/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1088_2058-9565_ac3460/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1088_2058-9565_ac3460/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1088_2058-9565_ac3460/markdown-quality.json"
+      }
+    },
+    "10.1088_1748-9326_aa9f73": {
+      "doi": "10.1088/1748-9326/aa9f73",
+      "publisher": "iop",
+      "source_url": "https://doi.org/10.1088/1748-9326/aa9f73",
+      "fetched_at": "2026-05-27T07:19:06Z",
+      "purpose": "pdf_fallback",
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "application/pdf",
+      "route_kind": "pdf_fallback",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "original.pdf": "tests/fixtures/golden_criteria/10.1088_1748-9326_aa9f73/original.pdf",
+        "expected.json": "tests/fixtures/golden_criteria/10.1088_1748-9326_aa9f73/expected.json",
+        "extracted.md": "tests/fixtures/golden_criteria/10.1088_1748-9326_aa9f73/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.1088_1748-9326_aa9f73/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.1088_1748-9326_aa9f73/markdown-quality.json"
+      },
+      "diagnostics": {
+        "browser_final_url": "https://iopscience.iop.org/article/10.1088/1748-9326/aa9f73/pdf",
+        "browser_final_url_redacted": false,
+        "capture_source_url": "https://doi.org/10.1088/1748-9326/aa9f73"
+      }
     }
   },
   "tests": [

@@ -8,10 +8,14 @@
 
 ### 新增
 
+- 新增 IOP Publishing (`iop`) provider：支持 `10.1088/` 与 `iopscience.iop.org` 路由、CloakBrowser article HTML、seeded-browser PDF fallback、`iop_html` / `iop_pdf` source，以及 Radware/hCaptcha challenge 拒绝。
+- 新增真实 IOP fixture 覆盖 table、formula 与 PDF fallback purpose，样本为 `10.1088/2058-9565/ac3460` 和 `10.1088/1748-9326/aa9f73`。
 - 新增 Annual Reviews (`annualreviews`) provider：支持 `10.1146/` DOI 路由、CloakBrowser 渲染 HTML 全文、seeded-browser PDF fallback、provider-managed abstract-only 降级、fixture replay、golden corpus 覆盖和 HTML 正文图片资产抽取。
 
 ### 修复
 
+- 重新审批 IOP replay fixture 覆盖范围：真实 `10.1088/1748-9326/ab7d02` 捕获现在通过正文内的 `stacks.iop.org` media 链接覆盖 supplementary purpose。
+- 收紧 provider fixture discovery：Crossref 候选搜索现在可按 DOI prefix 过滤，probe 前会剔除 off-provider DOI，challenge/access/empty-shell probe 结果不会再被评为 high-confidence 全文 fixture。
 - ACS onboarding 合约现在要求正文 figure 资产内联和下载；browser workflow 清理会保留 figure 内图片链接，下载后可把正文 Markdown 远程 figure URL 改写为本地 asset path。
 - Annual Reviews fast browser fixture 捕获会等待动态全文 DOM 容器填充；机构访问提示 `access provided by` 不再作为 paywall 阻断词，但仍保留为 Markdown 降噪词。
 - browser PDF fixture 下载返回非 PDF payload 时改为 `NON_PDF_FALLBACK_CONTENT`，不再误报为网络暂态，并要求替换失败 PDF 样本后才能续跑 onboarding。

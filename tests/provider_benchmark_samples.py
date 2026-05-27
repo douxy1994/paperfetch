@@ -211,6 +211,24 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         accepted_live_source_trail_groups=(("fulltext:acs_html_ok",),),
         required_env=("CROSSREF_MAILTO",),
     ),
+    "iop": ProviderBenchmarkSample(
+        provider="iop",
+        doi="10.1088/1748-9326/ab7d02",
+        year=2020,
+        title="Quantifying the role of internal variability in the temperature we expect to observe in the coming decades",
+        landing_url="https://iopscience.iop.org/article/10.1088/1748-9326/ab7d02",
+        expected_source="iop_html",
+        accepted_live_source_trail_groups=(
+            ("fulltext:iop_html_ok",),
+            ("fulltext:iop_pdf_fallback_ok",),
+        ),
+        required_env=("CROSSREF_MAILTO",),
+        fixture_name=golden_criteria_fixture(
+            "10.1088/1748-9326/ab7d02",
+            "original.html",
+        ),
+        fixture_kind="html",
+    ),
 }
 
 

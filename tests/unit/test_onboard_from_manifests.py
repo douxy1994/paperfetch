@@ -345,6 +345,374 @@ def test_prepare_discovery_cli_no_network_writes_evidence_pack(tmp_path: Path) -
     assert len(pack["query_plan"]["table"]) == 3
 
 
+class _StaticLandingTransport:
+    def __init__(
+        self,
+        body: str,
+        *,
+        status_code: int = 200,
+        content_type: str = "text/html",
+    ) -> None:
+        self.body = body
+        self.status_code = status_code
+        self.content_type = content_type
+        self.calls: list[str] = []
+
+    def request(self, method: str, url: str, **_kwargs: object) -> dict[str, object]:
+        assert method == "GET"
+        self.calls.append(url)
+        return {
+            "headers": {"content-type": self.content_type},
+            "body": self.body,
+            "url": url,
+            "status_code": self.status_code,
+        }
+
+
+def test_discovery_http_403_uses_browser_fallback_when_access_allows() -> None:
+    module = load_script_module("onboard_from_manifests")
+    calls: list[dict[str, object]] = []
+
+    def browser_probe(**kwargs: object) -> dict[str, object]:
+        calls.append(dict(kwargs))
+        return {
+            "url": kwargs["url"],
+            "status": "ok",
+            "route": "browser",
+            "status_code": 200,
+            "observed_signals": [
+                "article_html",
+                "html_body",
+                "body_tables",
+                "table",
+                "table_evidence",
+            ],
+        }
+
+    probe = module._probe_landing_page(
+        transport=_StaticLandingTransport(
+            "<html><body>Access denied</body></html>",
+            status_code=403,
+        ),
+        url="https://publisher.test/article",
+        purpose="table",
+        provider="iop",
+        browser_fallback_enabled=True,
+        browser_required=False,
+        browser_probe_func=browser_probe,
+    )
+
+    assert calls and calls[0]["provider"] == "iop"
+    assert probe["route"] == "browser"
+    assert probe["browser_attempted"] is True
+    assert probe["fallback_from"] == "http_access_or_rate_limit"
+    assert probe["http_probe"]["status_code"] == 403
+    assert {"body_tables", "table_evidence"} <= set(probe["observed_signals"])
+
+
+def test_discovery_browser_required_provider_falls_back_for_missing_purpose_signal() -> None:
+    module = load_script_module("onboard_from_manifests")
+    calls: list[str] = []
+
+    def browser_probe(**kwargs: object) -> dict[str, object]:
+        calls.append(str(kwargs["url"]))
+        return {
+            "url": kwargs["url"],
+            "status": "ok",
+            "route": "browser",
+            "status_code": 200,
+            "observed_signals": [
+                "article_html",
+                "html_body",
+                "formula",
+                "mathml",
+                "formula_evidence",
+            ],
+        }
+
+    probe = module._probe_landing_page(
+        transport=_StaticLandingTransport(
+            "<html><main><p>" + ("article body " * 140) + "</p></main></html>",
+        ),
+        url="https://iopscience.iop.org/article/10.1088/example",
+        purpose="formula",
+        provider="iop",
+        browser_fallback_enabled=True,
+        browser_required=True,
+        browser_probe_func=browser_probe,
+    )
+
+    assert calls == ["https://iopscience.iop.org/article/10.1088/example"]
+    assert probe["route"] == "browser"
+    assert probe["fallback_from"] == "browser_required_missing_purpose_signal"
+    assert {"formula", "formula_evidence"} <= set(probe["observed_signals"])
+
+
+def test_discovery_access_review_disallowing_browser_keeps_http_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    monkeypatch.setattr(
+        module,
+        "_load_optional_access_review",
+        lambda _provider: {"allowed_runtimes": ["http"]},
+    )
+    monkeypatch.setattr(module, "_provider_requires_browser_runtime", lambda _provider: True)
+    policy = module._discovery_browser_fallback_policy(
+        provider="newpub",
+        mode="auto",
+        no_network=False,
+    )
+
+    def browser_probe(**_kwargs: object) -> dict[str, object]:
+        raise AssertionError("browser probe must not be called")
+
+    probe = module._probe_landing_page(
+        transport=_StaticLandingTransport(
+            "<html><body>Access denied</body></html>",
+            status_code=403,
+        ),
+        url="https://newpub.example/article",
+        purpose="table",
+        provider="newpub",
+        browser_fallback_enabled=bool(policy["enabled"]),
+        browser_required=bool(policy["provider_requires_browser_runtime"]),
+        browser_probe_func=browser_probe,
+    )
+
+    assert policy["enabled"] is False
+    assert policy["disabled_reason"] == "access_review_disallows_browser"
+    assert probe["route"] == "http"
+    assert probe["browser_attempted"] is False
+    assert {"http_403", "access_gate"} <= set(probe["observed_signals"])
+
+
+def test_discovery_browser_challenge_records_failure_without_success() -> None:
+    module = load_script_module("onboard_from_manifests")
+
+    def browser_probe(**kwargs: object) -> dict[str, object]:
+        return {
+            "url": kwargs["url"],
+            "status": "challenge",
+            "route": "browser",
+            "observed_signals": ["challenge"],
+            "browser_failure_code": "publisher_access_challenge",
+        }
+
+    probe = module._probe_landing_page(
+        transport=_StaticLandingTransport("<html><title>Shell</title></html>"),
+        url="https://publisher.test/article",
+        purpose="table",
+        provider="iop",
+        browser_fallback_enabled=True,
+        browser_required=True,
+        browser_probe_func=browser_probe,
+    )
+
+    assert probe["route"] == "http"
+    assert probe["browser_attempted"] is True
+    assert probe["browser_failure_code"] == "publisher_access_challenge"
+    assert probe["browser_probe"]["observed_signals"] == ["challenge"]
+    assert "challenge" not in probe["observed_signals"]
+
+
+def test_discovery_browser_signals_affect_candidate_sorting(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+
+    class FakeCrossrefLookupClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def search_bibliographic_candidates(
+            self,
+            _query: str,
+            *,
+            rows: int,
+        ) -> list[dict[str, object]]:
+            assert rows == 3
+            return [
+                {
+                    "doi": "10.4242/first",
+                    "title": "Newpub article without tables",
+                    "journal_title": "Newpub Journal",
+                    "publisher": "Newpub",
+                    "landing_page_url": "https://newpub.example/first",
+                },
+                {
+                    "doi": "10.4242/second",
+                    "title": "Newpub article with body tables",
+                    "journal_title": "Newpub Journal",
+                    "publisher": "Newpub",
+                    "landing_page_url": "https://newpub.example/second",
+                },
+            ]
+
+    def browser_probe(**kwargs: object) -> dict[str, object]:
+        signals = ["article_html", "html_body"]
+        if str(kwargs["url"]).endswith("/second"):
+            signals.extend(["body_tables", "table", "table_evidence"])
+        return {
+            "url": kwargs["url"],
+            "status": "ok",
+            "route": "browser",
+            "status_code": 200,
+            "observed_signals": signals,
+        }
+
+    monkeypatch.setattr(module, "CrossrefLookupClient", FakeCrossrefLookupClient)
+    monkeypatch.setattr(module, "_openalex_candidates", lambda **_kwargs: [])
+
+    candidates, errors = module._prepare_discovery_candidates(
+        provider="newpub",
+        domain="newpub.example",
+        doi_prefix="10.4242/",
+        query_plan={"table": ["newpub 10.4242 table DOI candidates"]},
+        transport=_StaticLandingTransport(
+            "<html><main><p>" + ("article body " * 140) + "</p></main></html>",
+        ),
+        browser_fallback_enabled=True,
+        browser_required=True,
+        browser_probe_func=browser_probe,
+    )
+
+    assert errors == []
+    assert candidates["table"][0]["doi"] == "10.4242/second"
+    assert candidates["table"][0]["probe"]["route"] == "browser"
+    assert {"body_tables", "table_evidence"} <= set(
+        candidates["table"][0]["observed_signals"]
+    )
+
+
+def test_discovery_filters_candidates_by_doi_prefix_and_provider_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+    seen_prefixes: list[str | None] = []
+
+    class FakeCrossrefLookupClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def search_bibliographic_candidates(
+            self,
+            _query: str,
+            *,
+            rows: int,
+            doi_prefix: str | None = None,
+        ) -> list[dict[str, object]]:
+            assert rows == 3
+            seen_prefixes.append(doi_prefix)
+            return [
+                {
+                    "doi": "10.9999/off-prefix",
+                    "title": "Newpub table article",
+                    "journal_title": "Newpub Journal",
+                    "publisher": "Newpub",
+                    "landing_page_url": "https://newpub.example/off-prefix",
+                },
+                {
+                    "doi": "10.4242/off-domain",
+                    "title": "Table article from another publisher",
+                    "journal_title": "Other Journal",
+                    "publisher": "Other Publisher",
+                    "landing_page_url": "https://other.example/off-domain",
+                },
+                {
+                    "doi": "10.4242/ok",
+                    "title": "Newpub table article",
+                    "journal_title": "Newpub Journal",
+                    "publisher": "Newpub",
+                    "landing_page_url": "https://newpub.example/ok",
+                },
+            ]
+
+    monkeypatch.setattr(module, "CrossrefLookupClient", FakeCrossrefLookupClient)
+    monkeypatch.setattr(
+        module,
+        "_openalex_candidates",
+        lambda **_kwargs: [
+            {
+                "doi": "10.4242/openalex-off-domain",
+                "purpose": "table",
+                "title": "Another publisher candidate",
+                "journal_title": "Other Journal",
+                "publisher": "Other Publisher",
+                "landing_page_url": "https://other.example/openalex",
+                "evidence_url": "https://other.example/openalex",
+                "source_queries": ["query"],
+                "metadata_sources": [{"source": "openalex"}],
+                "observed_signals": ["openalex_metadata"],
+            }
+        ],
+    )
+
+    candidates, errors = module._prepare_discovery_candidates(
+        provider="newpub",
+        domain="newpub.example",
+        doi_prefix="10.4242/",
+        query_plan={"table": ["newpub 10.4242 table DOI candidates"]},
+        transport=_StaticLandingTransport(
+            "<html><main><p>" + ("article body " * 140) + "</p></main></html>",
+        ),
+    )
+
+    assert errors == []
+    assert seen_prefixes == ["10.4242"]
+    assert [candidate["doi"] for candidate in candidates["table"]] == ["10.4242/ok"]
+
+
+def test_discovery_unprobed_fulltext_candidates_do_not_rank_as_high(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    module = load_script_module("onboard_from_manifests")
+
+    class FakeCrossrefLookupClient:
+        def __init__(self, *_args: object, **_kwargs: object) -> None:
+            pass
+
+        def search_bibliographic_candidates(
+            self,
+            _query: str,
+            *,
+            rows: int,
+            doi_prefix: str | None = None,
+        ) -> list[dict[str, object]]:
+            assert rows == 3
+            assert doi_prefix == "10.4242"
+            return [
+                {
+                    "doi": f"10.4242/{index}",
+                    "title": f"Newpub table article {index}",
+                    "journal_title": "Newpub Journal",
+                    "publisher": "Newpub",
+                    "landing_page_url": f"https://newpub.example/{index}",
+                }
+                for index in range(6)
+            ]
+
+    monkeypatch.setattr(module, "CrossrefLookupClient", FakeCrossrefLookupClient)
+    monkeypatch.setattr(module, "_openalex_candidates", lambda **_kwargs: [])
+
+    candidates, errors = module._prepare_discovery_candidates(
+        provider="newpub",
+        domain="newpub.example",
+        doi_prefix="10.4242/",
+        query_plan={"table": ["newpub 10.4242 table DOI candidates"]},
+        transport=_StaticLandingTransport(
+            "<html><body>Radware Bot Manager hcaptcha</body></html>",
+            status_code=302,
+        ),
+    )
+
+    assert errors == []
+    assert all("probe" in candidate for candidate in candidates["table"][:3])
+    assert all("probe" not in candidate for candidate in candidates["table"][3:])
+    assert {candidate["confidence"] for candidate in candidates["table"][:3]} == {"medium"}
+    assert {candidate["confidence"] for candidate in candidates["table"][3:]} == {"medium"}
+
+
 def test_start_manifest_replay_skips_discover_brief(tmp_path: Path) -> None:
     manifest_path = tmp_path / "custom.yml"
     manifest_path.write_text("name: custom_provider\n", encoding="utf-8")

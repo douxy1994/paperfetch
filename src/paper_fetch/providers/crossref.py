@@ -76,10 +76,12 @@ class CrossrefClient(ProviderClient):
         article_title: str,
         *,
         journal_title: str | None = None,
+        doi_prefix: str | None = None,
         rows: int = 5,
     ) -> list[CrossrefMetadata]:
         return self.lookup.search_bibliographic_candidates(
             article_title,
             journal_title=journal_title,
+            doi_prefix=doi_prefix,
             rows=rows,
         )

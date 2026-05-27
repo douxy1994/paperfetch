@@ -21,7 +21,9 @@ FORMULA_IMAGE_URL_PATTERN = re.compile(
 )
 GENERIC_FORMULA_CONTAINER_TOKENS = (
     "inline-equation",
+    "inline-eqn",
     "display-equation",
+    "display-eqn",
     "disp-formula",
     "display-formula",
 )
@@ -34,12 +36,18 @@ FORMULA_IMAGE_ATTRS = (
 )
 FORMULA_IMAGE_SRCSET_ATTRS = ("srcset", "data-srcset")
 GENERIC_DISPLAY_FORMULA_SELECTORS = (
-    *(f".{token}" for token in GENERIC_FORMULA_CONTAINER_TOKENS),
+    *(
+        f".{token}"
+        for token in GENERIC_FORMULA_CONTAINER_TOKENS
+        if token != "inline-eqn"
+    ),
     "math[display='block']",
     "div[role='math']",
 )
 GENERIC_DISPLAY_FORMULA_IDENTITY_TOKENS = tuple(
-    token for token in GENERIC_FORMULA_CONTAINER_TOKENS if token != "inline-equation"
+    token
+    for token in GENERIC_FORMULA_CONTAINER_TOKENS
+    if token != "inline-eqn"
 )
 MATHML_SCRIPT_TYPES = frozenset(
     {
@@ -48,6 +56,15 @@ MATHML_SCRIPT_TYPES = frozenset(
         "text/mml",
     }
 )
+TEX_SCRIPT_TYPES = frozenset(
+    {
+        "math/tex",
+        "math/tex; mode=display",
+        "text/tex",
+        "application/x-tex",
+    }
+)
+FORMULA_SCRIPT_TYPES = MATHML_SCRIPT_TYPES | TEX_SCRIPT_TYPES
 SILVERCHAIR_FIGURE_CLASS_TOKENS = frozenset(
     {
         "fig",
@@ -102,6 +119,27 @@ def first_url_from_srcset(value: str | None) -> str:
             best_url = url
             best_score = score
     return best_url
+
+
+def normalize_formula_script_type(value: str | None) -> str:
+    normalized = normalize_text(str(value or "")).lower()
+    return re.sub(r"\s*;\s*", "; ", normalized)
+
+
+def is_formula_script_node(node: Any) -> bool:
+    return (
+        isinstance(node, Tag)
+        and normalize_text(node.name or "").lower() == "script"
+        and normalize_formula_script_type(node.get("type")) in FORMULA_SCRIPT_TYPES
+    )
+
+
+def is_tex_formula_script_node(node: Any) -> bool:
+    return (
+        isinstance(node, Tag)
+        and normalize_text(node.name or "").lower() == "script"
+        and normalize_formula_script_type(node.get("type")) in TEX_SCRIPT_TYPES
+    )
 
 
 def formula_node_identity_text(node: Any) -> str:
@@ -298,7 +336,7 @@ def mathml_element_from_html_node(node: Any) -> ET.Element | None:
     for script in node.find_all("script"):
         if not isinstance(script, Tag):
             continue
-        script_type = normalize_text(str(script.get("type") or "")).lower()
+        script_type = normalize_formula_script_type(script.get("type"))
         if script_type not in MATHML_SCRIPT_TYPES:
             continue
         raw_mathml = script.string if script.string is not None else script.decode_contents()

@@ -13,6 +13,7 @@ from paper_fetch.extraction.html.provider_rules import (
     provider_html_rules,
 )
 import paper_fetch.providers._ams_html as ams_html
+import paper_fetch.providers._iop_html as iop_html
 import paper_fetch.providers._pnas_html as pnas_html
 import paper_fetch.providers._science_html as science_html
 import paper_fetch.providers._wiley_html as wiley_html
@@ -53,6 +54,7 @@ def test_provider_rules_register_provider_owned_hook_functions() -> None:
     science_rules = provider_html_rules("science")
     wiley_rules = provider_html_rules("wiley")
     ams_rules = provider_html_rules("ams")
+    iop_rules = provider_html_rules("iop")
 
     assert (
         pnas_rules.dom_hooks.before_block_normalization.__name__
@@ -77,6 +79,18 @@ def test_provider_rules_register_provider_owned_hook_functions() -> None:
     assert (
         ams_rules.markdown_hooks.classify_heading.__name__
         == ams_html.ams_classify_heading.__name__
+    )
+    assert (
+        iop_rules.dom_hooks.body_container.__name__
+        == iop_html.iop_body_container.__name__
+    )
+    assert (
+        iop_rules.dom_hooks.asset_body_container.__name__
+        == iop_html.iop_asset_body_container.__name__
+    )
+    assert (
+        iop_rules.dom_hooks.asset_figure_extraction.__name__
+        == iop_html.iop_asset_figure_extraction.__name__
     )
 
 

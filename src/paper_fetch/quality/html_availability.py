@@ -11,7 +11,7 @@ from ..extraction.html.container_selectors import ARTICLE_BODY_SELECTORS
 from ..extraction.html.cleanup_policy import classify_availability_node
 from ..extraction.html._runtime import body_metrics, has_sufficient_article_body
 from ..extraction.html.front_matter import ARTICLE_TYPE_FRONT_MATTER_PREFIXES
-from ..extraction.html.formula_rules import MATHML_SCRIPT_TYPES
+from ..extraction.html.formula_rules import is_formula_script_node
 from ..extraction.html.provider_rules import (
     availability_rules_for_provider,
     front_matter_footer_prefixes,
@@ -63,6 +63,7 @@ from .reason_codes import (
     ACCESS_PAGE_URL,
     BODY_SUFFICIENT,
     CITATION_ABSTRACT_HTML_URL,
+    CLOUDFLARE_CHALLENGE,
     DATA_ARTICLE_ACCESS_ABSTRACT,
     DATA_ARTICLE_ACCESS_NO,
     FINAL_URL_MATCHES_CITATION_ABSTRACT_HTML_URL,
@@ -170,9 +171,7 @@ def _is_substantial_prose(text: str) -> bool:
 
 
 def _is_mathml_script(node: Tag) -> bool:
-    return normalize_text(getattr(node, "name", "")).lower() == "script" and normalize_text(
-        str((getattr(node, "attrs", None) or {}).get("type") or "")
-    ).lower() in MATHML_SCRIPT_TYPES
+    return is_formula_script_node(node)
 
 
 def _normalized_page_text(html_text: str) -> str:
@@ -908,6 +907,31 @@ def _dedupe_signals(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
 
 
+_IOP_RESIDUAL_CHALLENGE_SIGNALS = frozenset(
+    {
+        CLOUDFLARE_CHALLENGE,
+        "iop_radware_challenge",
+        "iop_captcha_challenge",
+    }
+)
+
+
+def _residual_challenge_signals_ignored_by_loaded_body(
+    provider: str | None,
+    structure: StructuredBodyAnalysis,
+    *,
+    body_ok: bool,
+) -> frozenset[str]:
+    normalized_provider = normalize_text(provider).lower()
+    if normalized_provider != "iop" or not body_ok:
+        return frozenset()
+    if not structure.explicit_body_container or not structure.post_abstract_body_run:
+        return frozenset()
+    if structure.body_run_char_count < NARRATIVE_BODY_RUN_MIN_CHARS and structure.body_paragraph_count < 1:
+        return frozenset()
+    return _IOP_RESIDUAL_CHALLENGE_SIGNALS
+
+
 def _diagnostics_content_kind(
     *,
     body_ok: bool,
@@ -1097,6 +1121,23 @@ def assess_html_fulltext_availability(
     if not body_ok and not metrics["char_count"] and abstract_only_hints:
         metrics["abstract_only_hints"] = _dedupe_signals(abstract_only_hints)
     has_abstract = bool(metrics.get("has_abstract"))
+    ignored_residual_challenge_signals = _residual_challenge_signals_ignored_by_loaded_body(
+        provider,
+        structure,
+        body_ok=body_ok,
+    )
+    if ignored_residual_challenge_signals:
+        hard_negative_signals = [
+            signal
+            for signal in hard_negative_signals
+            if signal not in ignored_residual_challenge_signals
+        ]
+        blocking_fallback_signals = [
+            signal
+            for signal in blocking_fallback_signals
+            if signal not in ignored_residual_challenge_signals
+        ]
+        soft_positive_signals.append("residual_challenge_outside_body_ignored")
     blocking_fallback_signals = _dedupe_signals(blocking_fallback_signals)
     content_kind = _diagnostics_content_kind(
         body_ok=body_ok,

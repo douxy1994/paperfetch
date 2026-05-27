@@ -10,9 +10,11 @@ from ...extraction.html.formula_rules import (
     display_formula_nodes,
     formula_image_url_from_node,
     is_display_formula_node,
+    is_tex_formula_script_node,
     looks_like_formula_image,
     mathml_element_from_html_node,
 )
+from ...extraction.markdown_render.formulas import html_formula_latex_from_node
 from ...extraction.html.shared import (
     append_text_block as _append_text_block,
     short_text as _short_text,
@@ -47,6 +49,9 @@ def _latex_from_math_node(node: Tag, *, display_mode: bool) -> str:
         expression = normalize_text(render_external_mathml_expression(element, display_mode=display_mode))
         if expression:
             return expression
+    expression = normalize_text(html_formula_latex_from_node(node))
+    if expression:
+        return expression
     return _short_text(node)
 
 
@@ -81,7 +86,7 @@ def _equation_label(node: Tag) -> str:
             candidates.append(_short_text(candidate))
     node_id = normalize_text(str(attrs.get("id") or ""))
     if node_id:
-        id_match = re.search(r"(?:^|[-_])(?:disp|eq|equation)[-_]?0*([0-9]+[A-Za-z]?)$", node_id, flags=re.IGNORECASE)
+        id_match = re.search(r"(?:disp|eqn?|equation)[-_]?0*([0-9]+[A-Za-z]?)$", node_id, flags=re.IGNORECASE)
         if id_match:
             return f"Equation {id_match.group(1)}."
         candidates.append(node_id)
@@ -210,10 +215,77 @@ def _normalize_inline_math_nodes(container: Tag) -> None:
         _inline_math_replacement_target(math_node).replace_with(f"${latex}$")
 
 
+def _has_class_token(node: Tag, token: str) -> bool:
+    raw_classes = (getattr(node, "attrs", None) or {}).get("class") or []
+    if isinstance(raw_classes, str):
+        class_values = raw_classes.split()
+    else:
+        class_values = [str(value) for value in raw_classes]
+    return token in {normalize_text(value).lower() for value in class_values}
+
+
+def _is_delimited_inline_latex(value: str) -> bool:
+    return (
+        (value.startswith("$") and value.endswith("$") and len(value) > 2)
+        or (value.startswith(r"\(") and value.endswith(r"\)") and len(value) > 4)
+    )
+
+
+def _inline_latex_markdown(value: str) -> str:
+    latex = normalize_text(value)
+    if not latex:
+        return ""
+    return latex if _is_delimited_inline_latex(latex) else f"${latex}$"
+
+
+def _latex_from_tex_script_container(node: Tag) -> str:
+    for script in node.find_all("script"):
+        if not isinstance(script, Tag) or not is_tex_formula_script_node(script):
+            continue
+        latex = normalize_text(html_formula_latex_from_node(script))
+        if latex:
+            return latex
+    return ""
+
+
+def _normalize_iop_inline_tex_formula_nodes(container: Tag) -> None:
+    nodes = _dedupe_top_level_nodes(
+        [
+            node
+            for node in container.select(".inline-eqn")
+            if isinstance(node, Tag)
+        ]
+    )
+    for node in nodes:
+        if not isinstance(node, Tag) or node.parent is None:
+            continue
+        if _is_display_formula_math(node) or _has_class_token(node, "display-eqn"):
+            continue
+        markdown = _inline_latex_markdown(_latex_from_tex_script_container(node))
+        if markdown:
+            node.replace_with(markdown)
+
+
 def _normalize_inline_formula_image_nodes(container: Tag) -> None:
     for image in list(container.find_all("img")):
         if not isinstance(image, Tag) or image.parent is None:
             continue
         if not _looks_like_formula_image_node(image):
             continue
+        latex = _latex_from_nearest_formula_container(image)
+        if latex:
+            image.replace_with(latex)
+            continue
         image.replace_with(_formula_image_markdown(image))
+
+
+def _latex_from_nearest_formula_container(node: Tag) -> str:
+    current: Tag | None = node
+    depth = 0
+    while isinstance(current, Tag) and depth < 6:
+        latex = normalize_text(html_formula_latex_from_node(current))
+        if latex:
+            return latex
+        current = current.parent if isinstance(current.parent, Tag) else None
+        depth += 1
+    return ""

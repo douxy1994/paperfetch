@@ -6,6 +6,7 @@ from typing import Any
 
 from ...extraction.html.formula_rules import (
     formula_image_url_from_node,
+    is_tex_formula_script_node,
     is_display_formula_node,
     is_formula_container,
     looks_like_formula_image,
@@ -71,8 +72,15 @@ def html_formula_latex_from_node(node: Any) -> str:
     if not isinstance(node, Tag):
         return ""
     candidates: list[Any] = []
+    if is_tex_formula_script_node(node):
+        candidates.append(node)
     if is_mathjax_tex_node(node):
         candidates.append(node)
+    candidates.extend(
+        candidate
+        for candidate in node.find_all("script")
+        if is_tex_formula_script_node(candidate)
+    )
     candidates.extend(candidate for candidate in node.find_all("tex-math") if isinstance(candidate, Tag))
     try:
         candidates.extend(candidate for candidate in node.select(".mathjax-tex, .tex, .tex2jax_ignore") if isinstance(candidate, Tag))

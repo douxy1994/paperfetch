@@ -7,7 +7,7 @@ from types import MappingProxyType
 from typing import Any, Callable, Literal
 AssetDefault = Literal["none", "body", "all"]
 MetadataProbeShortCircuit = Callable[[str], dict | None]
-_BROWSER_RUNTIME_PROVIDER_NAMES = frozenset({"wiley", "science", "pnas", "ams", "acs"})
+_BROWSER_RUNTIME_PROVIDER_NAMES = frozenset({"wiley", "science", "pnas", "ams", "acs", "iop"})
 @dataclass(frozen=True)
 class BodyTextThresholds:
     min_chars: int = 800

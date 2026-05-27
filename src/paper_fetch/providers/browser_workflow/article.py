@@ -71,6 +71,31 @@ def _normalized_authors(values: Any) -> list[str]:
     ]
 
 
+def _title_is_doi(title: str | None, doi: str | None) -> bool:
+    normalized_title = normalize_text(title)
+    normalized_doi = normalize_doi(doi)
+    return bool(
+        normalized_title
+        and normalized_doi
+        and normalize_doi(normalized_title) == normalized_doi
+    )
+
+
+def _merge_extracted_title(
+    article_metadata: dict[str, Any],
+    extraction_payload: Any,
+    doi: str | None,
+) -> None:
+    if not isinstance(extraction_payload, Mapping):
+        return
+    extracted_title = normalize_text(str(extraction_payload.get("title") or ""))
+    if not extracted_title or _title_is_doi(extracted_title, doi):
+        return
+    current_title = normalize_text(str(article_metadata.get("title") or ""))
+    if not current_title or _title_is_doi(current_title, doi):
+        article_metadata["title"] = extracted_title
+
+
 def merge_provider_owned_authors(
     metadata: Mapping[str, Any],
     raw_payload: RawFulltextPayload,
@@ -179,6 +204,7 @@ def browser_workflow_article_from_payload(
     extraction_payload = (
         content.diagnostics.get("extraction") if content is not None else None
     )
+    _merge_extracted_title(article_metadata, extraction_payload, doi)
     extracted_abstract = normalize_text(
         extraction_payload.get("abstract_text")
         if isinstance(extraction_payload, Mapping)

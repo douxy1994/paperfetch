@@ -83,6 +83,7 @@ class CrossrefLookupClient:
         article_title: str,
         *,
         journal_title: str | None = None,
+        doi_prefix: str | None = None,
         rows: int = 5,
     ) -> list[CrossrefMetadata]:
         normalized_title = article_title.strip()
@@ -98,6 +99,8 @@ class CrossrefLookupClient:
         )
         if journal_title and journal_title.strip():
             params["query.container-title"] = journal_title.strip()
+        if doi_prefix and doi_prefix.strip():
+            params["filter"] = f"prefix:{doi_prefix.strip().rstrip('/')}"
 
         try:
             response = self.transport.request(

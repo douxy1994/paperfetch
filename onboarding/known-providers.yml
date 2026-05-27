@@ -63,3 +63,7 @@ providers:
     display_source: acs
     status: implemented
     manifest_path: onboarding/manifests/acs.yml
+  - name: iop
+    display_source: iop_html
+    status: implemented
+    manifest_path: onboarding/manifests/iop.yml

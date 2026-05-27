@@ -568,9 +568,19 @@ def save_asset_resolution(
     if width > 0 and height > 0:
         download["width"] = width
         download["height"] = height
-    if download_tier == "preview" and preview_dimensions_are_acceptable(width, height):
+    if download_tier == "preview" and (
+        _asset_marks_preview_accepted(asset)
+        or preview_dimensions_are_acceptable(width, height)
+    ):
         download["preview_accepted"] = True
     return download
+
+
+def _asset_marks_preview_accepted(asset: Mapping[str, Any]) -> bool:
+    value = asset.get("preview_accepted")
+    if isinstance(value, bool):
+        return value
+    return normalize_text(str(value or "")).lower() in {"1", "true", "yes", "accepted"}
 
 
 def _asset_items_for_kind(

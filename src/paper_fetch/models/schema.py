@@ -36,6 +36,8 @@ SourceKind = Literal[
     "ams_html",
     "ams_pdf",
     "acs",
+    "iop_html",
+    "iop_pdf",
     "crossref_meta",
 ]
 
