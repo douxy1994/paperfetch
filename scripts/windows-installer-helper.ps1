@@ -291,18 +291,15 @@ function Copy-InstalledSkill {
 function Install-Skills {
     $codexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".codex") "skills") $SkillName
     $claudeSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".claude") "skills") $SkillName
-    $geminiSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".gemini") "skills") $SkillName
 
     Write-Log "Installing Codex skill to $codexSkill"
     Copy-InstalledSkill $codexSkill
     Write-Log "Installing Claude Code skill to $claudeSkill"
     Copy-InstalledSkill $claudeSkill
-    Write-Log "Installing Gemini CLI skill to $geminiSkill"
-    Copy-InstalledSkill $geminiSkill
 }
 
 function Remove-Skills {
-    foreach ($base in @(".codex", ".claude", ".gemini")) {
+    foreach ($base in @(".codex", ".claude")) {
         $skillDir = Join-Path (Join-Path (Join-Path $env:USERPROFILE $base) "skills") $SkillName
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $skillDir
         Write-Log "Removed $skillDir"
@@ -496,35 +493,6 @@ function Unregister-ClaudeMcp {
     }
 }
 
-function Register-GeminiMcp {
-    $gemini = Get-Command gemini -ErrorAction SilentlyContinue
-    if ($null -eq $gemini) {
-        Write-Log "Gemini CLI not found; installed the skill and skipped Gemini MCP registration"
-        return
-    }
-
-    try {
-        $python = ConvertTo-FullPath (Get-RuntimePython)
-        Write-Log "Registering Gemini MCP server '$McpName' with Gemini CLI"
-        Invoke-Checked -FilePath $gemini.Source -Arguments @("mcp", "remove", "-s", "user", $McpName) -IgnoreFailure
-        $args = @("mcp", "add", "-s", "user")
-        foreach ($entry in (Get-McpEnv).GetEnumerator()) {
-            $args += @("-e", "$($entry.Key)=$($entry.Value)")
-        }
-        $args += @($McpName, $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")
-        Invoke-Checked -FilePath $gemini.Source -Arguments $args
-    } catch {
-        Write-Warn "Gemini MCP registration failed and was skipped. $($_.Exception.Message)"
-    }
-}
-
-function Unregister-GeminiMcp {
-    $gemini = Get-Command gemini -ErrorAction SilentlyContinue
-    if ($null -ne $gemini) {
-        Invoke-Checked -FilePath $gemini.Source -Arguments @("mcp", "remove", "-s", "user", $McpName) -IgnoreFailure
-    }
-}
-
 function Invoke-SmokeChecks {
     $texmath = ConvertTo-FullPath (Join-Path (Join-Path $InstallRoot "formula-tools") "bin/texmath.exe")
     $node = ConvertTo-FullPath (Get-MathmlToLatexNode)
@@ -573,7 +541,6 @@ switch ($Action) {
         Invoke-InstallerStep -Name "PATH update" -ScriptBlock { Add-UserPathEntry (Join-Path $InstallRoot "bin") }
         Invoke-InstallerStep -Name "Codex MCP registration" -ScriptBlock { Register-CodexMcp }
         Invoke-InstallerStep -Name "Claude MCP registration" -ScriptBlock { Register-ClaudeMcp }
-        Invoke-InstallerStep -Name "Gemini MCP registration" -ScriptBlock { Register-GeminiMcp }
         if (-not $SkipSmoke) {
             Invoke-InstallerStep -Name "smoke checks" -ScriptBlock { Invoke-SmokeChecks }
         }
@@ -587,7 +554,6 @@ switch ($Action) {
         try { Remove-UserPathEntry (Join-Path $InstallRoot "bin") } catch { Write-Warn $_.Exception.Message }
         try { Unregister-CodexMcp } catch { Write-Warn $_.Exception.Message }
         try { Unregister-ClaudeMcp } catch { Write-Warn $_.Exception.Message }
-        try { Unregister-GeminiMcp } catch { Write-Warn $_.Exception.Message }
     }
     "Smoke" {
         Invoke-SmokeChecks

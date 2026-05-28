@@ -1,8 +1,8 @@
 # 添加一个 Provider：快速上手
 
-> Human reference only. AI/coordinator provider onboarding must use onboarding/.
+> Human reference only. AI/coordinator provider onboarding must use [`onboarding/coordinator-spec.md`](../onboarding/coordinator-spec.md) and related authority docs.
 
-这是为第一次给 paper_fetch 接入新出版社（如 MDPI、PLOS、Frontiers）的人类开发者写的快速教程。它不作为 AI/coordinator worker 输入；AI/coordinator 的权威入口是 [`onboarding/README.md`](../onboarding/README.md)，DAG、manifest schema、hard constraints 和 merge-ready gate 分别见 [`coordinator-spec.md`](../onboarding/coordinator-spec.md)、[`provider-manifest.schema.json`](../onboarding/provider-manifest.schema.json)、[`hard-constraints.md`](../onboarding/hard-constraints.md) 和 [`acceptance.md`](../onboarding/acceptance.md)。完整人工规约见 [`provider-development.md`](provider-development.md)，本文只讲流程。
+这是为第一次给 paper_fetch 接入新出版社（如 MDPI、PLOS、Frontiers）的人类开发者写的快速教程。它不作为 AI/coordinator worker 输入；AI/coordinator 的入口索引是 [`onboarding/README.md`](../onboarding/README.md)，行为事实源分别见 [`coordinator-spec.md`](../onboarding/coordinator-spec.md)、[`provider-manifest.md`](../onboarding/provider-manifest.md)、[`provider-manifest.schema.json`](../onboarding/provider-manifest.schema.json)、[`agent-task-brief.md`](../onboarding/agent-task-brief.md)、[`hard-constraints.md`](../onboarding/hard-constraints.md) 和 [`acceptance.md`](../onboarding/acceptance.md)。完整人工规约见 [`provider-development.md`](provider-development.md)，本文只讲流程。
 
 ## 你要做什么
 
@@ -76,7 +76,7 @@ PYTHONPATH=src python3 scripts/capture_fixture.py \
   --purpose access-gate
 ```
 
-详细 fixture 规则见 [`provider-development.md` §8](provider-development.md#8-测试标准)，正交清单见同文档 [附录 A](provider-development.md#附录-a)。
+详细 fixture 规则见 [`provider-development.md` §8](provider-development.md#testing-standard)，正交清单见同文档 [附录 A](provider-development.md#appendix-a-fixtures)。
 
 ---
 
@@ -100,10 +100,10 @@ python3 scripts/scaffold_provider.py --name mdpi --doi 10.3390/membranes15030093
 
 ### 3.1 填 `ProviderBundle`
 
-打开 provider entry module（例如 `mdpi.py`）或 scaffold 生成的 HTML starter，把 `register_provider_bundle(ProviderBundle(...))` 填完整：
+打开 provider entry module（例如 `mdpi.py`）把 `register_provider_bundle(ProviderBundle(...))` 填完整；scaffold 生成的 HTML starter 只作为 provider-owned helper / compatibility facade：
 
-- `catalog=ProviderSpec(...)`：hosts / 路径模板 / asset_default / probe_capability（见 [§2](provider-development.md#2-先接-provider-catalog)）
-- `html_rules=ProviderHtmlRules(cleanup=..., front_matter=..., availability=..., dom_hooks=..., markdown_hooks=...)`（见 [§5](provider-development.md#5-extraction-owner-复用规则)）
+- `catalog=ProviderSpec(...)`：hosts / 路径模板 / asset_default / probe_capability（见 [§2](provider-development.md#provider-bundle)）
+- `html_rules=ProviderHtmlRules(cleanup=..., front_matter=..., availability=..., dom_hooks=..., markdown_hooks=...)`（见 [§5](provider-development.md#extraction-owner-reuse)）
 - 可选：`asset_retry=AssetRetryPolicy(...)`、`metadata_merge=(...)`
 
 ### 3.2 写 hook 函数
@@ -114,7 +114,7 @@ python3 scripts/scaffold_provider.py --name mdpi --doi 10.3390/membranes15030093
 
 继承 `paper_fetch.providers.base.ProviderClient`，**只覆盖必要 hook**：
 
-- `fetch_raw_fulltext()`：发请求 + 校验 payload（见 [§3-§4](provider-development.md#3-client-contract)）
+- `fetch_raw_fulltext()`：发请求 + 校验 payload（见 [§3-§4](provider-development.md#client-contract)）
 - `to_article_model()`：raw → ArticleModel
 - `html_to_markdown()`：HTML 路线必填
 - `download_related_assets()`：仅有资产能力时实现
@@ -124,7 +124,7 @@ python3 scripts/scaffold_provider.py --name mdpi --doi 10.3390/membranes15030093
 
 ### 3.4 复用 canonical owner
 
-写代码前先看 [`provider-development.md` §5 owner 复用规则](provider-development.md#5-extraction-owner-复用规则)。HTTP header、access gate 文案、table 渲染、markdown IR 全部有 canonical 实现。**不要重写**——重写会被打回。
+写代码前先看 [`provider-development.md` §5 owner 复用规则](provider-development.md#extraction-owner-reuse)。HTTP header、access gate 文案、table 渲染、markdown IR 全部有 canonical 实现。**不要重写**——重写会被打回。
 
 ### 3.5 Markdown Review Loop
 
@@ -174,7 +174,7 @@ PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contra
 
 ## Step 5：重构对齐 canonical owner（Commit B，约半天）
 
-逐条跑 [`provider-development.md` 附录 B](provider-development.md#附录-b) 的 grep checklist。**每条命中**要么删除并 import canonical owner，要么加注释解释 publisher 差异。
+逐条跑 [`provider-development.md` 附录 B](provider-development.md#appendix-b-owner-reuse) 的 grep checklist。**每条命中**要么删除并 import canonical owner，要么加注释解释 publisher 差异。
 
 典型清理：
 
@@ -188,7 +188,7 @@ PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contra
 
 ## Step 6：端到端收尾（约半天）
 
-按 [`provider-development.md` §9](provider-development.md#9-文档同步标准) 更新：
+按 [`provider-development.md` §9](provider-development.md#docs-sync-standard) 更新：
 
 | 文件 | 必填项 |
 |---|---|
@@ -198,7 +198,7 @@ PYTHONPATH=src python3 -m pytest tests/unit/test_provider_markdown_review_contra
 | `docs/deployment.md` / `.env.example` | 新环境变量（若有） |
 | `CHANGELOG.md` | 一行用户可见摘要 |
 
-然后对照 [`provider-development.md` 附录 C PR Checklist](provider-development.md#附录-c) 逐项勾选。所有项通过 → PR。
+然后对照 [`provider-development.md` 附录 C PR Checklist](provider-development.md#appendix-c-pr-checklist) 逐项勾选。所有项通过 → PR。
 
 ---
 

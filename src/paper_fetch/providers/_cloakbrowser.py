@@ -68,7 +68,6 @@ DEFAULT_BROWSER_RUNTIME_WAIT_SECONDS = 8
 DEFAULT_BROWSER_RUNTIME_WARM_WAIT_SECONDS = 1
 DEFAULT_CLOAKBROWSER_TIMEOUT_MS = DEFAULT_BROWSER_RUNTIME_MAX_TIMEOUT_MS
 CLOAKBROWSER_STATUS_PROBE_ID = "probe://cloakbrowser/status"
-_BROWSER_WORKFLOW_PROVIDERS = ("wiley", "science", "pnas", "ams", "acs", "iop")
 _IMAGE_PAYLOAD_MIN_IMAGE_DIMENSION = 1
 _IMAGE_RESPONSE_BLOCKED_BY_HTML_WRAPPER = "image_response_blocked_by_html_wrapper"
 _IMAGE_PAYLOAD_RESPONSE_ATTR = "_paper_fetch_top_level_response"
@@ -81,9 +80,7 @@ CloakBrowserFailure = BrowserRuntimeFailure
 
 def _browser_workflow_label(provider: str) -> str:
     normalized = normalize_text(provider).lower()
-    if normalized in _BROWSER_WORKFLOW_PROVIDERS:
-        return f"{provider_display_name(normalized)} browser workflow"
-    return f"{normalized or provider} browser workflow"
+    return f"{provider_display_name(normalized)} browser workflow"
 
 
 def _dependency_available() -> bool:

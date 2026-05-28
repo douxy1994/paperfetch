@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ..provider_catalog import PROVIDER_CATALOG, SOURCE_PROVIDER_MAP, provider_names
 from ..reason_codes import ERROR, NO_ACCESS, RATE_LIMITED
 
 DEFAULT_FETCH_VALUES: tuple[tuple[str, str], ...] = (
@@ -56,6 +57,45 @@ ERROR_CONTRACT: tuple[tuple[str, str], ...] = (
 )
 
 
+def _backtick_join(values: tuple[str, ...] | list[str]) -> str:
+    return ", ".join(f"`{value}`" for value in values)
+
+
+def _browser_runtime_provider_names() -> tuple[str, ...]:
+    return tuple(
+        spec.name
+        for spec in sorted(PROVIDER_CATALOG.values(), key=lambda item: item.status_order)
+        if spec.requires_browser_runtime
+    )
+
+
+def _preferred_provider_sentence() -> str:
+    return (
+        "`provider_hint` and `preferred_providers` accept the runtime provider catalog "
+        f"({_backtick_join(provider_names())}). "
+    )
+
+
+def _browser_runtime_sentence() -> str:
+    return (
+        "Browser runtime providers are catalog-derived from "
+        "`ProviderSpec.requires_browser_runtime=True` "
+        f"({_backtick_join(_browser_runtime_provider_names())}). "
+    )
+
+
+def _public_source_sentence() -> str:
+    source_pairs = tuple(
+        f"`{source}`->`{provider}`"
+        for source, provider in sorted(SOURCE_PROVIDER_MAP.items())
+    )
+    return (
+        "Public article sources are catalog-derived from `SOURCE_PROVIDER_MAP`: "
+        + ", ".join(source_pairs)
+        + ". "
+    )
+
+
 def server_instructions() -> str:
     return (
         "Resolve or fetch a specific paper by DOI, landing URL, or title query. "
@@ -72,8 +112,11 @@ def server_instructions() -> str:
         "save_markdown=false. In full_text mode include_refs=null "
         "behaves like 'all'. When asset_profile is body/all, optional "
         "strategy.inline_image_budget can tune the default inline ImageContent caps of "
-        "3 figures, 2 MiB each, and 8 MiB total. `provider_hint` and "
-        "`preferred_providers` may include `elsevier`, `springer`, `wiley`, `science`, `pnas`, `ams`, `acs`, `iop`, `aip`, `mdpi`, `ieee`, `arxiv`, `copernicus`, or `crossref`. "
+        "3 figures, 2 MiB each, and 8 MiB total. "
+        + _preferred_provider_sentence()
+        + _browser_runtime_sentence()
+        + _public_source_sentence()
+        +
         "`elsevier` keeps an official XML route first and may then fall back to the "
         "official Elsevier API PDF lane before degrading to metadata-only, publishing "
         "`elsevier_xml` on XML success and `elsevier_pdf` on PDF fallback success. `springer` keeps a provider-managed direct HTML route "
@@ -81,21 +124,24 @@ def server_instructions() -> str:
         "the CloakBrowser HTML route, then seeded-browser publisher PDF/ePDF "
         "fallback, and may still continue into the official Wiley TDM API PDF lane "
         "when `WILEY_TDM_CLIENT_TOKEN` is configured while publishing `wiley_browser`. `science`, "
-        "`pnas`, `ams`, `acs`, `iop`, `aip`, and `mdpi` require the local browser runtime but no legacy local "
-        "rate-limit env vars; AMS publishes `ams_html` or `ams_pdf` and ignores `citation_xml_url`; ACS publishes `acs`; IOP publishes `iop_html` or `iop_pdf` and rejects Radware/hCaptcha challenge pages; AIP publishes `aip_html` or `aip_pdf`; MDPI publishes `mdpi_html` or `mdpi_pdf` and does not use an XML route. `ieee` uses "
+        "`pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, and `mdpi` require the local browser runtime but no legacy local "
+        "rate-limit env vars; AMS publishes `ams_html` or `ams_pdf` and ignores `citation_xml_url`; Annual Reviews publishes `annualreviews_html` or `annualreviews_pdf`; ACS publishes `acs`; IOP publishes `iop_html` or `iop_pdf` and rejects Radware/hCaptcha challenge pages; AIP publishes `aip_html` or `aip_pdf`; MDPI publishes `mdpi_html` or `mdpi_pdf` and does not use an XML route. `ieee` uses "
         "landing metadata, the Xplore dynamic HTML endpoint, and direct HTTP PDF fallback, "
         "publishing `ieee_html` or `ieee_pdf` when those routes return usable full text. `arxiv` uses "
         "arXiv ID-derived HTML first, optional API/HTML metadata merge, and text-only PDF fallback while publishing "
         "`arxiv_html` or `arxiv_pdf`. `copernicus` uses "
         "direct landing HTML to discover public NLM/JATS XML, then falls back to text-only PDF before metadata fallback, "
         "requires no browser runtime or provider credentials, and publishes `copernicus_xml` or `copernicus_pdf`. "
+        "`royalsocietypublishing` uses direct DOI HTML with direct HTTP PDF fallback, publishing `royalsocietypublishing_html` or `royalsocietypublishing_pdf`. "
+        "`plos` uses public JATS XML with direct HTTP PDF fallback, publishing `plos_xml` or `plos_pdf`. "
+        "`oxfordacademic` uses direct HTTP article HTML with direct HTTP PDF fallback, publishing `oxfordacademic_html` or `oxfordacademic_pdf`. "
         "Elsevier PDF fallback currently returns text-only markdown even when "
         "`asset_profile` is `body` or `all`. On successful HTML/XML routes, "
         "`asset_profile='none'` disables local asset downloads but does not remove "
         "remote image links already present in rendered Markdown. "
         "`asset_profile='body'` means provider-cleaned body figure/table/formula assets only, "
         "while `asset_profile='all'` additionally downloads supplementary files. "
-        "Inline ImageContent still only comes from body figures. Wiley/Science/PNAS/AMS/ACS/IOP/AIP/MDPI support "
+        "Inline ImageContent still only comes from body figures. Wiley/Science/PNAS/AMS/Annual Reviews/ACS/IOP/AIP/MDPI support "
         "`asset_profile=body|all` on successful CloakBrowser HTML routes and "
         "prefer full-size/original figures before falling back to previews, while "
         "their PDF/ePDF fallback routes remain text-only. Springer, IEEE, arXiv, and Copernicus PDF fallback "
@@ -129,27 +175,35 @@ def fetch_tool_description() -> str:
         "With body/all profiles, key local figures may be returned as ImageContent "
         "alongside the JSON result; strategy.inline_image_budget can override the default "
         "caps of 3 figures, 2 MiB each, and 8 MiB total, and any resulting zero disables "
-        "inline images. `elsevier` keeps an official XML route and may fall back to "
+        "inline images. "
+        + _preferred_provider_sentence()
+        + _browser_runtime_sentence()
+        + _public_source_sentence()
+        +
+        "`elsevier` keeps an official XML route and may fall back to "
         "the official Elsevier API PDF lane before degrading to metadata-only, publishing "
         "`elsevier_xml` on XML success and `elsevier_pdf` on PDF fallback success. `springer` uses provider-managed direct HTML and direct "
         "HTTP PDF fallback, publishing `springer_html` or `springer_pdf`. `wiley` keeps "
         "CloakBrowser HTML first, then seeded-browser publisher PDF/ePDF "
         "fallback, and may still continue into the official Wiley TDM API PDF lane "
         "when `WILEY_TDM_CLIENT_TOKEN` is configured while publishing source "
-        "`wiley_browser` on success. `science`, `pnas`, `ams`, `acs`, `iop`, `aip`, and `mdpi` routes use "
+        "`wiley_browser` on success. `science`, `pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, and `mdpi` routes use "
         "provider-managed browser runtime HTML plus seeded-browser publisher PDF/ePDF repo-local "
-        "workflows; AMS publishes `ams_html` or `ams_pdf` and does not request `citation_xml_url` / `/doc/...xml`; ACS publishes `acs`; IOP publishes `iop_html` or `iop_pdf`, rejects Radware/hCaptcha challenge pages, and does not implement unauthenticated TDM XML/PDF; AIP publishes `aip_html` or `aip_pdf`; MDPI publishes `mdpi_html` or `mdpi_pdf` and does not use an XML route. `ieee` uses landing metadata, "
+        "workflows; AMS publishes `ams_html` or `ams_pdf` and does not request `citation_xml_url` / `/doc/...xml`; Annual Reviews publishes `annualreviews_html` or `annualreviews_pdf`; ACS publishes `acs`; IOP publishes `iop_html` or `iop_pdf`, rejects Radware/hCaptcha challenge pages, and does not implement unauthenticated TDM XML/PDF; AIP publishes `aip_html` or `aip_pdf`; MDPI publishes `mdpi_html` or `mdpi_pdf` and does not use an XML route. `ieee` uses landing metadata, "
         "the Xplore dynamic HTML endpoint, and direct HTTP PDF fallback while publishing "
         "`ieee_html` or `ieee_pdf`. `arxiv` uses ID-derived official HTML first, optional API/HTML metadata merge, and text-only PDF "
         "fallback while publishing `arxiv_html` or `arxiv_pdf`. `copernicus` uses direct HTTP landing discovery, public NLM/JATS XML, "
-        "and text-only PDF fallback before metadata fallback while publishing `copernicus_xml` or `copernicus_pdf`; it does not need browser runtime or credentials. Elsevier PDF "
+        "and text-only PDF fallback before metadata fallback while publishing `copernicus_xml` or `copernicus_pdf`; it does not need browser runtime or credentials. "
+        "`royalsocietypublishing` uses direct DOI HTML with direct HTTP PDF fallback while publishing `royalsocietypublishing_html` or `royalsocietypublishing_pdf`. "
+        "`plos` uses public JATS XML with direct HTTP PDF fallback while publishing `plos_xml` or `plos_pdf`. "
+        "`oxfordacademic` uses direct HTTP article HTML with direct HTTP PDF fallback while publishing `oxfordacademic_html` or `oxfordacademic_pdf`. Elsevier PDF "
         "fallback keeps body/all requests text-only. On successful HTML/XML routes, "
         "`asset_profile='none'` disables local asset downloads but keeps rendered "
         "remote Markdown image links when the provider can resolve them. "
         "`asset_profile='body'` means provider-cleaned body figure/table/formula assets only, "
         "while `asset_profile='all'` additionally downloads supplementary files; "
         "supplementary files are saved as assets but are not emitted as ImageContent. "
-        "Wiley/Science/PNAS/AMS/ACS/IOP/AIP/MDPI support body/all assets on successful CloakBrowser HTML routes while keeping "
+        "Wiley/Science/PNAS/AMS/Annual Reviews/ACS/IOP/AIP/MDPI support body/all assets on successful CloakBrowser HTML routes while keeping "
         "PDF/ePDF fallback text-only, and Springer/IEEE/arXiv/Copernicus PDF fallback is also text-only "
         "in this version. Set "
         "download_dir to isolate task-local downloads; the MCP server can also surface "

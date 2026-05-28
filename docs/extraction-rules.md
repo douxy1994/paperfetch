@@ -508,7 +508,7 @@ metadata
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_wiley_provider_download_related_assets_uses_shared_browser_primary_path`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_wiley_provider_download_related_assets_reuses_shared_browser_fetcher_across_assets`
 - 边界说明：
-  - 这条规则目前适用于 `wiley`、`science`、`pnas`、`ams`、`acs`、`iop`、`mdpi` 的 browser workflow HTML 成功路径。
+  - 这条规则目前适用于 `wiley`、`science`、`pnas`、`ams`、`annualreviews`、`acs`、`iop`、`aip`、`mdpi` 的 browser workflow HTML 成功路径。
   - 它不改变 `elsevier` XML、`springer` direct HTML 或 PDF fallback 的下载语义。
 
 <a id="rule-table-flatten-or-list"></a>

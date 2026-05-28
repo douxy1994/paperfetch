@@ -94,15 +94,14 @@ for key in manifest["mcp"]["env_keys"]:
 usage() {
   cat <<'EOF'
 Usage:
-  ./install-offline.sh [--install-dir <path>] [--preset=headless|headful|wslg] [--user-config] [--reuse-env-file <path>]
+  ./install-offline.sh [--install-dir <path>] [--preset=headless|headful] [--user-config] [--reuse-env-file <path>]
   ./install-offline.sh [--install-dir <path>] --uninstall
   ./install-offline.sh [--install-dir <path>] --purge
 
 Options:
   --install-dir <path>    Install runtime files here. Default: ~/.local/share/paper-fetch-skill.
-  --preset=headless|headful|wslg
+  --preset=headless|headful
                             Select CloakBrowser headless/headful runtime env. Default: headless.
-                            wslg is Linux-only; use headful on macOS.
   --user-config           Also merge the offline runtime block into ~/.config/paper-fetch/.env.
   --no-user-config        Do not touch ~/.config/paper-fetch/.env. This is the default.
   --reuse-env-file <path> Use an existing offline.env without modifying it.
@@ -173,7 +172,7 @@ while (($#)); do
       ;;
     --preset)
       shift
-      [ "$#" -gt 0 ] || die "--preset requires headless, headful, or wslg"
+      [ "$#" -gt 0 ] || die "--preset requires headless or headful"
       PRESET="$1"
       ;;
     --user-config)
@@ -224,8 +223,8 @@ fi
 
 if [ "$UNINSTALL" != "1" ]; then
   case "$PRESET" in
-    headless|headful|wslg) ;;
-    *) die "--preset must be headless, headful, or wslg" ;;
+    headless|headful) ;;
+    *) die "--preset must be headless or headful" ;;
   esac
   if [ "$REUSE_ENV_FILE" = "1" ]; then
     [ -f "$OFFLINE_ENV_FILE" ] || die "Missing reusable offline env file: $OFFLINE_ENV_FILE"
@@ -346,18 +345,11 @@ verify_checksums() {
 }
 
 check_preset_requirements() {
-  local platform
-  platform="$(host_platform)" || die "This offline bundle supports Linux and macOS only; detected $(uname -s)."
-  if [ "$PRESET" = "wslg" ]; then
-    [ "$platform" = "linux" ] || die "--preset=wslg is Linux/WSLg-only; use --preset=headful on macOS."
-    if [ -z "${DISPLAY:-}" ] && [ -z "${WAYLAND_DISPLAY:-}" ]; then
-      die "DISPLAY or WAYLAND_DISPLAY is required for --preset=wslg."
-    fi
-  fi
+  host_platform >/dev/null || die "This offline bundle supports Linux and macOS only; detected $(uname -s)."
 }
 
 cloakbrowser_headless_value() {
-  if [ "$PRESET" = "wslg" ] || [ "$PRESET" = "headful" ]; then
+  if [ "$PRESET" = "headful" ]; then
     printf 'false\n'
   else
     printf 'true\n'
@@ -419,18 +411,15 @@ copy_installed_skill() {
 }
 
 install_skills() {
-  [ -n "${HOME:-}" ] || die "HOME is required to install Codex, Claude, and Gemini skills."
+  [ -n "${HOME:-}" ] || die "HOME is required to install Codex and Claude skills."
 
   local codex_skill="$HOME/.codex/skills/$SKILL_NAME"
   local claude_skill="$HOME/.claude/skills/$SKILL_NAME"
-  local gemini_skill="$HOME/.gemini/skills/$SKILL_NAME"
 
   log "Installing Codex skill to $codex_skill"
   copy_installed_skill "$codex_skill"
   log "Installing Claude Code skill to $claude_skill"
   copy_installed_skill "$claude_skill"
-  log "Installing Gemini CLI skill to $gemini_skill"
-  copy_installed_skill "$gemini_skill"
 }
 
 select_shell_startup_file() {
@@ -594,29 +583,6 @@ register_claude_mcp() {
   fi
 }
 
-register_gemini_mcp() {
-  local gemini_bin key
-  gemini_bin="$(command -v gemini || true)"
-
-  if [ -z "$gemini_bin" ]; then
-    log "Gemini CLI not found; installed the skill and skipped Gemini MCP registration"
-    return
-  fi
-
-  log "Registering Gemini MCP server '$MCP_NAME' with Gemini CLI"
-  "$gemini_bin" mcp remove -s user "$MCP_NAME" >/dev/null 2>&1 || true
-
-  local args=(mcp add -s user)
-  for key in "${MCP_ENV_KEYS[@]}"; do
-    args+=(-e "$key=$(mcp_env_value "$key")")
-  done
-  args+=("$MCP_NAME" "$(mcp_python_bin)" -X utf8 -m paper_fetch.mcp.server)
-
-  if ! "$gemini_bin" "${args[@]}"; then
-    warn "Gemini MCP registration failed and was skipped."
-  fi
-}
-
 remove_managed_block_from_file() {
   local target="$1"
   local remove_if_empty="${2:-0}"
@@ -658,12 +624,10 @@ remove_installed_skills() {
 
   local codex_skill="$HOME/.codex/skills/$SKILL_NAME"
   local claude_skill="$HOME/.claude/skills/$SKILL_NAME"
-  local gemini_skill="$HOME/.gemini/skills/$SKILL_NAME"
 
-  rm -rf "$codex_skill" "$claude_skill" "$gemini_skill"
+  rm -rf "$codex_skill" "$claude_skill"
   log "Removed Codex skill at $codex_skill"
   log "Removed Claude Code skill at $claude_skill"
-  log "Removed Gemini CLI skill at $gemini_skill"
 }
 
 remove_codex_config_toml() {
@@ -713,23 +677,11 @@ unregister_claude_mcp() {
   fi
 }
 
-unregister_gemini_mcp() {
-  local gemini_bin
-  gemini_bin="$(command -v gemini || true)"
-  if [ -n "$gemini_bin" ]; then
-    log "Removing Gemini MCP server '$MCP_NAME' with Gemini CLI"
-    "$gemini_bin" mcp remove -s user "$MCP_NAME" >/dev/null 2>&1 || true
-  else
-    log "Gemini CLI not found; skipped Gemini MCP removal"
-  fi
-}
-
 uninstall_user_integrations() {
   remove_installed_skills
   remove_shell_startup_blocks
   unregister_codex_mcp
   unregister_claude_mcp
-  unregister_gemini_mcp
 
   echo
   echo "Offline user-level integration removed."
@@ -980,7 +932,6 @@ main() {
   write_shell_startup_file
   register_codex_mcp
   register_claude_mcp
-  register_gemini_mcp
 
   run_smoke_checks
 
@@ -991,7 +942,7 @@ main() {
   echo "Open a new shell, or activate the current one with: source $INSTALL_ROOT/activate-offline.sh"
   echo "CloakBrowser headless: $(cloakbrowser_headless_value)"
   echo "Optional runtime override: set CLOAKBROWSER_BINARY_PATH in $OFFLINE_ENV_FILE before first browser fetch."
-  echo "Restart Codex, Claude Code, and Gemini CLI so they rescan skills and MCP registration."
+  echo "Restart Codex and Claude Code so they rescan skills and MCP registration."
   echo "Elsevier setup: request a key at https://dev.elsevier.com/, then add ELSEVIER_API_KEY=\"...\" to $OFFLINE_ENV_FILE before fetching Elsevier papers."
 }
 

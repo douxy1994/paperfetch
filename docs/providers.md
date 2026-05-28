@@ -10,7 +10,7 @@
 这份文档不解决：
 
 - agent runtime 的安装与 MCP 注册
-- Wiley / Science / PNAS / AMS / ACS / IOP / AIP / MDPI 的 CloakBrowser runtime 运维边界
+- Wiley / Science / PNAS / AMS / Annual Reviews / ACS / IOP / AIP / MDPI 的 CloakBrowser runtime 运维边界
 - 架构分层和数据契约的完整背景
 
 部署入口见 [`deployment.md`](deployment.md)，架构说明见 [`architecture/overview.md`](architecture/overview.md)。
@@ -31,7 +31,7 @@
 | `pnas` | 依赖 Crossref | `CloakBrowser fast HTML preflight -> CloakBrowser HTML -> CloakBrowser-seeded publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | fast preflight 成功时跳过 browser workflow；失败、challenge、正文不足或抽取失败时继续走 CloakBrowser/PDF 瀑布；较老文献常见 HTML 仅摘要，再继续走 provider 内部 PDF/ePDF fallback，必要时可返回 `abstract_only` |
 | `ams` | 依赖 Crossref | `DOI landing -> CloakBrowser HTML -> CloakBrowser-seeded publisher PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | AMS 只使用 `journals.ametsoc.org/view/...xml` landing HTML 和 PDF fallback；显式忽略 `citation_xml_url`，不请求 `/doc/...xml`，不暴露 XML/JATS source；HTML 成功公开 `ams_html`，PDF fallback 公开 `ams_pdf` |
 | `mdpi` | 依赖 Crossref merge | `CloakBrowser HTML -> CloakBrowser-seeded article PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | MDPI direct HTTP 常受 CDN 策略影响，主路径固定使用 CloakBrowser 捕获公开 article HTML；HTML 成功公开 `mdpi_html`，PDF fallback 公开 `mdpi_pdf` |
-| `ieee` | 依赖 Crossref merge + landing metadata | `CloakBrowser clean-browser HTML -> CloakBrowser-seeded PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | 现代 IEEE Xplore 文章优先公开为 `ieee_html`；REST 直连不可用时会用干净 CloakBrowser context 捕获同一全文 HTML；无动态 HTML 的老文献可经真实 PDF payload 返回 `ieee_pdf`；不处理 CAPTCHA、登录自动化或权限绕过 |
+| `ieee` | 依赖 Crossref merge + landing metadata | `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | 现代 IEEE Xplore 文章优先公开为 `ieee_html`；REST 直连不可用时会用干净 CloakBrowser context 捕获同一全文 HTML；无动态 HTML 的老文献可经真实 PDF payload 返回 `ieee_pdf`；不处理 CAPTCHA、登录自动化或权限绕过 |
 | `arxiv` | arXiv ID + 默认 Atom API enrichment | `ID 解析 -> arXiv official HTML -> direct HTTP PDF -> metadata fallback` | HTML 路线支持正文 figure 资产下载；official HTML 只给缺失图片占位符时，会尝试从 arXiv e-print source 包恢复图资产；PDF fallback 当前 text-only | 中 | HTML front matter 在主路径内合并；默认使用内部 arXiv Atom API client 在 HTML/PDF 主链结束后补齐 metadata，失败只追加 warning、不影响已得到的 fulltext payload；HTML 成功公开为 `arxiv_html`，PDF fallback 公开为 `arxiv_pdf`；可识别的 ID 形态（含 `vN` 版本、`10.48550/arXiv.*` 等）见后文 arXiv 小节 |
 | `copernicus` | 依赖 Crossref merge + landing metadata | `landing HTML / DOI-derived URL -> NLM/JATS XML -> direct HTTP PDF -> metadata fallback` | XML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | 开放获取 direct HTTP 路线，不需要登录态或本地浏览器运行时；XML 成功公开为 `copernicus_xml`，PDF fallback 公开为 `copernicus_pdf` |
 | `royalsocietypublishing` | Direct DOI HTML metadata merge | `direct HTTP DOI HTML -> direct HTTP PDF -> metadata fallback` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 强 | Royal Society Publishing 通过 `10.1098/` DOI 和 `royalsocietypublishing.org` 路由；HTML 成功公开为 `royalsocietypublishing_html`，PDF fallback 公开为 `royalsocietypublishing_pdf`；显式不把 `citation_xml_url` 当作 XML/JATS 路线 |
@@ -45,9 +45,9 @@
 说明：
 
 - 这张矩阵描述的是“当前代码里已经实现的 provider-owned waterfall”，不是“任意 DOI、任意运行环境都必然能拿到 publisher 全文”的承诺。
-- 尤其 `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 的浏览器与 PDF/ePDF 路径，仍受 publisher 访问权限、paywall/challenge 与远端站点行为影响。
+- 尤其 `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的浏览器与 PDF/ePDF 路径，仍受 publisher 访问权限、paywall/challenge 与远端站点行为影响。
 - Provider/source/domain/API/fallback marker、候选 URL 模板、HTML artifact 持久化、XML provider 推断与正文阈值的事实来源是 `paper_fetch.provider_catalog.ProviderSpec`。`SOURCE_PROVIDER_MAP` 登记实际 envelope / `ArticleModel.source` 值；例如 Springer HTML / PDF fallback 分别公开 `springer_html` / `springer_pdf`，二者都映射到 `springer` provider。
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 只保留一套 provider-owned 浏览器栈，canonical runtime 是 `paper_fetch.providers.browser_workflow` 包入口。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 只保留一套 provider-owned 浏览器栈，canonical runtime 是 `paper_fetch.providers.browser_workflow` 包入口。
 - browser workflow 的 bootstrap、PDF/ePDF fallback、article assembly、asset retry helper、client 基类和 browser fetchers 已收敛到 `browser_workflow/` 子包；profile 面向 provider catalog 中的浏览器 provider。
 - publisher 差异通过各 provider 模块 callback 下沉；旧 compatibility aliases、`_browser_workflow_*` 与 `browser_workflow_fetchers/` 兼容入口已移除，browser-PDF executor 继续共享 `_pdf_fallback`。
 - browser-workflow 的 HTML bootstrap 可通过 `RuntimeContext` 复用 CloakBrowser-backed shared browser；并发 asset download fetcher 使用线程私有 browser/context/page，不共享同步 Playwright browser 对象。
@@ -56,7 +56,7 @@
 - `geography` live runner 默认按 provider 轮转执行，保持单家样本顺序不变。
 - `run_geography_live_report.py`、`export_geography_issue_artifacts.py`、`group_geography_issue_artifacts.py` 都属于 repo-local internal tooling：不新增 console script，不作为 MCP surface，对外产品面不变。
 - geography live/report/export/group 仍受 `PAPER_FETCH_RUN_LIVE=1` 的 opt-in 边界保护；未启用 live 环境时，对应测试应稳定 skip。
-- golden criteria live review 产物写入 `live-downloads/golden-criteria-review/`，由 [`../scripts/run_golden_criteria_live_review.py`](../scripts/run_golden_criteria_live_review.py) 生成；每条结果保留兼容的 `elapsed_seconds`，并新增 `stage_timings.fetch_seconds` / `materialize_seconds` / `total_seconds` / `resolve_seconds` / `metadata_seconds` / `fulltext_seconds` / `asset_seconds` / `formula_seconds` / `render_seconds`，同时在 `http_cache_stats` 中记录该 sample 相对执行前的 cache delta。`elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee`、`arxiv`、`ams`、`acs`、`iop`、`aip`、`mdpi`、`copernicus` 和 `plos` 都纳入 supported provider 轮转，`provider-status.json` 会包含这些 provider 的本地诊断。`10.1016/S1575-1813(18)30261-4` 这类预期 metadata-only 样本，以及当前不支持的 TandF / Sage 样本，应通过 manifest 的 expected outcome 标记为 `skipped`，不进入 provider bug 修复队列。IEEE golden live 样本面向具备合法 IEEE Xplore 授权上下文的机器，预期为 `fulltext`；降级成 metadata-only、blocked fetch 或非 PDF payload 应作为 `live_fetch_blocked` 问题进入修复队列。
+- golden criteria live review 产物写入 `live-downloads/golden-criteria-review/`，由 [`../scripts/run_golden_criteria_live_review.py`](../scripts/run_golden_criteria_live_review.py) 生成；每条结果保留兼容的 `elapsed_seconds`，并新增 `stage_timings.fetch_seconds` / `materialize_seconds` / `total_seconds` / `resolve_seconds` / `metadata_seconds` / `fulltext_seconds` / `asset_seconds` / `formula_seconds` / `render_seconds`，同时在 `http_cache_stats` 中记录该 sample 相对执行前的 cache delta。golden criteria live review 的 supported provider 从 runtime `official_provider_names()` 派生，当前覆盖 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee`、`arxiv`、`copernicus`、`ams`、`mdpi`、`royalsocietypublishing`、`annualreviews`、`plos`、`oxfordacademic`、`acs`、`iop` 和 `aip`；`provider-status.json` 会包含这些 provider 的本地诊断。`10.1016/S1575-1813(18)30261-4` 这类预期 metadata-only 样本，以及当前不支持的 TandF / Sage 样本，应通过 manifest 的 expected outcome 标记为 `skipped`，不进入 provider bug 修复队列。IEEE golden live 样本面向具备合法 IEEE Xplore 授权上下文的机器，预期为 `fulltext`；降级成 metadata-only、blocked fetch 或非 PDF payload 应作为 `live_fetch_blocked` 问题进入修复队列。
 
 ### Copernicus
 
@@ -268,7 +268,7 @@ resolve
 
 - 系统会先尽可能拿到 Crossref metadata。
 - `elsevier` 和 `arxiv` 会参加 provider metadata probe；`arxiv` 通过项目内部 Atom API client 调用官方 arXiv API，获取 title、authors、abstract、published、categories、arXiv DOI、abs URL 和 PDF URL。
-- `springer`、`wiley`、`science`、`pnas`、`ams`、`acs`、`iop`、`aip`、`mdpi`、`ieee`、`copernicus`、`plos` 在 `probe_official_provider()` 和 `has_fulltext()` 中都只依赖 Crossref / landing-page / DOI 信号，不再调用 publisher metadata API。
+- `springer`、`wiley`、`science`、`pnas`、`ieee`、`copernicus`、`ams`、`mdpi`、`royalsocietypublishing`、`annualreviews`、`plos`、`oxfordacademic`、`acs`、`iop`、`aip` 在 `probe_official_provider()` 和 `has_fulltext()` 中都只依赖 Crossref / landing-page / DOI 信号，不再调用 publisher metadata API。
 - 最终会合并 primary / secondary metadata，统一生成正文抓取需要的元数据。
 
 ### 3. provider 全文主路径
@@ -355,6 +355,17 @@ resolve
   - PDF fallback 只返回 text-only Markdown；正文资产与 supplementary 下载仅在 HTML 路径启用。
   - `asset_profile=body` 只发现正文 figure / table / formula 资产；`asset_profile=all` 额外从明确 supplementary/app section 中发现 `/s1` 等 MDPI 附件链接；下载阶段复用 browser workflow 的 browser-backed image/file fetcher 和 seed refresh retry，失败诊断保留在 `quality.asset_failures`，partial-download warning 由 artifact 层统一生成。
   - 成功时公开 `source="mdpi_html"` 或 `source="mdpi_pdf"`。
+- `royalsocietypublishing`
+  - 固定顺序是 `direct HTTP DOI HTML -> direct HTTP PDF fallback -> metadata-only`。
+  - HTML 成功公开 `source="royalsocietypublishing_html"`；PDF fallback 成功公开 `source="royalsocietypublishing_pdf"`。
+  - `citation_xml_url` 不作为 XML/JATS 路线；PDF fallback 是 text-only。
+- `annualreviews`
+  - 固定顺序是 `CloakBrowser landing/full-text HTML -> seeded-browser PDF -> provider-managed abstract_only -> metadata-only`。
+  - 需要 `ProviderSpec.requires_browser_runtime=True` 的本地 browser runtime；HTML 成功公开 `source="annualreviews_html"`，PDF fallback 成功公开 `source="annualreviews_pdf"`。
+- `oxfordacademic`
+  - 固定顺序是 `direct HTTP article HTML -> direct HTTP PDF fallback -> metadata-only`。
+  - HTML 成功公开 `source="oxfordacademic_html"`；PDF fallback 成功公开 `source="oxfordacademic_pdf"`。
+  - local asset download 当前 deferred，PDF fallback 是 text-only。
 - `ieee`
   - 固定顺序是 `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback -> abstract-only / metadata-only`。
   - dynamic HTML 请求使用 document `Referer`、浏览器 UA、`x-security-request: required` 和兼容 `Accept`。
@@ -389,11 +400,11 @@ resolve
 
 ### 4. abstract-only / metadata-only fallback
 
-如果命中了 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ams`、`acs`、`iop`、`aip`、`mdpi`、`ieee`、`arxiv`、`copernicus`、`plos` 之一：
+如果命中了 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee`、`arxiv`、`copernicus`、`ams`、`mdpi`、`royalsocietypublishing`、`annualreviews`、`plos`、`oxfordacademic`、`acs`、`iop`、`aip` 之一：
 
 - 系统只会走该 provider 自己管理的 fulltext waterfall
 - provider 主链不可用或返回 `None` 后直接进入 metadata-only fallback
-- `springer` / `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `ieee` 如果只能确认摘要级内容，会返回 provider 自己的 `abstract_only` 结果，而不是再绕去通用 HTML；`mdpi`、`arxiv`、`copernicus`、`plos` 与 `elsevier` 保持一致，HTML/XML/PDF 都不可用时进入通用 metadata-only fallback
+- `springer` / `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `ieee` 如果只能确认摘要级内容，会返回 provider 自己的 `abstract_only` 结果，而不是再绕去通用 HTML；`mdpi`、`royalsocietypublishing`、`oxfordacademic`、`arxiv`、`copernicus`、`plos` 与 `elsevier` 保持一致，HTML/XML/PDF 都不可用时进入通用 metadata-only fallback
 
 如果没有命中这些 official provider：
 
@@ -405,7 +416,7 @@ resolve
 如果 provider 主链已经拿到 fulltext HTML：
 
 - provider fetch result 组装层会在构造 `ArticleModel` 前自动触发 HTML -> Markdown
-- `springer`、`wiley`、`science`、`pnas`、`ams`、`acs`、`iop`、`aip`、`mdpi`、`ieee`、`arxiv` 会优先复用各自 provider 专用的 HTML 解析器；`copernicus` 和 `plos` 只在 XML 主路径使用专用 XML 解析器
+- `springer`、`wiley`、`science`、`pnas`、`ams`、`mdpi`、`royalsocietypublishing`、`annualreviews`、`oxfordacademic`、`acs`、`iop`、`aip`、`ieee`、`arxiv` 会优先复用各自 provider 专用的 HTML 解析器；`copernicus` 和 `plos` 只在 XML 主路径使用专用 XML 解析器
 - 通用 HTML 转换只作为“已确认 fulltext HTML 但 provider 没有提供 Markdown”的兜底，不会变成任意 URL 的全文 fallback
 
 如果没有可返回的 provider `abstract_only` 结果，而 `strategy.allow_metadata_only_fallback=true`：
@@ -418,7 +429,7 @@ resolve
 
 如果关闭这个开关，正文不可得会直接抛错。
 
-## Elsevier / Springer / Wiley / Science / PNAS / AMS / ACS / IOP / AIP / MDPI / IEEE / arXiv / Copernicus / PLOS 的特殊语义
+## Elsevier / Springer / Wiley / Science / PNAS / IEEE / arXiv / Copernicus / AMS / MDPI / Royal Society Publishing / Annual Reviews / PLOS / Oxford Academic / ACS / IOP / AIP 的特殊语义
 
 这些 provider 的共同点是：
 
@@ -497,24 +508,38 @@ resolve
   - XML 成功轨迹是 `fulltext:copernicus_xml_ok`
   - XML 不可用时先保留 `fulltext:copernicus_xml_fail`，再尝试 `fulltext:copernicus_pdf_fallback_ok`
   - PDF fallback 公开为 `copernicus_pdf`，XML 主路径公开为 `copernicus_xml`
+- `royalsocietypublishing`
+  - provider 自管 `direct HTTP DOI HTML -> direct HTTP PDF -> metadata fallback`
+  - HTML 成功轨迹是 `fulltext:royalsocietypublishing_html_ok`，PDF fallback 成功轨迹是 `fulltext:royalsocietypublishing_pdf_fallback_ok`
+  - HTML 公开为 `royalsocietypublishing_html`，PDF fallback 公开为 `royalsocietypublishing_pdf`
+- `annualreviews`
+  - provider 自管 `CloakBrowser landing/full-text HTML -> seeded-browser PDF -> abstract/metadata fallback`
+  - HTML 成功轨迹是 `fulltext:annualreviews_html_ok`，PDF fallback 成功轨迹是 `fulltext:annualreviews_pdf_fallback_ok`
+  - HTML 公开为 `annualreviews_html`，PDF fallback 公开为 `annualreviews_pdf`
 - `plos`
   - provider 自管 `public JATS XML -> direct HTTP PDF -> metadata fallback`
   - XML 成功轨迹是 `fulltext:plos_xml_ok`
   - XML 不可用时先保留 `fulltext:plos_xml_fail`，再尝试 `fulltext:plos_pdf_fallback_ok`
   - PDF fallback 公开为 `plos_pdf`，XML 主路径公开为 `plos_xml`
+- `oxfordacademic`
+  - provider 自管 `direct HTTP article HTML -> direct HTTP PDF -> metadata fallback`
+  - HTML 成功轨迹是 `fulltext:oxfordacademic_html_ok`，PDF fallback 成功轨迹是 `fulltext:oxfordacademic_pdf_fallback_ok`
+  - HTML 公开为 `oxfordacademic_html`，PDF fallback 公开为 `oxfordacademic_pdf`
 
 因此：
 
 - 不再存在 public HTML fallback 开关
 - 对 `elsevier` 来说，系统始终按内部 `官方 DOI XML/API -> PII XML/API fallback -> 官方 API PDF fallback` waterfall 执行
 - 对 `springer` 来说，系统始终按内部 `direct HTML -> direct HTTP PDF` waterfall 执行
-- 对 `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 来说，系统始终按上文声明的 provider-owned browser workflow 执行。
+- 对 `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 来说，系统始终按上文声明的 provider-owned browser workflow 执行。
 - `pnas` preflight 只做快速成功路径，不改变 CloakBrowser/PDF 回退语义。
 - 对 `ams` 来说，系统始终按内部 `Crossref/DOI landing -> CloakBrowser HTML -> seeded-browser publisher PDF fallback -> metadata fallback` waterfall 执行，且不会走 `citation_xml_url` / `/doc/...xml`。
 - 对 `ieee` 来说，系统始终按内部 `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback -> abstract/metadata fallback` waterfall 执行
 - 对 `arxiv` 来说，系统始终按内部 `arXiv ID 解析 -> arXiv official HTML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行；metadata enrichment 只在主链外补充字段
 - 对 `copernicus` 来说，系统始终按内部 `landing HTML -> NLM/JATS XML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行
+- 对 `royalsocietypublishing` 来说，系统始终按内部 `direct HTTP DOI HTML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行
 - 对 `plos` 来说，系统始终按内部 `public JATS XML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行
+- 对 `oxfordacademic` 来说，系统始终按内部 `direct HTTP article HTML -> direct HTTP PDF fallback -> metadata fallback` waterfall 执行
 
 ## 默认输出策略
 
@@ -532,7 +557,7 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 
 - `null` / omitted
   - 使用 provider default
-  - `springer` / `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` / `ieee` / `copernicus` / `plos` 默认等价于 `body`
+  - `springer` / `wiley` / `science` / `pnas` / `ieee` / `arxiv` / `copernicus` / `ams` / `mdpi` / `royalsocietypublishing` / `annualreviews` / `plos` / `oxfordacademic` / `acs` / `iop` / `aip` 默认等价于 `body`
   - 其他默认等价于 `none`
 - `none`
   - 不下载本地资产
@@ -552,16 +577,16 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 #### PDF fallback 的 text-only 边界
 
 - PDF fallback 当前不下载资产。
-- 适用 provider：`elsevier`、`springer`、`ieee`、`arxiv`、`copernicus`、`plos`、`wiley`、`science`、`pnas`、`ams`、`acs`、`iop`、`aip`、`mdpi`。
+- 适用 provider：`elsevier`、`springer`、`ieee`、`arxiv`、`copernicus`、`royalsocietypublishing`、`annualreviews`、`plos`、`oxfordacademic`、`wiley`、`science`、`pnas`、`ams`、`acs`、`iop`、`aip`、`mdpi`。
 - 即使 `asset_profile=body|all`，这些 PDF / ePDF fallback 也只返回 text-only Markdown。
 - 共享 PDF Markdown 转换会拒绝明显过短或主要由 IEEE 授权页脚组成的结果。
 - PDF 内有大量透明文本层时，会用 PyMuPDF legacy transparent-text 路径二次转换。
 - Windows 上 PyMuPDF 探测 Tesseract 时可能产生本地编码的 stdout/stderr；PDF Markdown 转换会对这类第三方文本子进程输出使用 replacement 解码，避免非 UTF-8 字节让 reader thread 抛出 `UnicodeDecodeError`。
 - 二次转换仍不足时，继续走候选重试或 provider 降级。
 
-#### Provider HTML 资产语义（wiley / science / pnas / ams / acs / iop / aip / mdpi / arxiv / ieee / copernicus / springer / elsevier）
+#### Provider HTML 资产语义（wiley / science / pnas / ams / annualreviews / acs / iop / aip / mdpi / royalsocietypublishing / oxfordacademic / arxiv / ieee / copernicus / springer / elsevier）
 
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 的 CloakBrowser HTML 成功路径支持正文图、表和公式图片资产；AIP replay 覆盖本地 body figure asset rewrite；IOP 当前 committed replay 覆盖远程正文 figure links/captions、body table 和 formula image Markdown，但没有本地 downloadable figure replay，资产合约按 best-effort 记录。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 CloakBrowser HTML 成功路径支持正文图、表和公式图片资产；AIP replay 覆盖本地 body figure asset rewrite；IOP 当前 committed replay 覆盖远程正文 figure links/captions、body table 和 formula image Markdown，但没有本地 downloadable figure replay，资产合约按 best-effort 记录。
 - 这些 provider 以 CloakBrowser-backed browser context 为主链路，不再先走普通 HTTP 直连。
 - 图片候选优先 full-size/original；全部失败后才尝试 preview。
 - preview 也通过同一个 seeded browser context 下载。
@@ -591,7 +616,7 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 
 #### Supplementary 范围与命名
 
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 的 `asset_profile=all` 会把 supplementary 作为独立文件附件下载；IOP committed replay 当前覆盖 article-scoped `stacks.iop.org` supplementary media link，独立附件下载仍按 browser workflow best-effort 执行。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 `asset_profile=all` 会把可识别 supplementary 作为独立文件附件下载；Annual Reviews 当前不扩大 supplementary scope，IOP committed replay 当前覆盖 article-scoped `stacks.iop.org` supplementary media link，独立附件下载仍按 browser workflow best-effort 执行。
 - 这条链路不因 supplementary 失败重新下载已成功的正文 figure。
 - `wiley` supplementary 只从 `Supporting Information` 区块抽取。
 - `wiley` 只接受 `/action/downloadSupplement`、结构化 supplementary link 属性或 `sup-*` supporting file 链接。
@@ -643,10 +668,10 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 - 下载失败的资产会保留到 `article.quality.asset_failures` 与顶层 `quality.asset_failures`。
 - 失败诊断包含 `status`、`content_type`、`title_snippet`、`body_snippet` 和 `reason`。Cloudflare challenge 只记录失败并进入普通候选/seed refresh retry，不再执行额外 browser recovery。
 - 图片 payload MIME 识别由 `filetype` 负责，JPEG/PNG/GIF/WebP 尺寸读取由 `imagesize` 负责；无法识别时仍按 unknown/空宽高处理，不引入 Pillow。
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 正文图片主链路只输出 `download_tier="full_size"` 或 `download_tier="preview"`。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 正文图片主链路只输出 `download_tier="full_size"` 或 `download_tier="preview"`。
 - supplementary 文件链路输出 `download_tier="supplementary_file"`。
 - 旧的 `playwright_canvas_fallback` tier 只可能来自仍保留 HTTP-first 语义的旧通用图片下载路径。
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 正文图片下载会缓存重复的 figure page / 图片候选 URL。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 正文图片下载会缓存重复的 figure page / 图片候选 URL。
 - 这条链路按 `PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY` 控制 worker 上限，默认 `4`。
 - 使用 browser image document fetcher 时，单个正文图片也会在 worker 线程执行 resolver。
 - 这样可以避免主线程已有 browser sync context 时再次启动独立 sync browser。
@@ -711,7 +736,7 @@ CLI 主输出、artifact 与命令组合的用户语义见 [`cli.md`](cli.md)；
 这些字段最适合拿来判断结果质量和来源：
 
 - `source`
-  - 粗粒度公开来源，如 `elsevier_xml`、`elsevier_pdf`、`springer_html`、`springer_pdf`、`wiley_browser`、`science`、`pnas`、`ams_html`、`ams_pdf`、`acs`、`iop_html`、`iop_pdf`、`aip_html`、`aip_pdf`、`ieee_html`、`ieee_pdf`、`arxiv_html`、`arxiv_pdf`、`copernicus_xml`、`copernicus_pdf`、`plos_xml`、`plos_pdf`、`crossref_meta`、`metadata_only`
+  - 粗粒度公开来源，完整 `ArticleModel.source` 枚举由 runtime `SOURCE_PROVIDER_MAP` 派生，当前包括 `crossref_meta`、`elsevier_xml`、`elsevier_pdf`、`springer_html`、`springer_pdf`、`wiley_browser`、`science`、`pnas`、`ieee_html`、`ieee_pdf`、`arxiv_html`、`arxiv_pdf`、`copernicus_xml`、`copernicus_pdf`、`ams_html`、`ams_pdf`、`mdpi_html`、`mdpi_pdf`、`royalsocietypublishing_html`、`royalsocietypublishing_pdf`、`annualreviews_html`、`annualreviews_pdf`、`plos_xml`、`plos_pdf`、`oxfordacademic_html`、`oxfordacademic_pdf`、`acs`、`iop_html`、`iop_pdf`、`aip_html`、`aip_pdf`；`metadata_only` 只在 `FetchEnvelope.source` 的 metadata fallback 中出现。
 - `has_fulltext`
   - 最终抓取瀑布后的 verdict
 - `warnings`
@@ -886,7 +911,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - 是否能拿到全文仍取决于 IEEE Xplore 当前对操作者运行环境的合法访问上下文，以及 endpoint/browser route 是否返回真实 full-text HTML 或 PDF
 
 <a id="wiley-science-pnas-browser-workflow"></a>
-### Wiley / Science / PNAS / AMS / ACS / IOP / AIP / MDPI
+### Wiley / Science / PNAS / AMS / Annual Reviews / ACS / IOP / AIP / MDPI
 
 #### `WILEY_TDM_CLIENT_TOKEN`
 
@@ -920,13 +945,13 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 #### AGU/Wiley browser UA
 
 - 可选。
-- 仅用于 Wiley / Science / PNAS / AMS / ACS / IOP / AIP / MDPI 的 CloakBrowser HTML、图片资产恢复和 seeded-browser PDF/ePDF fallback。
+- 仅用于 Wiley / Science / PNAS / AMS / Annual Reviews / ACS / IOP / AIP / MDPI 的 CloakBrowser HTML、图片资产恢复和 seeded-browser PDF/ePDF fallback。
 - AGU/Wiley 站点触发 Cloudflare challenge 时，优先在 `.env` 中设置普通 Chrome UA。纯 stateless headless 环境仍可能被 challenge；需要人工验证时，临时设置 `CLOAKBROWSER_HEADLESS=false`，并把 `CLOAKBROWSER_USER_DATA_DIR` 指到稳定目录以保存合法完成的 session。
-- 完成一次 headed 验证后，同一 `CLOAKBROWSER_USER_DATA_DIR` 可在 `CLOAKBROWSER_HEADLESS=true` 下继续复用；macOS 可使用离线安装器的 `--preset=headful`，Linux WSLg 可使用 `--preset=wslg`。
+- 完成一次 headed 验证后，同一 `CLOAKBROWSER_USER_DATA_DIR` 可在 `CLOAKBROWSER_HEADLESS=true` 下继续复用；桌面显示环境可使用离线安装器的 `--preset=headful`。
 
 #### Browser HTML readiness
 
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 的 HTML fetch 会先等待 provider 正文 DOM 命中并连续两次轮询稳定，再执行 pre-extraction challenge / paywall 判定。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 HTML fetch 会先等待 provider 正文 DOM 命中并连续两次轮询稳定，再执行 pre-extraction challenge / paywall 判定。
 - 如果稳定正文 DOM 已出现，即使页面 shell 仍残留 Cloudflare / challenge 文案，也会继续进入 Markdown 抽取和 availability 判定；只有等待超时仍无可抽取正文 DOM 时，才把 challenge / paywall 作为 HTML route fallback 条件。
 
 <a id="royalsocietypublishing"></a>
@@ -989,17 +1014,22 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 
 `provider_status()` 只检查本地条件，不主动探测远端 publisher API 连通性。
 
-当前 provider 语义大致是：
+当前 provider 状态语义按 runtime catalog 派生，主要分为：
 
 - `elsevier`
   - 只检查官方全文 API key；`ELSEVIER_API_KEY` 配好即 `ready`，否则 `not_configured`。
-- `springer`
-  - 返回本地 direct HTML route 就绪状态；不依赖本地浏览器运行时。
+- `springer` / `royalsocietypublishing` / `oxfordacademic`
+  - 返回本地 direct HTML / PDF route 就绪状态；不依赖本地浏览器运行时或 provider credential。
+- `arxiv`
+  - `metadata_api`、`html_route` 与 `pdf_fallback` 不依赖额外 env；official HTML 主路径不可用时继续 text-only PDF fallback。
+- `copernicus` / `plos`
+  - 返回本地 XML / PDF route 就绪状态；不依赖本地浏览器运行时或 provider credential。
 - `ieee`
   - 返回两条本地 check：`html_route` 覆盖 direct REST HTML 与 clean-browser HTML fallback 两种 mode，`pdf_fallback` 覆盖 direct HTTP PDF 与 seeded-browser PDF fallback 两种 mode；具体 mode 名在各 check 的 `details.mode` 中体现。不依赖 IEEE API key。
 - `wiley`
   - 统一检查 `runtime_env`、`cloakbrowser_dependency`，以及可选的 `tdm_api_token`。
   - browser runtime ready 时，即使 `WILEY_TDM_CLIENT_TOKEN` 缺失，也应表现为 `ready`。
   - browser runtime 未配置但 `WILEY_TDM_CLIENT_TOKEN` 已配置时，通常表现为 `partial`，仍可尝试官方 TDM API PDF lane；如果 browser 检查本身报 `error`，provider 状态仍会反映该错误。
-- `science` / `pnas` / `ams`
-  - 统一检查 `runtime_env`、`cloakbrowser_dependency`。
+- `science` / `pnas` / `ams` / `mdpi` / `annualreviews` / `acs` / `iop` / `aip`
+  - 这些 provider 以 `ProviderSpec.requires_browser_runtime=True` 为准，统一检查 `runtime_env` 和 `cloakbrowser_dependency`。
+  - 本地 runtime 未就绪时，HTML 主路径、图片资产恢复和 seeded-browser PDF/ePDF fallback 会表现为 `not_configured` 或 `error`；远端 access gate、paywall 或 challenge 仍由实际抓取路线判定，不属于 `provider_status()` 的本地探测范围。

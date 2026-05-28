@@ -28,7 +28,6 @@ pf_skill_user_base() {
     case "$PF_HOST" in
         claude) printf '%s\n' "$HOME/.claude" ;;
         codex) printf '%s\n' "${CODEX_HOME:-$HOME/.codex}" ;;
-        gemini) printf '%s\n' "$HOME/.gemini" ;;
         *) pf_skill_die "Unsupported skill host: $PF_HOST" ;;
     esac
 }
@@ -159,9 +158,6 @@ pf_skill_print_next_steps() {
         pf_host_print_registered_note
     else
         echo "  2. If you want MCP tools too, rerun with --register-mcp or register a stdio server that runs 'paper-fetch-mcp'."
-    fi
-    if [ "$PF_HOST" = "gemini" ]; then
-        echo "     Verify Gemini discovery with 'gemini skills list' and 'gemini mcp list'."
     fi
     echo "  3. If you fetch Elsevier papers, request a key at https://dev.elsevier.com/ and set ELSEVIER_API_KEY in ~/.config/paper-fetch/.env or pass --env-file when registering MCP."
     echo "  4. Re-run this installer after upgrading the repo to install the new package build."

@@ -18,11 +18,8 @@ PF_RESTART_NAME="Codex"
 pf_host_register_mcp() {
     command -v codex >/dev/null 2>&1 || pf_skill_die "codex not found on PATH; cannot auto-register MCP. Install Codex CLI or rerun without --register-mcp."
 
-    local python_bin launcher
+    local python_bin
     python_bin="$(python3 -c 'import sys; print(sys.executable)')"
-    launcher="$PF_REPO_DIR/scripts/run-codex-paper-fetch-mcp.sh"
-    [ -f "$launcher" ] || pf_skill_die "Missing Codex MCP launcher at $launcher"
-    chmod +x "$launcher"
 
     if [ -n "$PF_MCP_ENV_FILE" ] && [ ! -f "$PF_MCP_ENV_FILE" ]; then
         pf_skill_warn "MCP env file $PF_MCP_ENV_FILE does not exist yet; registration will still point to it."
@@ -32,11 +29,10 @@ pf_host_register_mcp() {
     codex mcp remove "$PF_MCP_NAME" >/dev/null 2>&1 || true
 
     local args=(mcp add)
-    args+=(--env "PAPER_FETCH_MCP_PYTHON_BIN=$python_bin")
     if [ -n "$PF_MCP_ENV_FILE" ]; then
         args+=(--env "PAPER_FETCH_ENV_FILE=$PF_MCP_ENV_FILE")
     fi
-    args+=("$PF_MCP_NAME" -- "$launcher")
+    args+=("$PF_MCP_NAME" -- "$python_bin" -X utf8 -m paper_fetch.mcp.server)
     codex "${args[@]}"
 }
 

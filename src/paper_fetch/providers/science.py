@@ -44,6 +44,7 @@ register_provider_bundle(
                 *ATYPON_DEFAULT_PDF_PATH_TEMPLATES,
                 "/doi/pdf/{doi}?download=true",
             ),
+            requires_browser_runtime=True,
         ),
         html_rules=ProviderHtmlRules(
             name="science",

@@ -6,6 +6,23 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.0.0 - 2026-05-28
+
+### Changed
+
+- Derive MCP provider guidance from the runtime provider catalog so accepted provider hints, browser-runtime providers, and public source names stay aligned with registered providers.
+- Refresh public provider and extraction documentation for the current provider catalog, including Annual Reviews, Royal Society Publishing, PLOS, Oxford Academic, ACS, IOP, AIP, MDPI, AMS, Science, and PNAS route details.
+- Mark browser-workflow providers through provider specs instead of maintaining separate hard-coded browser-runtime provider lists.
+- Update Codex skill installation, offline installer, deployment, and onboarding documentation around the supported installation surface.
+
+### Removed
+
+- Remove the Gemini skill installer and legacy Codex MCP runner scripts from the shipped script surface.
+
+### Fixed
+
+- Keep CloakBrowser workflow labels, provider docs drift checks, offline install checks, and skill template tests synchronized with catalog-derived provider facts.
+
 ## 1.9.0 - 2026-05-27
 
 ### Added
@@ -107,7 +124,7 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 ### Fixed
 
 - Prevented the Windows offline installer from aborting after runtime files are installed when optional post-install integration or smoke checks fail on a user machine; warnings are now logged to `install-helper.log`.
-- Fixed Linux offline installer CloakBrowser checks and Claude/Gemini MCP registration arguments for current host CLIs.
+- Fixed Linux offline installer CloakBrowser checks and Claude MCP registration arguments for current host CLIs.
 - Fixed browser PDF fallback so CloakBrowser/Playwright sync work is handed to a worker thread when the caller is already inside an asyncio loop.
 
 ## 1.5.3 - 2026-05-17

@@ -7,7 +7,6 @@ from types import MappingProxyType
 from typing import Any, Callable, Literal
 AssetDefault = Literal["none", "body", "all"]
 MetadataProbeShortCircuit = Callable[[str], dict | None]
-_BROWSER_RUNTIME_PROVIDER_NAMES = frozenset({"wiley", "science", "pnas", "ams", "acs", "iop"})
 @dataclass(frozen=True)
 class BodyTextThresholds:
     min_chars: int = 800
@@ -63,10 +62,7 @@ class ProviderSpec:
     requires_browser_runtime: bool = False
 
     def __post_init__(self) -> None:
-        if (
-            (self.requires_playwright or self.name in _BROWSER_RUNTIME_PROVIDER_NAMES)
-            and not self.requires_browser_runtime
-        ):
+        if self.requires_playwright and not self.requires_browser_runtime:
             object.__setattr__(self, "requires_browser_runtime", True)
 
     def to_dict(self) -> dict[str, object]:

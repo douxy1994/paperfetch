@@ -69,13 +69,13 @@
 - [`provider-development.md`](provider-development.md)
   - 讲新增出版社 provider 的标准开发流程、typed contract、waterfall、资产语义、测试和文档验收标准。
 - [`onboarding/README.md`](../onboarding/README.md)
-  - 讲 AI/coordinator provider onboarding 的权威输入、runner、manifest、review artifact 和自动化边界。
+  - 普通用户入口和 authority index。AI/coordinator provider 行为事实源是 [`coordinator-spec.md`](../onboarding/coordinator-spec.md)、[`provider-manifest.md`](../onboarding/provider-manifest.md)、[`provider-manifest.schema.json`](../onboarding/provider-manifest.schema.json)、[`agent-task-brief.md`](../onboarding/agent-task-brief.md)、[`hard-constraints.md`](../onboarding/hard-constraints.md)、[`acceptance.md`](../onboarding/acceptance.md) 和 run records，不从 README 推断。
 - [`extraction-rules.md`](extraction-rules.md)
   - 讲当前提取 / 组装 / 渲染规则、真实样本证据和对应测试，不负责运行时路由和部署说明。
   - 修改后运行 `python3 scripts/validate_extraction_rules.py` 校验 anchor、Owner、fixture、测试名、manifest 引用和未挂规则 fixture 清单。
 - [`deployment.md`](deployment.md)
   - 讲安装、配置入口、MCP 注册、更新和最小验证。
-  - 讲 Wiley / Science / PNAS / AMS / ACS / IOP / AIP / MDPI 的 repo-local 浏览器工作流、本地 `scripts/dev-preflight.sh` 门禁和 CI 测试耗时信号。
+  - 讲 Wiley / Science / PNAS / AMS / Annual Reviews / ACS / IOP / AIP / MDPI 的 repo-local 浏览器工作流、本地 `scripts/dev-preflight.sh` 门禁和 CI 测试耗时信号。
 - [`architecture/overview.md`](architecture/overview.md)
   - 讲当前系统分层、端到端业务流程、数据契约和扩展点。
 - [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
@@ -140,10 +140,10 @@
 ### `download_tier`
 
 - `article.assets[*]` 上的资产下载层级诊断。
-- 常见值包括 `full_size`、`preview`。旧的通用 HTTP-first 路径仍可能保留 `playwright_canvas_fallback` 诊断，但 `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 的 HTML 资产主链路不再输出这个 tier。
+- 常见值包括 `full_size`、`preview`。旧的通用 HTTP-first 路径仍可能保留 `playwright_canvas_fallback` 诊断，但 `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 HTML 资产主链路不再输出这个 tier。
 - `preview` 不是天然错误；当宽高满足阈值且 `source_trail` 有 preview accepted 轨迹时，是可接受降级。
 - preview 降级仍必须导出自包含 Markdown；如果正文图片链接能映射到已下载本地资产，最终 `.md` 不应残留远端图片 URL。
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 的 challenge 恢复链路只接受能识别为图片的 CloakBrowser image payload，包括浏览器导出的 PNG 和原始 SVG；不会再把图片文档 screenshot 裁剪成正文图片资产，也不会把 challenge HTML 保存成图片。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 challenge 恢复链路只接受能识别为图片的 CloakBrowser image payload，包括浏览器导出的 PNG 和原始 SVG；不会再把图片文档 screenshot 裁剪成正文图片资产，也不会把 challenge HTML 保存成图片。
 - live review 中，只有公式图片发生 preview fallback 时不自动归为 `asset_download_failure`；figure/table preview fallback 仍需要 accepted 轨迹或其它证据才能降噪。资产下载 warning、`asset_failures` 轨迹或 `quality.asset_failures` 会归为 `asset_download_failure`。
 
 ### `semantic_losses`
@@ -181,7 +181,7 @@
 
 - golden criteria live review 的 `stage_timings` 包含 `fetch_seconds`、`materialize_seconds`、`total_seconds`、`resolve_seconds`、`metadata_seconds`、`fulltext_seconds`、`asset_seconds`、`formula_seconds`、`render_seconds`。
 - 每个 sample 的 `http_cache_stats` 表示该 sample 执行前后差值；最终汇总日志仍可查看 `HttpTransport.cache_stats_snapshot()` 的累计快照。
-- live runner supported provider 包含 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee`、`arxiv`、`ams`、`acs`、`iop`、`mdpi`、`copernicus`、`plos`；arXiv、MDPI、Copernicus 与 PLOS 路径和资产语义见 [`providers.md`](providers.md)。
+- live runner supported provider 从 runtime `official_provider_names()` 派生，当前包含 `elsevier`、`springer`、`wiley`、`science`、`pnas`、`ieee`、`arxiv`、`copernicus`、`ams`、`mdpi`、`royalsocietypublishing`、`annualreviews`、`plos`、`oxfordacademic`、`acs`、`iop`、`aip`；provider 路径和资产语义见 [`providers.md`](providers.md)。
 
 ## 一句话阅读建议
 

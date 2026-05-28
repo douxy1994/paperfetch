@@ -10,7 +10,7 @@
 这份文档不解决：
 
 - provider 差异、路由规则和限速语义
-- Wiley / Science / PNAS / AMS / ACS / IOP / AIP / MDPI 的浏览器运行时细节
+- Wiley / Science / PNAS / AMS / Annual Reviews / ACS / IOP / AIP / MDPI 的浏览器运行时细节
 - 架构实现细节
 
 provider 与环境变量说明见 [`providers.md`](providers.md)，架构说明见 [`architecture/overview.md`](architecture/overview.md)。
@@ -80,10 +80,10 @@ chmod +x paper-fetch-skill-offline-linux-x86_64-cp312.sh
 source ~/.local/share/paper-fetch-skill/activate-offline.sh
 ```
 
-WSLg 或桌面显示环境可用：
+桌面显示环境可用：
 
 ```bash
-./paper-fetch-skill-offline-linux-x86_64-cp312.sh --preset=wslg --no-user-config
+./paper-fetch-skill-offline-linux-x86_64-cp312.sh --preset=headful --no-user-config
 ```
 
 如需固定到自定义目录：
@@ -106,11 +106,10 @@ Preset 选项：
 
 - `headless` 面向服务器或无桌面环境。
 - `headful` 面向 macOS 或常规桌面显示环境。
-- `wslg` 面向 WSLg 或桌面显示环境。
 
 Shell rc 写入策略：
 
-- Linux / macOS 安装脚本会把 payload 复制到固定安装目录，使用该目录下的 `bin/` 启动器和 `runtime/site-packages/` 已安装 Python 包，复制 Codex / Claude Code / Gemini CLI skill，并注册 MCP。
+- Linux / macOS 安装脚本会把 payload 复制到固定安装目录，使用该目录下的 `bin/` 启动器和 `runtime/site-packages/` 已安装 Python 包，复制 Codex / Claude Code skill，并注册 MCP。
 - Bash 写 `~/.bashrc`，Zsh 写 `~/.zshrc`，Fish 写 `~/.config/fish/conf.d/paper-fetch-offline.fish`。
 - 无法识别 `$SHELL` 时写 `~/.profile` 并打印提示。
 
@@ -118,7 +117,7 @@ Shell rc 写入策略：
 
 - 安装后新开 shell，或临时执行 `source ~/.local/share/paper-fetch-skill/activate-offline.sh`；自定义安装目录时使用该目录下的 `activate-offline.sh`。
 
-Linux / macOS MCP 注册行为与 Windows 对齐：检测到 `codex` CLI 时执行 `codex mcp remove/add paper-fetch`，没有 CLI 或注册失败时更新 `~/.codex/config.toml` 中的 `mcp_servers.paper-fetch`；检测到 `claude` CLI 时执行 `claude mcp remove/add -s user paper-fetch`，没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册；检测到 `gemini` CLI 时执行 `gemini mcp remove/add -s user paper-fetch`，没有 Gemini CLI 时只安装 skill 并跳过 Gemini MCP 注册，不写 `~/.gemini/settings.json` fallback。Codex / Claude Code / Gemini CLI 需要重启后才会重新扫描 skill 和 MCP 配置。
+Linux / macOS MCP 注册行为与 Windows 对齐：检测到 `codex` CLI 时执行 `codex mcp remove/add paper-fetch`，没有 CLI 或注册失败时更新 `~/.codex/config.toml` 中的 `mcp_servers.paper-fetch`；检测到 `claude` CLI 时执行 `claude mcp remove/add -s user paper-fetch`，没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。Codex / Claude Code 需要重启后才会重新扫描 skill 和 MCP 配置。
 
 Windows 目标机运行安装器即可：
 
@@ -126,7 +125,7 @@ Windows 目标机运行安装器即可：
 .\paper-fetch-skill-windows-x86_64-setup.exe
 ```
 
-Windows 安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管理员权限。安装器会复制运行组件，写入用户 PATH，复制 Codex / Claude Code / Gemini CLI skill，并执行 best-effort 基础 smoke check。检测到 `codex` CLI 时会用 `codex mcp remove/add` 注册 MCP；没有 Codex CLI 时会备份并更新 `%USERPROFILE%\.codex\config.toml` 中的 `mcp_servers.paper-fetch`。检测到 `claude` CLI 时会用 `claude mcp remove/add -s user` 注册；没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。检测到 `gemini` CLI 时会用 `gemini mcp remove/add -s user` 注册；没有 Gemini CLI 时只安装 skill 并跳过 Gemini MCP 注册，不写 Gemini JSON fallback。用户级 skill / PATH / MCP 集成或 smoke check 失败时不会回滚已复制的 runtime，详细警告写入 `%LOCALAPPDATA%\PaperFetchSkill\install-helper.log`；可修正本机环境后手动重跑 `%LOCALAPPDATA%\PaperFetchSkill\scripts\windows-installer-helper.ps1 -Action Install`。
+Windows 安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管理员权限。安装器会复制运行组件，写入用户 PATH，复制 Codex / Claude Code skill，并执行 best-effort 基础 smoke check。检测到 `codex` CLI 时会用 `codex mcp remove/add` 注册 MCP；没有 Codex CLI 时会备份并更新 `%USERPROFILE%\.codex\config.toml` 中的 `mcp_servers.paper-fetch`。检测到 `claude` CLI 时会用 `claude mcp remove/add -s user` 注册；没有 Claude CLI 时只安装 skill 并跳过 Claude MCP 注册。用户级 skill / PATH / MCP 集成或 smoke check 失败时不会回滚已复制的 runtime，详细警告写入 `%LOCALAPPDATA%\PaperFetchSkill\install-helper.log`；可修正本机环境后手动重跑 `%LOCALAPPDATA%\PaperFetchSkill\scripts\windows-installer-helper.ps1 -Action Install`。
 
 离线更新：
 
@@ -140,12 +139,12 @@ Windows 安装器默认安装到 `%LOCALAPPDATA%\PaperFetchSkill`，不要求管
 source ~/.local/share/paper-fetch-skill/activate-offline.sh
 ```
 
-被复用的 `offline.env` 可以保留旧 managed block；运行时路径会通过 shell / MCP 进程环境覆盖为新安装目录路径。更新后重启 Codex / Claude Code / Gemini CLI。
+被复用的 `offline.env` 可以保留旧 managed block；运行时路径会通过 shell / MCP 进程环境覆盖为新安装目录路径。更新后重启 Codex / Claude Code。
 
 离线卸载：
 
-- Windows：在“设置 > 应用 > 已安装的应用”中卸载 `Paper Fetch Skill`，或运行 `%LOCALAPPDATA%\PaperFetchSkill\unins000.exe`。如需保留安装目录内 `offline.env` 的 API key，卸载前先备份该文件。卸载器会删除安装目录、安装器复制的 Codex / Claude Code / Gemini CLI skill、用户 PATH 中的安装目录 `bin`，并移除安装器管理的 MCP 注册；不会删除用户手写的其它 Codex / Claude / Gemini 配置。
-- Linux：运行 `~/.local/share/paper-fetch-skill/install-offline.sh --uninstall`，自定义目录则运行该目录下的 `install-offline.sh --install-dir <path> --uninstall`。该路径不做 checksum、Python ABI 或 bundle asset 检查，只删除 `~/.codex/skills/paper-fetch-skill`、`~/.claude/skills/paper-fetch-skill`、`~/.gemini/skills/paper-fetch-skill`，清理 shell 启动文件和 Codex fallback config 中的 installer managed block，并通过可用的 `codex` / `claude` / `gemini` CLI 移除 MCP；不会删除固定安装目录、`bin/`、`runtime/`、`offline.env`、`downloads/` 或用户配置目录。需要删除固定安装目录时显式运行 `install-offline.sh --purge`。
+- Windows：在“设置 > 应用 > 已安装的应用”中卸载 `Paper Fetch Skill`，或运行 `%LOCALAPPDATA%\PaperFetchSkill\unins000.exe`。如需保留安装目录内 `offline.env` 的 API key，卸载前先备份该文件。卸载器会删除安装目录、安装器复制的 Codex / Claude Code skill、用户 PATH 中的安装目录 `bin`，并移除安装器管理的 MCP 注册；不会删除用户手写的其它 Codex / Claude 配置。
+- Linux：运行 `~/.local/share/paper-fetch-skill/install-offline.sh --uninstall`，自定义目录则运行该目录下的 `install-offline.sh --install-dir <path> --uninstall`。该路径不做 checksum、Python ABI 或 bundle asset 检查，只删除 `~/.codex/skills/paper-fetch-skill`、`~/.claude/skills/paper-fetch-skill`，清理 shell 启动文件和 Codex fallback config 中的 installer managed block，并通过可用的 `codex` / `claude` CLI 移除 MCP；不会删除固定安装目录、`bin/`、`runtime/`、`offline.env`、`downloads/` 或用户配置目录。需要删除固定安装目录时显式运行 `install-offline.sh --purge`。
 - macOS：卸载命令与 Linux 相同；如果使用自定义安装目录，运行该目录下的 `install-offline.sh --install-dir <path> --uninstall`。
 
 离线安装约束：
@@ -158,14 +157,14 @@ source ~/.local/share/paper-fetch-skill/activate-offline.sh
 - CloakBrowser Python 包随 Linux / macOS `runtime/site-packages` 和 Windows embedded runtime 分发；浏览器 binary 不随包分发，受限环境可预先安装并设置 `CLOAKBROWSER_BINARY_PATH`
 - Linux `.sh` payload 不包含仓库源码快照和 `tests/` 目录；离线安装目标是运行已打包工具，不在目标机执行项目测试
 - Linux / macOS 公式工具使用包内 `formula-tools/bin/texmath`，Windows 使用 `formula-tools/bin/texmath.exe`；目标机不编译 texmath，也不运行 `npm install`
-- Linux / macOS 默认写固定安装目录内的 `offline.env`、生成可在 bash/zsh 中 `source` 的 `activate-offline.sh`、复制 `~/.codex/skills/paper-fetch-skill`、`~/.claude/skills/paper-fetch-skill` 和 `~/.gemini/skills/paper-fetch-skill`，并把离线 CLI PATH、formula tools PATH、`PAPER_FETCH_ENV_FILE`、`PAPER_FETCH_FORMULA_TOOLS_DIR`、`CLOAKBROWSER_HEADLESS` 写入当前 shell 对应启动文件；`offline.env` 的 managed block 默认启用普通 Chrome `PAPER_FETCH_BROWSER_USER_AGENT`，只有显式传 `--user-config` 才会把受标记管理的运行时块合并到 `~/.config/paper-fetch/.env`
+- Linux / macOS 默认写固定安装目录内的 `offline.env`、生成可在 bash/zsh 中 `source` 的 `activate-offline.sh`、复制 `~/.codex/skills/paper-fetch-skill` 和 `~/.claude/skills/paper-fetch-skill`，并把离线 CLI PATH、formula tools PATH、`PAPER_FETCH_ENV_FILE`、`PAPER_FETCH_FORMULA_TOOLS_DIR`、`CLOAKBROWSER_HEADLESS` 写入当前 shell 对应启动文件；`offline.env` 的 managed block 默认启用普通 Chrome `PAPER_FETCH_BROWSER_USER_AGENT`，只有显式传 `--user-config` 才会把受标记管理的运行时块合并到 `~/.config/paper-fetch/.env`
 - Linux / macOS `--install-dir <path>` 会把 runtime-only payload 固定安装到指定目录；升级同一目录时会清理旧 `src/`、`tests/`、`wheelhouse/`、`dist/`、`.github/` 等残留并保留安装目录内 `offline.env`
 - Linux / macOS `--reuse-env-file <path>` 会把 `PAPER_FETCH_ENV_FILE` 指向现有文件且不修改该文件；其它 runtime 路径仍由新安装目录写入 shell / MCP 环境
 - Linux / macOS 写入 shell 启动文件和 Codex fallback config 时会先替换旧的受管理 block，重复安装不会重复追加；不修改 `/etc/profile`
 - Windows 首次安装会写安装目录内 `offline.env`；升级安装会保留用户已有内容，只替换 `# BEGIN/END paper-fetch offline managed` 包围的运行时 block。MCP 注册环境固定指向安装目录内 `offline.env`、`downloads/`、`formula-tools/` 和包内 `runtime/Lib/site-packages/playwright/driver/node.exe`，并设置 `PYTHONUTF8=1`、`PYTHONIOENCODING=utf-8`、`CLOAKBROWSER_HEADLESS=true`、`PAPER_FETCH_BROWSER_USER_AGENT=<普通 Chrome UA>`、`MATHML_TO_LATEX_NODE_BIN=<install-root>/runtime/Lib/site-packages/playwright/driver/node.exe`。Linux / macOS 也会在包内 Playwright Node 存在时把 `MATHML_TO_LATEX_NODE_BIN` 指向 `runtime/site-packages/playwright/driver/node`
-- Windows 安装、升级或手工修改 `offline.env` 后，需要重启 Codex Desktop / Claude Code / Gemini CLI；已启动的 MCP 服务不会自动继承新写入的 env。
+- Windows 安装、升级或手工修改 `offline.env` 后，需要重启 Codex Desktop / Claude Code；已启动的 MCP 服务不会自动继承新写入的 env。
 - Windows GUI 安装完成页会提示 Elsevier API key 申请入口和包内 `offline.env` 位置，并提供可选的 Notepad 打开项；silent 安装不会弹出该提示。离线环境抓取 Elsevier 全文前，从 <https://dev.elsevier.com/> 申请 key，并在该文件中填写 `ELSEVIER_API_KEY`
-- `--preset=headless` 设置 `CLOAKBROWSER_HEADLESS=true`；`--preset=headful` 设置 `CLOAKBROWSER_HEADLESS=false`；`--preset=wslg` 仅 Linux 可用，并会检查 `DISPLAY` 或 `WAYLAND_DISPLAY`
+- `--preset=headless` 设置 `CLOAKBROWSER_HEADLESS=true`；`--preset=headful` 设置 `CLOAKBROWSER_HEADLESS=false`
 
 构建离线包：
 
@@ -191,9 +190,9 @@ scripts/verify-offline-package.sh dist/paper-fetch-skill-offline-linux-x86_64-cp
 
 上面的验证路径按实际构建出的 `cp311`、`cp312`、`cp313` 或 `cp314` 包名替换。
 
-验证脚本会执行 `.sh --install-dir <临时目录>` 或先解压 macOS `.tar.gz` 再执行包内 `install-offline.sh --install-dir <临时目录>`，确认安装后的固定目录包含 `runtime/site-packages` 和 `bin/` 启动器，且不包含源码树、`tests/`、`dist/` 或 build wheelhouse；再用 guard 拦截 `curl`、`git`、`npm`、`playwright` 等命令来确认安装器没有在线下载或目标机 patch 动作，并使用临时 HOME 和 fake `codex` / `claude` / `gemini` CLI 验证 Linux / macOS shell 写入、skill 复制和 MCP remove/add 注册；随后检查 `paper-fetch --help`、`texmath --help`、`cloakbrowser` import、`paper_fetch.mcp.fetch_tool.provider_status_payload`，最后执行 `install-offline.sh --uninstall` 验证用户级集成可清理且不删除安装目录内 `offline.env` 或 runtime，并执行 `--purge` 验证固定安装目录可显式删除。
+验证脚本会执行 `.sh --install-dir <临时目录>` 或先解压 macOS `.tar.gz` 再执行包内 `install-offline.sh --install-dir <临时目录>`，确认安装后的固定目录包含 `runtime/site-packages` 和 `bin/` 启动器，且不包含源码树、`tests/`、`dist/` 或 build wheelhouse；再用 guard 拦截 `curl`、`git`、`npm`、`playwright` 等命令来确认安装器没有在线下载或目标机 patch 动作，并使用临时 HOME 和 fake `codex` / `claude` CLI 验证 Linux / macOS shell 写入、skill 复制和 MCP remove/add 注册；随后检查 `paper-fetch --help`、`texmath --help`、`cloakbrowser` import、`paper_fetch.mcp.fetch_tool.provider_status_payload`，最后执行 `install-offline.sh --uninstall` 验证用户级集成可清理且不删除安装目录内 `offline.env` 或 runtime，并执行 `--purge` 验证固定安装目录可显式删除。
 
-Windows CI 在 `offline-windows-x86-64` job 中执行安装器验证：通过 `Start-Process -Wait -PassThru` silent install 并检查安装器进程退出码，失败时输出安装日志；随后验证安装目录是 runtime-only 布局，不存在顶层源码或构建目录，再验证 bundled `runtime\python.exe` import 和 `provider_status_payload()`、`bin\paper-fetch.cmd --help`、`texmath.exe --help`、CloakBrowser package smoke，并用 fake `codex` / `claude` / `gemini` CLI 验证 MCP remove/add 命令。
+Windows CI 在 `offline-windows-x86-64` job 中执行安装器验证：通过 `Start-Process -Wait -PassThru` silent install 并检查安装器进程退出码，失败时输出安装日志；随后验证安装目录是 runtime-only 布局，不存在顶层源码或构建目录，再验证 bundled `runtime\python.exe` import 和 `provider_status_payload()`、`bin\paper-fetch.cmd --help`、`texmath.exe --help`、CloakBrowser package smoke，并用 fake `codex` / `claude` CLI 验证 MCP remove/add 命令。
 
 只需要复核 Windows 安装器时，可以手动触发 `CI` workflow 并设置 `run_offline_windows_only=true`；该模式只运行 `offline-windows-x86-64`，其它常规 job 会跳过。
 
@@ -296,13 +295,13 @@ scripts/clean-local-artifacts.sh --days 7
 
 该脚本只删除 `git check-ignore` 确认为 ignored 的目标；未被 `.gitignore` 覆盖的路径会跳过。
 
-## 4. Elsevier / Wiley / Science / PNAS / AMS / ACS / IOP / AIP / MDPI / IEEE 接入入口
+## 4. Provider 接入入口与本地运行时
 
 `elsevier` 不依赖本地浏览器链路；它只需要官方 API 凭据，并走 `官方 XML/API -> 官方 API PDF fallback -> metadata-only`。
 
 `ieee` 不需要 IEEE API key；它走 `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback`，但全文是否可用仍取决于当前环境对 IEEE Xplore 的合法访问上下文。clean-browser HTML 使用新的 CloakBrowser context，不读取本机浏览器 profile、不复用用户登录态、不自动登录、不处理验证码，也不绕过访问权限。direct HTTP PDF 返回 `stamp.jsp` HTML wrapper 或 access/challenge 页面时，seeded-browser PDF fallback 只复用当前页面运行期间获得的合法 IEEE cookies/session。
 
-`wiley`、`science`、`pnas`、`ams`、`acs`、`iop`、`aip`、`mdpi` 默认通过 CloakBrowser HTML bootstrap 进入 provider-owned browser workflow。是否能拿到全文仍取决于 publisher 访问权限、paywall/challenge 与远端站点行为。
+`wiley`、`science`、`pnas`、`ams`、`annualreviews`、`acs`、`iop`、`aip`、`mdpi` 默认通过 CloakBrowser HTML bootstrap 进入 provider-owned browser workflow。是否能拿到全文仍取决于 publisher 访问权限、paywall/challenge 与远端站点行为。
 
 这些浏览器 HTML route 会在 challenge/paywall 判定前先等待正文 DOM 稳定；如果正文已经可抽取，页面残留的 Cloudflare/challenge 文案不会提前中断 HTML route，最终全文/摘要/降级结论仍由 Markdown 抽取后的 availability 判定负责。
 
@@ -313,23 +312,23 @@ export CLOAKBROWSER_HEADLESS="true"
 export CLOAKBROWSER_TIMEOUT_MS="120000"
 ```
 
-AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，离线安装器已默认启用普通 Chrome browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求；`CLOAKBROWSER_HEADLESS=true` 可以保持默认。纯 stateless headless 仍被 challenge 时，可以先用 `CLOAKBROWSER_HEADLESS=false` 和稳定的 `CLOAKBROWSER_USER_DATA_DIR` 完成合法站点验证，再切回 headless 复用该 session；macOS 可用 `--preset=headful`，Linux WSLg 可用 `--preset=wslg`：
+AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，离线安装器已默认启用普通 Chrome browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求；`CLOAKBROWSER_HEADLESS=true` 可以保持默认。纯 stateless headless 仍被 challenge 时，可以先用 `CLOAKBROWSER_HEADLESS=false` 和稳定的 `CLOAKBROWSER_USER_DATA_DIR` 完成合法站点验证，再切回 headless 复用该 session；桌面显示环境可用 `--preset=headful`：
 
 ```bash
 PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
-# GUI/WSLg 环境需要时再启用：
+# GUI 环境需要时再启用：
 export CLOAKBROWSER_HEADLESS="false"
 export CLOAKBROWSER_USER_DATA_DIR="$HOME/.cache/paper-fetch/cloakbrowser-wiley"
 ```
 
 补充：
 
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 还需要 browser runtime，因为 PNAS direct HTML preflight、HTML 正文图片资产下载和 seeded-browser PDF/ePDF fallback 都会使用 browser context
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 还需要 browser runtime，因为 PNAS direct HTML preflight、HTML 正文图片资产下载和 seeded-browser PDF/ePDF fallback 都会使用 browser context
 - `elsevier` 只需要 `ELSEVIER_API_KEY`
 - `ieee` 不需要额外 env；普通 fetch 在无授权或 REST/browser/PDF route 返回非全文时会降级到 provider abstract-only / metadata-only；golden criteria live review 面向具备合法 IEEE Xplore 授权上下文的机器，IEEE 样本预期为 fulltext，降级会作为 blocked live fetch 暴露；配置了 `download_dir` 且 artifact mode 为 `all` 时 PDF fallback 的最后一个非 PDF HTML 会保存在 `ieee_pdf_fallback/pdf.failure.html`
 - `arxiv` 不需要额外 env；路径细节见 [`providers.md` 的 arXiv 小节](providers.md#arxiv)。
 - 如果只想启用 `wiley` 的官方 TDM API PDF lane，可以只配置 `WILEY_TDM_CLIENT_TOKEN`；这不会启用 HTML 资产下载或 seeded-browser PDF/ePDF fallback
-- `wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 的 browser workflow 顺序见 [`providers.md`](providers.md#wiley-science-pnas-browser-workflow)。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 browser workflow 顺序见 [`providers.md`](providers.md#wiley-science-pnas-browser-workflow)。
 
 ## 5. 部署到 Codex
 
@@ -345,8 +344,8 @@ python3 -m pip install .
 - 安装当前包
 - 复制静态 skill bundle
 - 在显式传入 `--register-mcp` 时注册 `paper-fetch` MCP server
-- 注册 Codex MCP 时把当前 `python3` 解释器写入 `PAPER_FETCH_MCP_PYTHON_BIN`，并让 Codex 调用仓库里的 launcher
-- 在 WSL 下默认通过 `scripts/run-codex-paper-fetch-mcp.sh` 启动 MCP；如需 headed browser，请在外部环境中设置 `CLOAKBROWSER_HEADLESS=false` 并提供可用显示环境
+- 注册 Codex MCP 时直接使用当前 `python3` 解释器启动 `paper_fetch.mcp.server`
+- 如需 headed browser，请在外部环境中设置 `CLOAKBROWSER_HEADLESS=false` 并提供可用显示环境
 
 常用选项：
 
@@ -370,30 +369,7 @@ python3 -m pip install .
 - `--mcp-scope local|user|project`
 - `--mcp-name <name>`
 
-## 7. 部署到 Gemini CLI
-
-最常用流程：
-
-```bash
-python3 -m pip install .
-./scripts/install-gemini-skill.sh --register-mcp
-```
-
-这个脚本会：
-
-- 安装当前包
-- 复制静态 skill bundle 到 `~/.gemini/skills/paper-fetch-skill`
-- 在显式传入 `--register-mcp` 且检测到 `gemini` CLI 时，执行 `gemini mcp remove -s user paper-fetch` 后再注册 `paper-fetch` MCP server
-- 传入 `--env-file <path>` 时，把它映射为 Gemini MCP env 参数 `PAPER_FETCH_ENV_FILE=<path>`
-- 如果没有检测到 `gemini` CLI，只安装 skill 并跳过 MCP 注册，不写 `~/.gemini/settings.json`
-
-常用选项：
-
-- `--project`
-- `--env-file <path>`
-- `--mcp-name <name>`
-
-## 8. 手动注册 MCP
+## 7. 手动注册 MCP
 
 如果你不想使用安装脚本，也可以直接挂一个 stdio MCP server：
 
@@ -407,23 +383,11 @@ paper-fetch-mcp
 python3 -m paper_fetch.mcp.server
 ```
 
-Gemini CLI 可手动注册同一个 stdio server：
+Codex CLI 可手动注册同一个 stdio server：
 
 ```bash
-gemini mcp add -s user paper-fetch python3 -m paper_fetch.mcp.server
+codex mcp add paper-fetch -- python3 -X utf8 -m paper_fetch.mcp.server
 ```
-
-如果你是在 WSL 下给 Codex 挂宿主 MCP，推荐直接用：
-
-```bash
-./scripts/run-codex-paper-fetch-mcp.sh
-```
-
-这个包装脚本会：
-
-- 在 WSL 下补齐缺失的 `XDG_RUNTIME_DIR`
-- 如需 headed browser，可设置 `CLOAKBROWSER_HEADLESS=false`
-- 默认保持 headless，适合 stdio MCP 场景
 
 如果配置文件不在进程环境里，额外设置：
 
@@ -435,7 +399,7 @@ PAPER_FETCH_ENV_FILE=/path/to/.env
 
 常用抓取参数的默认模式、`artifact_mode`、`prefer_cache`、`no_download` 和 `save_markdown` 语义见 [`providers.md`](providers.md#mcp-download-and-markdown-save)。
 
-## 9. 更新方式
+## 8. 更新方式
 
 离线 release 包的更新方式见“离线包”小节。本节只针对源码或在线安装环境。
 
@@ -445,15 +409,14 @@ PAPER_FETCH_ENV_FILE=/path/to/.env
 python3 -m pip install .
 ```
 
-如果你还在使用 Codex、Claude Code 或 Gemini CLI，推荐顺手重跑对应安装脚本，让 skill 和 MCP 一起更新：
+如果你还在使用 Codex 或 Claude Code，推荐顺手重跑对应安装脚本，让 skill 和 MCP 一起更新：
 
 ```bash
 ./scripts/install-codex-skill.sh --register-mcp
 ./scripts/install-claude-skill.sh --register-mcp
-./scripts/install-gemini-skill.sh --register-mcp
 ```
 
-## 10. 最小验证步骤
+## 9. 最小验证步骤
 
 先做一个最小 smoke test：
 
@@ -488,7 +451,7 @@ PYTHONPATH=src python3 -m pytest tests/unit -q --cov=paper_fetch --cov-report=te
 PAPER_FETCH_RUN_FULL_GOLDEN=1 PYTHONPATH=src python3 -m pytest tests/integration/test_golden_corpus.py -q
 ```
 
-未设置 `PAPER_FETCH_RUN_LIVE=1` 时，`tests/live/test_live_publishers.py` 和 `tests/live/test_live_mcp.py` 应稳定 skip。额外验证 live smoke 时，`arxiv` 不需要凭据或 browser runtime；`wiley` / `science` / `pnas` / `ams` / `acs` / `iop` / `aip` / `mdpi` 需要 CloakBrowser-backed browser runtime；`ieee` 不需要 IEEE API key，但 IEEE fulltext smoke 预期当前机器具备合法 IEEE Xplore 访问上下文，并会先检查 CloakBrowser package，避免缺少 browser fallback 能力时误判 provider 行为。live 测试依赖真实 publisher/API/browser/授权上下文和外部限流状态，建议串行运行：
+未设置 `PAPER_FETCH_RUN_LIVE=1` 时，`tests/live/test_live_publishers.py` 和 `tests/live/test_live_mcp.py` 应稳定 skip。额外验证 live smoke 时，`arxiv` 不需要凭据或 browser runtime；`wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 需要 CloakBrowser-backed browser runtime；`ieee` 不需要 IEEE API key，但 IEEE fulltext smoke 预期当前机器具备合法 IEEE Xplore 访问上下文，并会先检查 CloakBrowser package，避免缺少 browser fallback 能力时误判 provider 行为。live 测试依赖真实 publisher/API/browser/授权上下文和外部限流状态，建议串行运行：
 
 ```bash
 PAPER_FETCH_RUN_LIVE=1 PYTHONPATH=src python3 -m pytest tests/live/test_live_publishers.py tests/live/test_live_mcp.py -q -n 0

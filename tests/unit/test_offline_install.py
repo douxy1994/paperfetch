@@ -347,25 +347,16 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertIn('set -gx CLOAKBROWSER_HEADLESS "true"', fish_config)
             self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH", bashrc + fish_config)
 
-    def test_wslg_preset_sets_headful_cloakbrowser_and_requires_display(self) -> None:
+    def test_unknown_preset_is_rejected(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle, fake_bin, home = self._create_bundle(Path(tmpdir))
 
-            missing_display = self._run_installer(
-                bundle,
-                fake_bin,
-                home,
-                "--preset=wslg",
-                extra_env={"DISPLAY": "", "WAYLAND_DISPLAY": ""},
-            )
-            self.assertNotEqual(missing_display.returncode, 0)
-            self.assertIn("DISPLAY or WAYLAND_DISPLAY is required", missing_display.stderr)
+            result = self._run_installer(bundle, fake_bin, home, "--preset=desktop")
 
-            result = self._run_installer(bundle, fake_bin, home, "--preset=wslg", extra_env={"DISPLAY": ":0"})
-            self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('CLOAKBROWSER_HEADLESS="false"', (bundle / "offline.env").read_text(encoding="utf-8"))
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("--preset must be headless or headful", result.stderr)
 
-    def test_macos_bundle_accepts_headful_preset_without_wslg_display(self) -> None:
+    def test_macos_bundle_accepts_headful_preset_without_display(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle, fake_bin, home = self._create_bundle(
                 Path(tmpdir),
@@ -386,10 +377,6 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertIn('CLOAKBROWSER_HEADLESS="false"', (bundle / "offline.env").read_text(encoding="utf-8"))
 
-            wslg_result = self._run_installer(bundle, fake_bin, home, "--preset=wslg")
-            self.assertNotEqual(wslg_result.returncode, 0)
-            self.assertIn("--preset=wslg is Linux/WSLg-only", wslg_result.stderr)
-
     def test_cli_registration_uses_cloakbrowser_env(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
@@ -397,7 +384,6 @@ class OfflineInstallTests(unittest.TestCase):
             cli_log = root / "cli.log"
             _write_recording_cli(fake_bin / "codex", cli_log)
             _write_recording_cli(fake_bin / "claude", cli_log)
-            _write_recording_cli(fake_bin / "gemini", cli_log)
 
             result = self._run_installer(bundle, fake_bin, home)
 
@@ -405,7 +391,6 @@ class OfflineInstallTests(unittest.TestCase):
             calls = [line.split("\t") for line in cli_log.read_text(encoding="utf-8").splitlines()]
             codex_add = next(call for call in calls if call[:3] == ["codex", "mcp", "add"])
             self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", codex_add)
-            self.assertFalse(any(arg.startswith("PAPER_FETCH_MCP_PYTHON_BIN=") for arg in codex_add))
             self.assertIn(
                 f"MATHML_TO_LATEX_NODE_BIN={bundle / 'runtime' / 'site-packages' / 'playwright' / 'driver' / 'node'}",
                 codex_add,
@@ -418,15 +403,6 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertIn("--", claude_add)
             self.assertLess(claude_add.index("--"), claude_add.index("paper-fetch"))
             self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", claude_add)
-            gemini_remove = next(call for call in calls if call[:3] == ["gemini", "mcp", "remove"])
-            self.assertIn("-s", gemini_remove)
-            self.assertIn("user", gemini_remove)
-            gemini_add = next(call for call in calls if call[:3] == ["gemini", "mcp", "add"])
-            self.assertIn("-s", gemini_add)
-            self.assertIn("user", gemini_add)
-            self.assertNotIn("--", gemini_add)
-            self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", gemini_add)
-            self.assertEqual(gemini_add[gemini_add.index("paper-fetch") + 1], str(bundle / "runtime" / "paper-fetch-python"))
 
     def test_missing_codex_cli_writes_config_toml_without_playwright_runtime_key(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -535,7 +511,6 @@ class OfflineInstallTests(unittest.TestCase):
             cli_log = root / "cli.log"
             _write_recording_cli(fake_bin / "codex", cli_log)
             _write_recording_cli(fake_bin / "claude", cli_log)
-            _write_recording_cli(fake_bin / "gemini", cli_log)
 
             _write_file(bundle / "offline.env", 'ELSEVIER_API_KEY="secret"\n')
             _write_file(bundle / "bin" / "paper-fetch", "installed\n")
@@ -640,7 +615,6 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn('@("--version")', script)
         self.assertIn('$args += @("--", $McpName, $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")', script)
         self.assertIn('$args = @("mcp", "add", "-s", "user")', script)
-        self.assertIn('$args += @($McpName, $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")', script)
         self.assertIn('"remove", "-s", "user"', script)
         self.assertNotIn('"-X", "utf8", "-c"', script)
         self.assertNotIn("sessions.list", script)

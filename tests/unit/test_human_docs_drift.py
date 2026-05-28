@@ -14,10 +14,12 @@ HARD_CONSTRAINTS_PATH = AI_ONBOARDING_DIR / "hard-constraints.md"
 PROVIDER_DEVELOPMENT_PATH = REPO_ROOT / "docs" / "provider-development.md"
 ADDING_PROVIDER_PATH = REPO_ROOT / "docs" / "adding-a-provider.md"
 HUMAN_DOC_PATHS = (PROVIDER_DEVELOPMENT_PATH, ADDING_PROVIDER_PATH)
+AI_ONBOARDING_INDEX_LINK = "../onboarding/README.md"
 AI_AUTHORITY_REQUIRED_LINKS = (
-    "../onboarding/README.md",
     "../onboarding/coordinator-spec.md",
+    "../onboarding/provider-manifest.md",
     "../onboarding/provider-manifest.schema.json",
+    "../onboarding/agent-task-brief.md",
     "../onboarding/hard-constraints.md",
     "../onboarding/acceptance.md",
 )
@@ -54,7 +56,6 @@ HUMAN_ONLY_API_ALLOWLIST = frozenset(
         "Tables",
         "WaterfallStep",
         "_X_author_",
-        "_X_html.X_xxx",
         "_doi_",
         "_doi_pdf_candidate",
         "_header_value",
@@ -85,7 +86,10 @@ AI_AUTHORITY_TOPIC_PATTERN = re.compile(
     r"|fixtures\.doi_samples",
     re.IGNORECASE,
 )
-AI_AUTHORITY_LINK_PATTERN = re.compile(r"(?:^|[\s(`])(?:\.\./)?onboarding/")
+AI_AUTHORITY_LINK_PATTERN = re.compile(
+    r"(?:^|[\s(`])(?:\.\./)?onboarding/"
+    r"(?:coordinator-spec|provider-manifest|provider-manifest\.schema|agent-task-brief|hard-constraints|acceptance)\."
+)
 API_TOKEN_PATTERN = re.compile(
     r"`(?P<backtick>[A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]*)?)`"
     r"|\b(?P<call>[A-Za-z_][A-Za-z0-9_]*)\s*\("
@@ -181,11 +185,33 @@ def test_human_docs_declare_ai_onboarding_authority() -> None:
     for path in HUMAN_DOC_PATHS:
         text = _read(path)
         assert "Human reference only" in text, path.relative_to(REPO_ROOT)
+        assert AI_ONBOARDING_INDEX_LINK in text, (
+            f"{path.relative_to(REPO_ROOT)} must link onboarding README as the "
+            "human entry/index"
+        )
         for required_link in AI_AUTHORITY_REQUIRED_LINKS:
             assert required_link in text, (
                 f"{path.relative_to(REPO_ROOT)} must link AI/coordinator authority "
                 f"{required_link}"
             )
+
+
+def test_adding_provider_uses_stable_provider_development_anchors() -> None:
+    provider_development = _read(PROVIDER_DEVELOPMENT_PATH)
+    stable_anchors = set(re.findall(r'<a id="([^"]+)"></a>', provider_development))
+    fragments = set(
+        re.findall(
+            r"\(provider-development\.md#([^)]+)\)",
+            _read(ADDING_PROVIDER_PATH),
+        )
+    )
+
+    assert fragments, "docs/adding-a-provider.md must link provider-development.md anchors"
+    assert fragments <= stable_anchors, (
+        "docs/adding-a-provider.md must link explicit stable anchors in "
+        "docs/provider-development.md: "
+        + ", ".join(sorted(fragments - stable_anchors))
+    )
 
 
 def test_human_docs_ai_topics_link_ai_authority_in_same_block() -> None:

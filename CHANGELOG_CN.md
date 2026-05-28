@@ -6,6 +6,23 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.0.0 - 2026-05-28
+
+### 变更
+
+- MCP provider 指引改为从运行时 provider catalog 派生，使可用 provider hint、browser-runtime provider 和公开 source 名称与已注册 provider 保持一致。
+- 刷新公开 provider 与抽取规则文档，覆盖当前 provider catalog 中 Annual Reviews、Royal Society Publishing、PLOS、Oxford Academic、ACS、IOP、AIP、MDPI、AMS、Science 和 PNAS 等 route 细节。
+- browser-workflow provider 改为通过 provider spec 标记，不再维护单独硬编码的 browser-runtime provider 列表。
+- 更新 Codex skill 安装、离线安装器、部署和 onboarding 文档，使其匹配当前支持的安装入口。
+
+### 移除
+
+- 从随包脚本中移除 Gemini skill 安装器和旧版 Codex MCP runner 脚本。
+
+### 修复
+
+- 让 CloakBrowser workflow 标签、provider docs drift 检查、离线安装检查和 skill template 测试与 catalog 派生的 provider 事实保持同步。
+
 ## 1.9.0 - 2026-05-27
 
 ### 新增
@@ -74,7 +91,7 @@
 ### 修复
 
 - 修复 Windows 离线安装器在 runtime 文件已安装后，仍会因用户级集成或 smoke check 在本机失败而中断的问题；相关警告现在写入 `install-helper.log`。
-- 修复 Linux 离线安装器的 CloakBrowser 检查以及 Claude/Gemini MCP 注册参数，使其匹配当前 host CLI。
+- 修复 Linux 离线安装器的 CloakBrowser 检查以及 Claude MCP 注册参数，使其匹配当前 host CLI。
 - 修复 browser PDF fallback 在调用方已处于 asyncio loop 中时直接启动 Playwright Sync API 的问题，相关 CloakBrowser 同步工作现在转交到 worker 线程执行。
 
 ## 1.5.3 - 2026-05-17

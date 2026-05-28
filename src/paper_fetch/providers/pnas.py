@@ -45,6 +45,7 @@ register_provider_bundle(
                 "/doi/pdf/{doi}?download=true",
                 "/doi/pdf/{doi}",
             ),
+            requires_browser_runtime=True,
         ),
         html_rules=ProviderHtmlRules(
             name="pnas",
