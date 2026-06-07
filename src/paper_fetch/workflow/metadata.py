@@ -91,7 +91,8 @@ def merge_primary_secondary_metadata(
 
 
 def metadata_from_resolution(resolved) -> ProviderMetadata:
-    return {
+    provider_identifiers = dict(getattr(resolved, "provider_identifiers", {}) or {})
+    metadata: ProviderMetadata = {
         "doi": resolved.doi,
         "title": resolved.title,
         "journal_title": None,
@@ -103,6 +104,23 @@ def metadata_from_resolution(resolved) -> ProviderMetadata:
         "references": [],
         "fulltext_links": [],
     }
+    if provider_identifiers:
+        metadata["provider_identifiers"] = provider_identifiers
+        if "pii" in provider_identifiers:
+            metadata["pii"] = provider_identifiers["pii"]
+    return metadata
+
+
+def provider_metadata_query_from_resolution(resolved) -> dict[str, str | None]:
+    query: dict[str, str | None] = {"doi": resolved.doi}
+    provider_identifiers = getattr(resolved, "provider_identifiers", {}) or {}
+    if isinstance(provider_identifiers, Mapping):
+        for key, value in provider_identifiers.items():
+            normalized_key = normalize_text(key)
+            normalized_value = normalize_text(value)
+            if normalized_key and normalized_value:
+                query[normalized_key] = normalized_value
+    return query
 
 
 def _citation_pdf_link(url: str) -> dict[str, Any]:
@@ -254,8 +272,27 @@ def fetch_metadata_for_resolved_query(
         provider_name = resolved.provider_hint
         source_trail.append(route_marker(f"provider_selected_{provider_name}"))
 
+    provider_identifiers = getattr(resolved, "provider_identifiers", {}) or {}
+    provider_metadata_client = clients.get(provider_name) if provider_name else None
+    if (
+        official_metadata is None
+        and crossref_metadata is None
+        and not resolved.doi
+        and provider_name
+        and provider_identifiers
+        and isinstance(provider_metadata_client, MetadataProvider)
+    ):
+        try:
+            official_metadata = cast(
+                ProviderMetadata,
+                provider_metadata_client.fetch_metadata(provider_metadata_query_from_resolution(resolved)),
+            )
+            source_trail.append(metadata_marker(provider_name, "ok"))
+        except ProviderFailure as exc:
+            source_trail.append(source_trail_for_failure("metadata", provider_name, exc))
+
     if official_metadata or crossref_metadata:
-        if official_metadata:
+        if official_metadata and metadata_marker(provider_name or "provider", "ok") not in source_trail:
             source_trail.append(metadata_marker(provider_name or "provider", "ok"))
         metadata = merge_primary_secondary_metadata(official_metadata, crossref_metadata)
         source_metadata = official_metadata or crossref_metadata or {}

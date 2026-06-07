@@ -289,6 +289,32 @@ def test_fetch_html_with_cloakbrowser_reuses_and_saves_storage_state(tmp_path) -
     assert state_path.read_text(encoding="utf-8") == "{}"
 
 
+def test_fetch_html_with_cloakbrowser_prefers_explicit_storage_state_path(tmp_path) -> None:
+    fake_module = _FakeCloakBrowserModule()
+    user_data_dir = tmp_path / "shared-profile"
+    explicit_state_path = tmp_path / "ams-state.json"
+    user_data_dir.mkdir()
+    explicit_state_path.write_text('{"cookies":[]}', encoding="utf-8")
+    config = replace(
+        _runtime_config(tmp_path),
+        user_data_dir=user_data_dir,
+        storage_state_path=explicit_state_path,
+    )
+
+    with mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module):
+        _cloakbrowser.fetch_html_with_cloakbrowser(
+            ["https://journals.ametsoc.org/doi/10.1175/MWR-D-10-05037.1"],
+            publisher="ams",
+            config=config,
+            disable_media=True,
+            wait_seconds=0,
+        )
+
+    assert fake_module.browser.new_context_kwargs["storage_state"] == str(explicit_state_path)
+    assert fake_module.browser.context.storage_state_path == str(explicit_state_path)
+    assert not (user_data_dir / "storage-state.json").exists()
+
+
 def test_load_runtime_config_accepts_cloakbrowser_user_data_dir(tmp_path) -> None:
     config = _cloakbrowser.load_runtime_config(
         {
@@ -301,6 +327,28 @@ def test_load_runtime_config_accepts_cloakbrowser_user_data_dir(tmp_path) -> Non
 
     assert config.user_data_dir == tmp_path / "profile"
     assert config.timeout_ms == 15000
+
+
+def test_load_runtime_config_requires_ams_storage_state_json() -> None:
+    try:
+        _cloakbrowser.load_runtime_config({}, provider="ams", doi="10.1175/example")
+    except _cloakbrowser.ProviderFailure as exc:
+        assert exc.code == "not_configured"
+        assert exc.missing_env == ["PAPER_FETCH_AMS_STORAGE_STATE_JSON"]
+    else:
+        raise AssertionError("expected AMS storage state configuration failure")
+
+
+def test_load_runtime_config_accepts_ams_storage_state_json(tmp_path) -> None:
+    state_path = tmp_path / "ams-state.json"
+    state_path.write_text('{"cookies":[]}', encoding="utf-8")
+    config = _cloakbrowser.load_runtime_config(
+        {"PAPER_FETCH_AMS_STORAGE_STATE_JSON": str(state_path)},
+        provider="ams",
+        doi="10.1175/example",
+    )
+
+    assert config.storage_state_path == state_path
 
 
 def test_fetch_html_with_cloakbrowser_skips_challenge_block_after_wiley_body_dom_ready(tmp_path) -> None:

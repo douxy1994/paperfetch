@@ -303,6 +303,14 @@ scripts/clean-local-artifacts.sh --days 7
 
 `wiley`、`science`、`pnas`、`ams`、`annualreviews`、`acs`、`iop`、`aip`、`mdpi` 默认通过 CloakBrowser HTML bootstrap 进入 provider-owned browser workflow。是否能拿到全文仍取决于 publisher 访问权限、paywall/challenge 与远端站点行为。
 
+AMS 是显式登录态模式：AMS browser workflow 缺少 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 时会直接返回 `not_configured`，不会尝试无状态浏览器抓取。首次使用前，在有桌面显示的终端运行：
+
+```bash
+paper-fetch auth ams
+```
+
+命令会打开 headed CloakBrowser，等待操作者完成合法 AMS 验证，保存 storage-state JSON，并默认把 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 写入 `~/.config/paper-fetch/.env`。如果部署使用自定义环境文件，改用 `paper-fetch auth ams --env-file /path/to/.env`。
+
 这些浏览器 HTML route 会在 challenge/paywall 判定前先等待正文 DOM 稳定；如果正文已经可抽取，页面残留的 Cloudflare/challenge 文案不会提前中断 HTML route，最终全文/摘要/降级结论仍由 Markdown 抽取后的 availability 判定负责。
 
 默认 browser workflow 的最小可选配置：
@@ -312,7 +320,7 @@ export CLOAKBROWSER_HEADLESS="true"
 export CLOAKBROWSER_TIMEOUT_MS="120000"
 ```
 
-AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，离线安装器已默认启用普通 Chrome browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求；`CLOAKBROWSER_HEADLESS=true` 可以保持默认。纯 stateless headless 仍被 challenge 时，可以先用 `CLOAKBROWSER_HEADLESS=false` 和稳定的 `CLOAKBROWSER_USER_DATA_DIR` 完成合法站点验证，再切回 headless 复用该 session；桌面显示环境可用 `--preset=headful`：
+AGU/Wiley 页面如果因为 Cloudflare challenge 无法在默认 headless browser 路径下通过，离线安装器已默认启用普通 Chrome browser context UA，不影响 Crossref / API 等非浏览器 HTTP 请求；`CLOAKBROWSER_HEADLESS=true` 可以保持默认。纯 stateless headless 仍被 challenge 时，可以先用 `CLOAKBROWSER_HEADLESS=false` 和稳定的 `CLOAKBROWSER_USER_DATA_DIR` 完成合法站点验证，再切回 headless 复用该 session；AMS 不读取 `CLOAKBROWSER_USER_DATA_DIR` 作为必填登录态，必须使用 `paper-fetch auth ams` 生成的 `PAPER_FETCH_AMS_STORAGE_STATE_JSON`。桌面显示环境可用 `--preset=headful`：
 
 ```bash
 PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"
@@ -324,6 +332,7 @@ export CLOAKBROWSER_USER_DATA_DIR="$HOME/.cache/paper-fetch/cloakbrowser-wiley"
 补充：
 
 - `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 还需要 browser runtime，因为 PNAS direct HTML preflight、HTML 正文图片资产下载和 seeded-browser PDF/ePDF fallback 都会使用 browser context
+- `ams` 额外需要 `PAPER_FETCH_AMS_STORAGE_STATE_JSON`；storage-state JSON 可复制用于排查，但不应视为跨机器通用凭据，站点 session 可能按时间、网络、设备或浏览器指纹失效
 - `elsevier` 只需要 `ELSEVIER_API_KEY`
 - `ieee` 不需要额外 env；普通 fetch 在无授权或 REST/browser/PDF route 返回非全文时会降级到 provider abstract-only / metadata-only；golden criteria live review 面向具备合法 IEEE Xplore 授权上下文的机器，IEEE 样本预期为 fulltext，降级会作为 blocked live fetch 暴露；配置了 `download_dir` 且 artifact mode 为 `all` 时 PDF fallback 的最后一个非 PDF HTML 会保存在 `ieee_pdf_fallback/pdf.failure.html`
 - `arxiv` 不需要额外 env；路径细节见 [`providers.md` 的 arXiv 小节](providers.md#arxiv)。
@@ -451,7 +460,7 @@ PYTHONPATH=src python3 -m pytest tests/unit -q --cov=paper_fetch --cov-report=te
 PAPER_FETCH_RUN_FULL_GOLDEN=1 PYTHONPATH=src python3 -m pytest tests/integration/test_golden_corpus.py -q
 ```
 
-未设置 `PAPER_FETCH_RUN_LIVE=1` 时，`tests/live/test_live_publishers.py` 和 `tests/live/test_live_mcp.py` 应稳定 skip。额外验证 live smoke 时，`arxiv` 不需要凭据或 browser runtime；`wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 需要 CloakBrowser-backed browser runtime；`ieee` 不需要 IEEE API key，但 IEEE fulltext smoke 预期当前机器具备合法 IEEE Xplore 访问上下文，并会先检查 CloakBrowser package，避免缺少 browser fallback 能力时误判 provider 行为。live 测试依赖真实 publisher/API/browser/授权上下文和外部限流状态，建议串行运行：
+未设置 `PAPER_FETCH_RUN_LIVE=1` 时，`tests/live/test_live_publishers.py` 和 `tests/live/test_live_mcp.py` 应稳定 skip。额外验证 live smoke 时，`arxiv` 不需要凭据或 browser runtime；`wiley` / `science` / `pnas` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 需要 CloakBrowser-backed browser runtime，`ams` 还需要 `PAPER_FETCH_AMS_STORAGE_STATE_JSON`；`ieee` 不需要 IEEE API key，但 IEEE fulltext smoke 预期当前机器具备合法 IEEE Xplore 访问上下文，并会先检查 CloakBrowser package，避免缺少 browser fallback 能力时误判 provider 行为。live 测试依赖真实 publisher/API/browser/授权上下文和外部限流状态，建议串行运行：
 
 ```bash
 PAPER_FETCH_RUN_LIVE=1 PYTHONPATH=src python3 -m pytest tests/live/test_live_publishers.py tests/live/test_live_mcp.py -q -n 0

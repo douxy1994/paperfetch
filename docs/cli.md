@@ -10,6 +10,31 @@ paper-fetch --query "10.1186/1471-2105-11-421"
 
 `--query` 可以是 DOI、论文 landing URL 或标题查询。CLI 默认会优先尝试全文；如果全文不可用，可能返回摘要或 metadata-only 结果。MDPI 的经典数字 URL（例如 `https://www.mdpi.com/2072-4292/18/10/1673`）会先按已知 ISSN 到 journal code 映射推导 DOI；MDPI DOI / DOI URL 也会在 provider 阶段反推对应的数字 article URL，再进入 MDPI CloakBrowser provider，避免解析阶段被 MDPI direct HTTP/CDN 403 阻断；未知 ISSN 仍按通用 landing URL 解析。
 
+## AMS 登录态
+
+AMS browser workflow 需要显式 storage-state JSON。首次抓取 AMS 前，在有桌面显示的终端运行：
+
+```bash
+paper-fetch auth ams
+```
+
+该命令会打开 headed CloakBrowser，进入 AMS 样例文章页，等待操作者完成合法站点验证，然后保存 storage-state JSON，并默认把 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 写入 `~/.config/paper-fetch/.env`。自定义位置：
+
+```bash
+paper-fetch auth ams \
+  --state-json ~/.local/share/paper-fetch/auth/ams/storage-state.json \
+  --env-file /path/to/.env
+```
+
+常用参数：
+
+- `--no-env-write`：只保存 JSON，不改 `.env`。
+- `--timeout-ms <ms>`：设置浏览器导航超时。
+- `--wait-seconds <seconds>`：设置等待 AMS 正文 DOM 的时间。
+- `--browser-user-agent <ua>`：仅本次认证使用的 browser UA。
+
+storage-state JSON 只保存浏览器 storage state，不绕过权限，也不是跨机器通用凭据；站点 session 可能按时间、网络、设备或浏览器指纹失效。
+
 ## 批量抓取
 
 批量模式使用 `--query-file <path>`，文件中每行一个 DOI、论文 landing URL 或标题；空行和以 `#` 开头的注释行会被忽略。`--query` 与 `--query-file` 互斥，必须二选一。

@@ -205,6 +205,58 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
         self.assertIn("resolve:url", article.quality.source_trail)
         self.assertIn("fulltext:elsevier_article_ok", article.quality.source_trail)
         self.assertNotIn("fallback:metadata_only", article.quality.source_trail)
+
+    def test_fetch_paper_model_uses_elsevier_pii_metadata_for_url_without_doi(self) -> None:
+        resolved = paper_fetch.ResolvedQuery(
+            query="https://www.sciencedirect.com/science/article/pii/S0959378017300134",
+            query_kind="url",
+            landing_url="https://www.sciencedirect.com/science/article/pii/S0959378017300134",
+            provider_hint="elsevier",
+            confidence=1.0,
+            provider_identifiers={"pii": "S0959378017300134"},
+        )
+
+        class PiiAwareProvider(StubProvider):
+            def __init__(self):
+                super().__init__(
+                    raw_payload=RawFulltextPayload(
+                        provider="elsevier",
+                        source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
+                        content_type="text/xml",
+                        body=b"<xml/>",
+                        metadata={"reason": "Downloaded full text from the official Elsevier API."},
+                    ),
+                    article=sample_article(),
+                )
+                self.metadata_queries = []
+
+            def fetch_metadata(self, query):
+                self.metadata_queries.append(dict(query))
+                return {
+                    "provider": "elsevier",
+                    "official_provider": True,
+                    "doi": "10.1016/test",
+                    "pii": "S0959378017300134",
+                    "title": "Example Article",
+                    "landing_page_url": resolved.landing_url,
+                    "fulltext_links": [],
+                    "references": [],
+                }
+
+        provider = PiiAwareProvider()
+        original_resolve = paper_fetch.resolve_paper
+        try:
+            paper_fetch.resolve_paper = lambda *args, **kwargs: resolved
+            article = fetch_paper_model(resolved.query, clients={"elsevier": provider})
+        finally:
+            paper_fetch.resolve_paper = original_resolve
+
+        self.assertEqual(provider.metadata_queries, [{"doi": None, "pii": "S0959378017300134"}])
+        self.assertEqual(article.source, "elsevier_xml")
+        self.assertTrue(article.quality.has_fulltext)
+        self.assertIn("metadata:elsevier_ok", article.quality.source_trail)
+        self.assertIn("fulltext:elsevier_article_ok", article.quality.source_trail)
+
     def test_fetch_paper_model_downloads_related_assets_for_official_xml(self) -> None:
         resolved = paper_fetch.ResolvedQuery(
             query="10.1016/test",

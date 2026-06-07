@@ -17,6 +17,7 @@ class BrowserRuntimeConfig:
     timeout_ms: int = 120000
     binary_path: str | None = None
     user_data_dir: Path | None = None
+    storage_state_path: Path | None = None
 
 
 @dataclass(frozen=True)

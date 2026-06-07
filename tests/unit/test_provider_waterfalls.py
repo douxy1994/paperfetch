@@ -744,6 +744,57 @@ class PublisherWaterfallTests(unittest.TestCase):
             raw_payload.warnings,
         )
 
+    def test_springer_article_in_press_notice_recovers_pdf(self) -> None:
+        doi = SPRINGER_SAMPLE.doi
+        landing_url = SPRINGER_SAMPLE.landing_url
+        notice = (
+            "We are providing an unedited version of this manuscript to give early access to its "
+            "findings. Before final publication, the manuscript will undergo further editing."
+        )
+        metadata = {
+            "doi": doi,
+            "title": SPRINGER_SAMPLE.title,
+            "landing_page_url": landing_url,
+            "fulltext_links": [{"url": f"{landing_url}.pdf", "content_type": "application/pdf"}],
+        }
+        response = {
+            "headers": {"content-type": "text/html; charset=utf-8"},
+            "body": (
+                b"<html><head>"
+                + f'<meta name="citation_title" content="{SPRINGER_SAMPLE.title}" />'.encode()
+                + f'<meta name="citation_doi" content="{SPRINGER_SAMPLE.doi}" />'.encode()
+                + f'<meta name="citation_pdf_url" content="{landing_url}.pdf" />'.encode()
+                + f"</head><body><article><h1>{SPRINGER_SAMPLE.title}</h1>".encode()
+                + b"<h2>Abstract</h2><p>HTML abstract only.</p>"
+                + f"<section property='articleBody'><p>{notice}</p></section>".encode()
+                + b"</article></body></html>"
+            ),
+            "url": landing_url,
+        }
+        client = springer_provider.SpringerClient(transport=mock.Mock(), env={})
+
+        with (
+            mock.patch.object(client, "_fetch_html_response", return_value=(response, landing_url)),
+            mock.patch.object(
+                springer_provider,
+                "fetch_pdf_over_http",
+                return_value=mock.Mock(
+                    source_url=f"{landing_url}.pdf",
+                    final_url=f"{landing_url}.pdf",
+                    pdf_bytes=fulltext_pdf_bytes(),
+                    markdown_text=f"# {SPRINGER_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                    suggested_filename="nature-article.pdf",
+                ),
+            ) as mocked_pdf,
+        ):
+            result = client.fetch_result(doi, metadata, None)
+
+        mocked_pdf.assert_called_once()
+        self.assertEqual(result.article.source, "springer_pdf")
+        self.assertEqual(result.article.quality.content_kind, "fulltext")
+        self.assertIn("fulltext:springer_html_fail", result.article.quality.source_trail)
+        self.assertIn("fulltext:springer_pdf_fallback_ok", result.article.quality.source_trail)
+
     def test_springer_fetch_result_returns_abstract_only_when_pdf_fallback_fails(self) -> None:
         doi = SPRINGER_SAMPLE.doi
         landing_url = SPRINGER_SAMPLE.landing_url

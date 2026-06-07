@@ -6,7 +6,6 @@ from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 import json
 import mimetypes
-import re
 import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
@@ -22,6 +21,7 @@ from ..http import (
     RequestFailure,
     is_xml_content_type,
 )
+from ..elsevier_identifiers import extract_elsevier_pii_from_url, normalize_elsevier_pii
 from ..metadata.types import ProviderMetadata
 from ..models import AssetProfile, article_from_markdown, article_from_structure, metadata_only_article
 from ..provider_catalog import ProviderSpec
@@ -129,7 +129,6 @@ _ELSEVIER_NON_RETRYABLE_ASSET_REASON_TOKENS = (
     *ASSET_BLOCKING_REASON_TOKENS,
 )
 _ELSEVIER_RETRYABLE_ASSET_REASON_TOKENS = NETWORK_RETRYABLE_REASON_TOKENS
-_ELSEVIER_PII_PATH_TOKENS = ("pii",)
 _ELSEVIER_PII_RETRYABLE_CODES = frozenset({ERROR, RATE_LIMITED})
 
 
@@ -200,27 +199,15 @@ def build_elsevier_object_url(attachment_eid: str) -> str:
     return f"https://api.elsevier.com/content/object/eid/{encoded_eid}?httpAccept=%2A%2F%2A"
 
 
-def extract_elsevier_pii_from_url(url: str | None) -> str | None:
-    normalized_url = normalize_text(url)
-    if not normalized_url:
-        return None
-    parsed = urllib.parse.urlparse(normalized_url)
-    path_segments = [
-        urllib.parse.unquote(segment).strip()
-        for segment in parsed.path.split("/")
-        if urllib.parse.unquote(segment).strip()
-    ]
-    for index, segment in enumerate(path_segments[:-1]):
-        if segment.lower() not in _ELSEVIER_PII_PATH_TOKENS:
-            continue
-        pii = re.sub(r"[^A-Za-z0-9]", "", path_segments[index + 1])
-        if pii:
-            return pii
-    return None
-
-
 def elsevier_pii_candidates_from_metadata(metadata: Mapping[str, Any]) -> list[str]:
     candidates: list[str] = []
+
+    def add_pii(value: Any) -> None:
+        if not isinstance(value, str):
+            return
+        pii = normalize_elsevier_pii(value)
+        if pii and pii not in candidates:
+            candidates.append(pii)
 
     def add_url(value: Any) -> None:
         if not isinstance(value, str):
@@ -229,6 +216,10 @@ def elsevier_pii_candidates_from_metadata(metadata: Mapping[str, Any]) -> list[s
         if pii and pii not in candidates:
             candidates.append(pii)
 
+    add_pii(metadata.get("pii"))
+    identifiers = metadata.get("provider_identifiers")
+    if isinstance(identifiers, Mapping):
+        add_pii(identifiers.get("pii"))
     add_url(metadata.get("landing_page_url"))
     add_url(metadata.get("source_url"))
     for item in metadata.get("fulltext_links") or []:
@@ -703,6 +694,12 @@ class ElsevierClient(ProviderClient):
     def _official_article_pii_url(self, pii: str) -> str:
         return f"https://api.elsevier.com/content/article/pii/{urllib.parse.quote(pii, safe='')}"
 
+    def _official_abstract_url(self, doi: str) -> str:
+        return f"https://api.elsevier.com/content/abstract/doi/{urllib.parse.quote(doi, safe='')}"
+
+    def _official_abstract_pii_url(self, pii: str) -> str:
+        return f"https://api.elsevier.com/content/abstract/pii/{urllib.parse.quote(pii, safe='')}"
+
     def _fetch_official_xml_payload_from_url(
         self,
         url: str,
@@ -851,13 +848,14 @@ class ElsevierClient(ProviderClient):
 
     def fetch_metadata(self, query: Mapping[str, str | None]) -> ProviderMetadata:
         doi = normalize_doi(query.get("doi"))
-        if not doi:
+        pii = normalize_elsevier_pii(query.get("pii"))
+        if not doi and not pii:
             raise ProviderFailure(
                 NOT_SUPPORTED,
-                "Elsevier official metadata retrieval needs a DOI in this implementation.",
+                "Elsevier official metadata retrieval needs a DOI or PII in this implementation.",
             )
 
-        url = f"https://api.elsevier.com/content/abstract/doi/{urllib.parse.quote(doi, safe='')}"
+        url = self._official_abstract_url(doi) if doi else self._official_abstract_pii_url(pii or "")
         try:
             response = self.transport.request(
                 "GET",
@@ -879,6 +877,7 @@ class ElsevierClient(ProviderClient):
             "official_provider": True,
             "source_url": response["url"],
             "doi": first_non_empty(core.get("prism:doi"), doi),
+            "pii": first_non_empty(core.get("pii"), pii),
             "title": first_non_empty(core.get("dc:title"), core.get("title")),
             "journal_title": first_non_empty(core.get("prism:publicationName"), core.get("publicationName")),
             "publisher": first_non_empty(core.get("dc:publisher"), "Elsevier"),

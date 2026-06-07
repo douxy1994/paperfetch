@@ -5,6 +5,7 @@ from __future__ import annotations
 import base64
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
+import json
 import logging
 import os
 import time
@@ -15,6 +16,7 @@ from bs4 import BeautifulSoup
 
 from .._cloakbrowser_runtime import import_cloakbrowser
 from ..config import (
+    AMS_STORAGE_STATE_JSON_ENV_VAR,
     CLOAKBROWSER_BINARY_PATH_ENV_VAR,
     CLOAKBROWSER_HEADLESS_ENV_VAR,
     CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
@@ -125,6 +127,13 @@ def _configured_user_data_dir(env: Mapping[str, str]) -> Path | None:
     return Path(value).expanduser() if value else None
 
 
+def _configured_storage_state_path(env: Mapping[str, str], *, provider: str) -> Path | None:
+    if normalize_text(provider).lower() != "ams":
+        return None
+    value = env.get(AMS_STORAGE_STATE_JSON_ENV_VAR, "").strip()
+    return Path(value).expanduser() if value else None
+
+
 def _validate_binary_path(binary_path: str | None) -> None:
     if not binary_path:
         return
@@ -136,11 +145,62 @@ def _validate_binary_path(binary_path: str | None) -> None:
         )
 
 
-def load_runtime_config(env: Mapping[str, str], *, provider: str, doi: str) -> CloakBrowserRuntimeConfig:
+def _validate_storage_state_path(
+    storage_state_path: Path | None,
+    *,
+    provider: str,
+    require_storage_state: bool,
+) -> None:
+    if normalize_text(provider).lower() != "ams" or not require_storage_state:
+        return
+    if storage_state_path is None:
+        raise ProviderFailure(
+            NOT_CONFIGURED,
+            (
+                "AMS browser workflow requires a storage-state JSON. "
+                f"Run `paper-fetch auth ams` or set {AMS_STORAGE_STATE_JSON_ENV_VAR}."
+            ),
+            missing_env=[AMS_STORAGE_STATE_JSON_ENV_VAR],
+        )
+    if not storage_state_path.is_file():
+        raise ProviderFailure(
+            NOT_CONFIGURED,
+            (
+                f"{AMS_STORAGE_STATE_JSON_ENV_VAR} is set but does not point to a readable "
+                f"storage-state JSON file: {storage_state_path}"
+            ),
+        )
+    try:
+        payload = json.loads(storage_state_path.read_text(encoding="utf-8"))
+    except Exception as exc:
+        raise ProviderFailure(
+            NOT_CONFIGURED,
+            f"{AMS_STORAGE_STATE_JSON_ENV_VAR} is not valid JSON: {storage_state_path}",
+        ) from exc
+    if not isinstance(payload, Mapping):
+        raise ProviderFailure(
+            NOT_CONFIGURED,
+            f"{AMS_STORAGE_STATE_JSON_ENV_VAR} must point to a JSON object: {storage_state_path}",
+        )
+
+
+def load_runtime_config(
+    env: Mapping[str, str],
+    *,
+    provider: str,
+    doi: str,
+    require_storage_state: bool = True,
+) -> CloakBrowserRuntimeConfig:
     headless = not _env_flag_false(env.get(CLOAKBROWSER_HEADLESS_ENV_VAR))
     artifact_dir = resolve_user_data_dir(env) / "publisher-browser-artifacts" / provider / sanitize_filename(doi)
     binary_path = _configured_binary_path(env)
     _validate_binary_path(binary_path)
+    storage_state_path = _configured_storage_state_path(env, provider=provider)
+    _validate_storage_state_path(
+        storage_state_path,
+        provider=provider,
+        require_storage_state=require_storage_state,
+    )
     return CloakBrowserRuntimeConfig(
         provider=provider,
         doi=doi,
@@ -154,6 +214,7 @@ def load_runtime_config(env: Mapping[str, str], *, provider: str, doi: str) -> C
         ),
         binary_path=binary_path,
         user_data_dir=_configured_user_data_dir(env),
+        storage_state_path=storage_state_path,
     )
 
 
@@ -169,7 +230,17 @@ def ensure_runtime_ready(config: CloakBrowserRuntimeConfig) -> None:
         ) from exc
 
 
-def _runtime_probe_details(env: Mapping[str, str], config: CloakBrowserRuntimeConfig | None = None) -> dict[str, Any]:
+def _runtime_probe_details(
+    env: Mapping[str, str],
+    *,
+    provider: str,
+    config: CloakBrowserRuntimeConfig | None = None,
+) -> dict[str, Any]:
+    storage_state_path = (
+        config.storage_state_path
+        if config is not None
+        else _configured_storage_state_path(env, provider=provider)
+    )
     details: dict[str, Any] = {
         "headless": (
             config.headless
@@ -183,7 +254,10 @@ def _runtime_probe_details(env: Mapping[str, str], config: CloakBrowserRuntimeCo
         ),
         "binary_path_configured": bool(config.binary_path if config is not None else _configured_binary_path(env)),
         "user_data_dir_configured": bool(config.user_data_dir if config is not None else _configured_user_data_dir(env)),
+        "storage_state_json_configured": bool(storage_state_path),
     }
+    if storage_state_path is not None:
+        details["storage_state_json_exists"] = storage_state_path.is_file()
     return details
 
 
@@ -195,11 +269,11 @@ def probe_runtime_status(
 ) -> ProviderStatusResult:
     checks = []
     config: CloakBrowserRuntimeConfig | None = None
-    runtime_details = _runtime_probe_details(env)
+    runtime_details = _runtime_probe_details(env, provider=provider)
     dependency_available = _dependency_available()
     try:
         config = load_runtime_config(env, provider=provider, doi=doi)
-        runtime_details = _runtime_probe_details(env, config)
+        runtime_details = _runtime_probe_details(env, provider=provider, config=config)
         checks.append(
             build_provider_status_check(
                 "runtime_env",
@@ -538,6 +612,8 @@ def _safe_close(value: Any) -> None:
 
 
 def _storage_state_path(config: CloakBrowserRuntimeConfig) -> Path | None:
+    if config.storage_state_path is not None:
+        return config.storage_state_path
     if config.user_data_dir is None:
         return None
     return config.user_data_dir / "storage-state.json"

@@ -176,6 +176,42 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertTrue(transport.calls[0]["retry_on_rate_limit"])
         self.assertTrue(transport.calls[0]["retry_on_transient"])
 
+    def test_elsevier_metadata_can_resolve_sciencedirect_pii(self) -> None:
+        pii = "S0959378017300134"
+        url = f"https://api.elsevier.com/content/abstract/pii/{pii}"
+        transport = RecordingTransport(
+            {
+                ("GET", url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
+                    "body": json.dumps(
+                        {
+                            "abstracts-retrieval-response": {
+                                "coredata": {
+                                    "prism:doi": "10.1016/j.gloenvcha.2017.01.002",
+                                    "dc:title": "Trees, forests and water",
+                                    "prism:publicationName": "Global Environmental Change",
+                                    "dc:publisher": "Elsevier",
+                                    "prism:coverDate": "2017-03-01",
+                                }
+                            }
+                        }
+                    ).encode("utf-8"),
+                    "url": f"{url}?view=META_ABS",
+                }
+            }
+        )
+        client = ElsevierClient(transport, {"ELSEVIER_API_KEY": "secret"})
+
+        metadata = client.fetch_metadata({"doi": None, "pii": pii})
+
+        self.assertEqual(metadata["doi"], "10.1016/j.gloenvcha.2017.01.002")
+        self.assertEqual(metadata["pii"], pii)
+        self.assertEqual(metadata["title"], "Trees, forests and water")
+        self.assertEqual(transport.calls[0]["url"], url)
+        self.assertEqual(transport.calls[0]["query"], {"view": "META_ABS"})
+        self.assertEqual(transport.calls[0]["headers"]["Accept"], "application/json")
+
     def test_springer_direct_html_fulltext_uses_extended_timeout(self) -> None:
         doi = "10.1186/1471-2105-11-421"
         transport = RecordingTransport(

@@ -114,6 +114,8 @@ paper-fetch --help
 **4. 开启 Wiley / Science / PNAS / AMS / Annual Reviews / ACS / IOP / AIP / MDPI 浏览器路径**
 
 安装器会注册 CloakBrowser 默认 headless 环境，并在 `offline.env` 默认启用普通 Chrome browser UA，降低 AGU/Wiley 页面进入 Cloudflare challenge 的概率。受限环境可在 `offline.env` 中设置 `CLOAKBROWSER_BINARY_PATH` 指向预装浏览器；如果桌面显示环境下仍被 challenge，再把 `CLOAKBROWSER_HEADLESS=false`，或安装 Linux / macOS 离线 bundle 时使用 `--preset=headful`。
+
+AMS 额外要求显式 storage-state JSON；先在有桌面显示的终端运行 `paper-fetch auth ams`，完成合法站点验证后，命令会保存 JSON 并把 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 写入 paper-fetch 用户配置文件。
 Windows 安装器还会设置 `MATHML_TO_LATEX_NODE_BIN` 指向包内 Playwright Node，避免 Codex Desktop 的 WindowsApps/MSIX 内部 `node.exe` 被公式转换 fallback 误用。
 
 **5. 开启 Elsevier 获取权限**
@@ -336,6 +338,14 @@ export PAPER_FETCH_ENV_FILE=/path/to/.env
 ```
 
 完整环境变量说明见 [`docs/providers.md`](docs/providers.md)。
+
+AMS browser workflow 不会无状态运行；首次抓取 AMS 前先执行：
+
+```bash
+paper-fetch auth ams
+```
+
+该命令打开 headed CloakBrowser 供操作者完成合法验证，并把 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 写入默认用户 `.env`。该 JSON 记录的是浏览器 storage state，可能过期，也不保证跨机器通用。
 
 
 ### 接入 Codex

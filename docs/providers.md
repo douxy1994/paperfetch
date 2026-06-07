@@ -29,7 +29,7 @@
 | `wiley` | 依赖 Crossref merge | `CloakBrowser HTML -> CloakBrowser-seeded publisher PDF/ePDF -> Wiley TDM API PDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | HTML 默认通过 CloakBrowser backend；`WILEY_TDM_CLIENT_TOKEN` 可在 browser PDF/ePDF fallback 失败或 browser runtime 不可用时继续尝试官方 TDM PDF lane；必要时可返回 provider `abstract_only` |
 | `science` | 依赖 Crossref | `CloakBrowser HTML -> CloakBrowser-seeded publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | 与 `wiley` 的 HTML / browser PDF/ePDF 路径共用浏览器工作流基座；AAAS access gate / entitlement 不满足时会停在 provider 内部并降级 `abstract_only` / `metadata_only` |
 | `pnas` | 依赖 Crossref | `CloakBrowser fast HTML preflight -> CloakBrowser HTML -> CloakBrowser-seeded publisher PDF/ePDF` | HTML 路线支持 `none` / `body` / `all`；PDF/ePDF fallback 当前 text-only | 中 | fast preflight 成功时跳过 browser workflow；失败、challenge、正文不足或抽取失败时继续走 CloakBrowser/PDF 瀑布；较老文献常见 HTML 仅摘要，再继续走 provider 内部 PDF/ePDF fallback，必要时可返回 `abstract_only` |
-| `ams` | 依赖 Crossref | `DOI landing -> CloakBrowser HTML -> CloakBrowser-seeded publisher PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | AMS 只使用 `journals.ametsoc.org/view/...xml` landing HTML 和 PDF fallback；显式忽略 `citation_xml_url`，不请求 `/doc/...xml`，不暴露 XML/JATS source；HTML 成功公开 `ams_html`，PDF fallback 公开 `ams_pdf` |
+| `ams` | 依赖 Crossref | `DOI landing -> CloakBrowser HTML -> CloakBrowser-seeded publisher PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | 需要 `PAPER_FETCH_AMS_STORAGE_STATE_JSON`；AMS 只使用 `journals.ametsoc.org/view/...xml` landing HTML 和 PDF fallback；显式忽略 `citation_xml_url`，不请求 `/doc/...xml`，不暴露 XML/JATS source；HTML 成功公开 `ams_html`，PDF fallback 公开 `ams_pdf` |
 | `mdpi` | 依赖 Crossref merge | `CloakBrowser HTML -> CloakBrowser-seeded article PDF` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | MDPI direct HTTP 常受 CDN 策略影响，主路径固定使用 CloakBrowser 捕获公开 article HTML；HTML 成功公开 `mdpi_html`，PDF fallback 公开 `mdpi_pdf` |
 | `ieee` | 依赖 Crossref merge + landing metadata | `landing metadata / article number -> direct REST HTML -> clean-browser HTML -> direct HTTP PDF fallback -> seeded-browser PDF fallback` | HTML 路线支持 `none` / `body` / `all`；PDF fallback 当前 text-only | 中 | 现代 IEEE Xplore 文章优先公开为 `ieee_html`；REST 直连不可用时会用干净 CloakBrowser context 捕获同一全文 HTML；无动态 HTML 的老文献可经真实 PDF payload 返回 `ieee_pdf`；不处理 CAPTCHA、登录自动化或权限绕过 |
 | `arxiv` | arXiv ID + 默认 Atom API enrichment | `ID 解析 -> arXiv official HTML -> direct HTTP PDF -> metadata fallback` | HTML 路线支持正文 figure 资产下载；official HTML 只给缺失图片占位符时，会尝试从 arXiv e-print source 包恢复图资产；PDF fallback 当前 text-only | 中 | HTML front matter 在主路径内合并；默认使用内部 arXiv Atom API client 在 HTML/PDF 主链结束后补齐 metadata，失败只追加 warning、不影响已得到的 fulltext payload；HTML 成功公开为 `arxiv_html`，PDF fallback 公开为 `arxiv_pdf`；可识别的 ID 形态（含 `vN` 版本、`10.48550/arXiv.*` 等）见后文 arXiv 小节 |
@@ -275,6 +275,7 @@ resolve
 
 - `elsevier`
   - 固定顺序是 `官方 DOI XML/API -> PII XML/API fallback -> 官方 API PDF fallback -> metadata-only`。
+  - 直接输入 LinkingHub 或 ScienceDirect 的 `/pii/{PII}` URL 时，resolve 阶段会提取 PII 并跳过 publisher landing 抓取；metadata 阶段改用 Elsevier Abstract PII API 补 DOI，再进入官方全文主路径。
   - PII XML/API fallback 只在 DOI XML/API 出现 transient / rate-limit 类失败，且 merged metadata 中能从 LinkingHub 或 ScienceDirect URL 提取 PII 时启用；它仍使用 Elsevier 官方 Article API，不走通用 HTML 抓取。
   - XML/API 成功时公开 `source="elsevier_xml"`。
   - 官方 PDF fallback 成功时公开 `source="elsevier_pdf"`。
@@ -310,6 +311,7 @@ resolve
   - 成功时公开 `source="pnas"`。
 - `ams`
   - 固定顺序是 `Crossref/DOI landing -> CloakBrowser HTML -> seeded-browser publisher PDF fallback -> abstract-only / metadata-only`。
+  - AMS browser workflow 要求 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 指向合法保存的 storage-state JSON；缺失、不可读或不是 JSON object 时，provider status 和全文抓取都会返回 `not_configured`，不会尝试无状态浏览器。用 `paper-fetch auth ams` 在 headed CloakBrowser 中完成合法站点验证并保存该 JSON。
   - HTML 候选只来自 Crossref / DOI landing 的 `journals.ametsoc.org/view/journals/.../*.xml` 页面；AMS 不按 DOI 拼接 direct HTTP 或 direct Playwright 正文路径。
   - 页面声明的 `citation_xml_url` 被显式忽略：不解析、不请求 `/doc/journals/.../*.xml`，也不注册 XML 诊断或 `ams_xml` source。
   - HTML 正文通过 AMS HTML extractor 与质量门槛；正文不足时才进入 seeded-browser PDF fallback。PDF.js viewer 页会继续解析 `defaultUrl` 指向的真实 PDF 请求。
@@ -443,6 +445,7 @@ resolve
 
 - `elsevier`
   - provider 自管 `官方 DOI XML/API -> PII XML/API fallback -> 官方 API PDF fallback`
+  - 直接输入 ScienceDirect / LinkingHub PII URL 时不抓 publisher landing HTML，避免被站点级 403/challenge 卡住；PII 先走官方 Abstract API 转 DOI，再按 DOI XML/API 主链处理
   - XML article document builder 通过 provider dispatch table 进入 Elsevier renderer；未知 provider 不会落入半成品分支
   - XML attachment MIME 优先使用 publisher 响应/节点声明；缺失时用 Python `mimetypes.guess_type` 按文件扩展推断
   - XML/PDF 官方 representation 的 `404/406/415` 统一经 `providers.base.map_request_failure` 映射为 `no_result`
@@ -936,6 +939,14 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - 可选。
 - 指向一个可写目录时，browser workflow 会在该目录维护 `storage-state.json`：启动 context 时复用已有 cookie / local storage，结束时写回新的 storage state。
 - 这不处理 CAPTCHA、不自动登录，也不绕过权限；它只保留操作者在 headed browser 中合法完成的站点验证或登录态，便于后续同一环境下继续抓取。
+- AMS 不把 `CLOAKBROWSER_USER_DATA_DIR` 当成必填登录态来源；AMS 必须使用 `PAPER_FETCH_AMS_STORAGE_STATE_JSON`。
+
+#### `PAPER_FETCH_AMS_STORAGE_STATE_JSON`
+
+- AMS 必填。
+- 指向 Playwright/CloakBrowser storage-state JSON 文件；运行时会在启动 AMS browser workflow 前校验文件存在、可读且顶层是 JSON object。
+- 推荐通过 `paper-fetch auth ams` 生成。该命令会打开 headed CloakBrowser，等待操作者完成合法 AMS 验证，保存 JSON，并默认写入 paper-fetch 用户 `.env`。自定义配置文件可用 `paper-fetch auth ams --env-file /path/to/.env`。
+- 该 JSON 是浏览器 storage state，不是通用凭据；可用于同一环境排查和复用，但站点 session 可能过期，也不保证跨机器、网络或浏览器指纹通用。
 
 #### `CLOAKBROWSER_TIMEOUT_MS`
 
@@ -947,7 +958,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - 可选。
 - 仅用于 Wiley / Science / PNAS / AMS / Annual Reviews / ACS / IOP / AIP / MDPI 的 CloakBrowser HTML、图片资产恢复和 seeded-browser PDF/ePDF fallback。
 - AGU/Wiley 站点触发 Cloudflare challenge 时，优先在 `.env` 中设置普通 Chrome UA。纯 stateless headless 环境仍可能被 challenge；需要人工验证时，临时设置 `CLOAKBROWSER_HEADLESS=false`，并把 `CLOAKBROWSER_USER_DATA_DIR` 指到稳定目录以保存合法完成的 session。
-- 完成一次 headed 验证后，同一 `CLOAKBROWSER_USER_DATA_DIR` 可在 `CLOAKBROWSER_HEADLESS=true` 下继续复用；桌面显示环境可使用离线安装器的 `--preset=headful`。
+- 完成一次 headed 验证后，同一 `CLOAKBROWSER_USER_DATA_DIR` 可在 `CLOAKBROWSER_HEADLESS=true` 下继续复用；AMS 例外，必须复用 `PAPER_FETCH_AMS_STORAGE_STATE_JSON`。桌面显示环境可使用离线安装器的 `--preset=headful`。
 
 #### Browser HTML readiness
 

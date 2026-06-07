@@ -442,6 +442,64 @@ class HtmlAvailabilityTests(unittest.TestCase):
         self.assertIn("post_abstract_body_run", diagnostics.strong_positive_signals)
         self.assertNotIn("springer_access_preview_wall", diagnostics.blocking_fallback_signals)
 
+    def test_assess_html_rejects_springer_article_in_press_notice_without_body_run(self) -> None:
+        notice = (
+            "We are providing an unedited version of this manuscript to give early access to its "
+            "findings. Before final publication, the manuscript will undergo further editing."
+        )
+        html = (
+            "<html><body><article><h1>Springer Article in Press</h1>"
+            "<h2>Abstract</h2><p>Short abstract.</p>"
+            f"<section property='articleBody'><p>{notice}</p></section>"
+            "</article></body></html>"
+        )
+
+        diagnostics = assess_html_fulltext_availability(
+            "# Springer Article in Press\n\n## Abstract\n\nShort abstract.",
+            {"title": "Springer Article in Press", "abstract": "Short abstract."},
+            provider="springer",
+            html_text=html,
+            title="Springer Article in Press",
+            final_url="https://www.nature.com/articles/example",
+        )
+
+        self.assertFalse(diagnostics.accepted)
+        self.assertEqual(diagnostics.content_kind, ABSTRACT_ONLY)
+        self.assertIn("springer_article_in_press_notice", diagnostics.blocking_fallback_signals)
+
+    def test_assess_html_ignores_springer_article_in_press_notice_with_body_run(self) -> None:
+        notice = "We are providing an unedited version of this manuscript to give early access to its findings."
+        first = (
+            "This results paragraph is real article body after the abstract heading. "
+            "It has enough prose to mark the body run."
+        )
+        second = (
+            "A second body paragraph continues the article discussion after the heading. "
+            "It prevents article-in-press chrome from deciding availability."
+        )
+        html = (
+            "<html><body>"
+            f"<aside>{notice}</aside>"
+            "<article><h1>Springer Full Text</h1>"
+            "<h2>Abstract</h2><p>Short abstract.</p>"
+            "<h2>Results</h2>"
+            f"<p>{first}</p><p>{second}</p>"
+            "</article></body></html>"
+        )
+
+        diagnostics = assess_html_fulltext_availability(
+            f"# Springer Full Text\n\n## Abstract\n\nShort abstract.\n\n## Results\n\n{first}\n\n{second}",
+            {"title": "Springer Full Text", "abstract": "Short abstract."},
+            provider="springer",
+            html_text=html,
+            title="Springer Full Text",
+            final_url="https://www.nature.com/articles/example",
+        )
+
+        self.assertTrue(diagnostics.accepted)
+        self.assertIn("post_abstract_body_run", diagnostics.strong_positive_signals)
+        self.assertNotIn("springer_article_in_press_notice", diagnostics.blocking_fallback_signals)
+
     def test_assess_html_fulltext_rejects_access_gate_without_body_run(self) -> None:
         diagnostics = assess_html_fulltext_availability(
             "# Example Article\n\nCheck access to continue.\n\nPurchase access.",

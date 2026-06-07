@@ -57,6 +57,25 @@ class ResolveQueryTests(unittest.TestCase):
         self.assertEqual(result.landing_url, "https://www.science.org/doi/full/10.1126/science.adp0212")
         self.assertEqual(transport.calls, [])
 
+    def test_sciencedirect_pii_url_skips_landing_fetch_and_keeps_provider_identifier(self) -> None:
+        transport = RecordingTransport({})
+
+        result = resolve_query.resolve_query(
+            "https://www.sciencedirect.com/science/article/pii/S0959378017300134",
+            transport=transport,
+            env={},
+        )
+
+        self.assertEqual(result.query_kind, "url")
+        self.assertIsNone(result.doi)
+        self.assertEqual(result.provider_hint, "elsevier")
+        self.assertEqual(result.provider_identifiers, {"pii": "S0959378017300134"})
+        self.assertEqual(
+            result.landing_url,
+            "https://www.sciencedirect.com/science/article/pii/S0959378017300134",
+        )
+        self.assertEqual(transport.calls, [])
+
     def test_mdpi_numeric_article_url_derives_doi_without_landing_fetch(self) -> None:
         transport = RecordingTransport({})
 

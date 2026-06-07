@@ -20,6 +20,7 @@ from ..arxiv_id import (
     canonical_arxiv_doi,
 )
 from ..config import build_runtime_env, build_user_agent
+from ..elsevier_identifiers import extract_elsevier_pii_from_url
 from ..errors import ProviderFailure
 from ..extraction.html.landing import fetch_landing_html
 from ..html_lookup import is_usable_html_lookup_title
@@ -45,6 +46,7 @@ class ResolvedQuery:
     confidence: float = 0.0
     candidates: list[dict[str, Any]] = field(default_factory=list)
     title: str | None = None
+    provider_identifiers: dict[str, str] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -169,6 +171,18 @@ def resolve_query(
                     landing_url=normalized_query,
                     provider_hint=direct_provider_hint,
                     confidence=1.0,
+                )
+        direct_provider_hint = infer_provider_from_signals(landing_urls=[normalized_query])
+        if direct_provider_hint == "elsevier":
+            elsevier_pii = extract_elsevier_pii_from_url(normalized_query)
+            if elsevier_pii:
+                return ResolvedQuery(
+                    query=normalized_query,
+                    query_kind="url",
+                    landing_url=normalized_query,
+                    provider_hint="elsevier",
+                    confidence=1.0,
+                    provider_identifiers={"pii": elsevier_pii},
                 )
         request_headers = {
             "Accept": "text/html,application/xhtml+xml",

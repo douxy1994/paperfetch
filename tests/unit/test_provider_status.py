@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from pathlib import Path
+import tempfile
 import unittest
 from unittest import mock
 
@@ -160,7 +162,7 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertTrue(all(check.status == "ok" for check in checks.values()))
 
     def test_browser_workflow_providers_are_ready_without_extra_env(self) -> None:
-        for provider in ("science", "pnas", "ams", "acs", "aip"):
+        for provider in ("science", "pnas", "acs", "aip"):
             with (
                 self.subTest(provider=provider),
                 mock.patch.object(
@@ -175,6 +177,49 @@ class ProviderStatusTests(unittest.TestCase):
                 self.assertEqual(result.missing_env, [])
                 self.assertEqual(checks["runtime_env"].status, "ok")
                 self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
+
+    def test_ams_browser_runtime_requires_storage_state_json(self) -> None:
+        with mock.patch.object(
+            _cloakbrowser, "_dependency_available", return_value=True
+        ):
+            result = AmsClient(DummyTransport(), {}).probe_status()
+        checks = {check.name: check for check in result.checks}
+
+        self.assertEqual(result.status, "not_configured")
+        self.assertFalse(result.available)
+        self.assertEqual(result.missing_env, [config.AMS_STORAGE_STATE_JSON_ENV_VAR])
+        self.assertEqual(checks["runtime_env"].status, "not_configured")
+        self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
+
+    def test_ams_browser_runtime_rejects_invalid_storage_state_json(self) -> None:
+        env = {config.AMS_STORAGE_STATE_JSON_ENV_VAR: __file__}
+        with mock.patch.object(
+            _cloakbrowser, "_dependency_available", return_value=True
+        ):
+            result = AmsClient(DummyTransport(), env).probe_status()
+        checks = {check.name: check for check in result.checks}
+
+        self.assertEqual(result.status, "not_configured")
+        self.assertFalse(result.available)
+        self.assertEqual(checks["runtime_env"].status, "not_configured")
+        self.assertIn("valid JSON", checks["runtime_env"].message)
+
+    def test_ams_browser_runtime_ready_with_storage_state_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "ams-state.json"
+            state_path.write_text('{"cookies":[]}', encoding="utf-8")
+            env = {config.AMS_STORAGE_STATE_JSON_ENV_VAR: str(state_path)}
+            with mock.patch.object(
+                _cloakbrowser, "_dependency_available", return_value=True
+            ):
+                result = AmsClient(DummyTransport(), env).probe_status()
+        checks = {check.name: check for check in result.checks}
+
+        self.assertEqual(result.status, "ready")
+        self.assertTrue(result.available)
+        self.assertEqual(result.missing_env, [])
+        self.assertEqual(checks["runtime_env"].status, "ok")
+        self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
 
     def test_browser_workflow_providers_missing_cloakbrowser_are_not_configured(
         self,
@@ -213,7 +258,7 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
 
     def test_browser_workflow_providers_ignore_unrelated_rate_limit_env(self) -> None:
-        for provider in ("science", "pnas", "ams", "acs", "aip"):
+        for provider in ("science", "pnas", "acs", "aip"):
             with self.subTest(provider=provider):
                 env = {"PAPER_FETCH_UNUSED_RATE_LIMIT_SECONDS": "60"}
 
@@ -228,7 +273,7 @@ class ProviderStatusTests(unittest.TestCase):
                 self.assertNotIn("rate_limit_window", checks)
 
     def test_browser_workflow_providers_ready_status_checks_all_pass(self) -> None:
-        for provider in ("science", "pnas", "ams", "acs", "aip"):
+        for provider in ("science", "pnas", "acs", "aip"):
             with (
                 self.subTest(provider=provider),
                 mock.patch.object(

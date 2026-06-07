@@ -106,6 +106,12 @@ class SelectorBlockingRule:
     require_structure_field_false: str | None = None
 
 @dataclass(frozen=True)
+class TextBlockingRule:
+    substring: str
+    token: str
+    require_structure_field_false: str | None = None
+
+@dataclass(frozen=True)
 class EmptyShellRule:
     selector: str
     body_selectors: tuple[str, ...]
@@ -116,6 +122,7 @@ class AvailabilityOverrides:
     selector_flags: tuple[SelectorFlagRule, ...] = ()
     canonical_url_rules: tuple[CanonicalUrlRule, ...] = ()
     selector_blocking_rules: tuple[SelectorBlockingRule, ...] = ()
+    text_blocking_rules: tuple[TextBlockingRule, ...] = ()
     empty_shell_rules: tuple[EmptyShellRule, ...] = ()
 
 class AvailabilityOverrideState:
@@ -196,7 +203,23 @@ IEEE_TEXT_MARKER_SIGNAL_SET = TextMarkerSignalSet(
 )
 SCIENCE_AVAILABILITY_OVERRIDES = AvailabilityOverrides(selector_flags=(SelectorFlagRule(".perspective, .article-type-perspective", "narrative_article_type"),))
 ELSEVIER_AVAILABILITY_OVERRIDES = AvailabilityOverrides(canonical_url_rules=(CanonicalUrlRule("/science/article/abs/", "canonical_abstract_url"),))
-SPRINGER_AVAILABILITY_OVERRIDES = AvailabilityOverrides(selector_blocking_rules=(SelectorBlockingRule(".app-article-access__heading, .c-preview-message__link, [data-test='access-via-institution']", "springer_access_preview_wall", require_structure_field_false="post_abstract_body_run"),))
+SPRINGER_ARTICLE_IN_PRESS_NOTICE = "we are providing an unedited version of this manuscript"
+SPRINGER_AVAILABILITY_OVERRIDES = AvailabilityOverrides(
+    selector_blocking_rules=(
+        SelectorBlockingRule(
+            ".app-article-access__heading, .c-preview-message__link, [data-test='access-via-institution']",
+            "springer_access_preview_wall",
+            require_structure_field_false="post_abstract_body_run",
+        ),
+    ),
+    text_blocking_rules=(
+        TextBlockingRule(
+            SPRINGER_ARTICLE_IN_PRESS_NOTICE,
+            "springer_article_in_press_notice",
+            require_structure_field_false="post_abstract_body_run",
+        ),
+    ),
+)
 IEEE_AVAILABILITY_OVERRIDES = AvailabilityOverrides(empty_shell_rules=(EmptyShellRule("#article", ("p", "h2", "h3", "div.section", "div.section_2", "figure", "table", "tex-math"), "ieee_empty_article_shell"),))
 def authorless_heading_signatures_for_provider(provider_name: str | None) -> tuple[tuple[str, ...], ...]:
     return PROVIDER_AUTHORLESS_HEADING_SIGNATURES.get(normalize_provider_key(provider_name), ())
@@ -264,6 +287,12 @@ def _apply_availability_override_rules(state: AvailabilityOverrideState, overrid
         if rule.require_structure_field_false and getattr(state.structure, rule.require_structure_field_false, False):
             continue
         if state.soup.select_one(rule.selector) and state.blocking_fallback_signals is not None:
+            state.blocking_fallback_signals.append(rule.token)
+    page_text = normalize_text(" ".join(state.soup.stripped_strings)).lower()
+    for rule in overrides.text_blocking_rules:
+        if rule.require_structure_field_false and getattr(state.structure, rule.require_structure_field_false, False):
+            continue
+        if normalize_text(rule.substring).lower() in page_text and state.blocking_fallback_signals is not None:
             state.blocking_fallback_signals.append(rule.token)
     for rule in overrides.empty_shell_rules:
         node = state.soup.select_one(rule.selector)

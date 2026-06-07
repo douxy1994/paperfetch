@@ -32,6 +32,8 @@ class ProviderMetadata(TypedDict, total=False):
     official_provider: bool
     source_url: str
     doi: str | None
+    pii: str | None
+    provider_identifiers: dict[str, str]
     title: str | None
     journal_title: str | None
     publisher: str | None

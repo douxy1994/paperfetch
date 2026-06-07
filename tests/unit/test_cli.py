@@ -21,6 +21,83 @@ from ._paper_fetch_support import build_envelope, sample_article
 
 
 class CliTests(unittest.TestCase):
+    def test_auth_ams_subcommand_invokes_auth_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "ams-state.json"
+            env_file = Path(tmpdir) / ".env"
+            auth_result = SimpleNamespace(
+                storage_state_path=state_path,
+                env_written=True,
+                env_file_path=env_file,
+                verified=True,
+                final_url="https://journals.ametsoc.org/view/journals/mwre/example.xml",
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            original_argv = sys.argv
+            sys.argv = [
+                "paper_fetch.py",
+                "auth",
+                "ams",
+                "--state-json",
+                str(state_path),
+                "--env-file",
+                str(env_file),
+                "--wait-seconds",
+                "30",
+                "--timeout-ms",
+                "120000",
+            ]
+            try:
+                with (
+                    mock.patch.object(
+                        paper_fetch_cli,
+                        "authenticate_ams",
+                        return_value=auth_result,
+                    ) as auth,
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    exit_code = paper_fetch_cli.main()
+            finally:
+                sys.argv = original_argv
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr.getvalue(), "")
+            self.assertIn("AMS storage state:", stdout.getvalue())
+            auth.assert_called_once()
+            kwargs = auth.call_args.kwargs
+            self.assertEqual(kwargs["state_json"], state_path)
+            self.assertEqual(kwargs["env_file"], env_file)
+            self.assertEqual(kwargs["wait_seconds"], 30)
+            self.assertEqual(kwargs["timeout_ms"], 120000)
+            self.assertTrue(kwargs["write_env"])
+
+    def test_auth_ams_subcommand_reports_provider_failure(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        original_argv = sys.argv
+        sys.argv = ["paper_fetch.py", "auth", "ams"]
+        try:
+            with (
+                mock.patch.object(
+                    paper_fetch_cli,
+                    "authenticate_ams",
+                    side_effect=ProviderFailure("not_configured", "CloakBrowser missing."),
+                ),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+            ):
+                exit_code = paper_fetch_cli.main()
+        finally:
+            sys.argv = original_argv
+
+        self.assertEqual(exit_code, 1)
+        self.assertEqual(stdout.getvalue(), "")
+        payload = json.loads(stderr.getvalue())
+        self.assertEqual(payload["status"], "not_configured")
+        self.assertEqual(payload["reason"], "CloakBrowser missing.")
+
     def test_main_writes_markdown_json_and_both_to_stdout(self) -> None:
         article = sample_article()
         original_fetch = paper_fetch_cli.fetch_paper

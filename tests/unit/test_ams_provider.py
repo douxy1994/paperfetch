@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest import mock
 
+from paper_fetch import config
 from paper_fetch.models import article_from_markdown
 from paper_fetch.providers import _ams_html, _cloakbrowser, browser_runtime, browser_workflow
 from paper_fetch.providers.ams import AmsClient
@@ -115,20 +116,26 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
         }
 
     def test_ams_without_browser_runtime_is_not_configured(self) -> None:
-        client = AmsClient(transport=None, env={})
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "ams-state.json"
+            state_path.write_text('{"cookies":[]}', encoding="utf-8")
+            client = AmsClient(
+                transport=None,
+                env={config.AMS_STORAGE_STATE_JSON_ENV_VAR: str(state_path)},
+            )
 
-        with (
-            mock.patch.object(
-                _cloakbrowser,
-                "_import_cloakbrowser",
-                side_effect=ProviderFailure("not_configured", "CloakBrowser missing."),
-            ),
-            self.assertRaisesRegex(
-                Exception,
-                "AMS browser workflow requires the cloakbrowser Python package",
-            ) as caught,
-        ):
-            client.fetch_raw_fulltext(AMS_DOI, self._metadata())
+            with (
+                mock.patch.object(
+                    _cloakbrowser,
+                    "_import_cloakbrowser",
+                    side_effect=ProviderFailure("not_configured", "CloakBrowser missing."),
+                ),
+                self.assertRaisesRegex(
+                    Exception,
+                    "AMS browser workflow requires the cloakbrowser Python package",
+                ) as caught,
+            ):
+                client.fetch_raw_fulltext(AMS_DOI, self._metadata())
 
         self.assertEqual(caught.exception.code, "not_configured")
         self.assertEqual(caught.exception.missing_env, [])
