@@ -34,6 +34,20 @@ CONFIDENT_SCORE_MIN = 0.90
 CONFIDENT_MARGIN_MIN = 0.05
 MIN_HTML_TITLE_LOOKUP_CHARS = 24
 MAX_URL_REDIRECTS = 3
+FORMAL_PUBLICATION_RELAXED_SCORE_MIN = 0.84
+FORMAL_PUBLICATION_FORMAL_MARGIN_MIN = 0.10
+FORMAL_PUBLICATION_PREPRINT_SCORE_GAP_MAX = 0.20
+PREPRINT_DOI_PREFIXES = (
+    "10.1101/",
+    "10.21203/",
+    "10.22541/au.",
+)
+PREPRINT_HOST_TOKENS = (
+    "authorea.com",
+    "biorxiv.org",
+    "medrxiv.org",
+    "researchsquare.com",
+)
 
 
 @dataclass
@@ -78,6 +92,18 @@ def candidate_score(query: str, candidate_title: str) -> float:
     return round((0.7 * jaccard) + (0.3 * ratio), 6)
 
 
+def is_preprint_candidate(candidate: Mapping[str, Any]) -> bool:
+    doi = normalize_doi(str(candidate.get("doi") or "")) or ""
+    landing_url = str(candidate.get("landing_page_url") or "").lower()
+    if any(doi.startswith(prefix) for prefix in PREPRINT_DOI_PREFIXES):
+        return True
+    return any(token in landing_url for token in PREPRINT_HOST_TOKENS)
+
+
+def is_formal_publication_candidate(candidate: Mapping[str, Any]) -> bool:
+    return bool(str(candidate.get("journal_title") or "").strip()) and not is_preprint_candidate(candidate)
+
+
 def score_candidates(query: str, candidates: list[CrossrefMetadata]) -> list[dict[str, Any]]:
     scored: list[dict[str, Any]] = []
     for item in candidates:
@@ -97,13 +123,57 @@ def score_candidates(query: str, candidates: list[CrossrefMetadata]) -> list[dic
                 "landing_page_url": item.get("landing_page_url"),
                 "provider_hint": provider_hint,
                 "score": score,
+                "is_preprint": is_preprint_candidate(item),
+                "is_formal_publication": is_formal_publication_candidate(item),
             }
         )
-    return sorted(scored, key=lambda item: item["score"], reverse=True)
+    return sorted(
+        scored,
+        key=lambda item: (
+            item["score"],
+            bool(item["is_formal_publication"]),
+            not bool(item["is_preprint"]),
+        ),
+        reverse=True,
+    )
+
+
+def select_formal_publication_candidate(candidates: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not candidates:
+        return None
+    formal_candidates = [item for item in candidates if item.get("is_formal_publication")]
+    if not formal_candidates:
+        return None
+    formal_candidates.sort(key=lambda item: item["score"], reverse=True)
+    selected = formal_candidates[0]
+    if selected["score"] < FORMAL_PUBLICATION_RELAXED_SCORE_MIN:
+        return None
+    runner_up_score = formal_candidates[1]["score"] if len(formal_candidates) > 1 else 0.0
+    if selected["score"] - runner_up_score < FORMAL_PUBLICATION_FORMAL_MARGIN_MIN:
+        return None
+    if not any(item.get("is_preprint") for item in candidates):
+        return selected if selected is candidates[0] else None
+    if candidates[0]["score"] - selected["score"] <= FORMAL_PUBLICATION_PREPRINT_SCORE_GAP_MAX:
+        return selected
+    return None
+
+
+def should_defer_preprint_for_formal_publication(candidates: list[dict[str, Any]]) -> bool:
+    if not candidates or not candidates[0].get("is_preprint"):
+        return False
+    top_score = candidates[0]["score"]
+    return any(
+        item.get("is_formal_publication")
+        and item["score"] >= FORMAL_PUBLICATION_RELAXED_SCORE_MIN
+        and top_score - item["score"] <= FORMAL_PUBLICATION_PREPRINT_SCORE_GAP_MAX
+        for item in candidates
+    )
 
 
 def is_confident_top_candidate(candidates: list[dict[str, Any]]) -> bool:
     if not candidates:
+        return False
+    if should_defer_preprint_for_formal_publication(candidates):
         return False
     top_one = candidates[0]
     top_two_score = candidates[1]["score"] if len(candidates) > 1 else 0.0
@@ -243,8 +313,9 @@ def resolve_query(
                 title_for_lookup,
                 crossref.search_bibliographic_candidates(title_for_lookup, rows=5),
             )
-            if is_confident_top_candidate(candidates):
-                top_one = candidates[0]
+            selected_candidate = select_formal_publication_candidate(candidates)
+            if selected_candidate is not None or is_confident_top_candidate(candidates):
+                top_one = selected_candidate or candidates[0]
                 if not resolved_doi:
                     resolved_doi = normalize_doi(str(top_one.get("doi") or "")) or None
                     confidence = top_one["score"]
@@ -290,7 +361,9 @@ def resolve_query(
         raise ProviderFailure(NO_RESULT, "Crossref returned no metadata results for the title query.")
     scored = score_candidates(normalized_query, candidates)
     top_one = scored[0]
-    if is_confident_top_candidate(scored):
+    selected_candidate = select_formal_publication_candidate(scored)
+    if selected_candidate is not None or is_confident_top_candidate(scored):
+        top_one = selected_candidate or top_one
         return ResolvedQuery(
             query=normalized_query,
             query_kind="title",

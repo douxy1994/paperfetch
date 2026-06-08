@@ -342,6 +342,12 @@ def _springer_fetch_result_recovery_warnings(
     return warnings
 
 
+def _springer_accepted_html_not_fulltext_message(content_kind: str) -> str:
+    if content_kind == ABSTRACT_ONLY:
+        return "Springer HTML route only exposed abstract-level content after markdown extraction."
+    return "Springer HTML route did not produce usable full text after markdown extraction."
+
+
 def _springer_fallback_attempt(
     *,
     normalized_doi: str,
@@ -1053,11 +1059,37 @@ class SpringerClient(ProviderClient):
                     ],
                     asset_profile=asset_profile,
                 )
-                return _springer_html_payload_from_attempt(
+                html_payload = _springer_html_payload_from_attempt(
                     attempt,
                     trace_markers=[fulltext_marker("springer", "ok", route="html")],
                     reason="Downloaded full text from the Springer landing page HTML.",
                     extracted_assets=extracted_assets,
+                )
+                provisional_article = self.to_article_model(
+                    metadata,
+                    html_payload,
+                    context=context,
+                )
+                if provisional_article.quality.content_kind == FULLTEXT:
+                    return html_payload
+                fallback_payload = _springer_html_payload_from_attempt(
+                    attempt,
+                    trace_markers=[fulltext_marker("springer", "fail", route="html")],
+                    reason=_springer_accepted_html_not_fulltext_message(
+                        provisional_article.quality.content_kind
+                    ),
+                    extracted_assets=extracted_assets,
+                )
+                attempt_context["provisional_payload"] = fallback_payload
+                attempt_context["provisional_article"] = self.to_article_model(
+                    metadata,
+                    fallback_payload,
+                    context=context,
+                )
+                raise ProviderFailure(
+                    NO_RESULT,
+                    _springer_accepted_html_not_fulltext_message(provisional_article.quality.content_kind),
+                    warnings=attempt.warnings,
                 )
 
             provisional_payload = _springer_html_payload_from_attempt(

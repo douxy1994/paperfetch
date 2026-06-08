@@ -508,6 +508,179 @@ class ResolveQueryTests(unittest.TestCase):
         self.assertEqual(len(result.candidates), 2)
         self.assertGreater(result.candidates[0]["score"], 0)
 
+    def test_title_query_prefers_formal_article_over_preprint_when_scores_tie(self) -> None:
+        transport = RecordingTransport(
+            {
+                ("GET", "https://api.crossref.org/works"): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
+                    "body": json.dumps(
+                        {
+                            "message": {
+                                "items": [
+                                    {
+                                        "DOI": "10.1101/2021.08.20.457106",
+                                        "title": [
+                                            "Avifauna recovers faster in areas less accessible to trapping in regenerating tropical forests"
+                                        ],
+                                        "URL": "http://biorxiv.org/lookup/doi/10.1101/2021.08.20.457106",
+                                    },
+                                    {
+                                        "DOI": "10.1016/j.biocon.2023.109901",
+                                        "title": [
+                                            "Avifauna recovers faster in areas less accessible to trapping in regenerating tropical forests"
+                                        ],
+                                        "container-title": ["Biological Conservation"],
+                                        "publisher": "Elsevier BV",
+                                        "URL": "https://linkinghub.elsevier.com/retrieve/pii/S0006320723000010",
+                                    },
+                                ]
+                            }
+                        }
+                    ).encode("utf-8"),
+                    "url": "https://api.crossref.org/works",
+                }
+            }
+        )
+
+        result = resolve_query.resolve_query(
+            "Avifauna recovers faster in areas less accessible to trapping in regenerating tropical forests",
+            transport=transport,
+            env={},
+        )
+
+        self.assertEqual(result.doi, "10.1016/j.biocon.2023.109901")
+        self.assertEqual(result.provider_hint, "elsevier")
+        self.assertEqual(result.candidates, [])
+
+    def test_title_query_prefers_wiley_formal_article_over_authorea_preprint(self) -> None:
+        title = "The direct and legacy effects of drying-rewetting cycles on active and relatively resistant soil carbon decomposition"
+        transport = RecordingTransport(
+            {
+                ("GET", "https://api.crossref.org/works"): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
+                    "body": json.dumps(
+                        {
+                            "message": {
+                                "items": [
+                                    {
+                                        "DOI": "10.22541/au.163646098.88346733/v1",
+                                        "title": [title],
+                                        "publisher": "Authorea, Inc.",
+                                        "URL": "https://www.authorea.com/doi/full/10.22541/au.163646098.88346733/v1",
+                                    },
+                                    {
+                                        "DOI": "10.1002/ldr.4594",
+                                        "title": [title],
+                                        "container-title": ["Land Degradation & Development"],
+                                        "publisher": "Wiley",
+                                        "URL": "https://onlinelibrary.wiley.com/doi/10.1002/ldr.4594",
+                                    },
+                                ]
+                            }
+                        }
+                    ).encode("utf-8"),
+                    "url": "https://api.crossref.org/works",
+                }
+            }
+        )
+
+        result = resolve_query.resolve_query(title, transport=transport, env={})
+
+        self.assertEqual(result.doi, "10.1002/ldr.4594")
+        self.assertEqual(result.provider_hint, "wiley")
+        self.assertEqual(result.candidates, [])
+
+    def test_title_query_with_near_match_selects_single_formal_candidate_over_preprint_conflict(self) -> None:
+        transport = RecordingTransport(
+            {
+                ("GET", "https://api.crossref.org/works"): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
+                    "body": json.dumps(
+                        {
+                            "message": {
+                                "items": [
+                                    {
+                                        "DOI": "10.1111/cobi.14205",
+                                        "title": [
+                                            "Identifying global conservation priorities for terrestrial vertebrates based on multiple dimensions of biodiversity"
+                                        ],
+                                        "container-title": ["Conservation Biology"],
+                                        "publisher": "Wiley",
+                                        "URL": "https://conbio.onlinelibrary.wiley.com/doi/10.1111/cobi.14205",
+                                    },
+                                    {
+                                        "DOI": "10.1101/2024.01.01.000001",
+                                        "title": [
+                                            "Identifying global conservation priorities for terrestrial vertebrates based on multidimensions of biodiversity"
+                                        ],
+                                        "URL": "https://www.biorxiv.org/content/10.1101/2024.01.01.000001v1",
+                                    },
+                                ]
+                            }
+                        }
+                    ).encode("utf-8"),
+                    "url": "https://api.crossref.org/works",
+                }
+            }
+        )
+
+        result = resolve_query.resolve_query(
+            "Identifying global conservation priorities for terrestrial vertebrates based on multidimensions of biodiversity",
+            transport=transport,
+            env={},
+        )
+
+        self.assertEqual(result.doi, "10.1111/cobi.14205")
+        self.assertEqual(result.provider_hint, "wiley")
+        self.assertEqual(result.candidates, [])
+
+    def test_title_query_keeps_ambiguous_when_multiple_formal_candidates_are_close(self) -> None:
+        query = "Climate change impacts on crop"
+        transport = RecordingTransport(
+            {
+                ("GET", "https://api.crossref.org/works"): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/json"},
+                    "body": json.dumps(
+                        {
+                            "message": {
+                                "items": [
+                                    {
+                                        "DOI": "10.1000/a",
+                                        "title": ["Climate change impacts on crop yield"],
+                                        "container-title": ["Journal A"],
+                                        "publisher": "Publisher A",
+                                        "URL": "https://example.test/a",
+                                    },
+                                    {
+                                        "DOI": "10.1000/b",
+                                        "title": ["Climate change impacts on crops"],
+                                        "container-title": ["Journal B"],
+                                        "publisher": "Publisher B",
+                                        "URL": "https://example.test/b",
+                                    },
+                                    {
+                                        "DOI": "10.1101/2024.01.01.000001",
+                                        "title": [query],
+                                        "URL": "https://www.biorxiv.org/content/10.1101/2024.01.01.000001v1",
+                                    },
+                                ]
+                            }
+                        }
+                    ).encode("utf-8"),
+                    "url": "https://api.crossref.org/works",
+                }
+            }
+        )
+
+        result = resolve_query.resolve_query(query, transport=transport, env={})
+
+        self.assertIsNone(result.doi)
+        self.assertEqual(len(result.candidates), 3)
+
     def test_no_title_results_raise_provider_failure(self) -> None:
         transport = RecordingTransport(
             {

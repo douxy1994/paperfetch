@@ -6,6 +6,24 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.1.0 - 2026-06-08
+
+### Added
+
+- Add `paper-fetch auth ams` to open a headed CloakBrowser session, save AMS storage-state JSON, and optionally write `PAPER_FETCH_AMS_STORAGE_STATE_JSON` to the paper-fetch user environment file.
+- Add Elsevier PII URL resolution for ScienceDirect and LinkingHub `/pii/...` URLs, including provider identifier propagation and official Elsevier Abstract PII API metadata lookup before the normal DOI full-text path.
+
+### Changed
+
+- Require explicit `PAPER_FETCH_AMS_STORAGE_STATE_JSON` for AMS browser workflow and provider status checks; AMS no longer relies on stateless browser startup or `CLOAKBROWSER_USER_DATA_DIR` as its authentication source.
+
+### Fixed
+
+- Try Springer PDF fallback when accepted Springer HTML still renders to abstract-only Markdown, instead of returning abstract-only before PDF recovery.
+- Prefer formally published Crossref title-query candidates over near-duplicate preprints when both appear in the candidate set.
+- Detect Springer article-in-press notice text as an availability blocker when no post-abstract body is present, avoiding false full-text acceptance.
+- Avoid duplicating IOP appendix figure captions and suppress repeated non-inline figure asset captions that are already present in rendered Markdown.
+
 ## 2.0.0 - 2026-05-28
 
 ### Changed

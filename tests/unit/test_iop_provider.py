@@ -320,6 +320,61 @@ def test_iop_extract_markdown_preserves_article_sections_figure_and_references()
     assert "Download PDF" not in markdown
 
 
+def test_iop_appendix_figure_caption_match_prevents_duplicate_append() -> None:
+    markdown = """
+## Appendix:
+
+**Figure** **Figure A.1.** Visualization of four elements in a three-dimensional data cube. In our definition of connectivity these four elements are connected and could form an extreme event.
+
+## References
+"""
+    caption = (
+        "Figure A.1. Figure A.1. Visualization of four elements in a three-dimensional "
+        "data cube. In our definition of connectivity these four elements are connected "
+        "and could form an extreme event. Download figure: Standard image High-resolution image"
+    )
+
+    updated = _iop_html._append_missing_figure_captions(markdown, [caption])
+
+    assert updated == markdown
+    assert updated.count("Visualization of four elements") == 1
+
+
+def test_iop_suppresses_only_non_inline_asset_captions_already_in_markdown() -> None:
+    markdown = """
+![Figure 1](https://content.cld.iop.org/example/f1_online.jpg)
+
+**Figure 1.** Main figure caption already rendered next to the inline image.
+
+## Appendix:
+
+**Figure** **Figure A.1.** Appendix figure caption already rendered in the appendix text.
+"""
+    assets = [
+        {
+            "kind": "figure",
+            "heading": "Figure 1",
+            "caption": "Figure 1. Main figure caption already rendered next to the inline image.",
+            "url": "https://content.cld.iop.org/example/f1_online.jpg",
+        },
+        {
+            "kind": "figure",
+            "heading": "Figure A.1",
+            "caption": "Figure A.1. Appendix figure caption already rendered in the appendix text.",
+            "url": "https://content.cld.iop.org/example/fA1_online.jpg",
+        },
+    ]
+
+    suppressed = _iop_html.suppress_iop_asset_captions_already_in_markdown(
+        assets,
+        markdown,
+    )
+
+    assert suppressed[0]["caption"] == assets[0]["caption"]
+    assert suppressed[1]["caption"] == ""
+    assert suppressed[1]["url"].endswith("fA1_online.jpg")
+
+
 def test_iop_real_replay_covers_table_and_formula_purposes() -> None:
     """rule: rule-iop-body-challenge-cleanup"""
     html = _golden_fixture_text(IOP_TABLE_FORMULA_DOI, "original.html")

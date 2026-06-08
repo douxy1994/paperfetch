@@ -941,6 +941,68 @@ class PublisherWaterfallTests(unittest.TestCase):
         self.assertIn("fulltext:springer_html_fail", result.article.quality.source_trail)
         self.assertIn("fulltext:springer_pdf_fallback_ok", result.article.quality.source_trail)
 
+    def test_springer_fetch_result_recovers_pdf_when_accepted_html_renders_abstract_only(self) -> None:
+        doi = SPRINGER_SAMPLE.doi
+        landing_url = SPRINGER_SAMPLE.landing_url
+        metadata = {
+            "doi": doi,
+            "title": SPRINGER_SAMPLE.title,
+            "landing_page_url": landing_url,
+            "fulltext_links": [{"url": f"{landing_url}.pdf", "content_type": "application/pdf"}],
+        }
+        response = {
+            "headers": {"content-type": "text/html; charset=utf-8"},
+            "body": (
+                b"<html><head>"
+                + f'<meta name="citation_title" content="{SPRINGER_SAMPLE.title}" />'.encode()
+                + f'<meta name="citation_doi" content="{SPRINGER_SAMPLE.doi}" />'.encode()
+                + b"</head><body><article><section><h2>Abstract</h2><p>HTML abstract only.</p></section></article></body></html>"
+            ),
+            "url": landing_url,
+        }
+        client = springer_provider.SpringerClient(transport=mock.Mock(), env={})
+
+        with (
+            mock.patch.object(client, "_fetch_html_response", return_value=(response, landing_url)),
+            mock.patch.object(
+                springer_html,
+                "extract_html_payload",
+                return_value={
+                    "markdown_text": f"# {SPRINGER_SAMPLE.title}\n\n## Abstract\n\nHTML abstract only.",
+                    "abstract_sections": [{"kind": "abstract", "heading": "Abstract", "text": "HTML abstract only."}],
+                    "section_hints": [{"kind": "body", "heading": "Results", "text": "Publisher structure signal."}],
+                    "extracted_authors": [],
+                },
+            ),
+            mock.patch.object(
+                springer_provider.HtmlQualityAssessor,
+                "assess",
+                return_value=mock.Mock(
+                    accepted=True,
+                    to_dict=mock.Mock(return_value={"reason": "body_sufficient", "content_kind": "fulltext"}),
+                ),
+            ),
+            mock.patch.object(
+                springer_provider,
+                "fetch_pdf_over_http",
+                return_value=mock.Mock(
+                    source_url=f"{landing_url}.pdf",
+                    final_url=f"{landing_url}.pdf",
+                    pdf_bytes=fulltext_pdf_bytes(),
+                    markdown_text=f"# {SPRINGER_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                    suggested_filename="nature-article.pdf",
+                ),
+            ) as mocked_pdf,
+        ):
+            result = client.fetch_result(doi, metadata, None)
+
+        mocked_pdf.assert_called_once()
+        self.assertEqual(result.article.source, "springer_pdf")
+        self.assertEqual(result.article.quality.content_kind, "fulltext")
+        self.assertIn("fulltext:springer_html_fail", result.article.quality.source_trail)
+        self.assertIn("fulltext:springer_pdf_fallback_ok", result.article.quality.source_trail)
+        self.assertNotIn("fulltext:springer_html_ok", result.article.quality.source_trail)
+
     def test_wiley_html_success_keeps_wiley_browser_source(self) -> None:
         doi = WILEY_SAMPLE.doi
         metadata = {

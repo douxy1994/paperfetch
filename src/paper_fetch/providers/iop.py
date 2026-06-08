@@ -190,6 +190,11 @@ class IopClient(browser_workflow.BrowserWorkflowClient):
             raw_payload.source_url,
             asset_profile=asset_profile,
         )
+        if content.markdown_text:
+            assets = _iop_html.suppress_iop_asset_captions_already_in_markdown(
+                assets,
+                content.markdown_text,
+            )
         if not assets:
             return empty_asset_results()
         return self._download_browser_backed_related_assets(

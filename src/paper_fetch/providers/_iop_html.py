@@ -16,6 +16,7 @@ from ..extraction.html.assets import (
 from ..extraction.html.formula_rules import is_tex_formula_script_node
 from ..extraction.html.parsing import choose_parser
 from ..extraction.html.provider_rules import COMMON_ACCESS_BLOCK_TOKENS
+from ..models.markdown import image_reference_candidates, image_references_match, iter_markdown_images
 from ..publisher_identity import normalize_doi
 from ..quality.html_signals import TextMarkerRule, TextMarkerSignalSet
 from ..utils import normalize_text
@@ -129,11 +130,11 @@ IOP_FIGURE_DOWNLOAD_PATTERN = re.compile(
     re.IGNORECASE,
 )
 IOP_DUPLICATE_MARKDOWN_FIGURE_LABEL_PATTERN = re.compile(
-    r"(\*\*Figure\s+\d+\.?\*\*)\s+\1\s*",
+    r"(\*\*Figure\s+(?:[A-Za-z]\.)?\d+\.?\*\*)\s+\1\s*",
     re.IGNORECASE,
 )
 IOP_DUPLICATE_TEXT_FIGURE_LABEL_PATTERN = re.compile(
-    r"^(Figure\s+\d+\.?)\s+\1\s+",
+    r"^(Figure\s+(?:[A-Za-z]\.)?\d+\.?)\s+\1\s+",
     re.IGNORECASE,
 )
 IOP_FRONT_MATTER_EXACT_TEXTS = (
@@ -407,6 +408,13 @@ def _clean_iop_markdown(markdown_text: str) -> str:
     return cleaned
 
 
+def _iop_caption_match_text(value: str | None) -> str:
+    text = _plain_markdown_text(_clean_iop_figure_caption_text(value))
+    text = re.sub(r"</?(?:sub|sup)>", " ", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bdownload figure\b.*", " ", text, flags=re.IGNORECASE)
+    return re.sub(r"[\W_]+", "", normalize_text(text), flags=re.UNICODE)
+
+
 def _markdown_contains_caption(markdown_text: str, caption: str) -> bool:
     plain_markdown = _plain_markdown_text(markdown_text)
     normalized_caption = _plain_markdown_text(caption)
@@ -414,8 +422,47 @@ def _markdown_contains_caption(markdown_text: str, caption: str) -> bool:
         return True
     if normalized_caption in plain_markdown:
         return True
-    caption_body = re.sub(r"^figure\s+\d+\.?\s+", "", normalized_caption)
+    markdown_match_text = _iop_caption_match_text(markdown_text)
+    caption_match_text = _iop_caption_match_text(caption)
+    if caption_match_text and caption_match_text in markdown_match_text:
+        return True
+    caption_body = re.sub(
+        r"^figure\s+(?:[a-z]+\.?)?\d+[a-z]?\s+",
+        "",
+        normalized_caption,
+    )
     return len(caption_body) >= 40 and caption_body in plain_markdown
+
+
+def _markdown_contains_asset_image(markdown_text: str, asset: Mapping[str, Any]) -> bool:
+    inline_candidates = [
+        image_reference_candidates(image.url)
+        for image in iter_markdown_images(markdown_text or "")
+    ]
+    if not inline_candidates:
+        return False
+    asset_candidates: set[str] = set()
+    for field in (
+        "path",
+        "url",
+        "original_url",
+        "download_url",
+        "source_url",
+        "source_path",
+        "source_href",
+        "preview_url",
+        "full_size_url",
+        "link",
+    ):
+        asset_candidates |= image_reference_candidates(str(asset.get(field) or ""))
+    return bool(
+        asset_candidates
+        and any(
+            image_references_match(asset_candidates, inline_candidate)
+            for inline_candidate in inline_candidates
+            if inline_candidate
+        )
+    )
 
 
 def _append_missing_figure_captions(
@@ -435,6 +482,28 @@ def _append_missing_figure_captions(
         head, tail = markdown_text.split(marker, 1)
         return f"{head.rstrip()}\n\n{addition}{marker}{tail}"
     return f"{markdown_text.rstrip()}\n\n{addition}\n"
+
+
+def suppress_iop_asset_captions_already_in_markdown(
+    assets: list[dict[str, Any]],
+    markdown_text: str | None,
+) -> list[dict[str, Any]]:
+    """Drop appended figure captions that are already visible in IOP markdown."""
+    if not assets or not normalize_text(markdown_text):
+        return [dict(asset) for asset in assets]
+    suppressed: list[dict[str, Any]] = []
+    for asset in assets:
+        item = dict(asset)
+        caption = normalize_text(str(item.get("caption") or ""))
+        if (
+            normalize_text(str(item.get("kind") or "")).lower() == "figure"
+            and caption
+            and _markdown_contains_caption(markdown_text or "", caption)
+            and not _markdown_contains_asset_image(markdown_text or "", item)
+        ):
+            item["caption"] = ""
+        suppressed.append(item)
+    return suppressed
 
 
 def _append_references_markdown(
@@ -754,4 +823,5 @@ __all__ = [
     "pdf_candidate_urls",
     "refine_selected_container",
     "scoped_asset_extractor",
+    "suppress_iop_asset_captions_already_in_markdown",
 ]

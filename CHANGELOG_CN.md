@@ -6,6 +6,24 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.1.0 - 2026-06-08
+
+### 新增
+
+- 新增 `paper-fetch auth ams`：打开 headed CloakBrowser 完成 AMS 合法站点验证，保存 storage-state JSON，并可把 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 写入 paper-fetch 用户环境文件。
+- 新增 Elsevier PII URL 解析：直接输入 ScienceDirect 或 LinkingHub `/pii/...` URL 时会提取 PII，先用 Elsevier 官方 Abstract PII API 补 metadata，再进入常规 DOI 全文路径。
+
+### 变更
+
+- AMS browser workflow 和 provider status 现在要求显式配置 `PAPER_FETCH_AMS_STORAGE_STATE_JSON`；AMS 不再依赖无状态 browser 启动，也不把 `CLOAKBROWSER_USER_DATA_DIR` 当作认证来源。
+
+### 修复
+
+- Springer HTML 虽被 availability 判为可用但最终只渲染出 abstract-only Markdown 时，现在会继续尝试 PDF fallback，而不是提前返回摘要级结果。
+- Crossref 标题查询同时命中近重复预印本与正式发表版本时，现在优先选择正式发表候选。
+- Springer article-in-press 提示页在缺少摘要后正文时会被识别为 availability blocker，避免误判为全文可用。
+- IOP Appendix figure caption 已在正文 Markdown 出现时不再重复追加；已渲染但非内联图片对应的 figure asset caption 也会去重保留。
+
 ## 2.0.0 - 2026-05-28
 
 ### 变更
