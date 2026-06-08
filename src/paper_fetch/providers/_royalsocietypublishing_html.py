@@ -834,6 +834,8 @@ def royalsocietypublishing_normalize_markdown(text: str) -> str:
             stripped = line.strip()
             if stripped in {"- —", "- –", "- -"}:
                 continue
+            line = re.sub(r"^(\s*-\s+)[—–-](?=\S)", r"\1", line)
+            stripped = line.strip()
             previous = next((item.strip() for item in reversed(lines) if item.strip()), "")
             if (
                 previous

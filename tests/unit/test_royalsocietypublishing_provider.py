@@ -8,6 +8,7 @@ import pytest
 
 from paper_fetch.provider_catalog import PROVIDER_CATALOG
 from paper_fetch.providers._registry import provider_bundle
+from paper_fetch.providers._royalsocietypublishing_html import royalsocietypublishing_normalize_markdown
 from paper_fetch.providers.base import ProviderFailure
 from paper_fetch.providers.royalsocietypublishing import RoyalsocietypublishingClient
 from paper_fetch.tracing import source_trail_from_trace
@@ -337,6 +338,21 @@ def test_markdown_contract_formula_fixture() -> None:
     assert re.search(r"(?m)^1\. Schinckus C", markdown)
     assert not re.search(r"(?m)^- Schinckus C", markdown)
     assert re.search("(?:\\$|Equation|BS)", markdown)
+
+
+def test_markdown_normalization_drops_inline_list_label_dash() -> None:
+    markdown = royalsocietypublishing_normalize_markdown(
+        "- —Condition 1: (Call Spread) For 0 < K1 <= K2\n"
+        "- –Condition 2: (Butterfly Spread) For 0 < K1 < K2 < K3\n"
+        "- -Condition 3: synthetic label"
+    )
+
+    assert "- Condition 1: (Call Spread) For 0 < K1 <= K2" in markdown
+    assert "- Condition 2: (Butterfly Spread) For 0 < K1 < K2 < K3" in markdown
+    assert "- Condition 3: synthetic label" in markdown
+    assert "- —Condition" not in markdown
+    assert "- –Condition" not in markdown
+    assert "- -Condition" not in markdown
 
 
 def test_markdown_contract_figure_fixture() -> None:
