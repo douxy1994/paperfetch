@@ -6,7 +6,7 @@ import re
 import urllib.parse
 from hashlib import sha1
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 
 def first_non_empty(*values: Any) -> Any:
@@ -109,6 +109,18 @@ def extend_unique(target: list[str], items: list[str] | None) -> None:
         normalized = normalize_text(item)
         if normalized and normalized not in target:
             target.append(normalized)
+
+
+def dedupe_normalized(values: Iterable[str | None] | None) -> list[str]:
+    """Return non-empty, order-preserving, normalized-unique strings."""
+    seen: set[str] = set()
+    ordered: list[str] = []
+    for value in values or []:
+        normalized = normalize_text(value)
+        if normalized and normalized not in seen:
+            seen.add(normalized)
+            ordered.append(normalized)
+    return ordered
 
 
 def strip_html_tags(value: str | None) -> str | None:

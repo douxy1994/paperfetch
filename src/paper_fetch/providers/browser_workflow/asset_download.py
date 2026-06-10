@@ -14,7 +14,7 @@ from ...extraction.html.assets import (
     extract_scoped_html_assets,
 )
 from ...models import AssetProfile
-from ...utils import empty_asset_results, normalize_text
+from ...utils import dedupe_normalized, empty_asset_results, normalize_text
 from ..browser_runtime import (
     BrowserRuntimeFailure,
     merge_browser_context_seeds,
@@ -247,23 +247,21 @@ def _run_browser_asset_download_attempt(
     def seed_urls_getter() -> list[str]:
         return _seed_urls_for(recovery, attempt_seed_snapshot())
 
-    image_document_fetcher = _build_attempt_image_fetcher(
+    image_document_fetcher = _build_attempt_document_fetcher(
         recovery,
         attempt_seed=attempt_seed,
-        attempt_seed_lock=attempt_seed_lock,
-        attempt_body_assets=attempt_body_assets,
+        assets=attempt_body_assets,
+        assets_kwarg="attempt_body_assets",
         seed_urls_getter=seed_urls_getter,
-        image_fetcher_factory=image_fetcher_factory,
-        deps=deps,
+        fetcher_factory=image_fetcher_factory,
     )
-    file_document_fetcher = _build_attempt_file_fetcher(
+    file_document_fetcher = _build_attempt_document_fetcher(
         recovery,
         attempt_seed=attempt_seed,
-        attempt_seed_lock=attempt_seed_lock,
-        attempt_supplementary_assets=attempt_supplementary_assets,
+        assets=attempt_supplementary_assets,
+        assets_kwarg="attempt_supplementary_assets",
         seed_urls_getter=seed_urls_getter,
-        file_fetcher_factory=file_fetcher_factory,
-        deps=deps,
+        fetcher_factory=file_fetcher_factory,
     )
     try:
         def download_body_assets() -> Mapping[str, Any]:
@@ -346,42 +344,19 @@ def _run_browser_asset_download_attempt(
                 close_fetcher()
 
 
-def _build_attempt_image_fetcher(
+def _build_attempt_document_fetcher(
     recovery: BrowserAssetRecoveryContext,
     *,
     attempt_seed: dict[str, Any],
-    attempt_seed_lock: threading.Lock,
-    attempt_body_assets: list[dict[str, Any]],
+    assets: list[dict[str, Any]],
+    assets_kwarg: str,
     seed_urls_getter: Callable[[], list[str]],
-    image_fetcher_factory,
-    deps: BrowserWorkflowDeps,
+    fetcher_factory,
 ) -> Callable[[str, Mapping[str, Any]], dict[str, Any] | None] | None:
-    if not attempt_body_assets or not callable(image_fetcher_factory):
+    if not assets or not callable(fetcher_factory):
         return None
-    return image_fetcher_factory(
-        attempt_body_assets=attempt_body_assets,
-        browser_context_seed_getter=lambda: attempt_seed,
-        seed_urls_getter=seed_urls_getter,
-        browser_user_agent=attempt_seed.get("browser_user_agent")
-        or getattr(recovery.runtime, "user_agent", None),
-        headless=getattr(recovery.runtime, "headless", True),
-    )
-
-
-def _build_attempt_file_fetcher(
-    recovery: BrowserAssetRecoveryContext,
-    *,
-    attempt_seed: dict[str, Any],
-    attempt_seed_lock: threading.Lock,
-    attempt_supplementary_assets: list[dict[str, Any]],
-    seed_urls_getter: Callable[[], list[str]],
-    file_fetcher_factory,
-    deps: BrowserWorkflowDeps,
-) -> Callable[[str, Mapping[str, Any]], dict[str, Any] | None] | None:
-    if not attempt_supplementary_assets or not callable(file_fetcher_factory):
-        return None
-    return file_fetcher_factory(
-        attempt_supplementary_assets=attempt_supplementary_assets,
+    return fetcher_factory(
+        **{assets_kwarg: assets},
         browser_context_seed_getter=lambda: attempt_seed,
         seed_urls_getter=seed_urls_getter,
         browser_user_agent=attempt_seed.get("browser_user_agent")
@@ -394,23 +369,12 @@ def _seed_urls_for(
     recovery: BrowserAssetRecoveryContext,
     current_seed: Mapping[str, Any],
 ) -> list[str]:
-    return _dedupe_urls(
+    return dedupe_normalized(
         [
             *recovery.active_seed_urls,
             normalize_text(str(current_seed.get("browser_final_url") or "")),
         ]
     )
-
-
-def _dedupe_urls(urls: list[str]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for candidate in urls:
-        normalized = normalize_text(candidate)
-        if normalized and normalized not in seen:
-            seen.add(normalized)
-            ordered.append(normalized)
-    return ordered
 
 
 def _attempt_settings(opener_requester: Any) -> dict[str, Any]:

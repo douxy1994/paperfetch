@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import logging
-import threading
 from typing import Any, Callable, Mapping
 
 from ....extraction.html.assets import supplementary_response_block_reason
@@ -11,13 +9,14 @@ from ....extraction.html.shared import (
     html_text_snippet as _html_text_snippet,
     html_title_snippet as _html_title_snippet,
 )
-from ....logging_utils import emit_structured_log
 from ....runtime import RuntimeContext
 from ....utils import normalize_text
-from .context import _BaseBrowserDocumentFetcher, _normalized_response_headers
-from .diagnostics import _copy_failure_diagnostic
-
-logger = logging.getLogger("paper_fetch.providers.browser_workflow")
+from .context import (
+    _BaseBrowserDocumentFetcher,
+    _ThreadLocalSharedDocumentFetcher,
+    _browser_response_headers,
+    _browser_response_status,
+)
 
 
 class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
@@ -98,15 +97,10 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
             )
             return None
 
-        try:
-            headers = _normalized_response_headers(response.all_headers())
-        except Exception:
-            headers = _normalized_response_headers(
-                getattr(response, "headers", {}) or {}
-            )
+        headers = _browser_response_headers(response)
         content_type = headers.get("content-type", "")
         final_url = normalize_text(getattr(response, "url", "") or "") or file_url
-        status = int(getattr(response, "status", 0) or 0) or None
+        status = _browser_response_status(response)
         try:
             body = response.body()
         except Exception:
@@ -139,7 +133,7 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
         }
 
 
-class _ThreadLocalSharedBrowserFileDocumentFetcher:
+class _ThreadLocalSharedBrowserFileDocumentFetcher(_ThreadLocalSharedDocumentFetcher):
     def __init__(
         self,
         *,
@@ -150,91 +144,17 @@ class _ThreadLocalSharedBrowserFileDocumentFetcher:
         runtime_context: RuntimeContext | None = None,
         use_runtime_shared_browser: bool = True,
     ) -> None:
-        self._browser_context_seed_getter = browser_context_seed_getter
-        self._seed_urls_getter = seed_urls_getter
-        self._browser_user_agent = browser_user_agent
-        self._headless = headless
-        self._runtime_context = runtime_context
-        self._use_runtime_shared_browser = use_runtime_shared_browser
-        self._thread_local = threading.local()
-        self._lock = threading.Lock()
-        self._fetchers: list[_SharedBrowserFileDocumentFetcher] = []
-        self._failure_by_url: dict[str, dict[str, Any]] = {}
-
-    def _get_fetcher(self) -> _SharedBrowserFileDocumentFetcher:
-        fetcher = getattr(self._thread_local, "fetcher", None)
-        if isinstance(fetcher, _SharedBrowserFileDocumentFetcher):
-            return fetcher
-        fetcher = _SharedBrowserFileDocumentFetcher(
-            browser_context_seed_getter=self._browser_context_seed_getter,
-            seed_urls_getter=self._seed_urls_getter,
-            browser_user_agent=self._browser_user_agent,
-            headless=self._headless,
-            runtime_context=self._runtime_context,
-            use_runtime_shared_browser=self._use_runtime_shared_browser,
+        super().__init__(
+            log_event="browser_workflow_file_fetcher_thread_created",
+            fetcher_factory=lambda: _SharedBrowserFileDocumentFetcher(
+                browser_context_seed_getter=browser_context_seed_getter,
+                seed_urls_getter=seed_urls_getter,
+                browser_user_agent=browser_user_agent,
+                headless=headless,
+                runtime_context=runtime_context,
+                use_runtime_shared_browser=use_runtime_shared_browser,
+            ),
         )
-        self._thread_local.fetcher = fetcher
-        with self._lock:
-            self._fetchers.append(fetcher)
-        emit_structured_log(
-            logger,
-            logging.DEBUG,
-            "browser_workflow_file_fetcher_thread_created",
-            thread=threading.current_thread().name,
-        )
-        return fetcher
-
-    def __call__(
-        self, file_url: str, asset: Mapping[str, Any]
-    ) -> dict[str, Any] | None:
-        normalized_url = normalize_text(file_url)
-        fetcher = self._get_fetcher()
-        try:
-            payload = fetcher(file_url, asset)
-            if normalized_url:
-                if payload is None:
-                    failure = fetcher.failure_for(normalized_url)
-                    if isinstance(failure, Mapping):
-                        with self._lock:
-                            self._failure_by_url[normalized_url] = _copy_failure_diagnostic(failure)
-                else:
-                    with self._lock:
-                        self._failure_by_url.pop(normalized_url, None)
-            return payload
-        finally:
-            # Browser sync objects must be closed from their owning worker
-            # thread. Closing these thread-local fetchers later from the caller
-            # thread can leave Chromium subprocesses behind.
-            self._close_fetcher_for_current_thread(fetcher)
-
-    def failure_for(self, file_url: str) -> dict[str, Any] | None:
-        fetcher = getattr(self._thread_local, "fetcher", None)
-        if not isinstance(fetcher, _SharedBrowserFileDocumentFetcher):
-            normalized_url = normalize_text(file_url)
-            with self._lock:
-                cached_failure = self._failure_by_url.get(normalized_url)
-            return _copy_failure_diagnostic(cached_failure) if cached_failure else None
-        failure = fetcher.failure_for(file_url)
-        return _copy_failure_diagnostic(failure) if isinstance(failure, Mapping) else None
-
-    def _close_fetcher_for_current_thread(self, fetcher: _SharedBrowserFileDocumentFetcher) -> None:
-        try:
-            fetcher.close()
-        finally:
-            with self._lock:
-                self._fetchers = [item for item in self._fetchers if item is not fetcher]
-            if getattr(self._thread_local, "fetcher", None) is fetcher:
-                try:
-                    delattr(self._thread_local, "fetcher")
-                except AttributeError:
-                    pass
-
-    def close(self) -> None:
-        with self._lock:
-            fetchers = list(self._fetchers)
-            self._fetchers.clear()
-        for fetcher in fetchers:
-            fetcher.close()
 
 
 def _build_shared_browser_file_fetcher(

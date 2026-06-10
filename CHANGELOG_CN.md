@@ -6,6 +6,22 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.2.0 - 2026-06-10
+
+### 新增
+
+- browser-workflow 图片恢复链路现在会先复用预热正文页中目标 `<img>` 的 canvas 导出；目标图存在但尚未加载时，会先在同一正文页执行带凭据的 `fetch()` 拉取原图字节，再退回图片 URL 直连请求、页面 fetch 与 navigation 候选（影响 `wiley`、`science`、`pnas`、`ams`、`annualreviews`、`acs`、`iop`、`aip`、`mdpi`）。
+
+### 变更
+
+- Atypon/Wiley figure caption label 现在只从显式 label、figure DOM id、图片 URL basename，或以 `Figure N` 起始的 caption 推断，并新增读取 `.figure__title` 选择器；caption 正文中间的 `Figure N` 交叉引用不再能覆盖当前图号。
+- 收敛 browser-workflow 资产下载内部实现（行为不变）：image 与 supplementary fetcher 共用同一个泛型的按线程文档 fetcher，image/file fetcher 复用共享的 browser 响应头/状态 helper，两个 attempt-fetcher 构建函数合并为一个（删除未使用参数），并以共享的 `dedupe_normalized` 工具替换四处重复的有序 URL 去重。
+
+### 修复
+
+- 公式图片不再被当作 figure：节点中唯一图片是公式图时不产出 figure 资产，公式图片锚点只按 formula 资产改写，同一图片 URL 同时命中 figure 与 formula 时保留 formula 语义，公式图片也不再占用 inline figure 槽位。
+- inline figure 注入现在同时按图片 alt 与图片 URL basename 提取去重键；当某 figure 已以 Markdown 图片形式出现时，正文里的 `Figure N` 交叉引用会被跳过，重复或缺少 label 的 figure 不再触发第二次插图。
+
 ## 2.1.0 - 2026-06-08
 
 ### 新增

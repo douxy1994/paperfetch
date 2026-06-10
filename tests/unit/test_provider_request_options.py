@@ -1024,6 +1024,170 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertIsNone(result)
         self.assertEqual(fetcher.failure_for(image_url)["reason"], "non_image_response")
 
+    def test_browser_image_fetcher_prefers_warmed_article_image_before_direct_request(self) -> None:
+        image_body = png_body(b"article-page-image")
+        image_url = "https://example.test/cdn/figure.png"
+        page = _FakeImagePage(
+            {
+                "ok": True,
+                "found": True,
+                "status": 200,
+                "url": image_url,
+                "contentType": "image/png",
+                "bodyB64": base64.b64encode(image_body).decode("ascii"),
+                "width": 640,
+                "height": 480,
+            }
+        )
+        fetcher = browser_fetchers._SharedBrowserImageDocumentFetcher(
+            browser_context_seed_getter=lambda: {},
+            seed_urls_getter=lambda: [],
+        )
+        fetcher._page = page
+
+        with (
+            mock.patch.object(
+                fetcher,
+                "_payload_from_context_request",
+                side_effect=AssertionError("direct request should not run"),
+            ),
+            mock.patch.object(
+                fetcher,
+                "_payload_from_page_fetch_url",
+                side_effect=AssertionError("page fetch should not run"),
+            ),
+        ):
+            result = fetcher._fetch_with_page(image_url)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["body"], image_body)
+        self.assertEqual(result["headers"]["content-type"], "image/png")
+        self.assertEqual(result["dimensions"], {"width": 640, "height": 480})
+        self.assertEqual(len(page.evaluate_calls), 1)
+
+    def test_browser_image_fetcher_falls_back_when_warmed_article_lacks_target(self) -> None:
+        image_url = "https://example.test/cdn/figure.png"
+        direct_payload = {
+            "status_code": 200,
+            "headers": {"content-type": "image/png"},
+            "body": png_body(b"direct-image"),
+            "url": image_url,
+            "dimensions": {"width": 320, "height": 240},
+        }
+        page = _FakeImagePage(
+            {
+                "ok": False,
+                "found": False,
+                "reason": "target_image_not_found",
+                "url": image_url,
+                "title": "Article",
+                "contentType": "text/html",
+                "imageCount": 4,
+            }
+        )
+        fetcher = browser_fetchers._SharedBrowserImageDocumentFetcher(
+            browser_context_seed_getter=lambda: {},
+            seed_urls_getter=lambda: [],
+        )
+        fetcher._page = page
+
+        with (
+            mock.patch.object(
+                fetcher,
+                "_payload_from_page_fetch_url",
+                return_value=None,
+            ) as mocked_page_fetch,
+            mock.patch.object(
+                fetcher,
+                "_payload_from_context_request",
+                return_value=direct_payload,
+            ) as mocked_direct,
+        ):
+            result = fetcher._fetch_with_page(image_url)
+
+        self.assertEqual(result, direct_payload)
+        mocked_page_fetch.assert_called_once_with(page, image_url)
+        mocked_direct.assert_called_once_with(image_url)
+        self.assertEqual(fetcher.failure_for(image_url), None)
+
+    def test_browser_image_fetcher_fetches_unloaded_article_target_from_page_context(
+        self,
+    ) -> None:
+        image_body = png_body(b"article-page-fetch-image")
+        image_url = "https://example.test/cdn/figure.png"
+        page = _FakeQueuedImagePage(
+            [
+                {
+                    "ok": False,
+                    "found": True,
+                    "reason": "target_image_not_loaded",
+                    "url": image_url,
+                    "width": 570,
+                    "height": 820,
+                    "title": "Article",
+                    "contentType": "text/html",
+                },
+                {
+                    "ok": True,
+                    "status": 200,
+                    "url": image_url,
+                    "contentType": "image/png;charset=UTF-8",
+                    "bodyB64": base64.b64encode(image_body).decode("ascii"),
+                },
+            ]
+        )
+        fetcher = browser_fetchers._SharedBrowserImageDocumentFetcher(
+            browser_context_seed_getter=lambda: {},
+            seed_urls_getter=lambda: [],
+        )
+
+        result = fetcher._payload_from_warmed_article_image(page, image_url)
+
+        self.assertIsNotNone(result)
+        assert result is not None
+        self.assertEqual(result["body"], image_body)
+        self.assertEqual(result["headers"]["content-type"], "image/png;charset=UTF-8")
+        self.assertEqual(result["dimensions"], {"width": 570, "height": 820})
+        self.assertEqual(len(page.evaluate_calls), 2)
+
+    def test_browser_image_fetcher_records_challenge_from_article_page_fetch(
+        self,
+    ) -> None:
+        image_url = "https://example.test/cdn/figure.png"
+        page = _FakeQueuedImagePage(
+            [
+                {
+                    "ok": False,
+                    "found": True,
+                    "reason": "target_image_not_loaded",
+                    "url": image_url,
+                    "width": 0,
+                    "height": 0,
+                    "title": "Article",
+                    "contentType": "text/html",
+                },
+                {
+                    "ok": True,
+                    "status": 403,
+                    "url": image_url,
+                    "contentType": "text/html",
+                    "nonImage": True,
+                    "title": "Just a moment...",
+                    "bodySnippet": "<title>Just a moment...</title>",
+                },
+            ]
+        )
+        fetcher = browser_fetchers._SharedBrowserImageDocumentFetcher(
+            browser_context_seed_getter=lambda: {},
+            seed_urls_getter=lambda: [],
+        )
+
+        result = fetcher._payload_from_warmed_article_image(page, image_url)
+
+        self.assertIsNone(result)
+        self.assertEqual(fetcher.failure_for(image_url)["reason"], "cloudflare_challenge")
+
     def test_browser_image_payload_uses_loaded_image_when_fetch_is_challenged(self) -> None:
         image_body = b"\x89PNG\r\n\x1a\nloaded-image"
         image_url = "https://example.test/cdn/figure.png"

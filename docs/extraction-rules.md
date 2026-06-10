@@ -381,6 +381,8 @@ metadata
 ### 已下载的正文图片和公式图片要改写成正文附近的本地链接
 
 - 这条规则约束的是：正文里已经有 figure、table image 或 formula image 锚点时，最终 markdown 应该尽量把远程图链接或绝对本地路径改写成当前 markdown 文件可用的本地资源链接，而且图和图之间不能误绑；改写后还要重新规范 Markdown 图片块边界和短 alt 标签，不能让图片和标题、正文句子或公式围栏粘在一起。
+- 公式图片锚点只能按 formula 资产改写；它不能被 inline figure 注入逻辑当作 figure 占位，也不能消耗后续正文 figure 的本地资产。
+- 已存在的 Markdown 图片块会按 alt 和图片 URL basename 提取 `Figure N` 去重键；即使 caption label 暂时不可用或同一 figure 资产重复出现，正文里的 `Figure N` 交叉引用也不能再触发第二次插图。
 - 如果违反，用户会看到：图片链接还是远程 URL、还是绝对路径、图 4 的本地资源被错绑到图 1 的 caption 上，table 图片被错改成下一张 figure，或者出现 `Heading![Figure]`、`text.![Formula]` 这类坏 Markdown。
 - 它对应的阶段是：`asset-link-rewrite`、`article-assembly`、`markdown-normalization`、`final-rendering`。
 - Owner：`paper_fetch.extraction.html.figure_links`。
@@ -395,6 +397,7 @@ metadata
     - [`../tests/unit/test_atypon_browser_workflow_postprocess.py`](../tests/unit/test_atypon_browser_workflow_postprocess.py) 中的 `test_rewrite_inline_figure_links_ignores_cross_references_in_asset_captions`
     - [`../tests/unit/test_atypon_browser_workflow_postprocess.py`](../tests/unit/test_atypon_browser_workflow_postprocess.py) 中的 `test_figure_link_injection_and_rewrite_share_path_preference`
     - [`../tests/unit/test_atypon_browser_workflow_postprocess.py`](../tests/unit/test_atypon_browser_workflow_postprocess.py) 中的 `test_inject_inline_figure_links_preserves_table_image_blocks`
+    - [`../tests/unit/test_atypon_browser_workflow_postprocess.py`](../tests/unit/test_atypon_browser_workflow_postprocess.py) 中的 `test_inline_figure_injection_skips_body_reference_for_existing_image_label`
   - Provider 覆盖：
     - [`../tests/unit/test_atypon_browser_workflow_provider_html.py`](../tests/unit/test_atypon_browser_workflow_provider_html.py) 中的 `test_science_provider_rewrites_inline_figure_links_to_downloaded_local_assets`
     - [`../tests/unit/test_arxiv_provider.py`](../tests/unit/test_arxiv_provider.py) 中的 `test_html_route_inlines_single_official_html_figure_without_trailing_figures`

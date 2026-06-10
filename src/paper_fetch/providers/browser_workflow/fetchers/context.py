@@ -2,17 +2,23 @@
 
 from __future__ import annotations
 
+import logging
+import threading
 from typing import Any, Callable, Mapping
 
+from ....logging_utils import emit_structured_log
 from ....runtime import RuntimeContext
 from ....runtime_browser import browser_context_options
-from ....utils import normalize_text
+from ....utils import dedupe_normalized, normalize_text
 from ..._pdf_candidates import BROWSER_WORKFLOW_PDF_URL_TOKENS
 from ...browser_runtime.seed import parse_optional_int
 from .diagnostics import (
     _compact_failure_diagnostic,
     _context_failure_diagnostic as _build_context_failure_diagnostic,
+    _copy_failure_diagnostic,
 )
+
+logger = logging.getLogger("paper_fetch.providers.browser_workflow")
 
 
 def _looks_like_pdf_navigation_url(url: str | None) -> bool:
@@ -189,14 +195,7 @@ class _BaseBrowserDocumentFetcher:
             pass
 
     def _seed_urls(self) -> list[str]:
-        seen: set[str] = set()
-        ordered: list[str] = []
-        for candidate in self._seed_urls_getter() or []:
-            normalized = normalize_text(candidate)
-            if normalized and normalized not in seen:
-                seen.add(normalized)
-                ordered.append(normalized)
-        return ordered
+        return dedupe_normalized(self._seed_urls_getter())
 
     def _warm_seed_urls(self, *, force: bool) -> None:
         page = self._page
@@ -223,3 +222,96 @@ class _BaseBrowserDocumentFetcher:
 
     def _context_failure_diagnostic(self, exc: Exception) -> dict[str, Any]:
         return _build_context_failure_diagnostic(exc)
+
+
+class _ThreadLocalSharedDocumentFetcher:
+    """Per-thread document fetcher with a shared failure cache.
+
+    Browser sync objects must be created and closed on their owning worker
+    thread, so each thread lazily builds its own ``_BaseBrowserDocumentFetcher``
+    via ``fetcher_factory``. Failures are mirrored into a shared, lock-guarded
+    cache so callers on other threads can still report diagnostics.
+    """
+
+    def __init__(
+        self,
+        *,
+        fetcher_factory: Callable[[], _BaseBrowserDocumentFetcher],
+        log_event: str,
+    ) -> None:
+        self._fetcher_factory = fetcher_factory
+        self._log_event = log_event
+        self._thread_local = threading.local()
+        self._lock = threading.Lock()
+        self._fetchers: list[_BaseBrowserDocumentFetcher] = []
+        self._failure_by_url: dict[str, dict[str, Any]] = {}
+
+    def _get_fetcher(self) -> _BaseBrowserDocumentFetcher:
+        fetcher = getattr(self._thread_local, "fetcher", None)
+        if isinstance(fetcher, _BaseBrowserDocumentFetcher):
+            return fetcher
+        fetcher = self._fetcher_factory()
+        self._thread_local.fetcher = fetcher
+        with self._lock:
+            self._fetchers.append(fetcher)
+        emit_structured_log(
+            logger,
+            logging.DEBUG,
+            self._log_event,
+            thread=threading.current_thread().name,
+        )
+        return fetcher
+
+    def __call__(
+        self, source_url: str, asset: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        normalized_url = normalize_text(source_url)
+        fetcher = self._get_fetcher()
+        try:
+            payload = fetcher(source_url, asset)
+            if normalized_url:
+                if payload is None:
+                    failure = fetcher.failure_for(normalized_url)
+                    if isinstance(failure, Mapping):
+                        with self._lock:
+                            self._failure_by_url[normalized_url] = _copy_failure_diagnostic(failure)
+                else:
+                    with self._lock:
+                        self._failure_by_url.pop(normalized_url, None)
+            return payload
+        finally:
+            # Browser sync objects must be closed from their owning worker
+            # thread. Closing these thread-local fetchers later from the caller
+            # thread can leave Chromium subprocesses behind.
+            self._close_fetcher_for_current_thread(fetcher)
+
+    def failure_for(self, source_url: str) -> dict[str, Any] | None:
+        fetcher = getattr(self._thread_local, "fetcher", None)
+        if not isinstance(fetcher, _BaseBrowserDocumentFetcher):
+            normalized_url = normalize_text(source_url)
+            with self._lock:
+                cached_failure = self._failure_by_url.get(normalized_url)
+            return _copy_failure_diagnostic(cached_failure) if cached_failure else None
+        failure = fetcher.failure_for(source_url)
+        return _copy_failure_diagnostic(failure) if isinstance(failure, Mapping) else None
+
+    def _close_fetcher_for_current_thread(
+        self, fetcher: _BaseBrowserDocumentFetcher
+    ) -> None:
+        try:
+            fetcher.close()
+        finally:
+            with self._lock:
+                self._fetchers = [item for item in self._fetchers if item is not fetcher]
+            if getattr(self._thread_local, "fetcher", None) is fetcher:
+                try:
+                    delattr(self._thread_local, "fetcher")
+                except AttributeError:
+                    pass
+
+    def close(self) -> None:
+        with self._lock:
+            fetchers = list(self._fetchers)
+            self._fetchers.clear()
+        for fetcher in fetchers:
+            fetcher.close()

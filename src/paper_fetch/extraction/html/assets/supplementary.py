@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from typing import Any
+from typing import Any, Mapping
 
 from ....models.schema import AssetProfile
 from ....utils import normalize_text
@@ -140,6 +140,22 @@ def extract_html_assets(
     )
 
 
+def _asset_url_candidates(asset: Mapping[str, Any]) -> set[str]:
+    candidates: set[str] = set()
+    for field in (
+        "url",
+        "preview_url",
+        "full_size_url",
+        "download_url",
+        "original_url",
+        "source_url",
+    ):
+        candidate = normalize_text(str(asset.get(field) or ""))
+        if candidate:
+            candidates.add(candidate)
+    return candidates
+
+
 def extract_scoped_html_assets(
     body_html_text: str,
     source_url: str,
@@ -148,14 +164,20 @@ def extract_scoped_html_assets(
     supplementary_html_text: str | None = None,
     noise_profile: str | None = None,
 ) -> list[dict[str, str]]:
-    assets = extract_figure_assets(body_html_text, source_url)
-    assets.extend(
-        extract_formula_assets(
-            body_html_text,
-            source_url,
-            noise_profile=noise_profile,
-        )
+    formula_assets = extract_formula_assets(
+        body_html_text,
+        source_url,
+        noise_profile=noise_profile,
     )
+    formula_url_candidates = set().union(
+        *(_asset_url_candidates(asset) for asset in formula_assets)
+    ) if formula_assets else set()
+    assets = [
+        asset
+        for asset in extract_figure_assets(body_html_text, source_url)
+        if not (_asset_url_candidates(asset) & formula_url_candidates)
+    ]
+    assets.extend(formula_assets)
     if asset_profile == "all":
         supplementary_scope = body_html_text if supplementary_html_text is None else supplementary_html_text
         assets.extend(

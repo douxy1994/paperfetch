@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 import base64
-import logging
-import threading
 import time
 from typing import Any, Callable, Mapping
 
@@ -16,20 +14,24 @@ from ....extraction.html.shared import (
 from ....extraction.html.signals import (
     CLOUDFLARE_CHALLENGE_TITLE_TOKENS as _CLOUDFLARE_CHALLENGE_TITLE_TOKENS,
 )
-from ....logging_utils import emit_structured_log
 from ....quality.reason_codes import CLOUDFLARE_CHALLENGE
 from ....runtime import RuntimeContext
 from ....utils import normalize_text
 from ...browser_runtime.types import BrowserFetchedHtml
-from .context import _BaseBrowserDocumentFetcher, _normalized_response_headers
+from .context import (
+    _BaseBrowserDocumentFetcher,
+    _ThreadLocalSharedDocumentFetcher,
+    _browser_response_headers,
+    _browser_response_status,
+)
 from .diagnostics import (
-    _copy_failure_diagnostic,
     _image_fetch_failure_reason,
     _looks_like_cloudflare_challenge_title,
 )
-from .scripts import _LOADED_IMAGE_CANVAS_EXPORT_SCRIPT
-
-logger = logging.getLogger("paper_fetch.providers.browser_workflow")
+from .scripts import (
+    _ARTICLE_IMAGE_CANVAS_EXPORT_SCRIPT,
+    _LOADED_IMAGE_CANVAS_EXPORT_SCRIPT,
+)
 
 _IMAGE_DOCUMENT_FETCH_TIMEOUT_MS = 15000
 
@@ -61,13 +63,10 @@ def _looks_like_image_response_payload(
 def _browser_image_document_payload(
     result: BrowserFetchedHtml,
 ) -> dict[str, Any] | None:
-    direct_payload = _payload_from_browser_image_payload(
+    return _payload_from_browser_image_payload(
         result.image_payload,
         fallback_url=result.final_url or result.source_url,
     )
-    if direct_payload is not None:
-        return direct_payload
-    return None
 
 
 def _payload_from_browser_image_payload(
@@ -197,13 +196,19 @@ class _SharedBrowserImageDocumentFetcher(_BaseBrowserDocumentFetcher):
         page = self._page
         if page is None:
             return None
-        request_payload = self._payload_from_context_request(image_url)
-        if request_payload is not None:
-            return request_payload
+        warmed_article_payload = self._payload_from_warmed_article_image(
+            page, image_url
+        )
+        if warmed_article_payload is not None:
+            return warmed_article_payload
 
         fetched_payload = self._payload_from_page_fetch_url(page, image_url)
         if fetched_payload is not None:
             return fetched_payload
+
+        request_payload = self._payload_from_context_request(image_url)
+        if request_payload is not None:
+            return request_payload
 
         navigation_response = None
         try:
@@ -224,6 +229,46 @@ class _SharedBrowserImageDocumentFetcher(_BaseBrowserDocumentFetcher):
             return None
 
         return self._payload_from_page_fetch(page, image_info)
+
+    def _payload_from_warmed_article_image(
+        self, page: Any, image_url: str
+    ) -> dict[str, Any] | None:
+        image_src = normalize_text(str(image_url or ""))
+        if not image_src:
+            return None
+        deadline = time.monotonic() + 15.0
+        while time.monotonic() < deadline:
+            try:
+                rendered = page.evaluate(
+                    _ARTICLE_IMAGE_CANVAS_EXPORT_SCRIPT,
+                    [image_src, self._min_width, self._min_height],
+                )
+            except Exception:
+                return None
+            if not isinstance(rendered, Mapping):
+                return None
+            if not rendered.get("found"):
+                return None
+            if rendered.get("ok"):
+                return _payload_from_browser_image_payload(
+                    rendered,
+                    fallback_url=image_src,
+                )
+            reason = normalize_text(str(rendered.get("reason") or ""))
+            if reason != "target_image_not_loaded":
+                return None
+            fetched_payload = self._payload_from_page_fetch_url(
+                page,
+                image_src,
+                dimensions=rendered,
+            )
+            if fetched_payload is not None:
+                return fetched_payload
+            try:
+                page.wait_for_timeout(500)
+            except Exception:
+                return None
+        return None
 
     def _payload_from_context_request(self, image_url: str) -> dict[str, Any] | None:
         if self._context is None:
@@ -259,15 +304,10 @@ class _SharedBrowserImageDocumentFetcher(_BaseBrowserDocumentFetcher):
     def _payload_from_response_body(
         self, response: Any, *, fallback_url: str, attempted_url: str
     ) -> dict[str, Any] | None:
-        try:
-            headers = _normalized_response_headers(response.all_headers())
-        except Exception:
-            headers = _normalized_response_headers(
-                getattr(response, "headers", {}) or {}
-            )
+        headers = _browser_response_headers(response)
         content_type = headers.get("content-type", "")
         final_url = normalize_text(getattr(response, "url", "") or "") or fallback_url
-        status = int(getattr(response, "status", 0) or 0) or None
+        status = _browser_response_status(response)
         try:
             body = response.body()
         except Exception:
@@ -566,7 +606,7 @@ class _SharedBrowserImageDocumentFetcher(_BaseBrowserDocumentFetcher):
         }
 
 
-class _ThreadLocalSharedBrowserImageDocumentFetcher:
+class _ThreadLocalSharedBrowserImageDocumentFetcher(_ThreadLocalSharedDocumentFetcher):
     def __init__(
         self,
         *,
@@ -579,95 +619,19 @@ class _ThreadLocalSharedBrowserImageDocumentFetcher:
         runtime_context: RuntimeContext | None = None,
         use_runtime_shared_browser: bool = True,
     ) -> None:
-        self._browser_context_seed_getter = browser_context_seed_getter
-        self._seed_urls_getter = seed_urls_getter
-        self._browser_user_agent = browser_user_agent
-        self._headless = headless
-        self._min_width = min_width
-        self._min_height = min_height
-        self._runtime_context = runtime_context
-        self._use_runtime_shared_browser = use_runtime_shared_browser
-        self._thread_local = threading.local()
-        self._lock = threading.Lock()
-        self._fetchers: list[_SharedBrowserImageDocumentFetcher] = []
-        self._failure_by_url: dict[str, dict[str, Any]] = {}
-
-    def _get_fetcher(self) -> _SharedBrowserImageDocumentFetcher:
-        fetcher = getattr(self._thread_local, "fetcher", None)
-        if isinstance(fetcher, _SharedBrowserImageDocumentFetcher):
-            return fetcher
-        fetcher = _SharedBrowserImageDocumentFetcher(
-            browser_context_seed_getter=self._browser_context_seed_getter,
-            seed_urls_getter=self._seed_urls_getter,
-            browser_user_agent=self._browser_user_agent,
-            headless=self._headless,
-            min_width=self._min_width,
-            min_height=self._min_height,
-            runtime_context=self._runtime_context,
-            use_runtime_shared_browser=self._use_runtime_shared_browser,
+        super().__init__(
+            log_event="browser_workflow_image_fetcher_thread_created",
+            fetcher_factory=lambda: _SharedBrowserImageDocumentFetcher(
+                browser_context_seed_getter=browser_context_seed_getter,
+                seed_urls_getter=seed_urls_getter,
+                browser_user_agent=browser_user_agent,
+                headless=headless,
+                min_width=min_width,
+                min_height=min_height,
+                runtime_context=runtime_context,
+                use_runtime_shared_browser=use_runtime_shared_browser,
+            ),
         )
-        self._thread_local.fetcher = fetcher
-        with self._lock:
-            self._fetchers.append(fetcher)
-        emit_structured_log(
-            logger,
-            logging.DEBUG,
-            "browser_workflow_image_fetcher_thread_created",
-            thread=threading.current_thread().name,
-        )
-        return fetcher
-
-    def __call__(
-        self, image_url: str, asset: Mapping[str, Any]
-    ) -> dict[str, Any] | None:
-        normalized_url = normalize_text(image_url)
-        fetcher = self._get_fetcher()
-        try:
-            payload = fetcher(image_url, asset)
-            if normalized_url:
-                if payload is None:
-                    failure = fetcher.failure_for(normalized_url)
-                    if isinstance(failure, Mapping):
-                        with self._lock:
-                            self._failure_by_url[normalized_url] = _copy_failure_diagnostic(failure)
-                else:
-                    with self._lock:
-                        self._failure_by_url.pop(normalized_url, None)
-            return payload
-        finally:
-            # Browser sync objects must be closed from their owning worker
-            # thread. Closing these thread-local fetchers later from the caller
-            # thread can leave Chromium subprocesses behind.
-            self._close_fetcher_for_current_thread(fetcher)
-
-    def failure_for(self, image_url: str) -> dict[str, Any] | None:
-        fetcher = getattr(self._thread_local, "fetcher", None)
-        if not isinstance(fetcher, _SharedBrowserImageDocumentFetcher):
-            normalized_url = normalize_text(image_url)
-            with self._lock:
-                cached_failure = self._failure_by_url.get(normalized_url)
-            return _copy_failure_diagnostic(cached_failure) if cached_failure else None
-        failure = fetcher.failure_for(image_url)
-        return _copy_failure_diagnostic(failure) if isinstance(failure, Mapping) else None
-
-    def _close_fetcher_for_current_thread(self, fetcher: _SharedBrowserImageDocumentFetcher) -> None:
-        try:
-            fetcher.close()
-        finally:
-            with self._lock:
-                self._fetchers = [item for item in self._fetchers if item is not fetcher]
-            if getattr(self._thread_local, "fetcher", None) is fetcher:
-                try:
-                    delattr(self._thread_local, "fetcher")
-                except AttributeError:
-                    pass
-
-    def close(self) -> None:
-        with self._lock:
-            fetchers = list(self._fetchers)
-            self._fetchers.clear()
-        for fetcher in fetchers:
-            fetcher.close()
 
 
 def _build_shared_browser_image_fetcher(

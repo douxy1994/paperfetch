@@ -267,6 +267,84 @@ class SharedHtmlHelperTests(unittest.TestCase):
         self.assertEqual(formula_assets, [])
         self.assertEqual([asset["kind"] for asset in scoped_assets], ["figure"])
 
+    def test_pnas_caption_formula_image_is_not_a_figure_asset(self) -> None:
+        html = """
+<html>
+  <body>
+    <figure id="F2">
+      <div class="graphic">
+        <img src="/cms/asset/main/assets/graphic/zpq9990969600002.jpeg" alt="Figure 2" />
+      </div>
+      <figcaption>
+        <span class="label">Figure 2.</span>
+        Statistical analysis.
+        <div class="display-formula">
+          <div class="equation" role="math">
+            <div class="inner">
+              <img src="/cms/asset/formula/assets/graphic/zpq01009-6960-m02.jpeg" />
+            </div>
+          </div>
+        </div>
+        where n = 86.
+      </figcaption>
+    </figure>
+  </body>
+</html>
+"""
+
+        figure_assets = html_assets.extract_figure_assets(
+            html,
+            "https://www.pnas.org/doi/full/10.1073/pnas.0810156106",
+        )
+        formula_assets = html_assets.extract_formula_assets(
+            html,
+            "https://www.pnas.org/doi/full/10.1073/pnas.0810156106",
+            noise_profile="pnas",
+        )
+        scoped_assets = html_assets.extract_scoped_html_assets(
+            html,
+            "https://www.pnas.org/doi/full/10.1073/pnas.0810156106",
+            asset_profile="body",
+            noise_profile="pnas",
+        )
+
+        self.assertEqual(len(figure_assets), 1)
+        self.assertEqual(figure_assets[0]["kind"], "figure")
+        self.assertIn("zpq9990969600002.jpeg", figure_assets[0]["url"])
+        self.assertNotIn("zpq01009-6960-m02.jpeg", figure_assets[0]["url"])
+        self.assertEqual(len(formula_assets), 1)
+        self.assertEqual(formula_assets[0]["kind"], "formula")
+        self.assertIn("zpq01009-6960-m02.jpeg", formula_assets[0]["url"])
+        self.assertEqual([asset["kind"] for asset in scoped_assets], ["figure", "formula"])
+
+    def test_scoped_assets_prefer_formula_when_figure_reuses_formula_url(self) -> None:
+        html = """
+<html>
+  <body>
+    <figure id="F1">
+      <img src="/cms/asset/shared/assets/graphic/zpq01009-6960-m01.jpeg" alt="Figure 1" />
+      <figcaption>Figure 1. Reused equation artwork.</figcaption>
+    </figure>
+    <div class="display-formula">
+      <div class="equation" role="math">
+        <img src="/cms/asset/shared/assets/graphic/zpq01009-6960-m01.jpeg" />
+      </div>
+    </div>
+  </body>
+</html>
+"""
+
+        scoped_assets = html_assets.extract_scoped_html_assets(
+            html,
+            "https://www.pnas.org/doi/full/10.1073/pnas.0810156106",
+            asset_profile="body",
+            noise_profile="pnas",
+        )
+
+        self.assertEqual(len(scoped_assets), 1)
+        self.assertEqual(scoped_assets[0]["kind"], "formula")
+        self.assertIn("zpq01009-6960-m01.jpeg", scoped_assets[0]["url"])
+
     def test_shared_figure_container_rules_do_not_promote_article_wrappers(
         self,
     ) -> None:

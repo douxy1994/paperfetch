@@ -7,19 +7,16 @@ import re
 import urllib.parse
 from typing import Any, Callable, Mapping
 
+from ...common_patterns import (
+    FIGURE_BASENAME_PATTERN,
+    FIGURE_LABEL_PATTERN,
+    SHORT_FIGURE_BASENAME_PATTERN,
+)
 from ...markdown.images import render_markdown_image
-from ...common_patterns import FIGURE_LABEL_PATTERN
 from ...models import normalize_markdown_text
 from ...utils import normalize_text
 from .asset_fields import DEFAULT_ASSET_URL_FIELDS
 
-FIGURE_BASENAME_PATTERN = re.compile(
-    r"(?:^|[^a-z])fig(?:ure)?[_-]?0*([A-Za-z]?\d+[A-Za-z]?)(?=$|[^a-z0-9])",
-    flags=re.IGNORECASE,
-)
-SHORT_FIGURE_BASENAME_PATTERN = re.compile(
-    r"(?:^|[^a-z])f[_-]?0*([A-Za-z]?\d+[A-Za-z]?)(?=$|[^a-z0-9])", flags=re.IGNORECASE
-)
 MARKDOWN_FIGURE_BLOCK_PATTERN = re.compile(
     r"^\*\*\s*((?:Fig(?:ure)?\.?)\s+\d+[A-Za-z]?\.?)(?:\s*\*\*|[\s\S]*\*\*$)",
     flags=re.IGNORECASE,
@@ -69,7 +66,7 @@ CAPTION_VIEWER_NOISE_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 NON_FIGURE_IMAGE_ALT_PATTERN = re.compile(
-    r"^(?:extended\s+data\s+table|supplementary\s+table|table)\b",
+    r"^(?:extended\s+data\s+table|supplementary\s+table|table|formula|equation)\b",
     flags=re.IGNORECASE,
 )
 FIGURE_ASSET_URL_FIELDS = (
@@ -89,6 +86,33 @@ def canonical_figure_label(text: str) -> str | None:
     return f"figure {match.group(1).lower()}"
 
 
+def canonical_figure_label_from_url(value: str | None) -> str | None:
+    raw_value = normalize_text(str(value or ""))
+    if not raw_value:
+        return None
+    parsed_path = urllib.parse.urlparse(raw_value).path or raw_value
+    basename = normalize_text(
+        os.path.basename(urllib.parse.unquote(parsed_path))
+    ).lower()
+    if not basename:
+        return None
+    match = FIGURE_BASENAME_PATTERN.search(
+        basename
+    ) or SHORT_FIGURE_BASENAME_PATTERN.search(basename)
+    if match:
+        return f"figure {match.group(1).lower()}"
+    return None
+
+
+def canonical_figure_label_from_image(
+    alt_text: str | None, url: str | None
+) -> str | None:
+    return (
+        canonical_figure_label(str(alt_text or ""))
+        or canonical_figure_label_from_url(url)
+    )
+
+
 def is_non_figure_image_alt(text: str | None) -> bool:
     normalized = normalize_text(text or "")
     if not normalized:
@@ -103,20 +127,9 @@ def canonical_figure_label_from_asset(asset: Mapping[str, Any]) -> str | None:
             return candidate
 
     for field in FIGURE_ASSET_URL_FIELDS:
-        raw_value = normalize_text(str(asset.get(field) or ""))
-        if not raw_value:
-            continue
-        parsed_path = urllib.parse.urlparse(raw_value).path or raw_value
-        basename = normalize_text(
-            os.path.basename(urllib.parse.unquote(parsed_path))
-        ).lower()
-        if not basename:
-            continue
-        match = FIGURE_BASENAME_PATTERN.search(
-            basename
-        ) or SHORT_FIGURE_BASENAME_PATTERN.search(basename)
-        if match:
-            return f"figure {match.group(1).lower()}"
+        candidate = canonical_figure_label_from_url(str(asset.get(field) or ""))
+        if candidate:
+            return candidate
 
     for field in ("caption",):
         candidate = canonical_figure_label(str(asset.get(field) or ""))
@@ -286,9 +299,7 @@ def inject_inline_figure_links(
                 entry = take_entry(index)
                 if entry is not None:
                     return entry
-        return take_entry_for_label(
-            canonical_figure_label(normalize_text(alt_text or ""))
-        )
+        return take_entry_for_label(canonical_figure_label_from_image(alt_text, url))
 
     caption_label_keys = {
         label_key
@@ -296,6 +307,18 @@ def inject_inline_figure_links(
         if (match := MARKDOWN_FIGURE_BLOCK_PATTERN.match(normalize_text(block)))
         is not None
         if (label_key := canonical_figure_label(match.group(1).rstrip("."))) is not None
+    }
+    existing_image_label_keys = {
+        label_key
+        for block in blocks
+        if (match := MARKDOWN_IMAGE_BLOCK_PATTERN.match(normalize_text(block)))
+        is not None
+        if not is_non_figure_image_alt(match.group(1))
+        if (
+            label_key := canonical_figure_label_from_image(
+                match.group(1), match.group(2)
+            )
+        ) is not None
     }
     active_heading_key: str | None = None
     active_heading_allows_injection = False
@@ -342,7 +365,7 @@ def inject_inline_figure_links(
         if not active_heading_allows_injection:
             continue
         for label_key in _figure_reference_label_keys(normalized_block):
-            if label_key in caption_label_keys:
+            if label_key in caption_label_keys or label_key in existing_image_label_keys:
                 continue
             entry = take_entry_for_label(label_key)
             if entry is not None:

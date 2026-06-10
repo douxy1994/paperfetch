@@ -10,7 +10,7 @@ from ...extraction.html.assets import (
     html_asset_identity_key,
     looks_like_full_size_asset_url,
 )
-from ...utils import normalize_text
+from ...utils import dedupe_normalized, normalize_text
 from .._asset_retry import (
     AssetRetryPolicy,
     assets_for_network_retry,
@@ -199,13 +199,7 @@ def _browser_workflow_image_download_candidates(
     if preview_url:
         candidates.append(preview_url)
 
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        if candidate and candidate not in seen:
-            seen.add(candidate)
-            deduped.append(candidate)
-    return deduped
+    return dedupe_normalized(candidates)
 
 
 def _merge_download_attempt_results(

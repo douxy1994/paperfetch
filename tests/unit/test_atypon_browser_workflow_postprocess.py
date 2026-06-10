@@ -41,6 +41,38 @@ class AtyponBrowserWorkflowPostprocessTests(unittest.TestCase):
         self.assertNotRegex(markdown, r"\*\*Equation \d+[A-Za-z]?\.\*\*\$\$")
         self.assertNotRegex(markdown, r"\$\$(?=[^\s\n])")
 
+    def test_inline_figure_injection_skips_body_reference_for_existing_image_label(
+        self,
+    ) -> None:
+        markdown = "\n\n".join(
+            [
+                "## Results",
+                "![Figure 2](assets/jgrd14507-fig-0002-m.png)",
+                "The response is summarized in Figure 2.",
+            ]
+        )
+        figure_assets = [
+            {
+                "kind": "figure",
+                "heading": "Figure 2",
+                "path": "assets/jgrd14507-fig-0002-m.png",
+            },
+            {
+                "kind": "figure",
+                "heading": "Figure 2",
+                "path": "assets/jgrd14507-fig-0002-duplicate.png",
+            },
+        ]
+
+        result = inject_inline_figure_links(
+            markdown,
+            figure_assets=figure_assets,
+            clean_markdown_fn=lambda text: text,
+        )
+
+        self.assertEqual(result.count("![Figure 2]("), 1)
+        self.assertNotIn("jgrd14507-fig-0002-duplicate.png", result)
+
     def _assert_pnas_table_inline_semantics(self, markdown: str) -> None:
         self.assertIn("TCID<sub>50</sub>", markdown)
         self.assertIn("log<sub>10</sub> copies/mL", markdown)
@@ -532,6 +564,38 @@ class AtyponBrowserWorkflowPostprocessTests(unittest.TestCase):
         self.assertLess(
             injected.index("![Figure 2](downloads/figure2.png)"),
             injected.index("**Figure 2.** Caption body."),
+        )
+
+    def test_inject_inline_figure_links_preserves_formula_image_blocks(self) -> None:
+        markdown = "\n\n".join(
+            [
+                "# Formula Figure Boundary",
+                "## Results",
+                "![Formula](formula-m01.jpeg)",
+                "The result is summarized in Fig. 1.",
+                "**Figure 1.** Caption body.",
+            ]
+        )
+
+        injected = inject_inline_figure_links(
+            markdown,
+            figure_assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Downloaded body image",
+                    "caption": "Caption body.",
+                    "path": "downloads/body-image.png",
+                    "section": "body",
+                }
+            ],
+            clean_markdown_fn=lambda value: value,
+        )
+
+        self.assertIn("![Formula](formula-m01.jpeg)", injected)
+        self.assertIn("![Figure 1](downloads/body-image.png)", injected)
+        self.assertLess(
+            injected.index("![Formula](formula-m01.jpeg)"),
+            injected.index("![Figure 1](downloads/body-image.png)"),
         )
 
     def test_inject_inline_figure_links_falls_back_to_first_body_reference(

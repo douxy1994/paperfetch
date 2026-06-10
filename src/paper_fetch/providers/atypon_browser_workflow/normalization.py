@@ -3,9 +3,16 @@
 from __future__ import annotations
 
 import re
+import os
+import urllib.parse
 from typing import Any, Callable
 
-from ...common_patterns import FIGURE_LABEL_PATTERN, TABLE_LABEL_PATTERN
+from ...common_patterns import (
+    FIGURE_BASENAME_PATTERN,
+    FIGURE_LABEL_PATTERN,
+    SHORT_FIGURE_BASENAME_PATTERN,
+    TABLE_LABEL_PATTERN,
+)
 from ...extraction.html.inline import (
     normalize_html_inline_text,
     render_html_inline_node,
@@ -223,9 +230,86 @@ def _normalize_abstract_blocks(container: Tag) -> None:
         node.insert(0, heading)
 
 
+def _figure_identifier_values(node: Tag) -> list[str]:
+    values: list[str] = []
+
+    def append(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                append(item)
+            return
+        normalized = normalize_text(str(value or ""))
+        if normalized and normalized not in values:
+            values.append(normalized)
+
+    for attr in ("id", "data-content-id", "data-id"):
+        append(node.get(attr))
+
+    for image in node.find_all("img"):
+        if not isinstance(image, Tag):
+            continue
+        for attr in (
+            "id",
+            "src",
+            "data-src",
+            "data-lg-src",
+            "data-full-size",
+            "data-fullsize",
+            "data-image-full",
+            "data-image-src",
+            "data-download-url",
+        ):
+            append(image.get(attr))
+        anchor = image.find_parent("a", href=True)
+        current: Any = anchor
+        while isinstance(current, Tag):
+            if current is node:
+                append(anchor.get("href") if isinstance(anchor, Tag) else "")
+                break
+            current = current.parent if isinstance(current.parent, Tag) else None
+        picture = image.find_parent("picture")
+        if not isinstance(picture, Tag):
+            continue
+        for source in picture.find_all("source"):
+            if not isinstance(source, Tag):
+                continue
+            for attr in ("srcset", "data-srcset"):
+                raw_srcset = source.get(attr)
+                if not raw_srcset:
+                    continue
+                for part in str(raw_srcset).split(","):
+                    append(part.strip().split(None, 1)[0])
+    return values
+
+
+def _figure_label_from_identifier(value: str) -> str:
+    raw_value = normalize_text(value)
+    if not raw_value:
+        return ""
+    parsed_path = urllib.parse.urlparse(raw_value).path or raw_value
+    basename = normalize_text(
+        os.path.basename(urllib.parse.unquote(parsed_path))
+    ).lower()
+    match = FIGURE_BASENAME_PATTERN.search(
+        basename
+    ) or SHORT_FIGURE_BASENAME_PATTERN.search(basename)
+    if match:
+        return f"Figure {match.group(1)}."
+    return ""
+
+
+def _figure_label_from_node_identifier(node: Tag) -> str:
+    for value in _figure_identifier_values(node):
+        label = _figure_label_from_identifier(value)
+        if label:
+            return label
+    return ""
+
+
 def _caption_label(node: Tag, *, kind: str) -> str:
     label_pattern = FIGURE_LABEL_PATTERN if kind == "Figure" else TABLE_LABEL_PATTERN
     selectors = (
+        ".figure__title",
         "header .label",
         ".label",
         "figcaption .heading",
@@ -241,8 +325,12 @@ def _caption_label(node: Tag, *, kind: str) -> str:
             match = label_pattern.search(text)
             if match:
                 return f"{kind} {match.group(1)}."
+    if kind == "Figure":
+        label = _figure_label_from_node_identifier(node)
+        if label:
+            return label
     caption_text = _caption_text(node)
-    match = label_pattern.search(caption_text)
+    match = label_pattern.match(caption_text)
     if match:
         return f"{kind} {match.group(1)}."
     fallback_text = re.sub(

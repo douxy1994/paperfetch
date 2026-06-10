@@ -9,9 +9,14 @@ from typing import Any, Callable, Mapping
 
 from ....http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
 from ....models import normalize_text
+from ....utils import dedupe_normalized
 from .._metadata import parse_html_metadata
 from .._runtime import decode_html
 from ..parsing import choose_parser
+from ..formula_rules import (
+    formula_image_url_from_node,
+    looks_like_formula_image,
+)
 from .dom import (
     FIGURE_PAGE_HINTS,
     FULL_SIZE_IMAGE_ATTRS,
@@ -336,6 +341,15 @@ def _image_preview_url_from_soup(image: Any, source_url: str) -> str:
     return urllib.parse.urljoin(source_url, preview_url) if preview_url else ""
 
 
+def _image_is_formula_asset(image: Any) -> bool:
+    if not isinstance(image, Tag):
+        return False
+    return looks_like_formula_image(
+        image,
+        formula_image_url_from_node(image, include_adjacent=True),
+    )
+
+
 def _figure_caption_texts_from_soup(node: Any) -> list[str]:
     if not isinstance(node, Tag):
         return []
@@ -378,6 +392,11 @@ def _figure_assets_from_soup_node(node: Any, soup: Any, source_url: str) -> list
                 **({"dom_id": dom_id} if dom_id else {}),
             }
         ]
+
+    raw_images = list(images)
+    images = [image for image in raw_images if not _image_is_formula_asset(image)]
+    if not images and raw_images:
+        return []
 
     single_image = len(images) == 1
     assets: list[dict[str, str]] = []
@@ -437,7 +456,7 @@ def _figure_assets_from_soup_node(node: Any, soup: Any, source_url: str) -> list
     return assets
 
 
-def _extract_figure_assets_with_soup(html_text: str, source_url: str) -> list[dict[str, str]]:
+def _extract_figure_assets_with_soup(html_text: str, source_url: str) -> tuple[list[dict[str, str]], bool]:
 
     soup = BeautifulSoup(html_text, choose_parser())
     candidates: list[Any] = []
@@ -478,12 +497,12 @@ def _extract_figure_assets_with_soup(html_text: str, source_url: str) -> list[di
             if preview_url and not normalize_text(existing.get("url") or ""):
                 existing["url"] = preview_url
 
-    return list(assets_by_key.values())
+    return list(assets_by_key.values()), bool(candidates)
 
 
 def extract_figure_assets(html_text: str, source_url: str) -> list[dict[str, str]]:
-    assets = _extract_figure_assets_with_soup(html_text, source_url)
-    if assets:
+    assets, saw_soup_candidates = _extract_figure_assets_with_soup(html_text, source_url)
+    if assets or saw_soup_candidates:
         return assets
 
     parser = _FigureParser()
@@ -591,13 +610,7 @@ def figure_download_candidates(
     if preview_url:
         candidates.append(preview_url)
 
-    deduped: list[str] = []
-    seen: set[str] = set()
-    for candidate in candidates:
-        if candidate and candidate not in seen:
-            seen.add(candidate)
-            deduped.append(candidate)
-    return deduped
+    return dedupe_normalized(candidates)
 
 
 def resolve_figure_download_url(

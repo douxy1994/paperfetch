@@ -246,6 +246,76 @@ class AtyponBrowserWorkflowMarkdownTests(unittest.TestCase):
         self.assertIn("gcb15322-math-0001.png", markdown)
         self.assertNotIn("**Equation 1.**![Formula]", markdown)
 
+    def test_pnas_formula_images_do_not_consume_inline_figure_slots(self) -> None:
+        body_text = " ".join(["PNAS formula boundary body text."] * 220)
+        html = f"""
+<html>
+  <head><title>PNAS Formula Boundary</title></head>
+  <body>
+    <article>
+      <section id="bodymatter">
+        <div data-extent="bodymatter" property="articleBody">
+          <section id="abstract">
+            <h2>Abstract</h2>
+            <p>{" ".join(["Abstract sentence."] * 40)}</p>
+          </section>
+          <section id="sec-1">
+            <h2>Results</h2>
+            <p>{body_text}</p>
+            <p>
+              Using Bayesian techniques, the posterior distribution follows
+              <div class="display-formula">
+                <div class="equation" role="math">
+                  <div class="inner">
+                    <img src="/cms/10.1073/pnas.0810156106/asset/formula/assets/graphic/zpq01009-6960-m01.jpeg" />
+                  </div>
+                </div>
+              </div>
+            </p>
+            <p>Figure 2 summarizes the statistical result.</p>
+            <figure id="F2">
+              <div class="graphic">
+                <img src="/cms/10.1073/pnas.0810156106/asset/main/assets/graphic/zpq9990969600002.jpeg" alt="Figure 2" />
+              </div>
+              <figcaption>
+                <span class="label">Figure 2.</span>
+                Statistical analysis.
+                <div class="display-formula">
+                  <div class="equation" role="math">
+                    <div class="inner">
+                      <img src="/cms/10.1073/pnas.0810156106/asset/formula/assets/graphic/zpq01009-6960-m02.jpeg" />
+                    </div>
+                  </div>
+                </div>
+                where n = 86.
+              </figcaption>
+            </figure>
+            <p>{body_text}</p>
+          </section>
+        </div>
+      </section>
+    </article>
+  </body>
+</html>
+"""
+
+        markdown, info = extract_atypon_browser_workflow_markdown(
+            html,
+            "https://www.pnas.org/doi/full/10.1073/pnas.0810156106",
+            "pnas",
+            metadata={
+                "doi": "10.1073/pnas.0810156106",
+                "title": "PNAS Formula Boundary",
+            },
+        )
+
+        self.assertTrue(info["availability_diagnostics"]["accepted"])
+        self.assertIn("![Formula](/cms/10.1073/pnas.0810156106/asset/formula/assets/graphic/zpq01009-6960-m01.jpeg)", markdown)
+        self.assertIn("![Formula](/cms/10.1073/pnas.0810156106/asset/formula/assets/graphic/zpq01009-6960-m02.jpeg)", markdown)
+        self.assertIn("![Figure 2](https://www.pnas.org/cms/10.1073/pnas.0810156106/asset/main/assets/graphic/zpq9990969600002.jpeg)", markdown)
+        self.assertNotIn("![Figure 2](/cms/10.1073/pnas.0810156106/asset/formula/assets/graphic/zpq01009-6960-m02.jpeg)", markdown)
+        self.assertNotIn("![Figure](/cms/10.1073/pnas.0810156106/asset/formula/assets/graphic/zpq01009-6960-m02.jpeg)", markdown)
+
     def test_wiley_real_fixture_does_not_count_research_funding_as_body(self) -> None:
         fixture_path = golden_criteria_asset("10.1111/gcb.15322", "original.html")
         html = fixture_path.read_text(encoding="utf-8", errors="ignore")

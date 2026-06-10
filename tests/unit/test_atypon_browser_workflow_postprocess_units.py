@@ -36,6 +36,78 @@ class AtyponBrowserWorkflowPostprocessUnitTests(unittest.TestCase):
             [],
         )
 
+    def test_wiley_caption_label_prefers_figure_identifier_over_caption_reference(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "jgrd14507-fig-0002",
+                "/cms/asset/jgrd14507-fig-0002-m.png",
+                "Probability density function in the domain for Figure 1.",
+                "Figure 2.",
+            ),
+            (
+                "jgrd14507-fig-0004",
+                "/cms/asset/jgrd14507-fig-0004-m.png",
+                "Seasonal mean response compared with Figure 3d.",
+                "Figure 4.",
+            ),
+            (
+                "jgrd14507-fig-0005",
+                "/cms/asset/jgrd14507-fig-0005-m.png",
+                "Sensitivity test using the Figure 3 configuration.",
+                "Figure 5.",
+            ),
+        )
+        for dom_id, image_url, caption, expected in cases:
+            with self.subTest(dom_id=dom_id):
+                soup = BeautifulSoup(
+                    f"""
+<article>
+  <figure id="{dom_id}">
+    <picture><img src="{image_url}" /></picture>
+    <figcaption>
+      <div class="figure__caption-text">{caption}</div>
+    </figcaption>
+  </figure>
+</article>
+""",
+                    "html.parser",
+                )
+
+                self.assertEqual(
+                    atypon_browser_workflow_normalization._caption_label(
+                        soup.figure,
+                        kind="Figure",
+                    ),
+                    expected,
+                )
+
+    def test_wiley_caption_label_reads_figure_title_selector(self) -> None:
+        soup = BeautifulSoup(
+            """
+<article>
+  <figure>
+    <figcaption class="figure__caption">
+      <div class="figure__caption__header">
+        <strong class="figure__title">FIGURE 2</strong>
+      </div>
+      <div class="figure__caption-text">Domain for Figure 1.</div>
+    </figcaption>
+  </figure>
+</article>
+""",
+            "html.parser",
+        )
+
+        self.assertEqual(
+            atypon_browser_workflow_normalization._caption_label(
+                soup.figure,
+                kind="Figure",
+            ),
+            "Figure 2.",
+        )
+
     def test_extract_atypon_browser_workflow_markdown_normalizes_title_subscript_line_breaks(
         self,
     ) -> None:

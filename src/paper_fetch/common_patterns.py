@@ -38,6 +38,14 @@ TABLE_LABEL_PATTERN = re.compile(
     rf"\b{TABLE_LABEL_CORE_PATTERN}",
     flags=re.IGNORECASE,
 )
+FIGURE_BASENAME_PATTERN = re.compile(
+    r"(?:^|[^a-z])fig(?:ure)?[_-]?0*([A-Za-z]?\d+[A-Za-z]?)(?=$|[^a-z0-9])",
+    flags=re.IGNORECASE,
+)
+SHORT_FIGURE_BASENAME_PATTERN = re.compile(
+    r"(?:^|[^a-z])f[_-]?0*([A-Za-z]?\d+[A-Za-z]?)(?=$|[^a-z0-9])",
+    flags=re.IGNORECASE,
+)
 EXTENDED_DATA_PREFIX_RE = re.compile(rf"^{EXTENDED_DATA_PREFIX_PATTERN}\b", flags=re.IGNORECASE)
 
 

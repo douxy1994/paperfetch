@@ -526,6 +526,11 @@ class BrowserWorkflowClient(ProviderClient):
             runtime_context=context,
             use_runtime_shared_browser=False,
         )
+        # Figures fan out several candidate URLs per asset (full-size, figure
+        # page, preview), so the same image URL is frequently fetched more than
+        # once across candidates and retries; memoizing collapses those to a
+        # single browser round-trip. Supplementary files have a single unique
+        # URL each, so the file fetcher below is left unmemoized on purpose.
         return _MemoizedImageDocumentFetcher(fetcher)
 
     def _browser_asset_file_fetcher(self, context: RuntimeContext, **request):

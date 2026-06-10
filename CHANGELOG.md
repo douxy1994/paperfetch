@@ -6,6 +6,22 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.2.0 - 2026-06-10
+
+### Added
+
+- Reuse the warmed in-page article `<img>` via canvas export as the first browser-workflow image-recovery step; when the target image exists but has not finished loading, perform a credentialed in-page `fetch()` for the raw image bytes before falling back to direct URL request, page fetch, and navigation candidates (affects `wiley`, `science`, `pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, `mdpi`).
+
+### Changed
+
+- Derive Atypon/Wiley figure caption labels from explicit labels, the figure DOM id, the image URL basename, or a caption that starts with `Figure N`, and read the `.figure__title` selector; a mid-caption `Figure N` cross-reference can no longer override the figure's own number.
+- Consolidate browser-workflow asset-download internals with no behavior change: a single generic per-thread document fetcher backs both the image and supplementary fetchers, image/file fetchers reuse the shared browser response-header/status helpers, the two attempt-fetcher builders collapse into one (dropping unused parameters), and a shared `dedupe_normalized` utility replaces four copies of ordered URL de-duplication.
+
+### Fixed
+
+- Stop formula images from masquerading as figures: a node whose only image is a formula image yields no figure asset, formula-image anchors rewrite only as formula assets, and when one image URL matches both a figure and a formula the formula semantics win, so formula images no longer consume inline figure slots.
+- Key inline figure injection off both image alt text and image URL basename, and skip a body `Figure N` cross-reference when that figure already appears as a Markdown image, so a repeated or label-less figure can no longer trigger a second inline insertion.
+
 ## 2.1.0 - 2026-06-08
 
 ### Added
