@@ -272,7 +272,7 @@ class McpPayloadCacheTests(unittest.TestCase):
             self.assertNotIn("saved_markdown_path", payload)
             self.assertIsNone(payload["markdown"])
             self.assertIsNone(payload["article"])
-            self.assertFalse((download_dir / "10.1000_example.md").exists())
+            self.assertFalse((download_dir / "unknown_unknown_Metadata_Only.md").exists())
             self.assertIn("download:markdown_skipped_no_fulltext", payload["source_trail"])
             self.assertTrue(any("nothing written to disk" in warning for warning in payload["warnings"]))
     def test_fetch_paper_payload_no_download_save_markdown_writes_only_markdown_and_index(self) -> None:
@@ -298,11 +298,11 @@ class McpPayloadCacheTests(unittest.TestCase):
                 )
 
             self.assertIsNone(captured["context"].download_dir)
-            self.assertTrue((download_dir / "10.1000_example.md").exists())
+            self.assertTrue((download_dir / "Example_2026_Example_Article.md").exists())
             self.assertFalse((download_dir / "10.1000_example.fetch-envelope.json").exists())
             self.assertFalse((download_dir / "10.1000_example.xml").exists())
             self.assertFalse((download_dir / "10.1000_example_assets").exists())
-            self.assertEqual(payload["saved_markdown_path"], str(download_dir / "10.1000_example.md"))
+            self.assertEqual(payload["saved_markdown_path"], str(download_dir / "Example_2026_Example_Article.md"))
             self.assertIsNone(payload["markdown"])
             self.assertIsNone(payload["article"])
             listed = mcp_tools.list_cached_payload(download_dir=download_dir)
@@ -440,7 +440,7 @@ class McpPayloadCacheTests(unittest.TestCase):
                     download_dir=download_dir,
                 )
 
-            saved_path = download_dir / "10.1000_example.md"
+            saved_path = download_dir / "Example_2026_Example_Article.md"
             self.assertEqual(payload["saved_markdown_path"], str(saved_path))
             self.assertTrue(saved_path.exists())
         self.assertIsNone(payload["markdown"])

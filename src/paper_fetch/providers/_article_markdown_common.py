@@ -24,7 +24,7 @@ from ..extraction.markdown_render.tables import (
     render_structured_table_block,
     render_table_block,
 )
-from ..utils import normalize_text, sanitize_filename
+from ..utils import format_paper_stem, normalize_text, sanitize_filename
 
 XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 XLINK_TITLE = "{http://www.w3.org/1999/xlink}title"
@@ -168,8 +168,15 @@ def path_relative_to(base_dir: Path, target_path: str | Path) -> str:
     return urllib.parse.quote(relative.as_posix(), safe="/._-")
 
 
-def make_markdown_path(output_dir: Path, doi: str, title: str | None) -> Path:
-    return output_dir / f"{sanitize_filename(doi or title or 'article')}.md"
+def make_markdown_path(
+    output_dir: Path,
+    doi: str,
+    title: str | None,
+    *,
+    authors: list[str] | None = None,
+    year: str | None = None,
+) -> Path:
+    return output_dir / f"{format_paper_stem(authors, year, title, doi=doi)}.md"
 
 
 def fallback_table_heading(raw_value: str | None) -> str:

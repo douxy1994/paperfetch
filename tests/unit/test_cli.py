@@ -197,7 +197,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertTrue(output_path.exists())
             self.assertIn("# Example Article", output_path.read_text(encoding="utf-8"))
-            self.assertFalse((output_dir / "10.1016_test.md").exists())
+            self.assertFalse((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_asset_profile_none_preserves_remote_markdown_images_in_output_file(self) -> None:
         article = sample_article()
@@ -293,7 +293,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(stdout.getvalue(), "")
             self.assertEqual(captured["modes"], {"article", "markdown"})
-            saved_path = output_dir / "10.1016_test.md"
+            saved_path = output_dir / "Example_et_al_2026_Example_Article.md"
             self.assertTrue(saved_path.exists())
             rendered = saved_path.read_text(encoding="utf-8")
             self.assertIn("![Figure 1](10.1016_test_assets/figure-1.png)", rendered)
@@ -329,7 +329,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(stdout.getvalue(), "")
             self.assertEqual(captured["modes"], {"article", "markdown"})
-            self.assertTrue((output_dir / "10.1016_test.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_creates_env_download_dir_before_fetch(self) -> None:
         article = sample_article()
@@ -360,7 +360,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertIn("# Example Article", stdout.getvalue())
             self.assertEqual(captured["context"].download_dir, output_dir)
-            self.assertTrue((output_dir / "10.1016_test.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_rejects_output_dir_that_is_existing_file_before_fetch(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -419,7 +419,7 @@ class CliTests(unittest.TestCase):
     def test_main_writes_json_and_both_to_output_dir_default_files_when_output_is_implicit(self) -> None:
         article = sample_article()
 
-        for output_format, expected_name in (("json", "10.1016_test.json"), ("both", "10.1016_test.both.json")):
+        for output_format, expected_name in (("json", "Example_et_al_2026_Example_Article.json"), ("both", "Example_et_al_2026_Example_Article.both.json")):
             with self.subTest(output_format=output_format), tempfile.TemporaryDirectory() as tmpdir:
                 output_dir = Path(tmpdir) / "papers"
 
@@ -496,7 +496,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr.getvalue(), "")
             self.assertIn("# Example Article", stdout.getvalue())
-            self.assertTrue((output_dir / "10.1016_test.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_uses_resolved_default_download_dir_for_save_markdown(self) -> None:
         article = sample_article()
@@ -527,7 +527,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(captured["context"].download_dir, default_dir)
-            self.assertTrue((default_dir / "10.1016_test.md").exists())
+            self.assertTrue((default_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_save_markdown_to_disk_rewrites_local_asset_links_relative_to_saved_file(self) -> None:
         article = sample_article()
@@ -568,7 +568,7 @@ class CliTests(unittest.TestCase):
                 render=RenderOptions(asset_profile="all"),
             )
 
-            rendered = (output_dir / "10.1016_test.md").read_text(encoding="utf-8")
+            rendered = (output_dir / "Example_et_al_2026_Example_Article.md").read_text(encoding="utf-8")
             self.assertIn("![Figure 1](10.1016_test_assets/figure%25201.png)", rendered)
             self.assertIn("[Supplementary Data](10.1016_test_assets/supplement%20data%25.pdf)", rendered)
             self.assertIn("[Remote Appendix](https://example.test/appendix.pdf)", rendered)
@@ -597,7 +597,7 @@ class CliTests(unittest.TestCase):
                 render=RenderOptions(),
             )
 
-            self.assertFalse((output_dir / "10.1016_test.md").exists())
+            self.assertFalse((output_dir / "Example_et_al_2026_Example_Article.md").exists())
             self.assertIn("download:markdown_skipped_no_fulltext", envelope.source_trail)
             self.assertTrue(any("nothing written to disk" in warning for warning in envelope.warnings))
 
@@ -1086,12 +1086,12 @@ class CliTests(unittest.TestCase):
             self.assertEqual(captured["context"].artifact_mode, "markdown-assets")
             self.assertEqual(captured["context"].download_dir, output_dir)
             self.assertIsNone(captured["context"].transport.disk_cache_dir)
-            self.assertTrue((output_dir / "10.1016_test.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_markdown_assets_writes_json_or_both_primary_output_and_markdown_artifact(self) -> None:
         article = sample_article()
 
-        for output_format, expected_name in (("json", "10.1016_test.json"), ("both", "10.1016_test.both.json")):
+        for output_format, expected_name in (("json", "Example_et_al_2026_Example_Article.json"), ("both", "Example_et_al_2026_Example_Article.both.json")):
             with self.subTest(output_format=output_format), tempfile.TemporaryDirectory() as tmpdir:
                 output_dir = Path(tmpdir) / "papers"
 
@@ -1125,7 +1125,7 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(stderr.getvalue(), "")
                 self.assertEqual(stdout.getvalue(), "")
                 self.assertTrue((output_dir / expected_name).exists())
-                self.assertTrue((output_dir / "10.1016_test.md").exists())
+                self.assertTrue((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_no_download_is_deprecated_alias_for_artifact_mode_none(self) -> None:
         article = sample_article()
@@ -1164,7 +1164,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(captured["context"].artifact_mode, "none")
             self.assertIsNone(captured["context"].download_dir)
-            self.assertTrue((output_dir / "10.1016_test.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_artifact_mode_none_still_writes_primary_output_dir_file(self) -> None:
         article = sample_article()
@@ -1204,7 +1204,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(captured["context"].artifact_mode, "none")
             self.assertEqual(captured["context"].download_dir, output_dir)
-            self.assertTrue((output_dir / "10.1016_test.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_artifact_mode_none_still_allows_explicit_save_markdown(self) -> None:
         article = sample_article()
@@ -1245,7 +1245,7 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertEqual(captured["context"].artifact_mode, "none")
             self.assertEqual(captured["context"].download_dir, output_dir)
-            self.assertTrue((output_dir / "10.1016_test.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Example_Article.md").exists())
 
     def test_main_markdown_assets_respects_explicit_asset_profile(self) -> None:
         article = sample_article()
@@ -1397,8 +1397,8 @@ class CliTests(unittest.TestCase):
             self.assertEqual(stderr.getvalue(), "")
             self.assertTrue(output_dir.is_dir())
             self.assertEqual(len(captured), 2)
-            self.assertTrue((output_dir / "10.1000_a.md").exists())
-            self.assertTrue((output_dir / "10.1000_b.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Article_10.1000_a.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Article_10.1000_b.md").exists())
             self.assertNotIn("# Example Article", stdout.getvalue())
             self.assertTrue(all(item["modes"] == {"article", "markdown"} for item in captured))
             self.assertTrue(all(item["render"].asset_profile == "body" for item in captured))
@@ -1457,9 +1457,9 @@ class CliTests(unittest.TestCase):
             self.assertEqual(calls, ["10.1000/a", "10.1000/b", "10.1000/c"])
             self.assertEqual(stdout.getvalue(), "")
             self.assertEqual(stderr.getvalue(), "")
-            self.assertTrue((output_dir / "10.1000_a.md").exists())
-            self.assertFalse((output_dir / "10.1000_b.md").exists())
-            self.assertTrue((output_dir / "10.1000_c.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Article_10.1000_a.md").exists())
+            self.assertFalse((output_dir / "Example_et_al_2026_Article_10.1000_b.md").exists())
+            self.assertTrue((output_dir / "Example_et_al_2026_Article_10.1000_c.md").exists())
 
             result_lines = [json.loads(line) for line in results_path.read_text(encoding="utf-8").splitlines()]
             self.assertEqual([item["status"] for item in result_lines], ["ok", "no_access", "ok"])

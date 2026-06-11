@@ -538,7 +538,7 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
 
             self.assertEqual(warnings, [])
             self.assertIn("download:springer_html_saved", trail)
-            saved_path = download_dir / "original.html"
+            saved_path = download_dir / "unknown_unknown_Example_original.html"
             self.assertTrue(saved_path.exists())
             self.assertEqual(saved_path.read_bytes(), content.body)
 

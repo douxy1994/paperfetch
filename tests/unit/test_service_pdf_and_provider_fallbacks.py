@@ -162,7 +162,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                         ),
                     },
                 )
-                downloaded = Path(tmpdir) / "10.1111_test.pdf"
+                downloaded = Path(tmpdir) / "Example_unknown_Wiley_PDF_Article.pdf"
                 self.assertTrue(downloaded.exists())
                 self.assertTrue(downloaded.read_bytes().startswith(b"%PDF"))
         finally:
@@ -263,7 +263,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                         ),
                     },
                 )
-                downloaded = Path(tmpdir) / "10.1016_test.pdf"
+                downloaded = Path(tmpdir) / "unknown_unknown_Example_Article.pdf"
                 self.assertTrue(downloaded.exists())
         finally:
             paper_fetch.resolve_paper = original_resolve
@@ -327,7 +327,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                         ),
                     },
                 )
-                downloaded = Path(tmpdir) / "10.1111_test.pdf"
+                downloaded = Path(tmpdir) / "Example_unknown_Wiley_PDF_Article.pdf"
                 self.assertFalse(downloaded.exists())
         finally:
             paper_fetch.resolve_paper = original_resolve

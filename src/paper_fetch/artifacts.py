@@ -13,9 +13,11 @@ from .provider_catalog import provider_persists_provider_html
 from .reason_codes import PDF_FALLBACK
 from .tracing import download_marker
 from .utils import (
+    _extract_year,
     build_output_path,
     extension_from_content_type,
     extend_unique,
+    format_paper_stem,
     normalize_text,
     provider_display_name,
     safe_text,
@@ -168,6 +170,8 @@ class ArtifactStore:
             safe_text(metadata.get("title")),
             content.content_type,
             content.source_url,
+            authors=metadata.get("authors") or None,
+            year=_extract_year(safe_text(metadata.get("published")) or None),
         )
         if output_path is not None:
             saved_path = self.write_bytes_file(output_path, content.body)
@@ -197,7 +201,12 @@ class ArtifactStore:
         if extension not in {".html", ".htm"}:
             return None
 
-        article_slug = sanitize_filename(doi or safe_text(metadata.get("title")) or "article")
+        article_slug = format_paper_stem(
+            metadata.get("authors") or None,
+            _extract_year(safe_text(metadata.get("published")) or None),
+            safe_text(metadata.get("title")) or None,
+            doi=doi,
+        )
         if self.download_dir.name == article_slug:
             return self.download_dir / f"original{extension}"
         return self.download_dir / f"{article_slug}_original{extension}"

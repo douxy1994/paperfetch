@@ -16,7 +16,7 @@ from ..provider_catalog import known_article_source_names
 from ..reason_codes import METADATA_ONLY
 from ..quality.reason_codes import FULLTEXT
 from ..tracing import download_marker, fallback_marker, merge_trace, source_trail_from_trace, trace_from_markers
-from ..utils import extend_unique, normalize_text, sanitize_filename
+from ..utils import _extract_year, extend_unique, format_paper_stem, normalize_text, sanitize_filename
 from .types import effective_asset_profile
 
 
@@ -258,12 +258,11 @@ def _markdown_filename(envelope: FetchEnvelope, *, markdown_filename: str | None
         stem = requested_path.stem if requested_path.suffix else requested_path.name
         return f"{sanitize_filename(stem or 'article')}{suffix}"
 
-    title = None
-    if envelope.article is not None:
-        title = envelope.article.metadata.title
-    if title is None and envelope.metadata is not None:
-        title = envelope.metadata.title
-    return f"{sanitize_filename(envelope.doi or title or 'article')}.md"
+    meta = envelope.article.metadata if envelope.article is not None else envelope.metadata
+    authors = list(meta.authors) if meta and meta.authors else None
+    year = _extract_year(meta.published if meta else None)
+    title = meta.title if meta else None
+    return f"{format_paper_stem(authors, year, title, doi=envelope.doi)}.md"
 
 
 def _extend_envelope_status(

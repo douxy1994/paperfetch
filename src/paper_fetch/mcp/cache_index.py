@@ -195,12 +195,14 @@ def scan_cached_files(download_dir: Path, doi: str) -> list[dict[str, Any]]:
         return []
     base = sanitize_filename(normalized_doi)
     entries: list[dict[str, Any]] = []
+    found_paths: set[Path] = set()
 
     for path in sorted(download_dir.glob(f"{base}.*")):
         if not path.is_file() or path.name.endswith(".part"):
             continue
         kind = _entry_kind_for_path(path, doi=normalized_doi)
         entries.append(_build_entry(doi=normalized_doi, kind=kind, path=path))
+        found_paths.add(path.resolve())
 
     asset_dir = download_dir / f"{base}_assets"
     if asset_dir.is_dir():
@@ -208,6 +210,13 @@ def scan_cached_files(download_dir: Path, doi: str) -> list[dict[str, Any]]:
             if not path.is_file():
                 continue
             entries.append(_build_entry(doi=normalized_doi, kind="asset", path=path))
+            found_paths.add(path.resolve())
+
+    for path in sorted(download_dir.glob("*.md")):
+        if not path.is_file() or path.name.endswith(".part"):
+            continue
+        if path.resolve() not in found_paths:
+            entries.append(_build_entry(doi=normalized_doi, kind="markdown", path=path))
 
     return _dedupe_entries(entries)
 

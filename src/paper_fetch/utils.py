@@ -167,6 +167,43 @@ def sanitize_filename(value: str) -> str:
     return f"{truncated or 'fulltext'}{suffix}"
 
 
+def _extract_last_name(author: str) -> str:
+    name = (author or "").strip()
+    if "," in name:
+        return name.split(",")[0].strip()
+    parts = name.split()
+    return parts[-1] if parts else ""
+
+
+def _extract_year(published: str | None) -> str | None:
+    if not published:
+        return None
+    m = re.match(r"(\d{4})", published.strip())
+    return m.group(1) if m else None
+
+
+def _sanitize_author_component(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    cleaned = re.sub(r"_+", "_", cleaned).strip("._-")
+    return cleaned
+
+
+def format_paper_stem(
+    authors: list[str] | None,
+    year: str | None,
+    title: str | None,
+    doi: str | None = None,
+) -> str:
+    if authors:
+        last = _sanitize_author_component(_extract_last_name(authors[0])) or "unknown"
+        author_part = f"{last}_et_al" if len(authors) > 1 else last
+    else:
+        author_part = "unknown"
+    year_part = year or "unknown"
+    title_part = title or doi or "article"
+    return sanitize_filename(f"{author_part}_{year_part}_{title_part}")
+
+
 def provider_display_name(value: str) -> str:
     normalized = normalize_text(value).lower().replace("-", "_")
     from .provider_catalog import provider_display_names
@@ -253,11 +290,13 @@ def build_output_path(
     title: str | None,
     content_type: str | None,
     source_url: str | None,
+    authors: list[str] | None = None,
+    year: str | None = None,
 ) -> Path | None:
     if output_dir is None:
         return None
     output_dir.mkdir(parents=True, exist_ok=True)
-    base_name = sanitize_filename(doi or title or "article")
+    base_name = format_paper_stem(authors, year, title, doi=doi)
     extension = extension_from_content_type(content_type, source_url)
     return output_dir / f"{base_name}{extension}"
 

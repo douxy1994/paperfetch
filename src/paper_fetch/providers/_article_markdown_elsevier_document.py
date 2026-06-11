@@ -10,6 +10,7 @@ import xml.etree.ElementTree as ET
 
 from ..models import Reference, SemanticLosses
 from ..publisher_identity import extract_doi, normalize_doi
+from ..utils import _extract_year
 from ._article_markdown_common import (
     child_text,
     collect_conversion_notes,
@@ -474,7 +475,13 @@ def write_article_markdown(
         return None
 
     xml_output_path = Path(xml_path)
-    markdown_path = make_markdown_path(output_dir, str(metadata.get("doi") or ""), metadata.get("title"))
+    markdown_path = make_markdown_path(
+        output_dir,
+        str(metadata.get("doi") or ""),
+        metadata.get("title"),
+        authors=metadata.get("authors") or None,
+        year=_extract_year(str(metadata.get("published") or "") or None),
+    )
     document = build_markdown_document(
         provider=provider,
         metadata=metadata,

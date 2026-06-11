@@ -103,7 +103,7 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                 )
 
         self.assertFalse(result.isError)
-        self.assertEqual(result.structuredContent["saved_markdown_path"], str(isolated_dir / "10.1000_example.md"))
+        self.assertEqual(result.structuredContent["saved_markdown_path"], str(isolated_dir / "Example_2026_Example_Article.md"))
         self.assertIsNone(result.structuredContent["markdown"])
         self.assertIsNone(result.structuredContent["article"])
         self.assertEqual(ctx.session.resource_list_changed_calls, 1)

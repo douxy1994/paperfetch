@@ -23,7 +23,7 @@ from .providers.base import ProviderFailure
 from .reason_codes import ERROR, NO_ACCESS, RATE_LIMITED
 from .runtime import build_http_transport_for_context
 from .service import FetchStrategy, PaperFetchFailure, fetch_paper
-from .utils import sanitize_filename
+from .utils import _extract_year, format_paper_stem, sanitize_filename
 from .workflow.pipeline import FetchPipeline, MarkdownSaveSpec
 from .workflow.request_builder import build_fetch_pipeline_request
 from .workflow.rendering import rewrite_markdown_asset_links
@@ -126,12 +126,11 @@ def _should_save_markdown_via_pipeline(
 
 
 def _formatted_output_filename(envelope: FetchEnvelope, *, output_format: str) -> str:
-    identifier = envelope.doi
-    if not identifier and envelope.article is not None:
-        identifier = envelope.article.metadata.title
-    if not identifier and envelope.metadata is not None:
-        identifier = envelope.metadata.title
-    stem = sanitize_filename(identifier or "article")
+    meta = envelope.article.metadata if envelope.article is not None else envelope.metadata
+    authors = list(meta.authors) if meta and meta.authors else None
+    year = _extract_year(meta.published if meta else None)
+    title = meta.title if meta else None
+    stem = format_paper_stem(authors, year, title, doi=envelope.doi)
     suffix = {
         "markdown": ".md",
         "json": ".json",
