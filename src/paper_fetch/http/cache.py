@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import functools
 import hashlib
 import json
 import os
@@ -11,7 +12,10 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import TYPE_CHECKING, Any, Mapping
+
+if TYPE_CHECKING:
+    from cachetools import TTLCache
 
 from ..provider_catalog import provider_sensitive_header_names
 
@@ -60,10 +64,12 @@ REDACTED_CACHE_HEADER_DIGEST_PREFIX = "sha256:"
 _CacheKey = tuple[str, str, tuple[tuple[str, str], ...]]
 
 
+@functools.cache
 def _sensitive_cache_header_names() -> frozenset[str]:
     return frozenset(SENSITIVE_CACHE_HEADER_NAMES) | provider_sensitive_header_names()
 
 
+@functools.cache
 def _cache_key_header_names() -> frozenset[str]:
     return frozenset(CACHE_KEY_HEADER_NAMES) | _sensitive_cache_header_names()
 
@@ -97,6 +103,23 @@ def redact_url_for_cache(url: str) -> str:
 
 class CacheMixin:
     """Private cache methods mixed into ``HttpTransport``."""
+
+    # Attributes provided by the host class (HttpTransport.__init__)
+    cache_ttl: int
+    metadata_cache_ttl: int
+    cache_capacity: int
+    max_cacheable_body_bytes: int
+    max_total_cache_bytes: int
+    disk_cache_dir: Path | None
+    disk_cache_max_entries: int
+    disk_cache_max_bytes: int
+    disk_cache_max_age_seconds: int
+    _cache: TTLCache[_CacheKey, dict[str, Any]]
+    _cache_body_bytes: int
+    _cache_lock: threading.RLock
+    _cache_stats_lock: threading.Lock
+    _cache_stats: dict[str, int]
+    _disk_cache_lock: threading.RLock
 
     def _increment_cache_stat(self, name: str, amount: int = 1) -> None:
         if name not in self._cache_stats:
@@ -209,13 +232,11 @@ class CacheMixin:
             stat_result = path.stat()
         except OSError:
             return None
-        stored_at = float(stat_result.st_mtime)
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-            stored_at = float(payload.get("stored_at") or stored_at)
-        except (OSError, ValueError, TypeError, json.JSONDecodeError):
-            pass
-        return _DiskCacheEntry(path=path, size=max(0, int(stat_result.st_size)), stored_at=stored_at)
+        return _DiskCacheEntry(
+            path=path,
+            size=max(0, int(stat_result.st_size)),
+            stored_at=float(stat_result.st_mtime),
+        )
 
     def _iter_disk_cache_entries(self) -> list[_DiskCacheEntry]:
         if self.disk_cache_dir is None:
@@ -273,26 +294,26 @@ class CacheMixin:
         cache_path = self._disk_cache_path(cache_key)
         if cache_path is None:
             return None
-        with self._disk_cache_lock:
-            try:
-                payload = json.loads(cache_path.read_text(encoding="utf-8"))
-                if payload.get("version") != DISK_CACHE_VERSION:
-                    return None
-                body = base64.b64decode(str(payload.get("body_b64") or ""), validate=True)
-                response = {
-                    "status_code": int(payload.get("status_code") or 200),
-                    "headers": {str(key).lower(): str(value) for key, value in dict(payload.get("headers") or {}).items()},
-                    "body": body,
-                    "url": str(payload.get("url") or ""),
-                }
-                if not self._is_cacheable_response(response):
-                    return None
-                stored_at = float(payload.get("stored_at") or 0.0)
-            except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+            if payload.get("version") != DISK_CACHE_VERSION:
                 return None
-            if self.disk_cache_max_age_seconds > 0 and time.time() - stored_at > self.disk_cache_max_age_seconds:
+            body = base64.b64decode(str(payload.get("body_b64") or ""), validate=True)
+            response = {
+                "status_code": int(payload.get("status_code") or 200),
+                "headers": {str(key).lower(): str(value) for key, value in dict(payload.get("headers") or {}).items()},
+                "body": body,
+                "url": str(payload.get("url") or ""),
+            }
+            if not self._is_cacheable_response(response):
+                return None
+            stored_at = float(payload.get("stored_at") or 0.0)
+        except (OSError, ValueError, TypeError, json.JSONDecodeError):
+            return None
+        if self.disk_cache_max_age_seconds > 0 and time.time() - stored_at > self.disk_cache_max_age_seconds:
+            with self._disk_cache_lock:
                 self._unlink_disk_cache_path(cache_path)
-                return None
+            return None
         return {
             "response": response,
             "stored_at": stored_at,

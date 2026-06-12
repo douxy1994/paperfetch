@@ -28,7 +28,7 @@ def _tool_result(
     if extra_content:
         content.extend(extra_content)
     return CallToolResult(
-        content=content,
+        content=content,  # type: ignore[arg-type]
         structuredContent=dict(payload),
         isError=is_error,
     )

@@ -23,7 +23,7 @@ def _resolve_download_dir(
 ) -> Path | None:
     if download_dir is _MCP_DEFAULT_DOWNLOAD_DIR:
         return deps.resolve_mcp_download_dir(runtime_env)
-    return download_dir
+    return download_dir  # type: ignore[return-value]
 
 
 def list_cached_payload(

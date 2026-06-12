@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import functools
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
@@ -111,6 +112,7 @@ class HtmlCleanupRules:
     markdown_promo_tokens: tuple[str, ...]
 
 
+@functools.lru_cache(maxsize=32)
 def html_cleanup_rules(noise_profile: str | None = None) -> HtmlCleanupRules:
     active_noise_profile = _normalize_noise_profile(noise_profile)
     policy = cleanup_policy_for_profile(active_noise_profile)
@@ -269,11 +271,8 @@ def prepare_html_extraction_tree(
     root = select_html_content_root(soup)
     if root is None:
         root = soup.body or soup
-
-    candidate_soup = BeautifulSoup(str(root), choose_parser())
-    active_root = candidate_soup.body or candidate_soup
-    prune_html_tree(active_root, noise_profile=noise_profile)
-    return str(active_root), active_root
+    prune_html_tree(root, noise_profile=noise_profile)
+    return str(root), root
 
 
 def extract_html_extraction_sidecars(

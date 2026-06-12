@@ -23,6 +23,8 @@ TEXTUAL_CONTENT_TYPES = (
 class BodyMixin:
     """Private body reading methods mixed into ``HttpTransport``."""
 
+    max_response_bytes: int
+
     def _read_response_body(
         self,
         response: Any,

@@ -86,7 +86,7 @@ class RetryMixin:
         transient_attempts_made: int,
     ) -> tuple[bool, Retry, Retry, int]:
         retry_after_seconds = parse_retry_after_seconds(headers_map.get("retry-after"))
-        rate_limit_wait_seconds = retry_after_seconds
+        rate_limit_wait_seconds: float | None = retry_after_seconds
         if rate_limit_wait_seconds is None:
             fallback_wait_seconds = max(0.0, float(transient_policy.backoff_factor))
             if fallback_wait_seconds <= max_rate_limit_wait_seconds:
@@ -160,8 +160,10 @@ def parse_retry_after_seconds(value: str | None) -> int | None:
     normalized = value.strip()
     if not normalized:
         return None
-    if normalized.isdigit():
-        return max(0, int(normalized))
+    try:
+        return max(0, int(float(normalized)))
+    except ValueError:
+        pass
     try:
         parsed = parsedate_to_datetime(normalized)
     except (TypeError, ValueError, IndexError):

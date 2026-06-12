@@ -16,7 +16,7 @@ dependencies = [
   "filelock>=3.20,<4",
   "imagesize>=1.4,<3",
   "idutils>=1.5,<2",
-  "mcp>=1.27,<1.28",
+  "mcp>=1.27,<2",
   "platformdirs>=4,<5",
   "python-dotenv>=1.2,<2",
   "rapidfuzz>=3,<4",
@@ -91,11 +91,12 @@ mypy_path = "src"
 files = [
   "src/paper_fetch/models",
   "src/paper_fetch/workflow",
+  "src/paper_fetch/mcp",
+  "src/paper_fetch/http",
   "src/paper_fetch/providers/base.py",
   "src/paper_fetch/providers/protocols.py",
   "src/paper_fetch/providers/copernicus.py",
   "src/paper_fetch/providers/_article_markdown_copernicus.py",
-  "src/paper_fetch/mcp/schemas.py",
 ]
 check_untyped_defs = true
 ignore_missing_imports = true

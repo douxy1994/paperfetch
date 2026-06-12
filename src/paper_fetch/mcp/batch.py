@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
+from contextlib import ExitStack
 from functools import partial
 import threading
 from typing import Any, Callable, Mapping
@@ -42,24 +43,18 @@ async def run_blocking_call(
     func: Callable[..., Any],
     /,
     *args: Any,
-    max_workers: int = 1,
     cancel_event: threading.Event | None = None,
     **kwargs: Any,
 ) -> Any:
     loop = asyncio.get_running_loop()
-    executor = ThreadPoolExecutor(max_workers=max(1, int(max_workers)))
-    future = loop.run_in_executor(executor, partial(func, *args, **kwargs))
-    shutdown_wait = True
+    future = loop.run_in_executor(None, partial(func, *args, **kwargs))
     try:
         return await future
     except asyncio.CancelledError:
         if cancel_event is not None:
             cancel_event.set()
         future.cancel()
-        shutdown_wait = False
         raise
-    finally:
-        executor.shutdown(wait=shutdown_wait, cancel_futures=not shutdown_wait)
 
 
 def _batch_check_success_payload(query: str, payload: Mapping[str, Any], *, mode: str) -> dict[str, Any]:
@@ -326,23 +321,21 @@ async def batch_resolve_tool_async(
     loop = asyncio.get_running_loop()
     bridge = PaperFetchLogBridge(ctx=ctx, loop=loop) if ctx is not None else None
 
-    try:
+    with ExitStack() as stack:
         if bridge is not None:
-            bridge.__enter__()
-        results, abort_reason = await _run_batch_async(
-            queries=request.queries,
-            concurrency=request.concurrency,
-            process_item=lambda query: fetch_tool.resolve_paper_payload(query=query, context=runtime_context, deps=deps),
-            ctx=ctx,
-            progress_prefix="Resolved",
-            cancel_event=cancelled,
-        )
-    except asyncio.CancelledError:
-        cancelled.set()
-        raise
-    finally:
-        if bridge is not None:
-            bridge.__exit__(None, None, None)
+            stack.enter_context(bridge)
+        try:
+            results, abort_reason = await _run_batch_async(
+                queries=request.queries,
+                concurrency=request.concurrency,
+                process_item=lambda query: fetch_tool.resolve_paper_payload(query=query, context=runtime_context, deps=deps),
+                ctx=ctx,
+                progress_prefix="Resolved",
+                cancel_event=cancelled,
+            )
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
 
     payload = {
         "results": results,
@@ -383,29 +376,27 @@ async def batch_check_tool_async(
     loop = asyncio.get_running_loop()
     bridge = PaperFetchLogBridge(ctx=ctx, loop=loop) if ctx is not None else None
 
-    try:
+    with ExitStack() as stack:
         if bridge is not None:
-            bridge.__enter__()
-        results, abort_reason = await _run_batch_async(
-            queries=request.queries,
-            concurrency=request.concurrency,
-            process_item=lambda query: _run_batch_check_item(
-                query,
-                mode=request.mode,
-                context=runtime_context,
-                requested_modes=requested_modes,
-                deps=deps,
-            ),
-            ctx=ctx,
-            progress_prefix="Checked",
-            cancel_event=cancelled,
-        )
-    except asyncio.CancelledError:
-        cancelled.set()
-        raise
-    finally:
-        if bridge is not None:
-            bridge.__exit__(None, None, None)
+            stack.enter_context(bridge)
+        try:
+            results, abort_reason = await _run_batch_async(
+                queries=request.queries,
+                concurrency=request.concurrency,
+                process_item=lambda query: _run_batch_check_item(
+                    query,
+                    mode=request.mode,
+                    context=runtime_context,
+                    requested_modes=requested_modes,
+                    deps=deps,
+                ),
+                ctx=ctx,
+                progress_prefix="Checked",
+                cancel_event=cancelled,
+            )
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
 
     payload = {
         "mode": request.mode,

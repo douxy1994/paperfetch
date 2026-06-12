@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence, cast
 
 from ..artifacts import ArtifactStore
 from ..models import (
@@ -140,16 +140,18 @@ def dedupe_quality_flags(values: Sequence[str] | None) -> list[str]:
 
 def quality_from_payload(value: Mapping[str, Any] | None) -> Quality:
     payload = value or {}
+    from ..models.schema import ContentKind, QualityConfidence
+
     return Quality(
         has_fulltext=bool(payload.get("has_fulltext")),
-        content_kind=normalize_text(payload.get("content_kind")) or METADATA_ONLY,
+        content_kind=cast(ContentKind, normalize_text(payload.get("content_kind")) or METADATA_ONLY),
         has_abstract=bool(payload.get("has_abstract")),
         token_estimate=int(payload.get("token_estimate") or 0),
         warnings=[normalize_text(item) for item in payload.get("warnings") or [] if normalize_text(item)],
         source_trail=[normalize_text(item) for item in payload.get("source_trail") or [] if normalize_text(item)],
         trace=trace_from_payload(payload.get("trace")),
         token_estimate_breakdown=coerce_token_estimate_breakdown(payload.get("token_estimate_breakdown")),
-        confidence=normalize_text(payload.get("confidence")) or "low",
+        confidence=cast(QualityConfidence, normalize_text(payload.get("confidence")) or "low"),
         flags=dedupe_quality_flags(payload.get("flags") or []),
         body_metrics=coerce_body_quality_metrics(
             payload.get("body_metrics") if isinstance(payload.get("body_metrics"), Mapping) else None
@@ -195,9 +197,11 @@ def article_from_payload(value: Mapping[str, Any] | None) -> ArticleModel | None
             sections=sections,
             references=references,
         )
+    from ..models.schema import SourceKind
+
     return ArticleModel(
         doi=normalize_text(value.get("doi")) or None,
-        source=normalize_text(value.get("source")) or "crossref_meta",
+        source=cast(SourceKind, normalize_text(value.get("source")) or "crossref_meta"),
         metadata=metadata,
         sections=sections,
         references=references,
@@ -218,9 +222,9 @@ def article_from_payload(value: Mapping[str, Any] | None) -> ArticleModel | None
                 source_path=normalize_text(entry.get("source_path")) or None,
                 source_href=normalize_text(entry.get("source_href")) or None,
                 content_type=normalize_text(entry.get("content_type")) or None,
-                downloaded_bytes=int(entry.get("downloaded_bytes")) if str(entry.get("downloaded_bytes") or "").isdigit() else None,
-                width=int(entry.get("width")) if str(entry.get("width") or "").isdigit() else None,
-                height=int(entry.get("height")) if str(entry.get("height") or "").isdigit() else None,
+                downloaded_bytes=int(entry.get("downloaded_bytes")) if str(entry.get("downloaded_bytes") or "").isdigit() else None,  # type: ignore[arg-type]
+                width=int(entry.get("width")) if str(entry.get("width") or "").isdigit() else None,  # type: ignore[arg-type]
+                height=int(entry.get("height")) if str(entry.get("height") or "").isdigit() else None,  # type: ignore[arg-type]
             )
             for entry in value.get("assets") or []
             if isinstance(entry, Mapping)
@@ -246,11 +250,13 @@ def envelope_from_payload(payload: Mapping[str, Any]) -> FetchEnvelope:
         quality.token_estimate = int(payload.get("token_estimate") or 0)
     if article is not None and not quality.flags and quality_payload is None:
         quality = article.quality
+    from ..models.schema import ContentKind, SourceKind
+
     return FetchEnvelope(
         doi=normalize_text(payload.get("doi")) or None,
-        source=normalize_text(payload.get("source")) or METADATA_ONLY,
+        source=cast(SourceKind, normalize_text(payload.get("source")) or METADATA_ONLY),
         has_fulltext=bool(payload.get("has_fulltext")),
-        content_kind=normalize_text(payload.get("content_kind")) or METADATA_ONLY,
+        content_kind=cast(ContentKind, normalize_text(payload.get("content_kind")) or METADATA_ONLY),
         has_abstract=bool(payload.get("has_abstract")),
         warnings=[normalize_text(item) for item in payload.get("warnings") or [] if normalize_text(item)],
         source_trail=[normalize_text(item) for item in payload.get("source_trail") or [] if normalize_text(item)],
@@ -264,7 +270,7 @@ def envelope_from_payload(payload: Mapping[str, Any]) -> FetchEnvelope:
     )
 
 
-def mark_envelope_cached_with_current_revision(envelope: FetchEnvelope) -> FetchEnvelope:
+def mark_envelope_cached_with_current_revision(envelope: FetchEnvelope) -> None:
     envelope.quality.flags = dedupe_quality_flags(
         [*envelope.quality.flags, QUALITY_FLAG_CACHED_WITH_CURRENT_REVISION]
     )
@@ -285,7 +291,6 @@ def mark_envelope_cached_with_current_revision(envelope: FetchEnvelope) -> Fetch
         envelope.trace = list(envelope.article.quality.trace)
         envelope.token_estimate = envelope.article.quality.token_estimate
         envelope.token_estimate_breakdown = envelope.article.quality.token_estimate_breakdown
-    return envelope
 
 
 class FetchCache:
@@ -356,7 +361,9 @@ class FetchCache:
             return None
         if not cached_payload_satisfies_request(payload, request):
             return None
-        return mark_envelope_cached_with_current_revision(envelope_from_payload(payload))
+        envelope = envelope_from_payload(payload)
+        mark_envelope_cached_with_current_revision(envelope)
+        return envelope
 
     def write_fetch_envelope(self, envelope: FetchEnvelope, request: FetchPaperRequest) -> None:
         if self.download_dir is None:

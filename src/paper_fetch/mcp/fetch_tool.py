@@ -7,6 +7,7 @@ import base64
 from collections.abc import Callable, Mapping
 import mimetypes
 from pathlib import Path
+import stat as _stat_module
 import threading
 from typing import Any
 
@@ -180,7 +181,7 @@ def _fetch_paper_envelope(
     return FetchPipeline(deps.service_fetch_paper).run(
         build_fetch_pipeline_request(
             query=request.query,
-            modes=_service_modes_for_fetch_request(request, include_article_for_assets=include_article_for_assets),
+            modes=_service_modes_for_fetch_request(request, include_article_for_assets=include_article_for_assets),  # type: ignore[arg-type]
             strategy=request.strategy.to_service_strategy(),
             render=request.to_render_options(),
             env=runtime_env,
@@ -188,7 +189,7 @@ def _fetch_paper_envelope(
             context=context,
             cancel_check=cancel_check,
             download_dir=cache_download_dir,
-            artifact_mode=request.artifact_mode,
+            artifact_mode=request.artifact_mode,  # type: ignore[arg-type]
             no_download=request.no_download,
             fetch_cache=FetchCache(service_download_dir),
             cache_hooks=FetchPipelineCacheHooks(load=load_cached, write=write_cached),
@@ -224,7 +225,7 @@ def resolve_paper_payload(
     context: RuntimeContext | None = None,
     deps: MCPDeps = default_mcp_deps(),
 ) -> dict[str, Any]:
-    request = ResolvePaperRequest(query=query, title=title, authors=authors, year=year)
+    request = ResolvePaperRequest(query=query, title=title, authors=authors, year=year)  # type: ignore[arg-type]
     runtime_context = context or RuntimeContext(env=deps.build_runtime_env(env), transport=transport)
     resolved = _call_service_resolve_paper(request.composed_query(), context=runtime_context, deps=deps)
     return resolved.to_dict()
@@ -267,8 +268,8 @@ def fetch_paper_payload(
 ) -> dict[str, Any]:
     request = FetchPaperRequest(
         query=query,
-        modes=modes,
-        strategy=strategy,
+        modes=modes,  # type: ignore[arg-type]
+        strategy=strategy,  # type: ignore[arg-type]
         include_refs=include_refs,
         max_tokens=max_tokens,
         prefer_cache=prefer_cache,
@@ -396,9 +397,6 @@ def _inline_image_contents(
             omitted += 1
             continue
         path = Path(path_text).expanduser()
-        if not path.is_file():
-            omitted += 1
-            continue
 
         mime_type = mimetypes.guess_type(path.name)[0] or ""
         if not mime_type.startswith("image/"):
@@ -406,10 +404,14 @@ def _inline_image_contents(
             continue
 
         try:
-            size = path.stat().st_size
+            path_stat = path.stat()
         except OSError:
             omitted += 1
             continue
+        if not _stat_module.S_ISREG(path_stat.st_mode):
+            omitted += 1
+            continue
+        size = path_stat.st_size
 
         if selected_count >= budget.max_images:
             omitted += 1
@@ -455,7 +457,7 @@ def build_fetch_tool_result(
     extra_content: list[TextContent | ImageContent] = []
 
     resolved_asset_profile = effective_asset_profile(
-        request.strategy.asset_profile,
+        request.strategy.asset_profile,  # type: ignore[arg-type]
         source_name=envelope.source,
     )
     if not request.save_markdown and resolved_asset_profile in {"body", "all"}:
@@ -547,8 +549,8 @@ async def fetch_paper_tool_async(
     try:
         request = FetchPaperRequest(
             query=query,
-            modes=modes,
-            strategy=strategy,
+            modes=modes,  # type: ignore[arg-type]
+            strategy=strategy,  # type: ignore[arg-type]
             include_refs=include_refs,
             max_tokens=max_tokens,
             prefer_cache=prefer_cache,
@@ -578,7 +580,6 @@ async def fetch_paper_tool_async(
                 include_article_for_assets=True,
                 cancel_check=cancelled.is_set,
                 deps=deps,
-                max_workers=1,
                 cancel_event=cancelled,
             )
         else:
@@ -592,7 +593,6 @@ async def fetch_paper_tool_async(
                     include_article_for_assets=True,
                     cancel_check=cancelled.is_set,
                     deps=deps,
-                    max_workers=1,
                     cancel_event=cancelled,
                 )
         await report_progress(ctx, 3, _FETCH_PROGRESS_TOTAL, "Shaping MCP result")

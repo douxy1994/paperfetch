@@ -18,6 +18,7 @@ _LOG_LEVEL_BY_RECORD_LEVEL = {
     logging.ERROR: "error",
     logging.CRITICAL: "critical",
 }
+_SORTED_LOG_LEVELS = sorted(_LOG_LEVEL_BY_RECORD_LEVEL.items())
 
 
 def _parse_log_value(raw_value: str) -> Any:
@@ -74,10 +75,10 @@ def structured_log_payload_from_record(record: logging.LogRecord) -> dict[str, A
 
 
 def _mcp_log_level(record: logging.LogRecord) -> str:
-    for level, name in sorted(_LOG_LEVEL_BY_RECORD_LEVEL.items()):
+    for level, name in _SORTED_LOG_LEVELS:
         if record.levelno <= level:
             return name
-    return "debug"
+    return "critical"
 
 
 class StructuredLogNotificationHandler(logging.Handler):

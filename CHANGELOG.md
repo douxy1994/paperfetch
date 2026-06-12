@@ -6,6 +6,28 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.2.1 - 2026-06-12
+
+### Changed
+
+- Disk cache entry iteration no longer reads each cache file's JSON payload to extract `stored_at`; `st_mtime` is used directly, removing O(n) file reads from every `_prune_disk_cache` call.
+- Disk cache reads in `_load_disk_cached_entry` no longer hold the exclusive `_disk_cache_lock` during file I/O; concurrent cache reads no longer serialize behind a single lock.
+- `_sensitive_cache_header_names` and `_cache_key_header_names` are now computed once per process via `@functools.cache` instead of calling `provider_sensitive_header_names()` on every HTTP request.
+- `prepare_html_extraction_tree` eliminates the redundant second BeautifulSoup parse; the HTML tree is now pruned in place and serialized once instead of being serialized to string and re-parsed into a fresh soup object.
+- `html_cleanup_rules` is now memoized with `@functools.lru_cache(maxsize=32)` so repeated calls with the same noise profile within a single extraction pipeline share a single `HtmlCleanupRules` instance.
+- `choose_parser` evaluates `importlib.util.find_spec("lxml")` once at import time and returns a module-level constant on every call.
+- `classify_dom_cleanup_node` now references a module-level `_HEADING_TAG_RE` constant instead of compiling `re.compile(r"^h[1-6]$")` twice on every element visit.
+- `_inline_image_contents` performs a single `path.stat()` call per asset instead of a separate `path.is_file()` followed by `path.stat()`.
+- `run_blocking_call` uses the default asyncio thread-pool executor instead of creating a dedicated per-call `ThreadPoolExecutor`; log bridge lifecycle in `batch_resolve_tool_async` and `batch_check_tool_async` now uses `ExitStack`.
+- `mark_envelope_cached_with_current_revision` is now a `None`-returning mutation instead of returning the modified envelope.
+- Expanded mypy coverage to include the `paper_fetch.mcp` and `paper_fetch.http` packages; added missing type annotations and `cast` calls to satisfy strict checking.
+- Relaxed `mcp` version constraint from `>=1.27,<1.28` to `>=1.27,<2`.
+
+### Fixed
+
+- `parse_retry_after_seconds` now handles fractional `Retry-After` values such as `"0.5"` or `"1.5"` by parsing through `float()` before truncating to `int`; previously these fell through to the HTTP-date parser and were silently discarded.
+- `_mcp_log_level` no longer returns `"debug"` as the fallback for log records with a level above `CRITICAL`; the fallback is now `"critical"`.
+
 ## 2.2.0 - 2026-06-10
 
 ### Added

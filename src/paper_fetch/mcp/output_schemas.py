@@ -31,7 +31,6 @@ class ResolvePaperOutput(ErrorPayloadOutput, total=False):
     landing_url: str | None
     provider_hint: str | None
     confidence: float
-    candidates: list[ResolvedCandidateOutput]
     title: str | None
 
 
@@ -205,7 +204,6 @@ class ListCachedOutput(ErrorPayloadOutput, total=False):
 
 
 class GetCachedOutput(ErrorPayloadOutput, total=False):
-    status: str
     doi: str
     download_dir: str | None
     entries: list[CacheEntryOutput]

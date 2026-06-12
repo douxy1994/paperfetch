@@ -98,6 +98,8 @@ BROWSER_WORKFLOW_SHORT_TEXT_PATTERNS = (
     "article metrics",
 )
 
+_HEADING_TAG_RE = re.compile(r"^h[1-6]$")
+
 CleanupAction = Literal["keep", "drop", "cutoff"]
 
 
@@ -368,12 +370,12 @@ def classify_dom_cleanup_node(
 
     if not normalized_text:
         return KEEP_CLEANUP_DECISION
-    if re.compile(r"^h[1-6]$").match(element_name):
+    if _HEADING_TAG_RE.match(element_name):
         return KEEP_CLEANUP_DECISION
     if looks_like_reference_anchor(element):
         return KEEP_CLEANUP_DECISION
 
-    has_heading_descendant = bool(element.find(re.compile(r"^h[1-6]$")))
+    has_heading_descendant = bool(element.find(_HEADING_TAG_RE))
     lowered = normalized_text.lower()
     if lowered in policy.dom_exact_texts:
         return CleanupDecision("drop", "dom_exact_text")

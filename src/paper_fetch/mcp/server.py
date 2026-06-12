@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
 from pathlib import Path
-import queue
 import sys
 import threading
 from types import MethodType
-from typing import Annotated, Any
+from typing import Annotated, Any, Mapping
 
 import anyio
 from mcp import types as mcp_types
@@ -57,32 +57,28 @@ _STDIO_SENTINEL = object()
 async def _threaded_stdio_server():
     read_stream_writer, read_stream = anyio.create_memory_object_stream(0)
     write_stream, write_stream_reader = anyio.create_memory_object_stream(0)
-    stop = threading.Event()
-    incoming: queue.Queue[SessionMessage | Exception | object] = queue.Queue()
+    loop = asyncio.get_running_loop()
+    incoming: asyncio.Queue[SessionMessage | Exception | object] = asyncio.Queue()
 
     def stdin_reader() -> None:
         try:
-            while not stop.is_set():
+            while True:
                 line = sys.stdin.readline()
                 if line == "":
                     break
                 try:
                     message = mcp_types.JSONRPCMessage.model_validate_json(line)
                 except Exception as exc:
-                    incoming.put(exc)
+                    loop.call_soon_threadsafe(incoming.put_nowait, exc)
                     continue
-                incoming.put(SessionMessage(message))
+                loop.call_soon_threadsafe(incoming.put_nowait, SessionMessage(message))
         finally:
-            incoming.put(_STDIO_SENTINEL)
+            loop.call_soon_threadsafe(incoming.put_nowait, _STDIO_SENTINEL)
 
     async def stdin_pump() -> None:
         async with read_stream_writer:
             while True:
-                try:
-                    item = incoming.get_nowait()
-                except queue.Empty:
-                    await anyio.sleep(0.01)
-                    continue
+                item = await incoming.get()
                 if item is _STDIO_SENTINEL:
                     break
                 await read_stream_writer.send(item)
@@ -102,7 +98,6 @@ async def _threaded_stdio_server():
         try:
             yield read_stream, write_stream
         finally:
-            stop.set()
             task_group.cancel_scope.cancel()
 
 
@@ -122,7 +117,7 @@ def _cache_index_resource_payload(
     *,
     deps: MCPDeps = default_mcp_deps(),
 ) -> dict[str, object]:
-    tool_kwargs: dict[str, object] = {}
+    tool_kwargs: dict[str, Any] = {}
     if download_dir is not None:
         tool_kwargs["download_dir"] = download_dir
     return list_cached_payload(**tool_kwargs, deps=deps)
@@ -145,7 +140,7 @@ def _fetch_annotations() -> ToolAnnotations:
 
 
 def _resource_uri_set(
-    resources: dict[str, object],
+    resources: Mapping[str, object],
     *,
     index_uri: str,
     entry_prefix: str,
@@ -160,7 +155,12 @@ def _sync_cache_resources(
     scope_id: str | None = None,
 ) -> bool:
     entries = list_cache_entries(download_dir)
+    # mcp has no public remove_resource() API; relies on internal _resources dict (verified mcp>=1.27).
+    # The assertion below will fire immediately if a future mcp version changes this layout.
     resources = server._resource_manager._resources
+    assert isinstance(resources, dict), (
+        "FastMCP internal layout changed; update _sync_cache_resources for the new mcp version"
+    )
 
     def default_entry_uri(entry_id: object) -> str:
         return cached_resource_uri(str(entry_id))
@@ -210,7 +210,7 @@ def _sync_cache_resources(
     for entry in entries:
         uri = entry_uri_for(entry["id"])
         resources[uri] = FileResource(
-            uri=uri,
+            uri=uri,  # type: ignore[arg-type]
             name=f"cached_{entry['id']}",
             description=f"Cached {entry['kind']} for DOI {entry['doi']}.",
             path=Path(str(entry["path"])),
@@ -290,7 +290,7 @@ def _enable_resource_list_changed_capability(server: FastMCP) -> None:
             experimental_capabilities=experimental_capabilities,
         )
 
-    server._mcp_server.create_initialization_options = MethodType(
+    server._mcp_server.create_initialization_options = MethodType(  # type: ignore[method-assign]
         create_options_with_resource_notifications,
         server._mcp_server,
     )
@@ -401,7 +401,7 @@ def build_server() -> FastMCP:
     ) -> Annotated[CallToolResult, FetchPaperOutput]:
         parsed_download_dir = _parse_download_dir(download_dir)
         parsed_markdown_output_dir = _parse_download_dir(markdown_output_dir)
-        tool_kwargs: dict[str, object] = {}
+        tool_kwargs: dict[str, Any] = {}
         if parsed_download_dir is not None:
             tool_kwargs["download_dir"] = parsed_download_dir
         result = await fetch_paper_tool_async(
@@ -428,7 +428,7 @@ def build_server() -> FastMCP:
                 parsed_download_dir=parsed_download_dir,
                 no_download=no_download,
                 save_markdown=save_markdown,
-                markdown_saved=bool(result.structuredContent.get("saved_markdown_path")),
+                markdown_saved=bool((result.structuredContent or {}).get("saved_markdown_path")),
                 parsed_markdown_output_dir=parsed_markdown_output_dir,
             ):
                 resources_changed = _sync_resources_for_download_dir(server, sync_dir, deps=deps) or resources_changed
@@ -447,7 +447,7 @@ def build_server() -> FastMCP:
         ctx: Context | None = None,
     ) -> Annotated[CallToolResult, ListCachedOutput]:
         parsed_download_dir = _parse_download_dir(download_dir)
-        tool_kwargs: dict[str, object] = {}
+        tool_kwargs: dict[str, Any] = {}
         if parsed_download_dir is not None:
             tool_kwargs["download_dir"] = parsed_download_dir
         result = list_cached_tool(**tool_kwargs, deps=deps)
@@ -469,7 +469,7 @@ def build_server() -> FastMCP:
         ctx: Context | None = None,
     ) -> Annotated[CallToolResult, GetCachedOutput]:
         parsed_download_dir = _parse_download_dir(download_dir)
-        tool_kwargs: dict[str, object] = {}
+        tool_kwargs: dict[str, Any] = {}
         if parsed_download_dir is not None:
             tool_kwargs["download_dir"] = parsed_download_dir
         result = get_cached_tool(doi=doi, **tool_kwargs, deps=deps)

@@ -15,6 +15,8 @@ from ..workflow.types import ALLOWED_PREFERRED_PROVIDERS
 from ..utils import dedupe_authors
 
 ALLOWED_INCLUDE_REFS = {"none", "top10", "all"}
+
+
 def _allowed_values_from_literal(literal_type: Any) -> frozenset[str]:
     return frozenset(str(value) for value in get_args(literal_type))
 
