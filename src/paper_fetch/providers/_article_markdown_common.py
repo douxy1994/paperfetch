@@ -24,7 +24,7 @@ from ..extraction.markdown_render.tables import (
     render_structured_table_block,
     render_table_block,
 )
-from ..utils import format_paper_stem, normalize_text, sanitize_filename
+from ..utils import format_paper_stem, normalize_text
 
 XLINK_HREF = "{http://www.w3.org/1999/xlink}href"
 XLINK_TITLE = "{http://www.w3.org/1999/xlink}title"

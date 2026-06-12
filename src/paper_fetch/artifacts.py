@@ -21,7 +21,6 @@ from .utils import (
     normalize_text,
     provider_display_name,
     safe_text,
-    sanitize_filename,
 )
 
 

@@ -23,7 +23,7 @@ from .providers.base import ProviderFailure
 from .reason_codes import ERROR, NO_ACCESS, RATE_LIMITED
 from .runtime import build_http_transport_for_context
 from .service import FetchStrategy, PaperFetchFailure, fetch_paper
-from .utils import _extract_year, format_paper_stem, sanitize_filename
+from .utils import _extract_year, format_paper_stem
 from .workflow.pipeline import FetchPipeline, MarkdownSaveSpec
 from .workflow.request_builder import build_fetch_pipeline_request
 from .workflow.rendering import rewrite_markdown_asset_links
