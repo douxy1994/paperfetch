@@ -6,6 +6,28 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.2.1 - 2026-06-12
+
+### 变更
+
+- 磁盘缓存条目遍历不再读取每个 JSON 文件以提取 `stored_at`，改为直接使用 `st_mtime`，消除每次 `_prune_disk_cache` 调用中的 O(n) 文件读取。
+- `_load_disk_cached_entry` 中的磁盘缓存读取不再持有独占 `_disk_cache_lock` 进行文件 I/O，并发缓存读取不再相互阻塞。
+- `_sensitive_cache_header_names` 与 `_cache_key_header_names` 改为通过 `@functools.cache` 在进程级别计算一次，不再在每次 HTTP 请求时重复调用 `provider_sensitive_header_names()`。
+- `prepare_html_extraction_tree` 消除了多余的第二次 BeautifulSoup 解析：现在直接在原树上执行剪枝并序列化一次，不再先将子树序列化为字符串再重新解析。
+- `html_cleanup_rules` 改为通过 `@functools.lru_cache(maxsize=32)` 进行缓存，单次抽取流程中相同 noise profile 的多次调用共享同一个 `HtmlCleanupRules` 实例。
+- `choose_parser` 在模块导入时计算一次 `importlib.util.find_spec("lxml")` 并将结果存为模块级常量，每次调用不再重复执行。
+- `classify_dom_cleanup_node` 改为引用模块级 `_HEADING_TAG_RE` 常量，不再在每次访问 DOM 元素时编译两次 `re.compile(r"^h[1-6]$")`。
+- `_inline_image_contents` 每个资产只调用一次 `path.stat()`，不再先调用 `path.is_file()` 再调用 `path.stat()`。
+- `run_blocking_call` 改为使用 asyncio 默认线程池（`None`），不再为每次调用创建独立的 `ThreadPoolExecutor`；`batch_resolve_tool_async` 与 `batch_check_tool_async` 中的日志桥生命周期改用 `ExitStack` 管理。
+- `mark_envelope_cached_with_current_revision` 改为原地修改并返回 `None`，调用方相应更新。
+- 将 mypy 覆盖范围扩展至 `paper_fetch.mcp` 和 `paper_fetch.http` 包；补充缺失的类型标注和 `cast` 调用以通过严格检查。
+- 将 `mcp` 版本约束从 `>=1.27,<1.28` 放宽至 `>=1.27,<2`。
+
+### 修复
+
+- `parse_retry_after_seconds` 现在通过 `float()` 解析后截断为 `int`，能正确处理 `"0.5"` 或 `"1.5"` 等分数秒 `Retry-After` 值；此前这类值会落入 HTTP-date 解析器并被静默丢弃。
+- `_mcp_log_level` 对级别高于 `CRITICAL` 的日志记录不再返回 `"debug"` 作为兜底值，改为返回 `"critical"`。
+
 ## 2.2.0 - 2026-06-10
 
 ### 新增
