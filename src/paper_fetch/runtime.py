@@ -9,7 +9,8 @@ import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Hashable, Mapping
+from typing import Any
+from collections.abc import Hashable, Mapping
 
 from .artifacts import DEFAULT_ARTIFACT_MODE, ArtifactMode, ArtifactStore
 from .config import (
@@ -40,6 +41,7 @@ from .http import (
     HttpTransport,
 )
 from .runtime_browser import BrowserContextManager
+import contextlib
 
 RUNTIME_UNSET = object()
 _PARSE_CACHE_MISSING = object()
@@ -194,10 +196,8 @@ class RuntimeContext:
         self.close_playwright()
 
     def __del__(self) -> None:  # pragma: no cover - defensive cleanup at GC/interpreter shutdown
-        try:
+        with contextlib.suppress(Exception):
             self.close_playwright()
-        except Exception:
-            pass
 
     def build_parse_cache_key(
         self,

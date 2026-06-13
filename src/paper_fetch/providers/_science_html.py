@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..quality.html_signals import (
     AAAS_DATALAYER_PATTERN,

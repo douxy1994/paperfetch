@@ -21,6 +21,5 @@ def run_scaffold(tmp_path: Path, *args: str) -> subprocess.CompletedProcess[str]
         ],
         check=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )

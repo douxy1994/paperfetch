@@ -6,7 +6,7 @@ import socket
 import ssl
 from collections.abc import Iterator
 from enum import StrEnum
-from typing import Mapping
+from collections.abc import Mapping
 
 import urllib3
 

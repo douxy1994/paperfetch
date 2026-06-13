@@ -135,8 +135,7 @@ assert provider_bundle("autodiscovered").catalog.html_capable is False
         ],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env={**os.environ, "PYTHONPATH": str(PROJECT_ROOT / "src")},
     )
 

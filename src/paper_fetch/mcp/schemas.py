@@ -114,7 +114,7 @@ class ResolvePaperRequest(BaseModel):
         return value
 
     @model_validator(mode="after")
-    def validate_input_mode(self) -> "ResolvePaperRequest":
+    def validate_input_mode(self) -> ResolvePaperRequest:
         has_query = self.query is not None
         has_structured = self.title is not None or self.authors is not None or self.year is not None
 

@@ -127,7 +127,7 @@ def _atom_feed(arxiv_id: str) -> bytes:
     <link title="pdf" href="https://arxiv.org/pdf/{arxiv_id}" rel="related" type="application/pdf" />
   </entry>
 </feed>
-""".encode("utf-8")
+""".encode()
 
 
 def _atom_feed_from_raw_result(raw: dict) -> bytes:
@@ -171,7 +171,7 @@ def _atom_feed_from_raw_result(raw: dict) -> bytes:
     <link title="pdf" href="{pdf_url}" rel="related" type="application/pdf" />
   </entry>
 </feed>
-""".encode("utf-8")
+""".encode()
 
 
 def _atom_feed_from_fixture(arxiv_id: str) -> bytes:
@@ -705,7 +705,7 @@ class ArxivProviderTests(unittest.TestCase):
           <p>An error in the conversion from LaTeX to XML has occurred here.</p>
           <p>{repeated_body}</p></section>
         </article></body></html>
-        """.encode("utf-8")
+        """.encode()
         transport = _html_then_pdf_transport(arxiv_id, html_body=polluted_html)
         client = ArxivClient(transport, {})
 
@@ -842,7 +842,7 @@ class ArxivProviderTests(unittest.TestCase):
             <ul><li class="ltx_bibitem">Example Author. Example reference. 2026.</li></ul>
           </section>
         </article></body></html>
-        """.encode("utf-8")
+        """.encode()
         api_raw = {
             "entry_id": f"http://arxiv.org/abs/{arxiv_id}",
             "updated": "2026-05-08T12:00:00+00:00",

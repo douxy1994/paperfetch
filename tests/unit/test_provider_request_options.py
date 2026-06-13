@@ -67,7 +67,7 @@ def elsevier_body_asset_xml(urls: list[str]) -> bytes:
             (
                 f"<object type='IMAGE-HIGH-RES' mimetype='image/png' ref='fig{index}'>"
                 f"{url}</object>"
-            ).encode("utf-8")
+            ).encode()
             for index, url in enumerate(urls)
         )
         + b"</full-text-retrieval-response>"
@@ -712,7 +712,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                 (
                     f"<object type='IMAGE-HIGH-RES' mimetype='image/png' ref='fig{index}'>"
                     f"{url}</object>"
-                ).encode("utf-8")
+                ).encode()
                 for index, url in enumerate(urls)
             )
             + b"</full-text-retrieval-response>"
@@ -730,7 +730,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                     return {
                         "status_code": 200,
                         "headers": {"content-type": "image/png"},
-                        "body": f"payload:{url}".encode("utf-8"),
+                        "body": f"payload:{url}".encode(),
                         "url": url,
                     }
                 finally:

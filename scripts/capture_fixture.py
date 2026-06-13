@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 import json
 import sys
 from pathlib import Path
@@ -1052,7 +1052,7 @@ def capture_fixture(args: argparse.Namespace) -> dict[str, Any]:
             retryable=False,
         )
 
-    fetched_at = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    fetched_at = datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z")
     if args.dry_run:
         content_type = planned_content_type
         body = b""

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field, replace
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 import json
 import logging
 from pathlib import Path
@@ -12,7 +12,8 @@ import re
 import shutil
 import time
 import urllib.parse
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
+from collections.abc import Callable, Mapping, Sequence
 
 import yaml
 
@@ -362,7 +363,7 @@ def provider_manifest_path(provider: str) -> Path:
 
 
 def timestamped_review_output_dir(*, now: datetime | None = None) -> Path:
-    active_now = now or datetime.now(timezone.utc)
+    active_now = now or datetime.now(UTC)
     timestamp = active_now.strftime("%Y%m%d-%H%M%S")
     return resolve_repo_root() / "live-downloads" / DEFAULT_REVIEW_ROOT_NAME / timestamp
 
@@ -853,7 +854,7 @@ def normalize_body_assets(article: Any, sample_dir: Path) -> int:
         if isinstance(asset, Asset):
             asset.path = str(destination)
         elif hasattr(asset, "path"):
-            setattr(asset, "path", str(destination))
+            asset.path = str(destination)
         copied_count += 1
     return copied_count
 
@@ -1498,7 +1499,7 @@ def run_golden_criteria_live_review(
     output_root = (output_dir or timestamped_review_output_dir(now=now)).resolve()
     output_root.mkdir(parents=True, exist_ok=True)
 
-    generated_at = (now or datetime.now(timezone.utc)).isoformat()
+    generated_at = (now or datetime.now(UTC)).isoformat()
     runtime_env = build_runtime_env(env)
     ensure_live_opt_in(runtime_env)
     active_transport = transport or HttpTransport()

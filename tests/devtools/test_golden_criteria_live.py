@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from pathlib import Path
 
 from paper_fetch_devtools.golden_criteria import cli as golden_criteria_live_cli
@@ -311,7 +311,7 @@ class GoldenCriteriaLiveTests(unittest.TestCase):
                 env={"PAPER_FETCH_RUN_LIVE": "1"},
                 fetch_paper_fn=fake_fetch,
                 provider_status_fn=_provider_status_payload,
-                now=datetime(2026, 4, 23, tzinfo=timezone.utc),
+                now=datetime(2026, 4, 23, tzinfo=UTC),
             )
 
             statuses = {result.sample_id: result.status for result in report.results}

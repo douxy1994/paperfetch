@@ -82,8 +82,8 @@ def extract_html_payload(
     }
 
 __all__ = [
-    "clean_markdown",
     "_remove_springer_ai_alt_disclaimers",
+    "clean_markdown",
     "extract_article_markdown",
     "extract_html_payload",
 ]

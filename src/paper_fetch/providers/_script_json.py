@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import re
-from typing import Any, Pattern
+from typing import Any
+from re import Pattern
 
 from ..extraction.html.parsing import choose_parser
 from ..utils import normalize_text

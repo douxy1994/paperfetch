@@ -10,7 +10,8 @@ import urllib.parse
 import urllib.request
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from ..http import (
     DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
@@ -36,6 +37,7 @@ from ._pdf_common import (
     pdf_fetch_result_from_bytes,
     sanitize_storage_state,
 )
+import contextlib
 
 PdfFallbackResult = PdfFetchResult
 PdfFallbackFailure = PdfFetchFailure
@@ -538,10 +540,8 @@ def fetch_pdf_with_browser(
                     response_headers = getattr(response, "headers", {}) or {}
                 detected = detect_html_block(title, summary, response_status)
                 (artifact_dir / "pdf.failure.html").write_text(html, encoding="utf-8")
-                try:
+                with contextlib.suppress(Exception):
                     page.screenshot(path=str(artifact_dir / "pdf.failure.png"), full_page=True)
-                except Exception:
-                    pass
                 failure_details = _pdf_failure_details_from_response(
                     source_url=url,
                     final_url=page.url,
@@ -575,15 +575,11 @@ def fetch_pdf_with_browser(
                 continue
     finally:
         if browser_context is not None:
-            try:
+            with contextlib.suppress(Exception):
                 browser_context.close()
-            except Exception:
-                pass
         if manager is not None:
-            try:
+            with contextlib.suppress(Exception):
                 manager.close()
-            except Exception:
-                pass
         if sanitized_storage_state_path is not None:
             sanitized_storage_state_path.unlink(missing_ok=True)
 

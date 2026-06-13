@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..extraction.html.availability_policy import AvailabilityPolicy
 from ..extraction.html.provider_rules import (

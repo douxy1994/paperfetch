@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 from dotenv import dotenv_values
 from platformdirs import user_config_path, user_data_path

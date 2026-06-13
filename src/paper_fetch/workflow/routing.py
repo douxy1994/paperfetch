@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Mapping, cast
+from typing import Any, cast
+from collections.abc import Mapping
 import urllib.parse
 
 from ..config import build_user_agent

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ...metadata.types import ProviderMetadata
 from ...extraction.html.parsing import choose_parser
@@ -208,6 +209,6 @@ def extract_atypon_browser_workflow_markdown(
 
 
 __all__ = [
-    "extract_browser_workflow_markdown",
     "extract_atypon_browser_workflow_markdown",
+    "extract_browser_workflow_markdown",
 ]

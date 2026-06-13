@@ -5,7 +5,8 @@ from __future__ import annotations
 from difflib import SequenceMatcher
 from functools import partial
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from bs4 import BeautifulSoup, Tag
 
@@ -482,12 +483,12 @@ def scoped_asset_extractor(*args: Any, **kwargs: Any) -> list[dict[str, str]]:
 
 
 __all__ = [
-    "extract_authors",
-    "extract_references",
-    "aip_classify_heading",
     "aip_before_block_normalization",
     "aip_body_container",
+    "aip_classify_heading",
     "aip_normalize_markdown",
+    "extract_authors",
+    "extract_references",
     "finalize_extraction",
     "scoped_asset_extractor",
 ]

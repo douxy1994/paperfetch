@@ -9,7 +9,8 @@ import os
 from pathlib import Path
 import re
 import sys
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 import yaml
 

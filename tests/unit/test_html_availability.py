@@ -182,16 +182,13 @@ class HtmlAvailabilityTests(unittest.TestCase):
             "This second paragraph adds more narrative evidence for full text detection and provider scoring. "
             * 8
         )
-        html = """
+        html = f"""
         <html><body><article id="article">
           <h2>Methods</h2>
           <p>{first_paragraph}</p>
           <p>{second_paragraph}</p>
         </article></body></html>
-        """.format(
-            first_paragraph=first_paragraph,
-            second_paragraph=second_paragraph,
-        )
+        """
         markdown = (
             "## Methods\n\n"
             f"{first_paragraph}\n\n"

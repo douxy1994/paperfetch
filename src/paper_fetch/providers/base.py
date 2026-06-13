@@ -6,7 +6,8 @@ from dataclasses import asdict, dataclass, field, replace
 import importlib.util
 from pathlib import Path
 import time
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
 
 from ..artifacts import ArtifactStore
 from ..extraction.html import render_html_markdown
@@ -263,7 +264,7 @@ def build_provider_status_check(
 
 def provider_status_check_from_failure(
     name: str,
-    failure: "ProviderFailure",
+    failure: ProviderFailure,
     *,
     details: Mapping[str, Any] | None = None,
 ) -> ProviderStatusCheck:
@@ -843,11 +844,7 @@ def _install_provider_registry_compat() -> None:
         registry_module,
         "build_provider_registry",
     ):
-        setattr(
-            registry_module,
-            "build_provider_registry",
-            _build_provider_registry_compat,
-        )
+        registry_module.build_provider_registry = _build_provider_registry_compat  # type: ignore[attr-defined]  # dynamic backward-compat shim
 
 
 _install_provider_registry_compat()

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 from typing import Any
 
@@ -25,7 +25,7 @@ MARKDOWN_REVIEWED_FIXTURES = {
 }
 
 
-@lru_cache(maxsize=None)
+@cache
 def _extract_fixture_markdown(doi: str) -> tuple[str, dict[str, Any]]:
     client = wiley_provider.WileyClient(transport=None, env={})
     html = golden_criteria_asset(doi, "original.html").read_text(

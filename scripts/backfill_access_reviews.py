@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 import json
 from pathlib import Path
 import sys
@@ -122,10 +122,10 @@ def _legal_access_evidence(
             f"{KNOWN_PROVIDERS_PATH} marks {provider} as implemented with manifest {manifest_path}."
         )
     evidence.append(
-        (
+        
             f"{manifest_path} declares display_source={manifest.get('display_source')} "
             f"and main_path={manifest.get('main_path')}."
-        )
+        
     )
     routing = manifest.get("routing")
     if isinstance(routing, dict):
@@ -169,7 +169,7 @@ def build_access_review_draft(
     manifest_ref = manifest_path or f"onboarding/manifests/{provider_name}.yml"
     timestamp = (
         reviewed_at
-        or datetime.now(timezone.utc)
+        or datetime.now(UTC)
         .replace(microsecond=0)
         .isoformat()
         .replace("+00:00", "Z")

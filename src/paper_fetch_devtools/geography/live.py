@@ -4,11 +4,12 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from dataclasses import asdict, dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 import json
 from pathlib import Path
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any
+from collections.abc import Mapping, Sequence
 
 from paper_fetch.config import build_runtime_env, resolve_repo_root
 from paper_fetch.http import HttpTransport
@@ -153,16 +154,7 @@ class GeographyLiveReport:
         for summary in self.summary_by_provider:
             counts = summary.status_counts
             lines.append(
-                "| {provider} | {attempted} | {fulltext} | {metadata_only} | {not_configured} | {rate_limited} | {no_result} | {error} |".format(
-                    provider=summary.provider,
-                    attempted=summary.attempted,
-                    fulltext=counts.get(FULLTEXT, 0),
-                    metadata_only=counts.get(METADATA_ONLY, 0),
-                    not_configured=counts.get(NOT_CONFIGURED, 0),
-                    rate_limited=counts.get(RATE_LIMITED, 0),
-                    no_result=counts.get(NO_RESULT, 0),
-                    error=counts.get(ERROR, 0),
-                )
+                f"| {summary.provider} | {summary.attempted} | {counts.get(FULLTEXT, 0)} | {counts.get(METADATA_ONLY, 0)} | {counts.get(NOT_CONFIGURED, 0)} | {counts.get(RATE_LIMITED, 0)} | {counts.get(NO_RESULT, 0)} | {counts.get(ERROR, 0)} |"
             )
 
         lines.extend(
@@ -336,7 +328,7 @@ def run_geography_live_report(
 
     report_providers = [item for item in GEOGRAPHY_PROVIDER_ORDER if any(result.provider == item for result in results)]
     return GeographyLiveReport(
-        generated_at=datetime.now(timezone.utc).isoformat(),
+        generated_at=datetime.now(UTC).isoformat(),
         providers=report_providers,
         per_provider_limit=per_provider,
         total_attempts=len(results),

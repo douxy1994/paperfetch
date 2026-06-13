@@ -172,8 +172,7 @@ class InstallerSmokeTests(unittest.TestCase):
             cwd=repo_dir,
             env=env,
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
         return repo_dir, sandbox, log_path
@@ -188,8 +187,7 @@ class InstallerSmokeTests(unittest.TestCase):
             ["bash", str(repo_dir / "install.sh"), "--help"],
             cwd=repo_dir,
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
 
@@ -219,8 +217,7 @@ class InstallerSmokeTests(unittest.TestCase):
             cwd=repo_dir,
             env=env,
             check=False,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
 
@@ -261,8 +258,7 @@ class InstallerSmokeTests(unittest.TestCase):
             cwd=repo_dir,
             env=env,
             check=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             text=True,
         )
 

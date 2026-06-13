@@ -5,7 +5,8 @@ from __future__ import annotations
 import html
 import re
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..extraction.html.parsing import choose_parser
 from ..extraction.html.ui_tokens import DOWNLOAD_PDF_LABEL

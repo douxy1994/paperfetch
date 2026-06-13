@@ -95,8 +95,8 @@ def import_provider_entry_modules() -> tuple[str, ...]:
     if imported:
         provider_catalog = sys.modules.get("paper_fetch.provider_catalog")
         if provider_catalog is not None:
-            setattr(provider_catalog, "_PROVIDER_CATALOG_CACHE", None)
-            setattr(provider_catalog, "_SOURCE_PROVIDER_MAP_CACHE", None)
+            provider_catalog._PROVIDER_CATALOG_CACHE = None
+            provider_catalog._SOURCE_PROVIDER_MAP_CACHE = None
     _PROVIDER_ENTRY_IMPORTS_COMPLETE = True
     return tuple(imported)
 

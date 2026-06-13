@@ -15,7 +15,8 @@ import subprocess
 import sys
 import urllib.parse
 from pathlib import Path
-from typing import Any, Mapping, NamedTuple
+from typing import Any, NamedTuple
+from collections.abc import Mapping
 
 from bs4 import BeautifulSoup
 import yaml
@@ -4338,7 +4339,11 @@ def _markdown_repair_brief(
             "evidence": issue.get("evidence"),
             "domain": domain,
         }
-        for issue, domain in zip(issues, domains + [domains[-1]] * max(0, len(issues) - len(domains)))
+        for issue, domain in zip(
+            issues,
+            domains + [domains[-1]] * max(0, len(issues) - len(domains)),
+            strict=False,
+        )
     ]
     return {
         "task_id": f"{ctx.provider}-{REPAIR_MARKDOWN_QUALITY_STEP}-{ctx.sample_id}",

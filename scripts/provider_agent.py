@@ -13,7 +13,8 @@ import io
 import json
 from pathlib import Path
 import sys
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 
 SCRIPT_DIR = Path(__file__).resolve().parent

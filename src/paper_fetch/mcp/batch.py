@@ -7,7 +7,8 @@ from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import ExitStack
 from functools import partial
 import threading
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from mcp.server.fastmcp import Context
 from mcp.types import CallToolResult

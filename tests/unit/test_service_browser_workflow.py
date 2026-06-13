@@ -360,7 +360,7 @@ class ServiceBrowserWorkflowTests(unittest.TestCase):
                     paper_fetch.resolve_paper = lambda *args, _resolved=resolved, **kwargs: _resolved
                     with tempfile.TemporaryDirectory() as tmpdir:
                         asset_path = Path(tmpdir) / case["asset_name"]
-                        asset_path.write_bytes(f"{case['provider_name']}-figure".encode("utf-8"))
+                        asset_path.write_bytes(f"{case['provider_name']}-figure".encode())
                         envelope = _fetch_paper(
                             case["doi"],
                             modes={"article", "markdown"},

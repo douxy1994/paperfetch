@@ -78,7 +78,7 @@ class _DelayedAssetTransport(HttpTransport):
             return {
                 "status_code": 200,
                 "headers": {"content-type": "image/png"},
-                "body": b"\x89PNG\r\n\x1a\n" + f"payload:{url}".encode("utf-8"),
+                "body": b"\x89PNG\r\n\x1a\n" + f"payload:{url}".encode(),
                 "url": url,
             }
         finally:
@@ -1126,7 +1126,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
                 return {
                     "status_code": 200,
                     "headers": {"content-type": "application/pdf"},
-                    "body": f"payload:{url}".encode("utf-8"),
+                    "body": f"payload:{url}".encode(),
                     "url": url,
                 }
             finally:
@@ -1179,7 +1179,7 @@ class SharedHtmlHelperTests(unittest.TestCase):
                 return {
                     "status_code": 200,
                     "headers": {"content-type": "application/pdf"},
-                    "body": f"payload:{url}".encode("utf-8"),
+                    "body": f"payload:{url}".encode(),
                     "url": url,
                 }
             finally:

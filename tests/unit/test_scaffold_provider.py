@@ -152,8 +152,7 @@ assert bundle.html_rules.availability.no_signals is True
         ],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
     )
     assert probe.returncode == 0, probe.stderr
@@ -212,8 +211,7 @@ def test_scaffold_provider_refuses_existing_files_and_manifest_samples(
         ],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
     assert result.returncode == 2
@@ -251,8 +249,7 @@ assert module.NewpubClient.waterfall_steps[1].label == "html"
         ],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
     )
     assert probe.returncode == 0, probe.stderr

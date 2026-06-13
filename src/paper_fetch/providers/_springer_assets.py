@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from bs4 import BeautifulSoup, Tag
 
@@ -583,11 +584,11 @@ def download_assets_for_springer(
 
 __all__ = [
     "SPRINGER_SUPPLEMENTARY_SECTION_TITLES",
+    "download_assets_for_springer",
     "extract_asset_html_scopes",
-    "extract_source_data_html_scope",
-    "extract_springer_table_image_url",
     "extract_html_assets",
     "extract_scoped_html_assets",
-    "download_assets_for_springer",
+    "extract_source_data_html_scope",
+    "extract_springer_table_image_url",
     "figure_download_candidates",
 ]

@@ -12,12 +12,14 @@ import time
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
 
 if TYPE_CHECKING:
     from cachetools import TTLCache
 
 from ..provider_catalog import provider_sensitive_header_names
+import contextlib
 
 DEFAULT_CACHE_TTL_SECONDS = 30
 DEFAULT_METADATA_CACHE_TTL_SECONDS = 86400
@@ -151,7 +153,7 @@ class CacheMixin:
     def _normalize_header_value_for_cache(self, key: str, value: str) -> str:
         normalized_key = key.lower()
         if normalized_key in _sensitive_cache_header_names():
-            digest = hashlib.sha256(f"{normalized_key}\0{value}".encode("utf-8")).hexdigest()[:16]
+            digest = hashlib.sha256(f"{normalized_key}\0{value}".encode()).hexdigest()[:16]
             return f"{REDACTED_CACHE_HEADER_DIGEST_PREFIX}{digest}"
         if normalized_key in UNSTABLE_CACHE_HEADER_NAMES:
             return "<volatile>"
@@ -222,10 +224,8 @@ class CacheMixin:
             return
         except OSError:
             return
-        try:
+        with contextlib.suppress(OSError):
             path.parent.rmdir()
-        except OSError:
-            pass
 
     def _disk_cache_entry_from_path(self, path: Path) -> _DiskCacheEntry | None:
         try:

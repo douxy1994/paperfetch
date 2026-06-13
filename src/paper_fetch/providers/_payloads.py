@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..tracing import trace_from_markers
 from .base import ProviderContent, ProviderFailure, RawFulltextPayload

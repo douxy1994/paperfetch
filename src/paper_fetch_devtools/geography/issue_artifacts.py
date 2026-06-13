@@ -7,7 +7,8 @@ from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 import time
-from typing import Any, Mapping, Sequence
+from typing import Any
+from collections.abc import Mapping, Sequence
 
 from paper_fetch.config import build_runtime_env, resolve_repo_root
 from paper_fetch.http import HttpTransport

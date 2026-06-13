@@ -11,7 +11,8 @@ import threading
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..common_patterns import WORD_TOKEN_PATTERN
 from ..http import PDF_ACCEPT_HEADER, is_pdf_content_type

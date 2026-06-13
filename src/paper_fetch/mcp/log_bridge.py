@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from mcp.server.fastmcp import Context
 
@@ -110,7 +111,7 @@ class PaperFetchLogBridge:
         self._handler = StructuredLogNotificationHandler(ctx=ctx, loop=loop)
         self._logger_states: list[tuple[logging.Logger, int]] = []
 
-    def __enter__(self) -> "PaperFetchLogBridge":
+    def __enter__(self) -> PaperFetchLogBridge:
         for logger_name in _FETCH_LOGGER_NAMES:
             logger = logging.getLogger(logger_name)
             self._logger_states.append((logger, logger.level))

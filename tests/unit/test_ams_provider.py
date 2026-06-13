@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 import re
 import tempfile
@@ -58,7 +58,7 @@ def _equation_labels(markdown: str) -> list[str]:
     return re.findall(r"\*\*Equation ([0-9]+[A-Za-z]?)\.\*\*", markdown)
 
 
-@lru_cache(maxsize=None)
+@cache
 def _extract_fixture_markdown(doi: str) -> tuple[str, dict[str, object]]:
     return extract_atypon_browser_workflow_markdown(
         _fixture_html(doi),

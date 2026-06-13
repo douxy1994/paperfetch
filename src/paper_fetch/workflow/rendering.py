@@ -6,7 +6,8 @@ import os
 import re
 import urllib.parse
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..artifacts import ArtifactStore
 from ..markdown.images import render_markdown_image

@@ -6,7 +6,8 @@ import copy
 from dataclasses import dataclass
 import re
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 

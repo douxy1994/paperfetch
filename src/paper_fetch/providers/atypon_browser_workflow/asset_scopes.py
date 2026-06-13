@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import copy
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ...extraction.html import assets as _html_asset_impl
 from ...extraction.html.parsing import choose_parser
@@ -220,10 +221,10 @@ def extract_atypon_browser_workflow_supplementary_section_asset_html_scopes(
 
 
 __all__ = [
-    "ATYPON_BROWSER_WORKFLOW_SUPPLEMENTARY_SECTION_SELECTORS",
     "ATYPON_BROWSER_WORKFLOW_SUPPLEMENTARY_HEADING_KEYS",
-    "extract_supplementary_assets",
-    "extract_scoped_html_assets",
-    "extract_browser_workflow_asset_html_scopes",
+    "ATYPON_BROWSER_WORKFLOW_SUPPLEMENTARY_SECTION_SELECTORS",
     "extract_atypon_browser_workflow_supplementary_section_asset_html_scopes",
+    "extract_browser_workflow_asset_html_scopes",
+    "extract_scoped_html_assets",
+    "extract_supplementary_assets",
 ]

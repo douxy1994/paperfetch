@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 from urllib.parse import quote, urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
@@ -794,12 +795,12 @@ def iop_asset_figure_extraction(container: Any) -> None:
 
 __all__ = [
     "IOP_ACCESS_BLOCK_TEXT_TOKENS",
+    "IOP_DISPLAY_FORMULA_SELECTORS",
     "IOP_EXTRACTION_CLEANUP_SELECTORS",
+    "IOP_FORMULA_CONTAINER_TOKENS",
     "IOP_FRONT_MATTER_CONTAINS_TOKENS",
     "IOP_FRONT_MATTER_EXACT_TEXTS",
     "IOP_FRONT_MATTER_PUBLICATION_KEYWORDS",
-    "IOP_FORMULA_CONTAINER_TOKENS",
-    "IOP_DISPLAY_FORMULA_SELECTORS",
     "IOP_MARKDOWN_PROMO_TOKENS",
     "IOP_NOISE_PROFILE",
     "IOP_POST_CONTENT_BREAK_TOKENS",

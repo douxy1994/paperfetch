@@ -6,7 +6,8 @@ import http.cookiejar
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ....http import RequestFailure, classify_network_error
 from ....models import normalize_text

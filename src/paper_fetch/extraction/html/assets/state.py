@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping, TypeVar
+from typing import Any, TypeVar
+from collections.abc import Callable, Mapping
 
 from ....config import DEFAULT_ASSET_DOWNLOAD_CONCURRENCY
 

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from ...common_patterns import HEADING_LEVEL_PATTERN, REFERENCE_TOKEN_VOCABULARY
 from ...section_vocab import MARKDOWN_ABSTRACT_HEADINGS

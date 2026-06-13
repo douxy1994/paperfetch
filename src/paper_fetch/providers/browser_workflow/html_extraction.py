@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Mapping
 
 from ...extraction.html.assets import extract_scoped_html_assets
 from ...extraction.html.signals import HtmlExtractionFailure, detect_html_block, summarize_html
@@ -43,6 +44,7 @@ from ..atypon_browser_workflow import (
     rewrite_inline_figure_links,
 )
 from ..base import ProviderContent, RawFulltextPayload
+import contextlib
 
 logger = logging.getLogger("paper_fetch.providers.browser_workflow")
 
@@ -65,23 +67,23 @@ _FAST_BROWSER_HTML_RETRY_KINDS = {
 }
 
 __all__ = [
+    "_FAST_BROWSER_HTML_RETRY_KINDS",
     "_FAST_BROWSER_HTML_TIMEOUT_MS",
     "_FAST_BROWSER_HTML_WAIT_SECONDS",
     "_FAST_BROWSER_HTML_WARM_WAIT_SECONDS",
-    "_FAST_BROWSER_HTML_RETRY_KINDS",
     "_browser_workflow_html_payload",
     "_cached_browser_workflow_assets",
     "_cached_browser_workflow_markdown",
     "_fetch_browser_html_payload",
     "_fetch_browser_html_payload_with_fast_path",
-    "extract_browser_workflow_asset_html_scopes",
     "extract_atypon_browser_workflow_markdown",
+    "extract_browser_workflow_asset_html_scopes",
     "fetch_html_with_fast_browser",
     "rewrite_inline_figure_links",
 ]
 
 def _cached_browser_workflow_markdown(
-    client: "BrowserWorkflowClient",
+    client: BrowserWorkflowClient,
     html_text: str,
     final_url: str,
     *,
@@ -113,7 +115,7 @@ def _cached_browser_workflow_markdown(
 
 
 def _cached_browser_workflow_assets(
-    client: "BrowserWorkflowClient",
+    client: BrowserWorkflowClient,
     html_text: str,
     source_url: str,
     *,
@@ -198,15 +200,11 @@ def fetch_html_with_fast_browser(
                     return
                 route.continue_()
             except Exception:
-                try:
+                with contextlib.suppress(Exception):
                     route.continue_()
-                except Exception:
-                    pass
 
-        try:
+        with contextlib.suppress(Exception):
             page.route("**/*", route_handler)
-        except Exception:
-            pass
 
         for url in candidate_urls:
             normalized_url = normalize_text(url)
@@ -276,15 +274,11 @@ def fetch_html_with_fast_browser(
         for value in (page, browser_context):
             if value is None:
                 continue
-            try:
+            with contextlib.suppress(Exception):
                 value.close()
-            except Exception:
-                pass
         if manager is not None:
-            try:
+            with contextlib.suppress(Exception):
                 manager.close()
-            except Exception:
-                pass
 
     if last_failure is not None:
         raise last_failure
@@ -295,7 +289,7 @@ fetch_html_with_fast_browser.paper_fetch_html_fetcher_name = "cloakbrowser_fast"
 
 
 def _browser_workflow_html_payload(
-    client: "BrowserWorkflowClient",
+    client: BrowserWorkflowClient,
     html_result: BrowserFetchedHtml,
     *,
     markdown_text: str,
@@ -330,7 +324,7 @@ def _browser_workflow_html_payload(
 
 
 def _fetch_browser_html_payload(
-    client: "BrowserWorkflowClient",
+    client: BrowserWorkflowClient,
     html_candidates: list[str],
     *,
     runtime,
@@ -360,7 +354,7 @@ def _fetch_browser_html_payload(
             context=context,
         )
     except HtmlExtractionFailure as exc:
-        setattr(exc, "html_result", html_result)
+        exc.html_result = html_result
         raise
     fetcher_attr = getattr(html_fetcher, "paper_fetch_html_fetcher_name", None)
     fetcher_name = (
@@ -387,7 +381,7 @@ def _should_retry_fast_browser_failure(exc: Exception) -> bool:
 
 
 def _fetch_browser_html_payload_with_fast_path(
-    client: "BrowserWorkflowClient",
+    client: BrowserWorkflowClient,
     html_candidates: list[str],
     *,
     runtime,

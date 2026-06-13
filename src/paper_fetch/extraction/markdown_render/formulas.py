@@ -19,6 +19,7 @@ from ...utils import normalize_text
 from ._ir import MarkdownFormula
 
 from bs4 import Tag
+import contextlib
 
 
 def render_formula(formula: MarkdownFormula) -> list[str]:
@@ -82,10 +83,8 @@ def html_formula_latex_from_node(node: Any) -> str:
         if is_tex_formula_script_node(candidate)
     )
     candidates.extend(candidate for candidate in node.find_all("tex-math") if isinstance(candidate, Tag))
-    try:
+    with contextlib.suppress(Exception):
         candidates.extend(candidate for candidate in node.select(".mathjax-tex, .tex, .tex2jax_ignore") if isinstance(candidate, Tag))
-    except Exception:
-        pass
     seen: set[int] = set()
     for candidate in candidates:
         identity = id(candidate)

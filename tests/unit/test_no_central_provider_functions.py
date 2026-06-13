@@ -53,7 +53,7 @@ class ProviderBranchVisitor(ast.NodeVisitor):
             if not isinstance(child, ast.Compare):
                 continue
             nodes = (child.left, *child.comparators)
-            for left, operator, right in zip(nodes, child.ops, nodes[1:]):
+            for left, operator, right in zip(nodes, child.ops, nodes[1:], strict=False):
                 if not isinstance(operator, ast.Eq):
                     continue
                 provider = self._provider_literal(left) or self._provider_literal(right)

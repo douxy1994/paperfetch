@@ -10,7 +10,8 @@ import logging
 import os
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Mapping
+from typing import TYPE_CHECKING, Any
+from collections.abc import Mapping
 
 from bs4 import BeautifulSoup
 
@@ -58,6 +59,7 @@ from .browser_workflow.fetchers.context import (
 from .browser_workflow.fetchers.readiness import wait_for_atypon_body_dom_ready
 from .browser_workflow.fetchers.scripts import _LOADED_IMAGE_CANVAS_EXPORT_SCRIPT
 from .browser_workflow.shared import BROWSER_HTML_BLOCKED_RESOURCE_TYPES
+import contextlib
 
 if TYPE_CHECKING:
     from ..runtime import RuntimeContext
@@ -475,17 +477,13 @@ def _payload_from_canvas_export(
 
 
 def _clear_image_payload_failure(page: Any) -> None:
-    try:
+    with contextlib.suppress(Exception):
         delattr(page, _IMAGE_PAYLOAD_FAILURE_ATTR)
-    except Exception:
-        pass
 
 
 def _record_image_payload_failure(page: Any, values: Mapping[str, Any]) -> None:
-    try:
+    with contextlib.suppress(Exception):
         setattr(page, _IMAGE_PAYLOAD_FAILURE_ATTR, dict(values))
-    except Exception:
-        pass
 
 
 def _capture_image_payload(
@@ -605,10 +603,8 @@ def _context_seed(context: Any, *, final_url: str, user_agent: str | None) -> di
 def _safe_close(value: Any) -> None:
     if value is None:
         return
-    try:
+    with contextlib.suppress(Exception):
         value.close()
-    except Exception:
-        pass
 
 
 def _storage_state_path(config: CloakBrowserRuntimeConfig) -> Path | None:
@@ -705,16 +701,12 @@ def fetch_html_with_cloakbrowser(
                     return
                 route.continue_()
             except Exception:
-                try:
+                with contextlib.suppress(Exception):
                     route.continue_()
-                except Exception:
-                    pass
 
         if disable_media:
-            try:
+            with contextlib.suppress(Exception):
                 page.route("**/*", route_handler)
-            except Exception:
-                pass
 
         for url in candidate_urls:
             normalized_url = normalize_text(url)
@@ -731,13 +723,11 @@ def fetch_html_with_cloakbrowser(
                 response = None
                 top_level_response = None
                 if return_image_payload:
-                    try:
+                    with contextlib.suppress(Exception):
                         setattr(page, _IMAGE_PAYLOAD_TIMEOUT_ATTR, timeout_ms)
-                    except Exception:
-                        pass
                     try:
                         with page.expect_response(
-                            lambda candidate_response: normalize_text(
+                            lambda candidate_response, normalized_url=normalized_url: normalize_text(
                                 str(getattr(candidate_response, "url", "") or "")
                             )
                             == normalized_url,
@@ -765,10 +755,8 @@ def fetch_html_with_cloakbrowser(
                 if top_level_response is None:
                     top_level_response = response
                 if return_image_payload:
-                    try:
+                    with contextlib.suppress(Exception):
                         setattr(page, _IMAGE_PAYLOAD_RESPONSE_ATTR, top_level_response)
-                    except Exception:
-                        pass
                 readiness = None
                 if not return_image_payload:
                     remaining_timeout_seconds = max(
@@ -895,10 +883,8 @@ def fetch_html_with_cloakbrowser(
     if last_failure is None:
         last_failure = CloakBrowserFailure("empty_html_attempts", "No publisher HTML candidates were attempted.")
     if artifact_dir:
-        try:
+        with contextlib.suppress(OSError):
             artifact_dir.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            pass
     raise last_failure
 
 

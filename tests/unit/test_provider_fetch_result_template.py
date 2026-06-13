@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 from paper_fetch.artifacts import ArtifactStore
 from paper_fetch.models import article_from_markdown

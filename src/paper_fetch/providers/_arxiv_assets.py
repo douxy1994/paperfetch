@@ -6,7 +6,8 @@ import gzip
 import io
 from pathlib import Path
 import tarfile
-from typing import Any, Mapping, Sequence
+from typing import Any
+from collections.abc import Mapping, Sequence
 import re
 import urllib.parse
 import zipfile

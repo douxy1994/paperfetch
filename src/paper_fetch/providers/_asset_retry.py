@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Collection, Mapping, Sequence
+from typing import Any
+from collections.abc import Callable, Collection, Mapping, Sequence
 
 from ..utils import normalize_text
 from ._retry_categories import (

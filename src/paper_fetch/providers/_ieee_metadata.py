@@ -7,7 +7,8 @@ from dataclasses import dataclass
 import html as html_lib
 import json
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS
 from ..metadata.types import MetadataMergeRule, merge_metadata_layers

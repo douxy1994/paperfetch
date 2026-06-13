@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import logging
 import threading
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from ....logging_utils import emit_structured_log
 from ....runtime import RuntimeContext
@@ -17,6 +18,7 @@ from .diagnostics import (
     _context_failure_diagnostic as _build_context_failure_diagnostic,
     _copy_failure_diagnostic,
 )
+import contextlib
 
 logger = logging.getLogger("paper_fetch.providers.browser_workflow")
 
@@ -128,22 +130,16 @@ class _BaseBrowserDocumentFetcher:
 
     def close(self) -> None:
         if self._page is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._page.close()
-            except Exception:
-                pass
             self._page = None
         if self._context is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._context.close()
-            except Exception:
-                pass
             self._context = None
         if self._browser_manager is not None:
-            try:
+            with contextlib.suppress(Exception):
                 self._browser_manager.close()
-            except Exception:
-                pass
             self._browser_manager = None
 
     def _current_seed(self) -> Mapping[str, Any]:
@@ -189,10 +185,8 @@ class _BaseBrowserDocumentFetcher:
         cookies = list(self._current_seed().get("browser_cookies") or [])
         if not cookies:
             return
-        try:
+        with contextlib.suppress(Exception):
             self._context.add_cookies(cookies)
-        except Exception:
-            pass
 
     def _seed_urls(self) -> list[str]:
         return dedupe_normalized(self._seed_urls_getter())
@@ -304,10 +298,8 @@ class _ThreadLocalSharedDocumentFetcher:
             with self._lock:
                 self._fetchers = [item for item in self._fetchers if item is not fetcher]
             if getattr(self._thread_local, "fetcher", None) is fetcher:
-                try:
+                with contextlib.suppress(AttributeError):
                     delattr(self._thread_local, "fetcher")
-                except AttributeError:
-                    pass
 
     def close(self) -> None:
         with self._lock:

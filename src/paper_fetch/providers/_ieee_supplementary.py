@@ -7,7 +7,8 @@ import json
 import re
 import urllib.parse
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..config import resolve_asset_download_concurrency
 from ..extraction.html import decode_html

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from functools import partial
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from bs4 import BeautifulSoup, Tag
 
@@ -196,10 +197,10 @@ def scoped_asset_extractor(*args: Any, **kwargs: Any) -> list[dict[str, str]]:
 
 __all__ = [
     "ATYPON_AUTHOR_NOISE_TEXT",
-    "extract_authors",
-    "extract_references",
     "acs_before_block_normalization",
     "acs_body_container",
+    "extract_authors",
+    "extract_references",
     "finalize_extraction",
     "scoped_asset_extractor",
 ]

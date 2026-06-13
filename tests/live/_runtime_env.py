@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.util
 import tempfile
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 from paper_fetch.config import build_runtime_env
 

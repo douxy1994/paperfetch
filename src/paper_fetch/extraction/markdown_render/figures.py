@@ -193,7 +193,7 @@ def html_figure_label_from_node(node: Any) -> str:
         label = normalize_text(label_node.get_text(" ", strip=True))
         if label:
             return label
-    current = node
+    current: Tag | None = node
     while isinstance(current, Tag):
         identity = html_node_attr_text(current)
         match = FIGURE_ID_PATTERN.search(identity)

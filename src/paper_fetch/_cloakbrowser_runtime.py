@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import threading
 from typing import Any
+import contextlib
 
 
 _SUPPRESS_LOCK = threading.Lock()
@@ -21,10 +22,8 @@ def suppress_cloakbrowser_welcome(cloakbrowser: Any) -> None:
         except Exception:
             cloakbrowser_download = getattr(cloakbrowser, "download", None)
         if cloakbrowser_download is not None:
-            try:
+            with contextlib.suppress(Exception):
                 cloakbrowser_download._show_welcome = lambda: None
-            except Exception:
-                pass
         _WELCOME_SUPPRESSED = True
 
 

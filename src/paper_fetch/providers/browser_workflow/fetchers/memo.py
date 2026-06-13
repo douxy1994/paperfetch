@@ -5,7 +5,8 @@ from __future__ import annotations
 import logging
 import threading
 from concurrent.futures import Future
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from ....logging_utils import emit_structured_log
 from ....utils import normalize_text

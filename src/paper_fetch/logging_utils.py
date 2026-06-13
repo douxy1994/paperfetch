@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 
 def _render_log_value(value: Any) -> str:

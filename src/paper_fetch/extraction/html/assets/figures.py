@@ -5,7 +5,8 @@ from __future__ import annotations
 import urllib.parse
 from html.parser import HTMLParser
 import re
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from ....http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
 from ....models import normalize_text
@@ -624,8 +625,8 @@ def resolve_figure_download_url(
 
 
 __all__ = [
-    "FigurePageFetcher",
     "NOISY_IMAGE_ALT_TEXTS",
+    "FigurePageFetcher",
     "clean_noisy_image_alt_text",
     "extract_figure_assets",
     "extract_full_size_figure_image_url",

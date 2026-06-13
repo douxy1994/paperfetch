@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ...extraction.html.figure_links import (
     inject_inline_figure_links,
@@ -215,7 +216,7 @@ def _semantic_match_text(value: str) -> str:
 
 def _shared_prefix_word_count(left_words: list[str], right_words: list[str]) -> int:
     count = 0
-    for left_word, right_word in zip(left_words, right_words):
+    for left_word, right_word in zip(left_words, right_words, strict=False):
         if left_word != right_word:
             break
         count += 1

@@ -8,7 +8,8 @@ import json
 import re
 import urllib.parse
 from dataclasses import asdict, dataclass, field
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from rapidfuzz import fuzz
 

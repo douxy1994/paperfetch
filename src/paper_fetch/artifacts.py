@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import json
 from pathlib import Path
-from typing import Any, Literal, Mapping
+from typing import Any, Literal
+from collections.abc import Mapping
 
 from .extraction.html.assets.dom import preview_dimensions_are_acceptable
 from .models import AssetProfile
@@ -22,6 +23,7 @@ from .utils import (
     provider_display_name,
     safe_text,
 )
+import contextlib
 
 
 ArtifactMode = Literal["markdown-assets", "all", "none"]
@@ -83,7 +85,7 @@ class ArtifactStore:
         download_dir: Path | None,
         *,
         artifact_mode: ArtifactMode = DEFAULT_ARTIFACT_MODE,
-    ) -> "ArtifactStore":
+    ) -> ArtifactStore:
         return cls(DownloadPolicy(download_dir=download_dir, artifact_mode=artifact_mode))
 
     @property
@@ -117,10 +119,8 @@ class ArtifactStore:
             tmp_path.write_text(text, encoding=encoding)
             tmp_path.replace(path)
         except Exception:
-            try:
+            with contextlib.suppress(OSError):
                 tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
             raise
         return path
 
@@ -131,10 +131,8 @@ class ArtifactStore:
             tmp_path.write_bytes(body)
             tmp_path.replace(path)
         except Exception:
-            try:
+            with contextlib.suppress(OSError):
                 tmp_path.unlink(missing_ok=True)
-            except OSError:
-                pass
             raise
         return path
 
@@ -298,8 +296,8 @@ def _is_pdf_fallback_content(content: Any) -> bool:
 
 
 __all__ = [
-    "ArtifactMode",
     "DEFAULT_ARTIFACT_MODE",
-    "DownloadPolicy",
+    "ArtifactMode",
     "ArtifactStore",
+    "DownloadPolicy",
 ]

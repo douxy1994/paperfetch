@@ -4,7 +4,8 @@ from collections.abc import Iterator, Mapping as MappingABC
 from dataclasses import asdict, dataclass
 import importlib
 from types import MappingProxyType
-from typing import Any, Callable, Literal
+from typing import Any, Literal
+from collections.abc import Callable
 AssetDefault = Literal["none", "body", "all"]
 MetadataProbeShortCircuit = Callable[[str], dict | None]
 @dataclass(frozen=True)

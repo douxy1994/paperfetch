@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ....models import normalize_text
 

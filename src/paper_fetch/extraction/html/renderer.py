@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from bs4 import BeautifulSoup, Tag
 
@@ -147,11 +148,11 @@ def render_provider_html_fragment(
 
 
 __all__ = [
-    "HtmlMarkdownRenderer",
     "HtmlMarkdownRenderFn",
+    "HtmlMarkdownRenderer",
     "MarkdownPostprocessor",
     "RenderedHtmlFragment",
     "clean_rendered_markdown",
-    "render_provider_html_fragment",
     "render_html_markdown",
+    "render_provider_html_fragment",
 ]

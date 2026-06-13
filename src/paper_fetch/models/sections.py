@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 from collections.abc import Sequence
 from difflib import SequenceMatcher
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..extraction.section_hints import (
     SECTION_HINT_KINDS,
@@ -119,7 +120,7 @@ def _should_preserve_empty_parent_section(heading: str, current_level: int, next
     return section_kind_for_heading(normalized) == "body"
 
 
-def section_priority(section: "Section") -> int:
+def section_priority(section: Section) -> int:
     normalized = normalize_text(section.heading).lower()
     if normalized in SECTION_PRIORITY:
         return SECTION_PRIORITY[normalized]
@@ -133,7 +134,7 @@ def _normalized_text_field(value: Any) -> str:
     return normalize_text(value) if isinstance(value, str) else ""
 
 
-def filtered_body_sections(sections: Sequence["Section"]) -> list["Section"]:
+def filtered_body_sections(sections: Sequence[Section]) -> list[Section]:
     return [
         section
         for section in sections
@@ -142,7 +143,7 @@ def filtered_body_sections(sections: Sequence["Section"]) -> list["Section"]:
     ]
 
 
-def renderable_body_sections(sections: Sequence["Section"]) -> list["Section"]:
+def renderable_body_sections(sections: Sequence[Section]) -> list[Section]:
     renderable: list[Section] = []
     section_list = list(sections)
     for index, section in enumerate(section_list):
@@ -166,7 +167,7 @@ def renderable_body_sections(sections: Sequence["Section"]) -> list["Section"]:
     return renderable
 
 
-def abstract_sections(sections: Sequence["Section"]) -> list["Section"]:
+def abstract_sections(sections: Sequence[Section]) -> list[Section]:
     return [
         section
         for section in sections
@@ -175,7 +176,7 @@ def abstract_sections(sections: Sequence["Section"]) -> list["Section"]:
     ]
 
 
-def first_abstract_text(*, abstract_text: str | None, sections: Sequence["Section"]) -> str:
+def first_abstract_text(*, abstract_text: str | None, sections: Sequence[Section]) -> str:
     section_abstract = next(
         (
             strip_markdown_images(section.text)
@@ -189,7 +190,7 @@ def first_abstract_text(*, abstract_text: str | None, sections: Sequence["Sectio
     return normalize_text(abstract_text)
 
 
-def combine_abstract_text(*, abstract_text: str | None, sections: Sequence["Section"]) -> str:
+def combine_abstract_text(*, abstract_text: str | None, sections: Sequence[Section]) -> str:
     texts: list[str] = []
     seen: set[str] = set()
     for candidate in [normalize_text(abstract_text), *[strip_markdown_images(section.text) for section in abstract_sections(sections)]]:
@@ -205,8 +206,8 @@ def combine_abstract_text(*, abstract_text: str | None, sections: Sequence["Sect
 
 
 def split_leading_abstract_context_sections(
-    sections: Sequence["Section"],
-) -> tuple[tuple["Section", ...], tuple["Section", ...]]:
+    sections: Sequence[Section],
+) -> tuple[tuple[Section, ...], tuple[Section, ...]]:
     lead_sections: list[Section] = []
     remaining_index = 0
     for index, section in enumerate(sections):
@@ -630,25 +631,25 @@ def split_leading_inline_abstract(sections: Sequence[Section]) -> tuple[str | No
 
 
 __all__ = [
-    "BODY_SECTION_EXCLUDED_KINDS",
-    "RETAINED_NON_BODY_SECTION_KINDS",
-    "PRESERVE_EMPTY_PARENT_SECTION_HEADINGS",
-    "SECTION_PRIORITY",
-    "LEADING_ABSTRACT_CONTEXT_HEADINGS",
-    "ABSTRACT_NEAR_DUPLICATE_SIMILARITY_THRESHOLD",
     "ABSTRACT_NEAR_DUPLICATE_MAX_LENGTH_DELTA",
-    "BODY_ABSTRACT_PARAGRAPH_NEAR_DUPLICATE_SIMILARITY_THRESHOLD",
+    "ABSTRACT_NEAR_DUPLICATE_SIMILARITY_THRESHOLD",
     "BODY_ABSTRACT_PARAGRAPH_NEAR_DUPLICATE_MAX_LENGTH_DELTA",
+    "BODY_ABSTRACT_PARAGRAPH_NEAR_DUPLICATE_SIMILARITY_THRESHOLD",
+    "BODY_SECTION_EXCLUDED_KINDS",
+    "LEADING_ABSTRACT_CONTEXT_HEADINGS",
+    "PRESERVE_EMPTY_PARENT_SECTION_HEADINGS",
+    "RETAINED_NON_BODY_SECTION_KINDS",
+    "SECTION_PRIORITY",
+    "abstract_sections",
+    "combine_abstract_text",
+    "filtered_body_sections",
+    "first_abstract_text",
+    "lines_to_sections",
+    "normalize_abstract_text",
+    "normalize_authors",
+    "renderable_body_sections",
     "section_kind_for_heading",
     "section_priority",
-    "filtered_body_sections",
-    "renderable_body_sections",
-    "abstract_sections",
-    "first_abstract_text",
-    "combine_abstract_text",
     "split_leading_abstract_context_sections",
-    "lines_to_sections",
     "split_leading_inline_abstract",
-    "normalize_authors",
-    "normalize_abstract_text",
 ]

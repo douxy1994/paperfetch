@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import math
 from collections.abc import Sequence
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..utils import normalize_text
 from .markdown import normalize_markdown_text, strip_markdown_images
@@ -58,8 +59,8 @@ def coerce_token_estimate_breakdown(
 def build_token_estimate_breakdown(
     *,
     abstract_text: str | None,
-    sections: Sequence["Section"],
-    references: Sequence["Reference"],
+    sections: Sequence[Section],
+    references: Sequence[Reference],
 ) -> TokenEstimateBreakdown:
     abstract = estimate_tokens(combine_abstract_text(abstract_text=abstract_text, sections=sections) or "")
     body = estimate_tokens(
@@ -75,10 +76,10 @@ def build_token_estimate_breakdown(
 
 __all__ = [
     "TRUNCATION_WARNING",
-    "estimate_tokens",
-    "estimate_normalized_tokens",
-    "truncate_text_to_tokens",
-    "normalize_token_budget",
-    "coerce_token_estimate_breakdown",
     "build_token_estimate_breakdown",
+    "coerce_token_estimate_breakdown",
+    "estimate_normalized_tokens",
+    "estimate_tokens",
+    "normalize_token_budget",
+    "truncate_text_to_tokens",
 ]

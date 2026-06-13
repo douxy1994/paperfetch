@@ -33,6 +33,11 @@ live-downloads/
 .paper-fetch/
 .paper-fetch-runs/
 figures/.paper-fetch-mcp-cache.json
+# Ad-hoc batch debugging output (never referenced by code/tests/docs)
+failures/
+# Raw fetch artifacts dropped next to documentation figures
+figures/*_original.html
+figures/*.fetch-envelope.json
 problems.md
 problems_doc.md
 agent-surface-plan.md

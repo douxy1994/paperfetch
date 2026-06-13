@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..markdown.citations import normalize_inline_citation_markdown
 from ..publisher_identity import normalize_doi
@@ -70,7 +71,7 @@ def _asset_from_entry(
     kind: str,
     heading_fallback: str,
     render_state: str | None = None,
-) -> "Asset":
+) -> Asset:
     link = entry.get("link")
     url = local_asset_link(link if link is not None else entry.get("url") or entry.get("source_url"))
     original_url = next(
@@ -451,10 +452,10 @@ def article_from_markdown(
 
 
 __all__ = [
-    "local_asset_link",
-    "build_metadata",
-    "metadata_only_article",
-    "build_references",
-    "article_from_structure",
     "article_from_markdown",
+    "article_from_structure",
+    "build_metadata",
+    "build_references",
+    "local_asset_link",
+    "metadata_only_article",
 ]

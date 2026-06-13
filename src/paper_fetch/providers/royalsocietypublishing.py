@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, Sequence
+from typing import Any
+from collections.abc import Mapping, Sequence
 from urllib.parse import urljoin
 
 from ..config import build_user_agent, resolve_asset_download_concurrency

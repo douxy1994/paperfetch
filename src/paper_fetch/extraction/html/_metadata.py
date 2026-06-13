@@ -6,7 +6,8 @@ import html
 import re
 import urllib.parse
 from html.parser import HTMLParser
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ...html_lookup import is_usable_html_lookup_title
 from ...metadata.types import HtmlLookupHints, HtmlMetadata

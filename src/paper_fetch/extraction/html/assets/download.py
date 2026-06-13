@@ -5,7 +5,8 @@ from __future__ import annotations
 import urllib.parse
 import urllib.request
 from pathlib import Path
-from typing import Any, Callable, Mapping, Sequence
+from typing import Any
+from collections.abc import Callable, Mapping, Sequence
 
 from ....http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
 from ....http.headers import header_value
@@ -679,16 +680,16 @@ def download_assets(
 
 
 __all__ = [
-    "_CLOUDFLARE_CHALLENGE_TOKENS",
-    "SUPPLEMENTARY_BLOCKING_TITLE_TOKENS",
+    "FIGURE_KIND",
     "SUPPLEMENTARY_BLOCKING_BODY_TOKENS",
-    "ImageDocumentFetcher",
+    "SUPPLEMENTARY_BLOCKING_TITLE_TOKENS",
+    "SUPPLEMENTARY_KIND",
+    "_CLOUDFLARE_CHALLENGE_TOKENS",
     "FileDocumentFetcher",
+    "ImageDocumentFetcher",
+    "_build_cookie_seeded_opener",
+    "_request_with_opener",
     "download_assets",
     "resolve_asset_download",
     "save_asset_resolution",
-    "_build_cookie_seeded_opener",
-    "_request_with_opener",
-    "FIGURE_KIND",
-    "SUPPLEMENTARY_KIND",
 ]

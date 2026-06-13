@@ -251,8 +251,7 @@ class OfflineInstallTests(unittest.TestCase):
             cwd=bundle,
             env=env,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
             check=False,
         )
 
@@ -444,8 +443,7 @@ class OfflineInstallTests(unittest.TestCase):
                     ),
                 ],
                 text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 check=False,
             )
             self.assertEqual(probe.returncode, 0, probe.stderr)
@@ -464,8 +462,7 @@ class OfflineInstallTests(unittest.TestCase):
                         ),
                     ],
                     text=True,
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
+                    capture_output=True,
                     check=False,
                 )
                 self.assertEqual(zsh_probe.returncode, 0, zsh_probe.stderr)
@@ -497,8 +494,7 @@ class OfflineInstallTests(unittest.TestCase):
                     ),
                 ],
                 text=True,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
+                capture_output=True,
                 check=False,
             )
             self.assertEqual(probe.returncode, 0, probe.stderr)

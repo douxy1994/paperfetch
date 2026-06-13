@@ -11,9 +11,9 @@ from .asset_scopes import (
 from .postprocess import rewrite_inline_figure_links
 
 __all__ = [
+    "extract_atypon_browser_workflow_markdown",
     "extract_browser_workflow_asset_html_scopes",
     "extract_browser_workflow_markdown",
-    "extract_atypon_browser_workflow_markdown",
     "extract_scoped_html_assets",
     "extract_supplementary_assets",
     "rewrite_inline_figure_links",

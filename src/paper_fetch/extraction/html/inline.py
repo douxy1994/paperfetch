@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Callable, Literal, Sequence
+from typing import Any, Literal
+from collections.abc import Callable, Sequence
 
 from ...markdown.citations import (
     NUMERIC_CITATION_SENTINEL_PREFIX,

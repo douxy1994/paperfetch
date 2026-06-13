@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from importlib import resources
-from typing import Any, Sequence
+from typing import Any
+from collections.abc import Sequence
 import html as html_lib
 import json
 import re

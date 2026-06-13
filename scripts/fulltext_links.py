@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from paper_fetch.http import HttpTransport, RequestFailure, build_text_preview
 from paper_fetch.providers.base import ProviderFailure, map_request_failure

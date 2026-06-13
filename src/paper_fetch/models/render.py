@@ -6,7 +6,8 @@ import math
 import re
 from collections.abc import Sequence
 from dataclasses import replace
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..common_patterns import EXTENDED_DATA_FIGURE_LABEL
 from ..markdown.images import render_markdown_image
@@ -54,11 +55,11 @@ FIGURE_CAPTION_LABEL_PREFIX_PATTERN = re.compile(
 )
 
 
-def asset_link(asset: "Asset") -> str:
+def asset_link(asset: Asset) -> str:
     return normalize_text(asset.path or asset.url)
 
 
-def is_table_like_figure_asset(asset: "Asset") -> bool:
+def is_table_like_figure_asset(asset: Asset) -> bool:
     for candidate in (asset.heading, asset.caption):
         normalized = normalize_text(candidate)
         if TABLE_LIKE_FIGURE_ASSET_PATTERN.match(normalized) or NATURE_TABLE_LIKE_FIGURE_ASSET_PATTERN.match(
@@ -102,7 +103,7 @@ def resolve_supplementary_mode(include_supplementary: bool | None, *, asset_prof
     return asset_profile == "all"
 
 
-def _build_article_header_block(article: "ArticleModel") -> RenderedBlock:
+def _build_article_header_block(article: ArticleModel) -> RenderedBlock:
     lines = ["---"]
     front_matter_fields = (
         ("title", article.metadata.title),
@@ -133,7 +134,7 @@ def _build_article_header_block(article: "ArticleModel") -> RenderedBlock:
 
 
 def _build_markdown_render_plan(
-    article: "ArticleModel",
+    article: ArticleModel,
     *,
     include_refs: str | None,
     include_figures: str | None,
@@ -226,7 +227,7 @@ def _append_abstract_with_budget(
 def _append_sections_with_budget(
     lines: list[str],
     *,
-    sections: tuple["Section", ...],
+    sections: tuple[Section, ...],
     level_shift: int,
     context: RenderContext,
     preserve_source_order: bool = False,
@@ -293,7 +294,7 @@ def selected_figure_assets(assets: list[Asset], *, asset_profile: AssetProfile) 
     return figure_assets
 
 
-def _inline_markdown_image_urls(sections: Sequence["Section"]) -> set[str]:
+def _inline_markdown_image_urls(sections: Sequence[Section]) -> set[str]:
     urls: set[str] = set()
     for section in sections:
         for image in iter_markdown_images(section.text or ""):
@@ -374,7 +375,7 @@ def rewrite_markdown_asset_links(markdown_text: str, assets: Sequence[Asset | Ma
 def filter_inline_body_assets(
     assets: Sequence[Asset],
     *,
-    sections: Sequence["Section"],
+    sections: Sequence[Section],
 ) -> list[Asset]:
     inline_urls = _inline_markdown_image_urls(sections)
     if not inline_urls:
@@ -400,7 +401,7 @@ def filter_inline_body_assets(
 def filter_inline_body_figure_assets(
     assets: Sequence[Asset],
     *,
-    sections: Sequence["Section"],
+    sections: Sequence[Section],
 ) -> list[Asset]:
     return filter_inline_body_assets(assets, sections=sections)
 
@@ -408,7 +409,7 @@ def filter_inline_body_figure_assets(
 def filter_inline_body_table_assets(
     assets: Sequence[Asset],
     *,
-    sections: Sequence["Section"],
+    sections: Sequence[Section],
 ) -> list[Asset]:
     return filter_inline_body_assets(assets, sections=sections)
 
@@ -439,7 +440,7 @@ def _figure_caption_candidates(asset: Asset) -> list[str]:
 def suppress_repeated_body_figure_captions(
     assets: Sequence[Asset],
     *,
-    sections: Sequence["Section"],
+    sections: Sequence[Section],
 ) -> list[Asset]:
     if not assets or not sections:
         return list(assets)
@@ -721,36 +722,36 @@ def compute_level_shift(sections: Sequence[Section]) -> int:
 
 
 __all__ = [
-    "asset_link",
-    "is_table_like_figure_asset",
-    "resolve_reference_limit",
-    "resolve_reference_mode",
-    "resolve_figure_mode",
-    "resolve_supplementary_mode",
-    "render_abstract_section_block",
-    "normalize_asset_section",
-    "normalize_asset_render_state",
-    "asset_is_appendable",
-    "asset_in_body",
-    "selected_figure_assets",
-    "rewrite_markdown_asset_links",
-    "filter_inline_body_figure_assets",
-    "filter_inline_body_table_assets",
-    "suppress_repeated_body_figure_captions",
-    "selected_table_assets",
-    "selected_supplementary_assets",
-    "build_rendered_block",
-    "render_abstract_block",
     "append_asset_block",
     "append_asset_block_with_budget",
-    "asset_block_heading",
     "append_reference_block",
     "append_reference_block_with_budget",
+    "asset_block_heading",
+    "asset_in_body",
+    "asset_is_appendable",
+    "asset_link",
+    "build_rendered_block",
+    "compute_level_shift",
+    "filter_inline_body_figure_assets",
+    "filter_inline_body_table_assets",
+    "is_table_like_figure_asset",
+    "normalize_asset_render_state",
+    "normalize_asset_section",
+    "render_abstract_block",
+    "render_abstract_section_block",
     "render_figure_asset_groups",
-    "render_table_asset_groups",
-    "render_supplementary_asset_groups",
     "render_heading",
     "render_section",
     "render_section_block",
-    "compute_level_shift",
+    "render_supplementary_asset_groups",
+    "render_table_asset_groups",
+    "resolve_figure_mode",
+    "resolve_reference_limit",
+    "resolve_reference_mode",
+    "resolve_supplementary_mode",
+    "rewrite_markdown_asset_links",
+    "selected_figure_assets",
+    "selected_supplementary_assets",
+    "selected_table_assets",
+    "suppress_repeated_body_figure_captions",
 ]

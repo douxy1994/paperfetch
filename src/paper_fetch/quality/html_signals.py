@@ -4,7 +4,9 @@ import json
 import re
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Mapping, Pattern
+from typing import Any
+from re import Pattern
+from collections.abc import Mapping
 from ..extraction.html.provider_keys import normalize_provider_key
 from ..extraction.html.signals import ACCESS_GATE_PATTERNS
 from ..utils import normalize_text

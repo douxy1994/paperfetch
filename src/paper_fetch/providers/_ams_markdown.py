@@ -190,11 +190,11 @@ def finalize_extraction(
 
 
 __all__ = [
-    "_normalize_ams_markdown_text",
     "_normalize_ams_label_text",
-    "ams_normalize_markdown",
+    "_normalize_ams_markdown_text",
     "ams_classify_heading",
     "ams_keep_unknown_abstract_block",
-    "normalize_article_model",
+    "ams_normalize_markdown",
     "finalize_extraction",
+    "normalize_article_model",
 ]

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import urllib.parse
 from dataclasses import dataclass
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from ...http import DEFAULT_TIMEOUT_SECONDS, HttpTransport
 from ...metadata.types import HtmlMetadata

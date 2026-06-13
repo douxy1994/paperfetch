@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from html import escape
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 from urllib.parse import quote, urljoin
 
 from bs4 import BeautifulSoup, Tag

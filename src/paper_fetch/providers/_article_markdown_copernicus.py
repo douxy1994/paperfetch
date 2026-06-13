@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 import xml.etree.ElementTree as ET
 
 from ._article_markdown_jats import (

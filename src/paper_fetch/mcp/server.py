@@ -8,7 +8,8 @@ from pathlib import Path
 import sys
 import threading
 from types import MethodType
-from typing import Annotated, Any, Mapping
+from typing import Annotated, Any
+from collections.abc import Mapping
 
 import anyio
 from mcp import types as mcp_types

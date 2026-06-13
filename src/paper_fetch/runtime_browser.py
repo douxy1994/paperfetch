@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 import os
 import threading
 from dataclasses import dataclass, field
@@ -96,16 +96,12 @@ class BrowserContextManager:
             self._browser = None
             self._headless = None
             if browser is not None:
-                try:
+                with suppress(Exception):
                     browser.close()
-                except Exception:
-                    pass
 
     def __del__(self) -> None:  # pragma: no cover - defensive cleanup at GC/interpreter shutdown
-        try:
+        with suppress(Exception):
             self.close()
-        except Exception:
-            pass
 
 __all__ = [
     "BrowserContextManager",

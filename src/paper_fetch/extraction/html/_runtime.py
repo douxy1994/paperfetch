@@ -6,7 +6,8 @@ import functools
 import re
 from dataclasses import dataclass
 from html.parser import HTMLParser
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ...extraction.html.language import (
     collect_html_abstract_blocks,

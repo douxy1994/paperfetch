@@ -97,6 +97,6 @@ def extract_keywords(html_text: str) -> list[str]:
     return keywords
 
 __all__ = [
-    "extract_references",
     "extract_keywords",
+    "extract_references",
 ]

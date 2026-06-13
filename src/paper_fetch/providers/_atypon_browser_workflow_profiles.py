@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import copy
 from dataclasses import dataclass, field
-from functools import lru_cache
+from functools import cache
 from importlib import import_module
 from types import ModuleType
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from ..extraction.html.provider_rules import (
     DomHooks,
@@ -40,8 +41,8 @@ from .browser_workflow.shared import (
 DEFAULT_SITE_RULE = _html_profiles.DEFAULT_SITE_RULE
 
 __all__ = [
-    "DEFAULT_SITE_RULE",
     "ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES",
+    "DEFAULT_SITE_RULE",
     "GENERIC_PROFILE",
     "PublisherProfile",
     "build_html_candidates",
@@ -93,7 +94,7 @@ def _unsupported_atypon_publisher_message(route_kind: str, publisher: str) -> st
     )
 
 
-@lru_cache(maxsize=None)
+@cache
 def _publisher_module(publisher: str | None) -> ModuleType | None:
     normalized = normalize_text(publisher or "").lower()
     if normalized not in ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES:

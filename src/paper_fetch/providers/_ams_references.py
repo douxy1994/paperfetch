@@ -34,6 +34,6 @@ def blocking_fallback_signals(html_text: str) -> list[str]:
 
 
 __all__ = [
-    "extract_references",
     "blocking_fallback_signals",
+    "extract_references",
 ]

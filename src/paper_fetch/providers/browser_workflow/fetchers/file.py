@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from ....extraction.html.assets import supplementary_response_block_reason
 from ....extraction.html.shared import (

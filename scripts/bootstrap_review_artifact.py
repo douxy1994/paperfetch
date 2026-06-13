@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import argparse
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 import hashlib
 import json
 import re
@@ -355,7 +355,7 @@ def build_review(
     return {
         "schema_version": 2,
         "provider": provider,
-        "reviewed_at": datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
+        "reviewed_at": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
         "reviewed_by": "bootstrap_review_artifact.py",
         "fixtures": fixture_reviews,
     }

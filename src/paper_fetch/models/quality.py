@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..utils import normalize_text
 from ..quality.reason_codes import (
@@ -164,7 +165,7 @@ def coerce_semantic_losses(value: SemanticLosses | Mapping[str, Any] | None) -> 
     return SemanticLosses()
 
 
-def classify_content(*, sections: Sequence["Section"], abstract_text: str | None) -> ContentKind:
+def classify_content(*, sections: Sequence[Section], abstract_text: str | None) -> ContentKind:
     if filtered_body_sections(sections):
         return "fulltext"
     if normalize_text(abstract_text) or abstract_sections(sections):
@@ -172,7 +173,7 @@ def classify_content(*, sections: Sequence["Section"], abstract_text: str | None
     return "metadata_only"
 
 
-def classify_article_content(article: "ArticleModel") -> ContentKind:
+def classify_article_content(article: ArticleModel) -> ContentKind:
     metadata = getattr(article, "metadata", None)
     abstract_text = _normalized_text_field(getattr(metadata, "abstract", None))
     sections = list(getattr(article, "sections", []) or [])
@@ -227,7 +228,7 @@ def _word_count(text: str) -> int:
     return len(re.findall(r"\w+", normalized, flags=re.UNICODE))
 
 
-def _article_body_quality_metrics(article: "ArticleModel") -> BodyQualityMetrics:
+def _article_body_quality_metrics(article: ArticleModel) -> BodyQualityMetrics:
     body_sections = filtered_body_sections(article.sections)
     body_chunks = [strip_markdown_images(section.text) for section in body_sections if strip_markdown_images(section.text)]
     body_text = normalize_text("\n\n".join(body_chunks))
@@ -259,7 +260,7 @@ def _article_body_quality_metrics(article: "ArticleModel") -> BodyQualityMetrics
 
 
 def _quality_body_metrics(
-    article: "ArticleModel",
+    article: ArticleModel,
     *,
     availability_diagnostics: Mapping[str, Any] | None,
 ) -> BodyQualityMetrics:
@@ -349,7 +350,7 @@ def _diagnostics_require_downgrade(
     return False
 
 
-def _clone_quality(quality: "Quality") -> "Quality":
+def _clone_quality(quality: Quality) -> Quality:
     return Quality(
         has_fulltext=quality.has_fulltext,
         token_estimate=quality.token_estimate,
@@ -369,7 +370,7 @@ def _clone_quality(quality: "Quality") -> "Quality":
 
 
 def _refresh_article_quality(
-    article: "ArticleModel",
+    article: ArticleModel,
     *,
     explicit_content_kind: ContentKind | None = None,
     recompute_tokens: bool = True,
@@ -396,7 +397,7 @@ def _refresh_article_quality(
     article.quality.has_fulltext = content_kind == FULLTEXT
 
 
-def _downgrade_article(article: "ArticleModel", *, target_kind: ContentKind) -> None:
+def _downgrade_article(article: ArticleModel, *, target_kind: ContentKind) -> None:
     if target_kind == METADATA_ONLY:
         article.sections = []
         article.assets = []
@@ -462,7 +463,7 @@ def _resolve_quality_confidence(
 
 
 def apply_quality_assessment(
-    article: "ArticleModel",
+    article: ArticleModel,
     *,
     availability_diagnostics: Mapping[str, Any] | None = None,
     semantic_losses: SemanticLosses | Mapping[str, Any] | None = None,
@@ -470,7 +471,7 @@ def apply_quality_assessment(
     allow_downgrade_from_diagnostics: bool = False,
     cached_with_current_revision: bool = False,
     recompute_tokens: bool = True,
-) -> "ArticleModel":
+) -> ArticleModel:
     losses = coerce_semantic_losses(semantic_losses)
     body_metrics = _quality_body_metrics(article, availability_diagnostics=availability_diagnostics)
     flags = _dedupe_strings(extra_flags)
@@ -536,24 +537,24 @@ def apply_quality_assessment(
 
 __all__ = [
     "QUALITY_FLAG_ACCESS_GATE_DETECTED",
-    "QUALITY_FLAG_INSUFFICIENT_BODY",
-    "QUALITY_FLAG_WEAK_BODY_STRUCTURE",
-    "QUALITY_FLAG_TABLE_FALLBACK_PRESENT",
-    "QUALITY_FLAG_TABLE_LOSSY_PRESENT",
-    "QUALITY_FLAG_TABLE_LAYOUT_DEGRADED",
-    "QUALITY_FLAG_TABLE_SEMANTIC_LOSS",
+    "QUALITY_FLAG_CACHED_WITH_CURRENT_REVISION",
     "QUALITY_FLAG_FORMULA_FALLBACK_PRESENT",
     "QUALITY_FLAG_FORMULA_MISSING_PRESENT",
-    "QUALITY_FLAG_CACHED_WITH_CURRENT_REVISION",
+    "QUALITY_FLAG_INSUFFICIENT_BODY",
+    "QUALITY_FLAG_TABLE_FALLBACK_PRESENT",
+    "QUALITY_FLAG_TABLE_LAYOUT_DEGRADED",
+    "QUALITY_FLAG_TABLE_LOSSY_PRESENT",
+    "QUALITY_FLAG_TABLE_SEMANTIC_LOSS",
+    "QUALITY_FLAG_WEAK_BODY_STRUCTURE",
     "_QUALITY_ACCESS_SIGNAL_TOKENS",
     "_QUALITY_DOWNGRADE_REASONS",
+    "abstract_sections",
+    "apply_quality_assessment",
+    "classify_article_content",
+    "classify_content",
+    "coerce_asset_failure_diagnostics",
     "coerce_body_quality_metrics",
     "coerce_semantic_losses",
-    "classify_content",
-    "classify_article_content",
-    "coerce_asset_failure_diagnostics",
-    "apply_quality_assessment",
-    "abstract_sections",
     "combine_abstract_text",
     "filtered_body_sections",
     "first_abstract_text",

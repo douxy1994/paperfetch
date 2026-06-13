@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ...utils import normalize_text
+import contextlib
 
 CLOUDFLARE_COOKIE_NAMES = frozenset(
     {
@@ -47,10 +49,8 @@ def normalize_browser_cookie_for_playwright(
     if expires_value is None:
         expires_value = cookie.get("expires")
     if expires_value is not None:
-        try:
+        with contextlib.suppress(TypeError, ValueError):
             normalized["expires"] = float(expires_value)
-        except (TypeError, ValueError):
-            pass
 
     same_site = normalize_text(str(cookie.get("sameSite") or ""))
     canonical_same_site = {

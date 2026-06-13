@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from functools import lru_cache
+from functools import cache
 from pathlib import Path
 import tempfile
 import unittest
@@ -145,7 +145,7 @@ def _inline_wrapper_regression_html() -> str:
 """
 
 
-@lru_cache(maxsize=None)
+@cache
 def _extract_fixture_markdown(doi: str) -> tuple[str, dict[str, object]]:
     return _mdpi_html.extract_markdown(
         _fixture_html(doi),

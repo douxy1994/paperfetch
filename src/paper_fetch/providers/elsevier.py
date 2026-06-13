@@ -10,7 +10,8 @@ import urllib.parse
 import uuid
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..config import build_user_agent, resolve_asset_download_concurrency
 from ..extraction.html.availability_policy import AvailabilityPolicy

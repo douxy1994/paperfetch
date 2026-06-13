@@ -34,8 +34,7 @@ def _run_from_manifest(
         ],
         check=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
 
@@ -50,8 +49,7 @@ def test_help_includes_from_manifest() -> None:
         [sys.executable, str(SCRIPT), "--help"],
         check=True,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
     assert "--from-manifest" in result.stdout
@@ -211,8 +209,7 @@ assert [step.label for step in client_module.NewmanifestClient.waterfall_steps] 
         ],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
         env={**os.environ, "PYTHONPATH": str(REPO_ROOT / "src")},
     )
 
@@ -344,8 +341,7 @@ def test_from_manifest_rejects_mixed_legacy_flags(
             ],
             check=False,
             text=True,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            capture_output=True,
         )
 
     result = run_with(*extra_args)
@@ -369,8 +365,7 @@ def test_invalid_manifest_outputs_json_stderr(tmp_path: Path) -> None:
         ],
         check=False,
         text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
+        capture_output=True,
     )
 
     assert result.returncode != 0

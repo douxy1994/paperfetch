@@ -6,7 +6,8 @@ import copy
 import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ._article_markdown_common import (
     add_figure_once,

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import atexit
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from contextvars import ContextVar
 import json
 import re
@@ -19,7 +19,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from functools import lru_cache
 from pathlib import Path
-from typing import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping
 
 from cachetools import LRUCache
 
@@ -44,7 +44,7 @@ MATHML_NS = "http://www.w3.org/1998/Math/MathML"
 ET.register_namespace("", MATHML_NS)
 _CONVERSION_CACHE: LRUCache[tuple[object, ...], FormulaConversionResult] | None = None
 _CONVERSION_CACHE_LOCK = threading.RLock()
-_MATHML_WORKERS: dict[tuple[str, str], "MathMLToLatexWorker"] = {}
+_MATHML_WORKERS: dict[tuple[str, str], MathMLToLatexWorker] = {}
 _MATHML_WORKERS_LOCK = threading.Lock()
 _PERSISTENT_MATHML_WORKER_SUPPORTED = os.name != "nt"
 _FORMULA_TIMING_COLLECTOR: ContextVar[Callable[[float], None] | None] = ContextVar(
@@ -343,10 +343,8 @@ def _record_formula_timing(started_at: float) -> None:
     collector = _FORMULA_TIMING_COLLECTOR.get()
     if collector is None:
         return
-    try:
+    with suppress(Exception):
         collector(max(0.0, time.monotonic() - started_at))
-    except Exception:
-        pass
 
 
 def _conversion_cache_for(env: Mapping[str, str]) -> LRUCache[tuple[object, ...], FormulaConversionResult] | None:
@@ -630,10 +628,8 @@ class MathMLToLatexWorker:
             process.terminate()
             process.wait(timeout=0.5)
         except Exception:
-            try:
+            with suppress(Exception):
                 process.kill()
-            except Exception:
-                pass
 
     def convert(self, raw_mathml: str, *, timeout_seconds: float) -> str:
         with self._lock:

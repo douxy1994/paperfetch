@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ....provider_catalog import provider_body_text_thresholds
 from ....utils import normalize_text
+import contextlib
 
 ATYPON_BODY_READY_SELECTORS: Mapping[str, tuple[str, ...]] = {
     "annualreviews": (
@@ -207,10 +209,8 @@ def wait_for_atypon_body_dom_ready(
         wait_ms = min(interval_ms, timeout_budget_ms - elapsed_ms)
         wait_for_timeout = getattr(page, "wait_for_timeout", None)
         if callable(wait_for_timeout):
-            try:
+            with contextlib.suppress(Exception):
                 wait_for_timeout(wait_ms)
-            except Exception:
-                pass
         elapsed_ms += wait_ms
 
 

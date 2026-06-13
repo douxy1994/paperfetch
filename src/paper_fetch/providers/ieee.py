@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 import tempfile
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..config import build_browser_user_agent, build_user_agent
 from ..extraction.html import decode_html

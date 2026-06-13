@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from paper_fetch.extraction.html.landing import fetch_landing_html
 

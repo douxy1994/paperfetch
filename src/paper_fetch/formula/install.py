@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Sequence
+from collections.abc import Sequence
 
 from .paths import (
     FORMULA_NODE_SCRIPT_NAME,

@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from functools import partial
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..extraction.html.semantics import normalize_heading, parse_markdown_heading
 from ..quality.html_signals import PNAS_SIGNAL_SET, evaluate_datalayer_blocking_signals

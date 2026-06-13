@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..utils import normalize_text
 

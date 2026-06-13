@@ -56,7 +56,7 @@ def _fetch_browser_html_payload_with_fast_path(
 
 
 def bootstrap_browser_workflow(
-    client: "BrowserWorkflowClient",
+    client: BrowserWorkflowClient,
     doi: str,
     metadata: ProviderMetadata,
     *,

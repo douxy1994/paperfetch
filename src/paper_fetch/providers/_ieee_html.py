@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..extraction.html.asset_fields import DEFAULT_ASSET_URL_FIELDS
 from ..extraction.html.assets import extract_scoped_html_assets

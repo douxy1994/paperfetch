@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import datetime, timezone
+from datetime import datetime, UTC
 from email.utils import parsedate_to_datetime
-from typing import Mapping
+from collections.abc import Mapping
 
 from urllib3.util import Retry
 
@@ -169,8 +169,8 @@ def parse_retry_after_seconds(value: str | None) -> int | None:
     except (TypeError, ValueError, IndexError):
         return None
     if parsed.tzinfo is None:
-        parsed = parsed.replace(tzinfo=timezone.utc)
-    delta = (parsed - datetime.now(timezone.utc)).total_seconds()
+        parsed = parsed.replace(tzinfo=UTC)
+    delta = (parsed - datetime.now(UTC)).total_seconds()
     return max(0, int(delta))
 
 

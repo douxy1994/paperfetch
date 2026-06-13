@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import json
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..config import build_user_agent
 from ..errors import ProviderFailure
@@ -139,7 +140,7 @@ class CrossrefLookupClient:
             )
 
         licenses = [
-            license_record.get("URL")
+            str(license_record.get("URL"))
             for license_record in message.get("license", []) or []
             if isinstance(license_record, dict) and license_record.get("URL")
         ]
@@ -168,7 +169,7 @@ class CrossrefLookupClient:
                 continue
             references.append(
                 {
-                    "raw": strip_html_tags(str(raw)),
+                    "raw": strip_html_tags(str(raw)) or "",
                     "doi": reference.get("DOI"),
                     "title": reference.get("article-title"),
                     "year": reference.get("year"),

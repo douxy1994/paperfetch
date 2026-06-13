@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ....models.schema import AssetProfile
 from ....utils import normalize_text
@@ -191,11 +192,11 @@ def extract_scoped_html_assets(
 
 
 __all__ = [
-    "GENERIC_SUPPLEMENTARY_TEXT_TOKENS",
     "GENERIC_SUPPLEMENTARY_FILE_SUFFIXES",
-    "extract_supplementary_assets",
+    "GENERIC_SUPPLEMENTARY_TEXT_TOKENS",
     "extract_html_assets",
     "extract_scoped_html_assets",
+    "extract_supplementary_assets",
     "has_supplementary_file_suffix",
     "supplementary_file_suffixes",
     "supplementary_text_tokens_for_profile",

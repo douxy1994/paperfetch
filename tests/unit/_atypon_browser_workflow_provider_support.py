@@ -6,7 +6,7 @@ import tempfile
 import urllib.parse
 import unittest
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 from unittest import mock
 
 from paper_fetch.quality.issues import collect_issue_flags

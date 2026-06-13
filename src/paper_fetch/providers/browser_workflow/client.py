@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ...config import build_browser_user_agent, build_user_agent, resolve_asset_download_concurrency
 from ...extraction.html import decode_html
@@ -344,10 +345,10 @@ class BrowserWorkflowClient(ProviderClient):
         except (ProviderFailure, PdfFallbackFailure):
             provider_label = self.provider_label()
             prepared.finalize_warnings.append(
-                (
+                
                     f"{provider_label} HTML route only exposed abstract-level content after markdown extraction, "
                     "and PDF fallback did not return usable full text; returning abstract-only content."
-                )
+                
             )
             return prepared
 

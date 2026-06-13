@@ -5,7 +5,8 @@ from __future__ import annotations
 import re
 import urllib.parse
 from functools import partial
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..common_patterns import HEADING_TAG_PATTERN
 from ..extraction.html.parsing import choose_parser

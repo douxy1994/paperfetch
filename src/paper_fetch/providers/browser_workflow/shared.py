@@ -5,7 +5,8 @@ from __future__ import annotations
 import urllib.parse
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from ...quality import html_profiles as _html_profiles
 from ...utils import normalize_text

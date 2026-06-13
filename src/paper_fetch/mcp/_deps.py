@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any
+from collections.abc import Callable
 
 from ..config import build_runtime_env, resolve_mcp_download_dir
 from ..providers.registry import build_clients

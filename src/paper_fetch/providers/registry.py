@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import importlib
-from typing import Mapping
+from collections.abc import Mapping
 
 from ..config import build_runtime_env
 from ..http import HttpTransport

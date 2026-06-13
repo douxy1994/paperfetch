@@ -3,7 +3,8 @@ from __future__ import annotations
 from functools import lru_cache
 import json
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
 
 from tests.paths import FIXTURE_DIR, REPO_ROOT
 

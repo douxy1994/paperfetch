@@ -5,7 +5,6 @@ import gzip
 import io
 import json
 import logging
-import socket
 import threading
 import unittest
 import urllib.error
@@ -204,7 +203,7 @@ class HttpTransportCacheTests(unittest.TestCase):
         def fake_urlopen(request, timeout=20):
             nonlocal call_count
             call_count += 1
-            return FakeHTTPResponse(f"ok-{call_count}".encode("utf-8"), request.full_url)
+            return FakeHTTPResponse(f"ok-{call_count}".encode(), request.full_url)
 
         with mock.patch.object(http_module.time, "monotonic", side_effect=fake_monotonic):
             transport = http_module.HttpTransport(cache_ttl=1, cache_capacity=128)
@@ -245,7 +244,7 @@ class HttpTransportCacheTests(unittest.TestCase):
         def fake_urlopen(request, timeout=20):
             nonlocal call_count
             call_count += 1
-            return FakeHTTPResponse(f'{{"call":{call_count}}}'.encode("utf-8"), request.full_url, headers={"content-type": "application/json"})
+            return FakeHTTPResponse(f'{{"call":{call_count}}}'.encode(), request.full_url, headers={"content-type": "application/json"})
 
         with mock.patch.object(transport, "_perform_request", side_effect=fake_urlopen):
             first = transport.request(
@@ -303,7 +302,7 @@ class HttpTransportCacheTests(unittest.TestCase):
             nonlocal call_count
             call_count += 1
             return FakeHTTPResponse(
-                f"body-{call_count}".encode("utf-8"),
+                f"body-{call_count}".encode(),
                 request.full_url,
                 headers={"content-type": "text/plain"},
             )
@@ -853,7 +852,7 @@ class HttpTransportCacheTests(unittest.TestCase):
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                raise urllib3.exceptions.ProtocolError("conn broken", socket.timeout("timed out"))
+                raise urllib3.exceptions.ProtocolError("conn broken", TimeoutError("timed out"))
             return FakeHTTPResponse(b"ok", request.full_url)
 
         with mock.patch.object(transport, "_perform_request", side_effect=fake_urlopen):
@@ -877,7 +876,7 @@ class HttpTransportCacheTests(unittest.TestCase):
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                raise urllib.error.URLError(socket.timeout("timed out"))
+                raise urllib.error.URLError(TimeoutError("timed out"))
             return FakeHTTPResponse(b"ok", request.full_url)
 
         with mock.patch.object(transport, "_perform_request", side_effect=fake_urlopen):
@@ -901,7 +900,7 @@ class HttpTransportCacheTests(unittest.TestCase):
             nonlocal call_count
             call_count += 1
             if call_count <= 2:
-                raise socket.timeout("timed out")
+                raise TimeoutError("timed out")
             return FakeHTTPResponse(b"ok", request.full_url)
 
         with mock.patch.object(transport, "_perform_request", side_effect=fake_urlopen):

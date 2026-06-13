@@ -237,16 +237,16 @@ class RenderedBlock:
 class _MarkdownRenderPlan:
     token_budget: float
     abstract_text: str
-    abstract_sections: tuple["Section", ...]
+    abstract_sections: tuple[Section, ...]
     level_shift: int
     include_figures: str
     reference_count: int
-    lead_sections: tuple["Section", ...]
-    body_sections: tuple["Section", ...]
-    retained_sections: tuple["Section", ...]
-    figure_assets: tuple["Asset", ...]
-    table_assets: tuple["Asset", ...]
-    supplementary_assets: tuple["Asset", ...]
+    lead_sections: tuple[Section, ...]
+    body_sections: tuple[Section, ...]
+    retained_sections: tuple[Section, ...]
+    figure_assets: tuple[Asset, ...]
+    table_assets: tuple[Asset, ...]
+    supplementary_assets: tuple[Asset, ...]
 
 
 @dataclass
@@ -285,7 +285,7 @@ class FetchEnvelope:
         default_factory=TokenEstimateBreakdown
     )
     quality: Quality = field(default_factory=Quality)
-    article: "ArticleModel | None" = None
+    article: ArticleModel | None = None
     markdown: str | None = None
     metadata: Metadata | None = None
 
@@ -496,27 +496,27 @@ class ArticleModel:
 
 
 __all__ = [
-    "SourceKind",
-    "OutputMode",
-    "AssetProfile",
-    "MaxTokensMode",
-    "ContentKind",
-    "QualityConfidence",
-    "TRUNCATION_WARNING",
     "EXTRACTION_REVISION",
-    "Metadata",
-    "Section",
-    "SectionHint",
-    "ExtractedAbstractBlock",
-    "Reference",
+    "TRUNCATION_WARNING",
+    "ArticleModel",
     "Asset",
-    "TokenEstimateBreakdown",
+    "AssetProfile",
     "BodyQualityMetrics",
-    "SemanticLosses",
+    "ContentKind",
+    "ExtractedAbstractBlock",
+    "FetchEnvelope",
+    "MaxTokensMode",
+    "Metadata",
+    "OutputMode",
     "Quality",
+    "QualityConfidence",
+    "Reference",
+    "RenderContext",
     "RenderOptions",
     "RenderedBlock",
-    "RenderContext",
-    "FetchEnvelope",
-    "ArticleModel",
+    "Section",
+    "SectionHint",
+    "SemanticLosses",
+    "SourceKind",
+    "TokenEstimateBreakdown",
 ]

@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
-from typing import TYPE_CHECKING, Any, Callable, Mapping
+from typing import TYPE_CHECKING, Any
+from collections.abc import Callable, Mapping
 
 from ...extraction.html.signals import HtmlExtractionFailure
 from ...metadata.types import ProviderMetadata
@@ -126,7 +127,7 @@ def merge_provider_owned_authors(
 
 
 def browser_workflow_article_from_payload(
-    client: "BrowserWorkflowClient",
+    client: BrowserWorkflowClient,
     metadata: ProviderMetadata,
     raw_payload: RawFulltextPayload,
     *,

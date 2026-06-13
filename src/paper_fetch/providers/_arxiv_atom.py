@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Sequence
+from collections.abc import Sequence
 import re
 import xml.etree.ElementTree as ET
 

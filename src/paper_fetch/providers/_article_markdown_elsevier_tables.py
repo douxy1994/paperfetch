@@ -5,7 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 import xml.etree.ElementTree as ET
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ._article_markdown_common import (
     add_table_once,

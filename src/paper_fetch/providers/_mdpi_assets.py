@@ -214,9 +214,9 @@ def _dedupe_assets(assets: list[dict[str, str]]) -> list[dict[str, str]]:
     return deduped
 
 __all__ = [
-    "mark_inline_assets",
-    "extract_pdf_urls",
-    "mdpi_pdf_url_from_landing_url",
     "extract_asset_html_scopes",
+    "extract_pdf_urls",
     "extract_scoped_html_assets",
+    "mark_inline_assets",
+    "mdpi_pdf_url_from_landing_url",
 ]

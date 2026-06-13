@@ -22,6 +22,7 @@ from ._payloads import (
 )
 from .base import ProviderFailure, RawFulltextPayload
 from .browser_workflow.shared import BROWSER_HTML_BLOCKED_RESOURCE_TYPES
+import contextlib
 
 IEEE_BROWSER_HTML_NAVIGATION_TIMEOUT_MS = 60000
 IEEE_BROWSER_HTML_REST_WAIT_TIMEOUT_MS = 15000
@@ -98,10 +99,8 @@ def fetch_ieee_browser_html_payload(
                     return
                 route.continue_()
             except Exception:
-                try:
+                with contextlib.suppress(Exception):
                     route.continue_()
-                except Exception:
-                    pass
 
         browser_context.route("**/*", route_handler)
         page = browser_context.new_page()
@@ -123,10 +122,8 @@ def fetch_ieee_browser_html_payload(
         navigation_status = _playwright_response_status(navigation_response)
 
         if not rest_responses:
-            try:
+            with contextlib.suppress(Exception):
                 page.wait_for_timeout(IEEE_BROWSER_HTML_REST_WAIT_TIMEOUT_MS)
-            except Exception:
-                pass
 
         for response in reversed(rest_responses):
             try:
@@ -143,10 +140,8 @@ def fetch_ieee_browser_html_payload(
             break
 
         if not html_text:
-            try:
+            with contextlib.suppress(PlaywrightTimeoutError):
                 page.wait_for_selector("#article", timeout=IEEE_BROWSER_HTML_DOM_WAIT_TIMEOUT_MS)
-            except PlaywrightTimeoutError:
-                pass
             try:
                 has_article = page.locator("#article").count() > 0
             except Exception:
@@ -169,15 +164,11 @@ def fetch_ieee_browser_html_payload(
         raise ProviderFailure(ERROR, f"IEEE browser HTML fallback failed ({message}).") from exc
     finally:
         if page is not None:
-            try:
+            with contextlib.suppress(Exception):
                 page.close()
-            except Exception:
-                pass
         if browser_context is not None:
-            try:
+            with contextlib.suppress(Exception):
                 browser_context.close()
-            except Exception:
-                pass
 
     extraction = ieee_html._extract_ieee_html(
         html_text,

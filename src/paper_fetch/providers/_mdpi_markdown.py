@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from bs4 import BeautifulSoup, Tag
 
@@ -176,6 +177,6 @@ def extract_markdown(
     return markdown, extraction_payload
 
 __all__ = [
-    "extract_markdown",
     "_normalize_mdpi_markdown",
+    "extract_markdown",
 ]

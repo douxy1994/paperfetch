@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from ..tracing import source_trail_from_trace, trace_from_markers
 from .base import ProviderFailure, RawFulltextPayload, combine_provider_failures
@@ -171,7 +172,7 @@ def run_provider_waterfall(
         except ProviderFailure as exc:
             failure = _failure_with_marker(exc, step.failure_marker)
             if failure.code not in step.continue_codes:
-                raise failure
+                raise failure from exc
             warning = _resolve_failure_warning(step.failure_warning, failure, state)
             failure = _failure_with_warning(failure, warning)
             state.failures.append((step.label, failure))

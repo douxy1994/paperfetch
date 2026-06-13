@@ -6,7 +6,8 @@ from dataclasses import dataclass
 import re
 import urllib.parse
 from pathlib import Path
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..common_patterns import (
     EXTENDED_DATA_TABLE_PREFIX_PATTERN,

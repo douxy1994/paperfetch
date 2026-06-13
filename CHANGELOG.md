@@ -6,6 +6,12 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+### Changed
+
+- Broadened the ruff lint ruleset from `E4,E7,E9,F,TID251` to additionally enforce `UP`, `B`, `SIM105`, and `RUF022`, and applied the resulting fixes across the codebase: `typing` ABC imports migrated to `collections.abc`, `datetime.timezone.utc` rewritten to `datetime.UTC`, `try`/`except`/`pass` blocks replaced with `contextlib.suppress`, an explicit exception chain added to `run_provider_waterfall` (`raise ... from exc`), and explicit `zip(..., strict=...)` at the sites the new rules surfaced. `B008` is ignored project-wide (the MCP `default_mcp_deps()` argument default is an intentional dependency-injection seam) and `B023` is ignored under `tests/`.
+- Extended mypy `files` coverage beyond the model/workflow/mcp/http contract surface to additional foundational modules (`metadata`, `markdown`, `extraction/markdown_render`, `tracing`, `reason_codes`, `arxiv_id`, `normalize_journal_name`, `section_vocab`, `logging_utils`, `publisher_identity`, `provider_catalog`, `extraction/citation_anchors`), raising the analyzed set from 45 to 68 files, with the type fixes required to keep the check green.
+- Stopped tracking the ad-hoc batch-debugging output under `failures/` and three unreferenced raw fetch artifacts under `figures/`, and added both to `.gitignore` to prevent re-committing them.
+
 ## 2.2.1 - 2026-06-12
 
 ### Changed

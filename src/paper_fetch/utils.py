@@ -6,7 +6,9 @@ import re
 import urllib.parse
 from hashlib import sha1
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
+from collections.abc import Iterable
+import contextlib
 
 
 def first_non_empty(*values: Any) -> Any:
@@ -309,10 +311,8 @@ def save_payload(output_path: Path | None, body: bytes) -> str | None:
         tmp_path.write_bytes(body)
         tmp_path.replace(output_path)
     except Exception:
-        try:
+        with contextlib.suppress(OSError):
             tmp_path.unlink(missing_ok=True)
-        except OSError:
-            pass
         raise
     return str(output_path)
 

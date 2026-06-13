@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import logging
 import os
-import socket
 import threading
 import time
 import urllib.error
@@ -12,7 +11,8 @@ import urllib.parse
 from contextlib import nullcontext
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Mapping
+from typing import Any
+from collections.abc import Callable, Mapping
 
 from cachetools import TTLCache
 import urllib3
@@ -395,7 +395,7 @@ class HttpTransport(CacheMixin, RetryMixin, BodyMixin):
                         url=redact_url_for_cache(url),
                         error_category=classify_network_error(exc),
                     ) from exc
-                except (socket.timeout, TimeoutError) as exc:
+                except TimeoutError as exc:
                     if self._retry_remaining(transient_policy) > 0:
                         emit_structured_log(
                             logger,

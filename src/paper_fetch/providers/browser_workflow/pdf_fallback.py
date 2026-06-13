@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ...http import PDF_MIME_TYPE
 from ...runtime import RuntimeContext

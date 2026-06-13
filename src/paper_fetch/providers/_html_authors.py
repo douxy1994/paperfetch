@@ -4,7 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import re
-from typing import Any, Callable, Mapping, Pattern
+from typing import Any
+from re import Pattern
+from collections.abc import Callable, Mapping
 
 from ..extraction.html.parsing import choose_parser
 from ..utils import dedupe_authors, normalize_text

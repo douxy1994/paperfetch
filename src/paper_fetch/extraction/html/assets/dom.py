@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import re
 import urllib.parse
-from typing import Any, Mapping
+from typing import Any
+from collections.abc import Mapping
 
 from ..asset_fields import FULL_SIZE_IMAGE_ATTRS, PREVIEW_IMAGE_ATTRS
 from ..ui_tokens import SPRINGER_FULL_SIZE_IMAGE_LABEL
@@ -179,21 +180,21 @@ def _collect_tag_attr_urls(tag: Any, source_url: str, *attrs: str) -> list[str]:
 
 
 __all__ = [
-    "FULL_SIZE_IMAGE_ATTRS",
-    "PREVIEW_IMAGE_ATTRS",
-    "FULL_SIZE_URL_TOKENS",
-    "PREVIEW_URL_TOKENS",
-    "ACCEPTABLE_PREVIEW_MIN_WIDTH",
-    "ACCEPTABLE_PREVIEW_MIN_HEIGHT",
     "ACCEPTABLE_PREVIEW_MIN_AREA",
-    "ACCEPTABLE_WIDE_PREVIEW_MIN_WIDTH",
+    "ACCEPTABLE_PREVIEW_MIN_HEIGHT",
+    "ACCEPTABLE_PREVIEW_MIN_WIDTH",
     "ACCEPTABLE_WIDE_PREVIEW_MIN_HEIGHT",
+    "ACCEPTABLE_WIDE_PREVIEW_MIN_WIDTH",
     "FIGURE_PAGE_HINTS",
-    "_response_dimensions",
-    "supplementary_response_block_reason",
-    "preview_dimensions_are_acceptable",
+    "FULL_SIZE_IMAGE_ATTRS",
+    "FULL_SIZE_URL_TOKENS",
+    "PREVIEW_IMAGE_ATTRS",
+    "PREVIEW_URL_TOKENS",
+    "_collect_tag_attr_urls",
     "_first_url_from_srcset",
+    "_response_dimensions",
     "_soup_attr_url",
     "looks_like_full_size_asset_url",
-    "_collect_tag_attr_urls",
+    "preview_dimensions_are_acceptable",
+    "supplementary_response_block_reason",
 ]

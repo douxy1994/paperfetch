@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Literal, Mapping, Sequence
+from typing import Any, Literal
+from collections.abc import Callable, Mapping, Sequence
 
 from ....utils import normalize_text
 from ...image_payloads import image_mime_type_from_bytes
@@ -344,7 +345,7 @@ SUPPLEMENTARY_KIND = AssetDownloadKind(
 
 
 __all__ = [
-    "AssetDownloadKind",
     "FIGURE_KIND",
     "SUPPLEMENTARY_KIND",
+    "AssetDownloadKind",
 ]

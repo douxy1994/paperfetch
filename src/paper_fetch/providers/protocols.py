@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Mapping, Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
+from collections.abc import Mapping
 
 from ..artifacts import ArtifactStore
 from ..http import RequestFailure

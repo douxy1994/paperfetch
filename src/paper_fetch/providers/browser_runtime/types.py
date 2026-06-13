@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Mapping, TypedDict
+from typing import Any, TypedDict
+from collections.abc import Mapping
 
 
 @dataclass(frozen=True)

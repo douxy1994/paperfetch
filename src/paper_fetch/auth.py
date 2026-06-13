@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import re
 from pathlib import Path
-from typing import Mapping
+from collections.abc import Mapping
 
 from .config import (
     AMS_STORAGE_STATE_JSON_ENV_VAR,

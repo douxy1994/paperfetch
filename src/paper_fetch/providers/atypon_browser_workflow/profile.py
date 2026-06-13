@@ -56,6 +56,7 @@ from .._atypon_browser_workflow_profiles import (
 )
 
 from bs4 import BeautifulSoup, Tag
+import contextlib
 
 BODY_PARAGRAPH_MIN_CHARS = 80
 
@@ -244,17 +245,15 @@ def _structural_abstract_nodes(container: Tag) -> list[Tag]:
     abstract_roots: list[Tag] = []
     if (
         normalize_text(
-            ((getattr(container, "attrs", None) or {}).get("id") or "")
+            (getattr(container, "attrs", None) or {}).get("id") or ""
         ).lower()
         == "abstracts"
     ):
         abstract_roots.append(container)
-    try:
+    with contextlib.suppress(Exception):
         abstract_roots.extend(
             [node for node in container.select("#abstracts") if isinstance(node, Tag)]
         )
-    except Exception:
-        pass
 
     sections: list[Tag] = []
     seen: set[int] = set()
@@ -546,46 +545,46 @@ def _strip_heading_terminal_punctuation(heading_text: str) -> str:
 
 
 __all__ = [
-    "clean_markdown",
-    "extract_article_markdown",
-    "body_metrics",
-    "has_sufficient_article_body",
     "BODY_PARAGRAPH_MIN_CHARS",
-    "HEADING_TAG_PATTERN",
-    "SENTENCE_PATTERN",
+    "CONTENT_ABSTRACT_SELECTORS",
+    "CONTENT_AVAILABILITY_SELECTORS",
+    "CONTENT_BODY_SELECTORS",
     "FRONT_MATTER_LINE_PATTERNS",
     "FRONT_MATTER_PUBLICATION_KEYWORDS",
+    "HEADING_TAG_PATTERN",
     "POST_CONTENT_BREAK_PREFIXES",
     "POST_CONTENT_BREAK_TEXTS",
     "POST_CONTENT_BREAK_TOKENS",
-    "CONTENT_ABSTRACT_SELECTORS",
-    "CONTENT_BODY_SELECTORS",
-    "CONTENT_AVAILABILITY_SELECTORS",
-    "_noise_profile_for_publisher",
-    "_container_selection_policy",
-    "_sentence_count",
-    "_is_substantial_prose",
-    "_heading_category",
-    "_promotional_parent",
-    "_drop_promotional_blocks",
-    "_structural_abstract_nodes",
+    "SENTENCE_PATTERN",
     "_abstract_nodes",
-    "_node_language_hint",
-    "_drop_abstract_sections_from_body_container",
-    "extract_page_title",
     "_ancestor_identity_text",
-    "_looks_like_front_matter_paragraph",
-    "_looks_like_publication_watermark",
-    "_looks_like_access_gate_text",
-    "_markdown_heading_info",
-    "_looks_like_post_content_noise_block",
-    "_looks_like_markdown_auxiliary_block",
-    "_is_descendant",
-    "_dedupe_top_level_nodes",
-    "_nodes_from_selectors",
     "_availability_node_score",
+    "_container_selection_policy",
+    "_content_fragment_html",
+    "_dedupe_top_level_nodes",
+    "_drop_abstract_sections_from_body_container",
+    "_drop_promotional_blocks",
+    "_heading_category",
+    "_is_descendant",
+    "_is_substantial_prose",
+    "_looks_like_access_gate_text",
+    "_looks_like_front_matter_paragraph",
+    "_looks_like_markdown_auxiliary_block",
+    "_looks_like_post_content_noise_block",
+    "_looks_like_publication_watermark",
+    "_markdown_heading_info",
+    "_node_language_hint",
+    "_nodes_from_selectors",
+    "_noise_profile_for_publisher",
+    "_promotional_parent",
     "_select_availability_nodes",
     "_select_content_nodes",
-    "_content_fragment_html",
+    "_sentence_count",
     "_strip_heading_terminal_punctuation",
+    "_structural_abstract_nodes",
+    "body_metrics",
+    "clean_markdown",
+    "extract_article_markdown",
+    "extract_page_title",
+    "has_sufficient_article_body",
 ]
