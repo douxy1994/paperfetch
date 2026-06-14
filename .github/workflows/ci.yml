@@ -340,6 +340,14 @@ jobs:
           test -x "$install_root/bin/paper-fetch"
           test -x "$install_root/bin/paper-fetch-install-formula-tools"
           grep -F -q 'CLOAKBROWSER_HEADLESS="false"' "$install_root/offline.env"
+          test -f "$layout_home/.gemini/antigravity-cli/skills/paper-fetch-skill/SKILL.md"
+          test -f "$layout_home/.gemini/antigravity-cli/mcp_config.json"
+          "$install_root/runtime/paper-fetch-python" -X utf8 - "$layout_home/.gemini/antigravity-cli/mcp_config.json" <<'PY'
+          import json, sys
+          data = json.load(open(sys.argv[1], encoding="utf-8"))
+          server = data["mcpServers"]["paper-fetch"]
+          assert "paper_fetch.mcp.server" in server["args"], server
+          PY
           for forbidden in src tests wheelhouse dist .github pyproject.toml; do
             if [ -e "$install_root/$forbidden" ]; then
               echo "macOS runtime package must not include source/build path: $forbidden" >&2
@@ -620,6 +628,25 @@ jobs:
             if ($log -notlike "*$expected*") {
               throw "Fake host CLI log is missing: $expected`n$log"
             }
+          }
+
+          # Antigravity has no CLI to register MCP; it is configured via files.
+          $antigravityHome = Join-Path $env:USERPROFILE ".gemini/antigravity-cli"
+          $antigravitySkill = Join-Path $antigravityHome "skills/paper-fetch-skill/SKILL.md"
+          if (-not (Test-Path -LiteralPath $antigravitySkill -PathType Leaf)) {
+            throw "Antigravity skill was not installed: $antigravitySkill"
+          }
+          $antigravityMcpConfig = Join-Path $antigravityHome "mcp_config.json"
+          if (-not (Test-Path -LiteralPath $antigravityMcpConfig -PathType Leaf)) {
+            throw "Antigravity mcp_config.json was not written: $antigravityMcpConfig"
+          }
+          $mcpConfig = Get-Content -LiteralPath $antigravityMcpConfig -Raw | ConvertFrom-Json
+          $antigravityServer = $mcpConfig.mcpServers."paper-fetch"
+          if ($null -eq $antigravityServer) {
+            throw "Antigravity mcp_config.json is missing the 'paper-fetch' server.`n$(Get-Content -LiteralPath $antigravityMcpConfig -Raw)"
+          }
+          if (-not ($antigravityServer.args -contains "paper_fetch.mcp.server")) {
+            throw "Antigravity 'paper-fetch' server does not launch paper_fetch.mcp.server.`n$(Get-Content -LiteralPath $antigravityMcpConfig -Raw)"
           }
 
       - name: Upload offline package

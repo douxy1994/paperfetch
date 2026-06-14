@@ -6,6 +6,10 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+### 新增
+
+- 新增 Antigravity CLI（`agy`）作为继 Codex、Claude Code 之后的第三个安装目标。新增的 `scripts/install-antigravity-skill.sh` 会拷贝静态 skill（用户级 `~/.gemini/antigravity-cli/skills/`，项目级 `./.agents/skills/`，可用 `ANTIGRAVITY_HOME` 覆盖），并在 `--register-mcp` 时把本地 stdio server（`command`/`args`/`env`）合并进对应的 `mcp_config.json`，同时保留已有的其它 server 条目。离线安装器（`install-offline.sh`、`scripts/windows-installer-helper.ps1`）也会一并安装 Antigravity 的 skill 与 `mcp_config.json`，并提供对称的卸载处理与 CI 校验。
+
 ### 变更
 
 - 将 ruff 检查规则集从 `E4,E7,E9,F,TID251` 扩展为额外启用 `UP`、`B`、`SIM105`、`RUF022`，并在全代码库应用相应修复：`typing` 抽象基类导入迁移至 `collections.abc`，`datetime.timezone.utc` 改写为 `datetime.UTC`，`try`/`except`/`pass` 替换为 `contextlib.suppress`，为 `run_provider_waterfall` 补充显式异常链（`raise ... from exc`），并在新规则暴露的位置使用显式 `zip(..., strict=...)`。`B008` 在全项目忽略（MCP 的 `default_mcp_deps()` 参数默认值是刻意的依赖注入接缝），`B023` 在 `tests/` 下忽略。

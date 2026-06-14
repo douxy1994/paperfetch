@@ -6,6 +6,10 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+### Added
+
+- Added Antigravity CLI (`agy`) as a third install target alongside Codex and Claude Code. The new `scripts/install-antigravity-skill.sh` copies the static skill (user scope `~/.gemini/antigravity-cli/skills/`, project scope `./.agents/skills/`, overridable via `ANTIGRAVITY_HOME`) and, with `--register-mcp`, merges the local stdio server into the appropriate `mcp_config.json` (`command`/`args`/`env`) while preserving any existing server entries. The offline installers (`install-offline.sh`, `scripts/windows-installer-helper.ps1`) now install the Antigravity skill and `mcp_config.json` too, with matching uninstall handling and CI coverage.
+
 ### Changed
 
 - Broadened the ruff lint ruleset from `E4,E7,E9,F,TID251` to additionally enforce `UP`, `B`, `SIM105`, and `RUF022`, and applied the resulting fixes across the codebase: `typing` ABC imports migrated to `collections.abc`, `datetime.timezone.utc` rewritten to `datetime.UTC`, `try`/`except`/`pass` blocks replaced with `contextlib.suppress`, an explicit exception chain added to `run_provider_waterfall` (`raise ... from exc`), and explicit `zip(..., strict=...)` at the sites the new rules surfaced. `B008` is ignored project-wide (the MCP `default_mcp_deps()` argument default is an intentional dependency-injection seam) and `B023` is ignored under `tests/`.

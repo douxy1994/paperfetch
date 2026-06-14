@@ -28,6 +28,7 @@ pf_skill_user_base() {
     case "$PF_HOST" in
         claude) printf '%s\n' "$HOME/.claude" ;;
         codex) printf '%s\n' "${CODEX_HOME:-$HOME/.codex}" ;;
+        antigravity) printf '%s\n' "${ANTIGRAVITY_HOME:-$HOME/.gemini/antigravity-cli}" ;;
         *) pf_skill_die "Unsupported skill host: $PF_HOST" ;;
     esac
 }
@@ -36,7 +37,10 @@ pf_skill_compute_dir() {
     if [ "$PF_SCOPE" = "user" ]; then
         printf '%s/skills/%s\n' "$(pf_skill_user_base)" "$PF_SKILL_NAME"
     else
-        printf '%s/.%s/skills/%s\n' "$PF_REPO_DIR" "$PF_HOST" "$PF_SKILL_NAME"
+        # Project-scope skills live under a host-specific directory. Most hosts use
+        # ".<host>/skills", but a host can override the parent via PF_PROJECT_SKILLS_PARENT
+        # (e.g. Antigravity uses ".agents").
+        printf '%s/%s/skills/%s\n' "$PF_REPO_DIR" "${PF_PROJECT_SKILLS_PARENT:-.$PF_HOST}" "$PF_SKILL_NAME"
     fi
 }
 

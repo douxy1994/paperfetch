@@ -383,6 +383,27 @@ paper-fetch auth ams
 ./scripts/install-claude-skill.sh --register-mcp --env-file ~/.config/paper-fetch/.env
 ```
 
+### 接入 Antigravity CLI
+
+Antigravity CLI（`agy`）同样支持 SKILL.md 规范的 skill 和 MCP server：
+
+```bash
+./scripts/install-antigravity-skill.sh --register-mcp
+```
+
+常用参数：
+
+```bash
+# 只安装到当前项目（skill 写入 ./.agents/skills/，MCP 写入 ./.agents/mcp_config.json）
+./scripts/install-antigravity-skill.sh --project --register-mcp
+# 注册时指定环境变量文件
+./scripts/install-antigravity-skill.sh --register-mcp --env-file ~/.config/paper-fetch/.env
+```
+
+- 用户级安装默认写入 `~/.gemini/antigravity-cli/skills/` 与 `~/.gemini/antigravity-cli/mcp_config.json`；用环境变量 `ANTIGRAVITY_HOME` 可覆盖全局目录。
+- Antigravity 没有 `mcp add` 子命令，`--register-mcp` 会把本地 stdio server（`command`/`args`/`env`）合并进 `mcp_config.json`，已有的其它 server 条目会被保留。
+- 安装后重启 `agy`，让它重新扫描 skills 和 MCP 配置。
+
 ### 手动注册 MCP
 
 任何支持 stdio MCP 的 host 都可以直接运行：

@@ -288,19 +288,31 @@ function Copy-InstalledSkill {
     Copy-Item -Path (Join-Path $source "*") -Destination $Destination -Recurse -Force
 }
 
+function Get-AntigravityHome {
+    if (-not [string]::IsNullOrWhiteSpace($env:ANTIGRAVITY_HOME)) {
+        return $env:ANTIGRAVITY_HOME
+    }
+    return (Join-Path (Join-Path $env:USERPROFILE ".gemini") "antigravity-cli")
+}
+
 function Install-Skills {
     $codexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".codex") "skills") $SkillName
     $claudeSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".claude") "skills") $SkillName
+    $antigravitySkill = Join-Path (Join-Path (Get-AntigravityHome) "skills") $SkillName
 
     Write-Log "Installing Codex skill to $codexSkill"
     Copy-InstalledSkill $codexSkill
     Write-Log "Installing Claude Code skill to $claudeSkill"
     Copy-InstalledSkill $claudeSkill
+    Write-Log "Installing Antigravity skill to $antigravitySkill"
+    Copy-InstalledSkill $antigravitySkill
 }
 
 function Remove-Skills {
-    foreach ($base in @(".codex", ".claude")) {
-        $skillDir = Join-Path (Join-Path (Join-Path $env:USERPROFILE $base) "skills") $SkillName
+    $codexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".codex") "skills") $SkillName
+    $claudeSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".claude") "skills") $SkillName
+    $antigravitySkill = Join-Path (Join-Path (Get-AntigravityHome) "skills") $SkillName
+    foreach ($skillDir in @($codexSkill, $claudeSkill, $antigravitySkill)) {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $skillDir
         Write-Log "Removed $skillDir"
     }
@@ -493,6 +505,102 @@ function Unregister-ClaudeMcp {
     }
 }
 
+function Register-AntigravityMcp {
+    # Antigravity has no `mcp add` CLI; it reads servers from mcp_config.json.
+    $agHome = Get-AntigravityHome
+    $configPath = Join-Path $agHome "mcp_config.json"
+    New-Item -ItemType Directory -Force -Path $agHome | Out-Null
+    Backup-File $configPath
+
+    $python = ConvertTo-FullPath (Get-RuntimePython)
+    $envMap = [ordered]@{}
+    foreach ($entry in (Get-McpEnv).GetEnumerator()) {
+        $envMap[$entry.Key] = [string]$entry.Value
+    }
+    $envJson = ($envMap | ConvertTo-Json -Compress -Depth 5)
+
+    [Environment]::SetEnvironmentVariable("PF_CONFIG_PATH", (ConvertTo-FullPath $configPath), "Process")
+    [Environment]::SetEnvironmentVariable("PF_MCP_NAME", $McpName, "Process")
+    [Environment]::SetEnvironmentVariable("PF_PYTHON_BIN", $python, "Process")
+    [Environment]::SetEnvironmentVariable("PF_ENV_JSON", $envJson, "Process")
+    try {
+        Write-Log "Registering Antigravity MCP server '$McpName' in $configPath"
+        Invoke-RuntimePythonScript -Script @'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["PF_CONFIG_PATH"])
+name = os.environ["PF_MCP_NAME"]
+
+data = {}
+if path.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Existing {path} is not valid JSON: {exc}")
+if not isinstance(data, dict):
+    raise SystemExit(f"Existing {path} must contain a JSON object")
+
+servers = data.setdefault("mcpServers", {})
+if not isinstance(servers, dict):
+    raise SystemExit(f"'mcpServers' in {path} must be a JSON object")
+
+env = json.loads(os.environ.get("PF_ENV_JSON") or "{}")
+entry = {
+    "command": os.environ["PF_PYTHON_BIN"],
+    "args": ["-X", "utf8", "-m", "paper_fetch.mcp.server"],
+}
+if env:
+    entry["env"] = env
+
+servers[name] = entry
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+'@
+    } finally {
+        foreach ($key in @("PF_CONFIG_PATH", "PF_MCP_NAME", "PF_PYTHON_BIN", "PF_ENV_JSON")) {
+            [Environment]::SetEnvironmentVariable($key, $null, "Process")
+        }
+    }
+    Write-Log "Updated Antigravity MCP config at $configPath"
+}
+
+function Unregister-AntigravityMcp {
+    $configPath = Join-Path (Get-AntigravityHome) "mcp_config.json"
+    if (-not (Test-Path -LiteralPath $configPath -PathType Leaf)) {
+        return
+    }
+    Backup-File $configPath
+
+    [Environment]::SetEnvironmentVariable("PF_CONFIG_PATH", (ConvertTo-FullPath $configPath), "Process")
+    [Environment]::SetEnvironmentVariable("PF_MCP_NAME", $McpName, "Process")
+    try {
+        Invoke-RuntimePythonScript -Script @'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["PF_CONFIG_PATH"])
+name = os.environ["PF_MCP_NAME"]
+try:
+    data = json.loads(path.read_text(encoding="utf-8") or "{}")
+except json.JSONDecodeError:
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    raise SystemExit(0)
+servers = data.get("mcpServers")
+if isinstance(servers, dict):
+    servers.pop(name, None)
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+'@
+    } finally {
+        foreach ($key in @("PF_CONFIG_PATH", "PF_MCP_NAME")) {
+            [Environment]::SetEnvironmentVariable($key, $null, "Process")
+        }
+    }
+    Write-Log "Removed Antigravity MCP config from $configPath"
+}
+
 function Invoke-SmokeChecks {
     $texmath = ConvertTo-FullPath (Join-Path (Join-Path $InstallRoot "formula-tools") "bin/texmath.exe")
     $node = ConvertTo-FullPath (Get-MathmlToLatexNode)
@@ -541,6 +649,7 @@ switch ($Action) {
         Invoke-InstallerStep -Name "PATH update" -ScriptBlock { Add-UserPathEntry (Join-Path $InstallRoot "bin") }
         Invoke-InstallerStep -Name "Codex MCP registration" -ScriptBlock { Register-CodexMcp }
         Invoke-InstallerStep -Name "Claude MCP registration" -ScriptBlock { Register-ClaudeMcp }
+        Invoke-InstallerStep -Name "Antigravity MCP registration" -ScriptBlock { Register-AntigravityMcp }
         if (-not $SkipSmoke) {
             Invoke-InstallerStep -Name "smoke checks" -ScriptBlock { Invoke-SmokeChecks }
         }
@@ -554,6 +663,7 @@ switch ($Action) {
         try { Remove-UserPathEntry (Join-Path $InstallRoot "bin") } catch { Write-Warn $_.Exception.Message }
         try { Unregister-CodexMcp } catch { Write-Warn $_.Exception.Message }
         try { Unregister-ClaudeMcp } catch { Write-Warn $_.Exception.Message }
+        try { Unregister-AntigravityMcp } catch { Write-Warn $_.Exception.Message }
     }
     "Smoke" {
         Invoke-SmokeChecks

@@ -410,16 +410,24 @@ copy_installed_skill() {
   cp -a "$source/." "$destination/"
 }
 
+antigravity_home() {
+  printf '%s\n' "${ANTIGRAVITY_HOME:-$HOME/.gemini/antigravity-cli}"
+}
+
 install_skills() {
-  [ -n "${HOME:-}" ] || die "HOME is required to install Codex and Claude skills."
+  [ -n "${HOME:-}" ] || die "HOME is required to install Codex, Claude, and Antigravity skills."
 
   local codex_skill="$HOME/.codex/skills/$SKILL_NAME"
   local claude_skill="$HOME/.claude/skills/$SKILL_NAME"
+  local antigravity_skill
+  antigravity_skill="$(antigravity_home)/skills/$SKILL_NAME"
 
   log "Installing Codex skill to $codex_skill"
   copy_installed_skill "$codex_skill"
   log "Installing Claude Code skill to $claude_skill"
   copy_installed_skill "$claude_skill"
+  log "Installing Antigravity skill to $antigravity_skill"
+  copy_installed_skill "$antigravity_skill"
 }
 
 select_shell_startup_file() {
@@ -583,6 +591,73 @@ register_claude_mcp() {
   fi
 }
 
+resolve_json_python() {
+  if [ -x "$(mcp_python_bin)" ]; then
+    mcp_python_bin
+  elif command -v python3 >/dev/null 2>&1; then
+    command -v python3
+  else
+    printf '\n'
+  fi
+}
+
+register_antigravity_mcp() {
+  [ -n "${HOME:-}" ] || die "HOME is required to install the Antigravity MCP config."
+
+  local config_path key
+  config_path="$(antigravity_home)/mcp_config.json"
+  mkdir -p "$(dirname "$config_path")"
+
+  local env_pairs=()
+  for key in "${MCP_ENV_KEYS[@]}"; do
+    env_pairs+=("$key=$(mcp_env_value "$key")")
+  done
+
+  log "Registering Antigravity MCP server '$MCP_NAME' in $config_path"
+  PF_CONFIG_PATH="$config_path" \
+  PF_MCP_NAME="$MCP_NAME" \
+  PF_PYTHON_BIN="$(mcp_python_bin)" \
+  PF_ENV_PAIRS="$(printf '%s\n' "${env_pairs[@]}")" \
+  "$(mcp_python_bin)" -X utf8 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["PF_CONFIG_PATH"])
+name = os.environ["PF_MCP_NAME"]
+
+data = {}
+if path.exists():
+    try:
+        data = json.loads(path.read_text(encoding="utf-8") or "{}")
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Existing {path} is not valid JSON: {exc}")
+if not isinstance(data, dict):
+    raise SystemExit(f"Existing {path} must contain a JSON object")
+
+servers = data.setdefault("mcpServers", {})
+if not isinstance(servers, dict):
+    raise SystemExit(f"'mcpServers' in {path} must be a JSON object")
+
+env = {}
+for line in os.environ.get("PF_ENV_PAIRS", "").splitlines():
+    if not line:
+        continue
+    key, _, value = line.partition("=")
+    env[key] = value
+
+entry = {
+    "command": os.environ["PF_PYTHON_BIN"],
+    "args": ["-X", "utf8", "-m", "paper_fetch.mcp.server"],
+}
+if env:
+    entry["env"] = env
+
+servers[name] = entry
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+PY
+}
+
 remove_managed_block_from_file() {
   local target="$1"
   local remove_if_empty="${2:-0}"
@@ -624,10 +699,13 @@ remove_installed_skills() {
 
   local codex_skill="$HOME/.codex/skills/$SKILL_NAME"
   local claude_skill="$HOME/.claude/skills/$SKILL_NAME"
+  local antigravity_skill
+  antigravity_skill="$(antigravity_home)/skills/$SKILL_NAME"
 
-  rm -rf "$codex_skill" "$claude_skill"
+  rm -rf "$codex_skill" "$claude_skill" "$antigravity_skill"
   log "Removed Codex skill at $codex_skill"
   log "Removed Claude Code skill at $claude_skill"
+  log "Removed Antigravity skill at $antigravity_skill"
 }
 
 remove_codex_config_toml() {
@@ -677,11 +755,49 @@ unregister_claude_mcp() {
   fi
 }
 
+unregister_antigravity_mcp() {
+  [ -n "${HOME:-}" ] || die "HOME is required for --uninstall."
+
+  local config_path json_python
+  config_path="$(antigravity_home)/mcp_config.json"
+  [ -f "$config_path" ] || return 0
+
+  json_python="$(resolve_json_python)"
+  if [ -z "$json_python" ]; then
+    warn "No python available to edit $config_path; left Antigravity MCP entry in place."
+    return 0
+  fi
+
+  PF_CONFIG_PATH="$config_path" \
+  PF_MCP_NAME="$MCP_NAME" \
+  "$json_python" -X utf8 - <<'PY'
+import json
+import os
+from pathlib import Path
+
+path = Path(os.environ["PF_CONFIG_PATH"])
+name = os.environ["PF_MCP_NAME"]
+try:
+    data = json.loads(path.read_text(encoding="utf-8") or "{}")
+except json.JSONDecodeError:
+    raise SystemExit(0)
+if not isinstance(data, dict):
+    raise SystemExit(0)
+
+servers = data.get("mcpServers")
+if isinstance(servers, dict):
+    servers.pop(name, None)
+path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+PY
+  log "Removed Antigravity MCP server '$MCP_NAME' from $config_path"
+}
+
 uninstall_user_integrations() {
   remove_installed_skills
   remove_shell_startup_blocks
   unregister_codex_mcp
   unregister_claude_mcp
+  unregister_antigravity_mcp
 
   echo
   echo "Offline user-level integration removed."
@@ -932,6 +1048,7 @@ main() {
   write_shell_startup_file
   register_codex_mcp
   register_claude_mcp
+  register_antigravity_mcp
 
   run_smoke_checks
 
@@ -942,7 +1059,7 @@ main() {
   echo "Open a new shell, or activate the current one with: source $INSTALL_ROOT/activate-offline.sh"
   echo "CloakBrowser headless: $(cloakbrowser_headless_value)"
   echo "Optional runtime override: set CLOAKBROWSER_BINARY_PATH in $OFFLINE_ENV_FILE before first browser fetch."
-  echo "Restart Codex and Claude Code so they rescan skills and MCP registration."
+  echo "Restart Codex, Claude Code, and the Antigravity CLI so they rescan skills and MCP registration."
   echo "Elsevier setup: request a key at https://dev.elsevier.com/, then add ELSEVIER_API_KEY=\"...\" to $OFFLINE_ENV_FILE before fetching Elsevier papers."
 }
 
