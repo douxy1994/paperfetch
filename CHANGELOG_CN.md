@@ -6,6 +6,8 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.3.0 - 2026-06-14
+
 ### 新增
 
 - 新增 Antigravity CLI（`agy`）作为继 Codex、Claude Code 之后的第三个安装目标。新增的 `scripts/install-antigravity-skill.sh` 会拷贝静态 skill（用户级 `~/.gemini/antigravity-cli/skills/`，项目级 `./.agents/skills/`，可用 `ANTIGRAVITY_HOME` 覆盖），并在 `--register-mcp` 时把本地 stdio server（`command`/`args`/`env`）合并进对应的 `mcp_config.json`，同时保留已有的其它 server 条目。离线安装器（`install-offline.sh`、`scripts/windows-installer-helper.ps1`）也会一并安装 Antigravity 的 skill 与 `mcp_config.json`，并提供对称的卸载处理与 CI 校验。

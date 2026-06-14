@@ -6,6 +6,8 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.3.0 - 2026-06-14
+
 ### Added
 
 - Added Antigravity CLI (`agy`) as a third install target alongside Codex and Claude Code. The new `scripts/install-antigravity-skill.sh` copies the static skill (user scope `~/.gemini/antigravity-cli/skills/`, project scope `./.agents/skills/`, overridable via `ANTIGRAVITY_HOME`) and, with `--register-mcp`, merges the local stdio server into the appropriate `mcp_config.json` (`command`/`args`/`env`) while preserving any existing server entries. The offline installers (`install-offline.sh`, `scripts/windows-installer-helper.ps1`) now install the Antigravity skill and `mcp_config.json` too, with matching uninstall handling and CI coverage.

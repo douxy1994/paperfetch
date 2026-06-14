@@ -680,6 +680,9 @@ jobs:
       contents: write
 
     steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
       - name: Download offline packages
         uses: actions/download-artifact@v8
         with:
@@ -734,14 +737,35 @@ jobs:
 
           find release-artifacts -maxdepth 1 -type f -print | sort
 
+      - name: Extract release notes from CHANGELOG_CN
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="${GITHUB_REF_NAME#v}"
+          awk -v prefix="## $version " '
+            index($0, "## ") == 1 {
+              if (started) { exit }
+              if (index($0, prefix) == 1) { started = 1; print; next }
+              next
+            }
+            started { print }
+          ' CHANGELOG_CN.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG_CN section found for version $version" >&2
+            exit 1
+          fi
+          echo "----- release notes -----"
+          cat release-notes.md
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
           name: ${{ github.ref_name }}
+          body_path: release-notes.md
           files: release-artifacts/*
           fail_on_unmatched_files: true
-          generate_release_notes: true
+          generate_release_notes: false
           prerelease: ${{ contains(github.ref_name, '-') }}
 
   full-golden:
