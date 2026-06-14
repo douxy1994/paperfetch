@@ -17,6 +17,7 @@
 - 将 ruff 检查规则集从 `E4,E7,E9,F,TID251` 扩展为额外启用 `UP`、`B`、`SIM105`、`RUF022`，并在全代码库应用相应修复：`typing` 抽象基类导入迁移至 `collections.abc`，`datetime.timezone.utc` 改写为 `datetime.UTC`，`try`/`except`/`pass` 替换为 `contextlib.suppress`，为 `run_provider_waterfall` 补充显式异常链（`raise ... from exc`），并在新规则暴露的位置使用显式 `zip(..., strict=...)`。`B008` 在全项目忽略（MCP 的 `default_mcp_deps()` 参数默认值是刻意的依赖注入接缝），`B023` 在 `tests/` 下忽略。
 - 将 mypy `files` 覆盖范围从 model/workflow/mcp/http 契约面扩展至更多基础模块（`metadata`、`markdown`、`extraction/markdown_render`、`tracing`、`reason_codes`、`arxiv_id`、`normalize_journal_name`、`section_vocab`、`logging_utils`、`publisher_identity`、`provider_catalog`、`extraction/citation_anchors`），分析文件数从 45 增至 68，并附带使检查通过所需的类型修复。
 - 不再跟踪 `failures/` 下的临时批处理调试产物与 `figures/` 下三个无引用的原始抓取产物，并将二者加入 `.gitignore` 以防再次提交。
+- 将打包的 `mathml-to-latex` 公式后端从 1.5.0 升级到 1.8.0，并在根目录与 `src/paper_fetch/resources/formula/` 的 package 清单与 lockfile 之间同步该版本。
 
 ## 2.2.1 - 2026-06-12
 
