@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from importlib import resources
 from typing import Any
 from collections.abc import Sequence
@@ -21,6 +22,7 @@ from ._arxiv_html import (
     _arxiv_select_one,
     _clean_arxiv_frontmatter_text,
 )
+from ._arxiv_parsing import ARXIV_HTML_PARSER
 from ._html_authors import AuthorExtractionPipeline, AuthorStep
 from ._html_section_markdown import render_clean_text_from_html
 
@@ -144,8 +146,7 @@ def _trim_arxiv_author_text_at_boundary(text: str) -> str:
 def _candidate_arxiv_author_text_from_person_node(node: Any) -> str:
     if not isinstance(node, Tag):
         return ""
-    clone_soup = BeautifulSoup(str(node), "html.parser")
-    clone = clone_soup.find()
+    clone = copy.deepcopy(node)
     if not isinstance(clone, Tag):
         return ""
     for selector in _arxiv_ar5iv_selectors("frontmatter_noise"):
@@ -247,11 +248,11 @@ def _split_arxiv_author_text(text: str) -> list[str]:
 
 
 def _arxiv_author_article_from_html(html_text: str) -> Any:
-    soup = BeautifulSoup(html_text, "html.parser")
+    soup = BeautifulSoup(html_text, ARXIV_HTML_PARSER)
     article = soup.find("article")
     if isinstance(article, Tag):
         return article
-    wrapper_soup = BeautifulSoup(f"<article>{html_text}</article>", "html.parser")
+    wrapper_soup = BeautifulSoup(f"<article>{html_text}</article>", ARXIV_HTML_PARSER)
     return wrapper_soup.find("article")
 
 
@@ -433,8 +434,7 @@ def _normalize_official_html_latexml_notes(article: Any) -> int:
         if not isinstance(content_node, Tag):
             continue
 
-        content_soup = BeautifulSoup(str(content_node), "html.parser")
-        content = content_soup.find()
+        content = copy.deepcopy(content_node)
         if not isinstance(content, Tag):
             continue
         for duplicate_marker in _arxiv_select(content, "note_markers"):
@@ -447,7 +447,7 @@ def _normalize_official_html_latexml_notes(article: Any) -> int:
 
         note.clear()
         if marker:
-            sup = BeautifulSoup("", "html.parser").new_tag("sup")
+            sup = BeautifulSoup("", ARXIV_HTML_PARSER).new_tag("sup")
             sup.string = marker
             note.append(sup)
         if content_text:

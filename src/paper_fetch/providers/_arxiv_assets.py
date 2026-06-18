@@ -22,6 +22,7 @@ from ..extraction.html import assets as html_assets
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
 from ..markdown.images import render_markdown_image
 from ..utils import empty_asset_results, normalize_text, sanitize_filename, save_payload
+from ._arxiv_parsing import ARXIV_HTML_PARSER
 from ._asset_retry import AssetRetryPolicy, is_retryable_asset_failure
 from ._arxiv_html import Tag, BeautifulSoup
 from ._arxiv_references import _is_arxiv_inline_figure_container
@@ -556,7 +557,7 @@ def _arxiv_source_asset_failure(
 def _extract_arxiv_missing_html_figure_placeholders(
     article_html: str, source_url: str
 ) -> list[dict[str, Any]]:
-    soup = BeautifulSoup(article_html, "html.parser")
+    soup = BeautifulSoup(article_html, ARXIV_HTML_PARSER)
     article = soup.find("article") or soup
     placeholders: list[dict[str, Any]] = []
     for figure in article.find_all("figure"):

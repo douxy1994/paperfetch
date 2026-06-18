@@ -431,7 +431,10 @@ class BrowserWorkflowClient(ProviderClient):
                 "context": context,
                 "asset_profile": asset_profile,
             }
-            html_text = decode_html(raw_payload.body)
+            html_text = decode_html(
+                raw_payload.body,
+                content_type=content.content_type if content is not None else raw_payload.content_type,
+            )
         else:
             plan_profile = {
                 "assets": [dict(asset) for asset in assets],

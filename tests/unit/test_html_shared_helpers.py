@@ -1234,6 +1234,131 @@ class SharedHtmlHelperTests(unittest.TestCase):
         self.assertIn("Important body text.", cleaned)
         self.assertNotIn("Skip to main content", cleaned)
 
+    def test_decode_html_uses_http_charset_after_utf8_fails(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        body = "<html><body><p>Résumé</p></body></html>".encode("iso-8859-1")
+
+        decoded = html_runtime.decode_html(
+            body,
+            content_type="text/html; charset=iso-8859-1",
+        )
+
+        self.assertIn("Résumé", decoded)
+
+    def test_decode_html_reads_meta_charset_after_utf8_fails(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        body = (
+            '<html><head><meta charset="windows-1252"></head>'
+            "<body><p>“quoted”</p></body></html>"
+        ).encode("windows-1252")
+
+        decoded = html_runtime.decode_html(body)
+
+        self.assertIn("“quoted”", decoded)
+
+    def test_decode_html_uses_charset_normalizer_before_replace_fallback(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        body = b"\xffnot-utf8"
+        original = html_runtime._charset_normalizer_from_bytes
+
+        class _FakeBest:
+            def __str__(self) -> str:
+                return "detected text"
+
+        class _FakeMatches:
+            def best(self) -> _FakeBest:
+                return _FakeBest()
+
+        try:
+            html_runtime._charset_normalizer_from_bytes = lambda value: _FakeMatches()
+            decoded = html_runtime.decode_html(body)
+        finally:
+            html_runtime._charset_normalizer_from_bytes = original
+
+        self.assertEqual(decoded, "detected text")
+
+    def test_decode_html_short_circuits_valid_utf8(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        original = html_runtime._charset_normalizer_from_bytes
+
+        def fail_if_called(_: bytes):
+            raise AssertionError("charset-normalizer should not run for UTF-8")
+
+        try:
+            html_runtime._charset_normalizer_from_bytes = fail_if_called
+            decoded = html_runtime.decode_html("naïve UTF-8".encode())
+        finally:
+            html_runtime._charset_normalizer_from_bytes = original
+
+        self.assertEqual(decoded, "naïve UTF-8")
+
+    def test_no_root_cleanup_skips_per_node_classification(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        html = """
+<html>
+  <body>
+    <script>bad()</script>
+    <div><p>Important body text.</p></div>
+    <a href="https://orcid.org/0000-0000-0000-0001">ORCID</a>
+  </body>
+</html>
+"""
+        original = html_runtime.should_drop_html_element
+        calls = 0
+
+        def count_calls(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        try:
+            html_runtime.should_drop_html_element = count_calls
+            cleaned = html_runtime.clean_html_for_extraction(html)
+        finally:
+            html_runtime.should_drop_html_element = original
+
+        self.assertEqual(calls, 0)
+        self.assertIn("Important body text.", cleaned)
+        self.assertNotIn("bad()", cleaned)
+        self.assertNotIn("orcid.org", cleaned)
+
+    def test_raw_trafilatura_fallback_skips_large_raw_html(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        calls: list[str] = []
+
+        class _Backend:
+            def extract(self, html_text: str, **kwargs) -> str | None:
+                del kwargs
+                calls.append(html_text)
+                return None
+
+        cleaned_html = "<article><p>Fallback body text remains.</p></article>"
+        raw_html = "x" * (html_runtime.RAW_TRAFILATURA_FALLBACK_CHAR_LIMIT + 1)
+
+        markdown = html_runtime.extract_article_markdown_from_cleaned_html(
+            cleaned_html,
+            "https://example.test/article",
+            trafilatura_backend=_Backend(),
+            raw_html=raw_html,
+        )
+
+        self.assertEqual(calls, [cleaned_html])
+        self.assertIn("Fallback body text remains.", markdown)
+
+    def test_orcid_href_pattern_is_module_constant_used_by_pruning(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        self.assertIsNotNone(
+            html_runtime.ORCID_HREF_PATTERN.search("https://orcid.org/0000")
+        )
+        soup = BeautifulSoup(
+            '<article><p>Body</p><a href="https://orcid.org/0000">ORCID</a></article>',
+            "html.parser",
+        )
+
+        html_runtime.prune_html_tree(soup)
+
+        self.assertNotIn("orcid.org", str(soup))
+
     def test_extract_html_section_hints_reads_structural_data_availability(
         self,
     ) -> None:

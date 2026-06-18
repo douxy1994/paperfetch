@@ -4,6 +4,7 @@ from paper_fetch.providers._html_authors import (
     AuthorExtractionPipeline,
     AuthorStep,
 )
+from paper_fetch.providers import _html_authors as html_authors
 
 
 def test_author_extraction_pipeline_accepts_callables_and_named_steps() -> None:
@@ -46,3 +47,43 @@ def test_author_extraction_pipeline_returns_empty_when_all_steps_miss() -> None:
     )
 
     assert pipeline("<html></html>") == []
+
+
+def test_author_extraction_pipeline_reuses_soup_between_html_steps(monkeypatch) -> None:
+    html_text = """
+<html>
+  <head><meta name="citation_author" content=""></head>
+  <body><span class="author-name">Ada Lovelace</span></body>
+</html>
+"""
+    real_beautiful_soup = html_authors.BeautifulSoup
+    parse_count = 0
+
+    def counting_beautiful_soup(*args, **kwargs):
+        nonlocal parse_count
+        parse_count += 1
+        return real_beautiful_soup(*args, **kwargs)
+
+    monkeypatch.setattr(html_authors, "BeautifulSoup", counting_beautiful_soup)
+
+    pipeline = AuthorExtractionPipeline(
+        AuthorStep(
+            "meta",
+            lambda html: html_authors.extract_meta_authors(
+                html,
+                keys={"citation_author"},
+            ),
+        ),
+        AuthorStep(
+            "selector",
+            lambda html: html_authors.extract_selector_authors(
+                html,
+                selectors=(".author-name",),
+                ignored_text=set(),
+                node_text=lambda node: node.get_text(" ", strip=True),
+            ),
+        ),
+    )
+
+    assert pipeline(html_text) == ["Ada Lovelace"]
+    assert parse_count == 1

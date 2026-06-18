@@ -8,5 +8,5 @@ _PARSER: str = "lxml" if importlib.util.find_spec("lxml") is not None else "html
 
 
 def choose_parser() -> str:
-    """Prefer lxml when installed, while keeping BeautifulSoup fallback behavior."""
+    """Prefer lxml; html.parser is only a compatibility fallback for minimal installs."""
     return _PARSER

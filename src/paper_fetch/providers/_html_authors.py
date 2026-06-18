@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextvars import ContextVar
 from dataclasses import dataclass
 import re
 from typing import Any
@@ -38,6 +39,10 @@ ATYPON_AUTHOR_NOISE_TEXT = frozenset(
 )
 ATYPON_AUTHOR_COLLAPSE_UI_TEXT = frozenset({"expand all", "collapse all", "fewer"})
 ATYPON_AUTHOR_COUNT_PATTERN = re.compile(r"^\+\s*\d+\s+authors?$", flags=re.IGNORECASE)
+_AUTHOR_PIPELINE_CONTEXT: ContextVar[dict[str, Any] | None] = ContextVar(
+    "_AUTHOR_PIPELINE_CONTEXT",
+    default=None,
+)
 
 
 @dataclass(frozen=True)
@@ -54,11 +59,15 @@ class AuthorExtractionPipeline:
         self.extractors = tuple(step.extractor for step in self.steps)
 
     def __call__(self, html_text: str) -> list[str]:
-        for step in self.steps:
-            authors = dedupe_authors(step.extractor(html_text))
-            if authors:
-                return authors
-        return []
+        token = _AUTHOR_PIPELINE_CONTEXT.set({"html_text": html_text, "soup": None})
+        try:
+            for step in self.steps:
+                authors = dedupe_authors(step.extractor(html_text))
+                if authors:
+                    return authors
+            return []
+        finally:
+            _AUTHOR_PIPELINE_CONTEXT.reset(token)
 
     @staticmethod
     def _coerce_step(step: Callable[[str], list[str]] | AuthorStep) -> AuthorStep:
@@ -246,7 +255,7 @@ def extract_jsonld_authors(
 
 
 def extract_meta_authors(html_text: str, *, keys: set[str]) -> list[str]:
-    soup = BeautifulSoup(html_text, choose_parser())
+    soup = _pipeline_soup_for_html(html_text)
     authors: list[str] = []
     for meta in soup.find_all("meta"):
         if not isinstance(meta, Tag):
@@ -270,7 +279,7 @@ def extract_property_authors(
     count_pattern: Pattern[str] | None = None,
     reject_email: bool = False,
 ) -> list[str]:
-    soup = BeautifulSoup(html_text, choose_parser())
+    soup = _pipeline_soup_for_html(html_text)
     authors: list[str] = []
     for node in soup.select(selectors):
         if not isinstance(node, Tag):
@@ -324,7 +333,7 @@ def extract_selector_authors(
     reject_affiliation: bool = False,
     reject_affiliation_prefixes: tuple[str, ...] = (),
 ) -> list[str]:
-    soup = BeautifulSoup(html_text, choose_parser())
+    soup = _pipeline_soup_for_html(html_text)
     authors: list[str] = []
     seen_nodes: set[int] = set()
     for selector in selectors:
@@ -347,3 +356,15 @@ def extract_selector_authors(
             if looks_like_author_name(candidate):
                 authors.append(candidate)
     return dedupe_authors(authors)
+
+
+def _pipeline_soup_for_html(html_text: str) -> BeautifulSoup:
+    context = _AUTHOR_PIPELINE_CONTEXT.get()
+    if context is not None and context.get("html_text") == html_text:
+        soup = context.get("soup")
+        if soup is not None:
+            return soup
+        soup = BeautifulSoup(html_text, choose_parser())
+        context["soup"] = soup
+        return soup
+    return BeautifulSoup(html_text, choose_parser())

@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import codecs
 import functools
+import logging
 import re
 from dataclasses import dataclass
+from email.message import Message
 from html.parser import HTMLParser
 from typing import Any
 from collections.abc import Mapping
@@ -63,9 +66,26 @@ try:
 except ImportError:  # pragma: no cover - exercised implicitly when dependency is absent
     trafilatura = None
 
+try:
+    from charset_normalizer import from_bytes as _charset_normalizer_from_bytes
+except ImportError:  # pragma: no cover - dependency is optional for degraded installs
+    _charset_normalizer_from_bytes = None
+
 from bs4 import BeautifulSoup
 
+LOGGER = logging.getLogger(__name__)
 HTML_ROOT_SELECTORS = ("article", "main", '[role="main"]')
+HTML_META_CHARSET_PATTERN = re.compile(
+    rb"<meta\b[^>]*\bcharset\s*=\s*['\"]?\s*([A-Za-z0-9._:-]+)",
+    flags=re.IGNORECASE,
+)
+HTML_META_HTTP_EQUIV_CONTENT_TYPE_PATTERN = re.compile(
+    rb"<meta\b(?=[^>]*http-equiv\s*=\s*['\"]?content-type['\"]?)"
+    rb"(?=[^>]*content\s*=\s*['\"][^'\"]*charset\s*=\s*([A-Za-z0-9._:-]+))",
+    flags=re.IGNORECASE,
+)
+ORCID_HREF_PATTERN = re.compile(r"orcid\.org", re.IGNORECASE)
+RAW_TRAFILATURA_FALLBACK_CHAR_LIMIT = 1_000_000
 # Publication-watermark heuristic only: these English masthead nouns are used
 # after short/title-like guards and are not a general language or NER list.
 FRONT_MATTER_PUBLICATION_KEYWORDS = {
@@ -203,12 +223,78 @@ class _FallbackMarkdownParser(HTMLParser):
         self._current = []
 
 
-def decode_html(body: bytes) -> str:
-    for encoding in ("utf-8", "utf-8-sig", "latin-1"):
-        try:
-            return body.decode(encoding)
-        except UnicodeDecodeError:
+def _normalized_encoding(value: str | bytes | None) -> str | None:
+    if isinstance(value, bytes):
+        raw = value.decode("ascii", errors="ignore")
+    else:
+        raw = str(value or "")
+    encoding = raw.strip().strip("\"'").lower()
+    if not encoding:
+        return None
+    try:
+        return codecs.lookup(encoding).name
+    except LookupError:
+        return None
+
+
+def _content_type_charset(content_type: str | None) -> str | None:
+    if not content_type:
+        return None
+    message = Message()
+    message["content-type"] = content_type
+    return _normalized_encoding(message.get_content_charset())
+
+
+def _html_meta_charset(body: bytes) -> str | None:
+    head = body[:8192]
+    for pattern in (
+        HTML_META_CHARSET_PATTERN,
+        HTML_META_HTTP_EQUIV_CONTENT_TYPE_PATTERN,
+    ):
+        match = pattern.search(head)
+        if match is None:
             continue
+        encoding = _normalized_encoding(match.group(1))
+        if encoding:
+            return encoding
+    return None
+
+
+def _decode_with_encoding(body: bytes, encoding: str | None) -> str | None:
+    normalized = _normalized_encoding(encoding)
+    if not normalized:
+        return None
+    try:
+        return body.decode(normalized)
+    except UnicodeDecodeError:
+        return None
+
+
+def decode_html(body: bytes, *, content_type: str | None = None) -> str:
+    if body.startswith(codecs.BOM_UTF8):
+        decoded = _decode_with_encoding(body, "utf-8-sig")
+        if decoded is not None:
+            return decoded
+
+    decoded = _decode_with_encoding(body, "utf-8")
+    if decoded is not None:
+        return decoded
+
+    for encoding in (
+        _content_type_charset(content_type),
+        _html_meta_charset(body),
+    ):
+        decoded = _decode_with_encoding(body, encoding)
+        if decoded is not None:
+            return decoded
+
+    if _charset_normalizer_from_bytes is not None:
+        best = _charset_normalizer_from_bytes(body).best()
+        if best is not None:
+            decoded = str(best)
+            if decoded:
+                return decoded
+
     return body.decode("utf-8", errors="replace")
 
 
@@ -220,16 +306,38 @@ def select_html_content_root(root: Any):
 
     best_candidate = None
     best_words = 0
+    scored_candidates: set[int] = set()
     for selector in HTML_ROOT_SELECTORS:
         for candidate in root.select(selector):
-            words = count_words(normalize_text(candidate.get_text(" ", strip=True)))
+            candidate_id = id(candidate)
+            if candidate_id in scored_candidates:
+                continue
+            scored_candidates.add(candidate_id)
+            if best_candidate is not None and best_candidate in getattr(candidate, "parents", []):
+                continue
+            if best_candidate is not None and candidate in getattr(best_candidate, "parents", []):
+                words = _html_root_candidate_word_count(candidate)
+            else:
+                words = _html_root_candidate_word_count(candidate)
             if words > best_words:
                 best_candidate = candidate
                 best_words = words
     return best_candidate
 
 
-def prune_html_tree(root: Any, *, noise_profile: str | None = None) -> None:
+def _html_root_candidate_word_count(candidate: Any) -> int:
+    words = 0
+    for text in getattr(candidate, "stripped_strings", ()):
+        words += count_words(normalize_text(text))
+    return words
+
+
+def prune_html_tree(
+    root: Any,
+    *,
+    noise_profile: str | None = None,
+    classify_elements: bool = True,
+) -> None:
 
     rules = html_cleanup_rules(noise_profile)
     for tag in root(HTML_DROP_TAGS):
@@ -240,8 +348,10 @@ def prune_html_tree(root: Any, *, noise_profile: str | None = None) -> None:
     for selector in rules.extraction_cleanup_selectors:
         for element in root.select(selector):
             element.decompose()
-    for element in list(root.find_all(href=re.compile(r"orcid\.org", re.IGNORECASE))):
+    for element in list(root.find_all(href=ORCID_HREF_PATTERN)):
         element.decompose()
+    if not classify_elements:
+        return
     for element in list(root.find_all(True)):
         if should_drop_html_element(element, noise_profile=noise_profile, rules=rules):
             element.decompose()
@@ -270,9 +380,15 @@ def prepare_html_extraction_tree(
 
     soup = BeautifulSoup(html_text, choose_parser())
     root = select_html_content_root(soup)
+    classify_elements = True
     if root is None:
         root = soup.body or soup
-    prune_html_tree(root, noise_profile=noise_profile)
+        classify_elements = False
+    prune_html_tree(
+        root,
+        noise_profile=noise_profile,
+        classify_elements=classify_elements,
+    )
     return str(root), root
 
 
@@ -375,8 +491,21 @@ def extract_article_markdown_from_cleaned_html(
         else trafilatura_backend
     )
     if active_trafilatura is not None:
-        for candidate_html in [cleaned_html, raw_html]:
+        candidates: list[tuple[str, str]] = [("cleaned", cleaned_html)]
+        if raw_html and raw_html != cleaned_html:
+            candidates.append(("raw", raw_html))
+        for candidate_kind, candidate_html in candidates:
             if not candidate_html:
+                continue
+            if (
+                candidate_kind == "raw"
+                and len(candidate_html) > RAW_TRAFILATURA_FALLBACK_CHAR_LIMIT
+            ):
+                LOGGER.debug(
+                    "Skipping raw trafilatura fallback for %s chars; limit is %s.",
+                    len(candidate_html),
+                    RAW_TRAFILATURA_FALLBACK_CHAR_LIMIT,
+                )
                 continue
             extracted = active_trafilatura.extract(
                 candidate_html,

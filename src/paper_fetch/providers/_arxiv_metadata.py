@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from datetime import datetime
 from typing import Any
 from collections.abc import Mapping, Sequence
@@ -24,7 +25,6 @@ from ..reason_codes import NO_RESULT, NOT_SUPPORTED
 from ..utils import dedupe_authors, normalize_text
 from ._arxiv_authors import _AUTHOR_PIPELINE
 from ._arxiv_html import (
-    BeautifulSoup,
     Tag,
     _arxiv_ar5iv_selectors,
     _arxiv_select_one,
@@ -377,8 +377,7 @@ def _extract_arxiv_html_frontmatter(
     abstract_node = _select_arxiv_abstract_node(article)
     abstract = ""
     if isinstance(abstract_node, Tag):
-        abstract_soup = BeautifulSoup(str(abstract_node), "html.parser")
-        abstract_clone = abstract_soup.find()
+        abstract_clone = copy.deepcopy(abstract_node)
         if isinstance(abstract_clone, Tag):
             for heading_selector in _arxiv_ar5iv_selectors("abstract_heading"):
                 for heading in abstract_clone.select(heading_selector):

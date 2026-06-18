@@ -183,6 +183,23 @@ def merge_metadata_with_html(
     doi: str | None = None,
 ) -> dict[str, Any]:
     html_metadata = parse_html_metadata(html_text, source_url)
+    merged = _merge_metadata_with_parsed_html(
+        base_metadata,
+        html_metadata,
+        doi=doi,
+    )
+    references = extract_references(html_text)
+    if references and not merged.get("references"):
+        merged["references"] = references
+    return dict(merged)
+
+
+def _merge_metadata_with_parsed_html(
+    base_metadata: Mapping[str, Any] | None,
+    html_metadata: Mapping[str, Any],
+    *,
+    doi: str | None = None,
+) -> dict[str, Any]:
     merged = merge_html_metadata(base_metadata, html_metadata)
     doi_value = normalize_doi(str(doi or merged.get("doi") or ""))
     if doi_value and not merged.get("doi"):
@@ -193,9 +210,6 @@ def merge_metadata_with_html(
         or normalize_doi(str(merged.get("title") or "")) == doi_value
     ):
         merged["title"] = html_title
-    references = extract_references(html_text)
-    if references and not merged.get("references"):
-        merged["references"] = references
     return dict(merged)
 
 
@@ -488,6 +502,22 @@ def _cleaned_article_html(
     source_url: str,
 ) -> tuple[str, str, int, list[dict[str, Any]], list[dict[str, Any]]]:
     soup = BeautifulSoup(html_text, choose_parser())
+    html_metadata = parse_html_metadata(html_text, source_url)
+    return _cleaned_article_html_from_soup(
+        soup,
+        html_text,
+        source_url,
+        html_metadata=html_metadata,
+    )
+
+
+def _cleaned_article_html_from_soup(
+    soup: BeautifulSoup,
+    html_text: str,
+    source_url: str,
+    *,
+    html_metadata: Mapping[str, Any] | None = None,
+) -> tuple[str, str, int, list[dict[str, Any]], list[dict[str, Any]]]:
     container = _select_article_container(soup)
     if container is None:
         raise HtmlExtractionFailure(
@@ -502,10 +532,10 @@ def _cleaned_article_html(
     _normalize_references(cleaned)
     _remove_noise_nodes(cleaned)
 
-    title = extract_page_title(html_text)
+    title = _extract_page_title_from_soup(soup, metadata=html_metadata)
     container_text_length = len(_node_text(cleaned))
     section_hints = collect_html_section_hints(cleaned, title=title)
-    abstract_sections = _abstract_sections(cleaned, html_text)
+    abstract_sections = _abstract_sections(cleaned, html_metadata or parse_html_metadata(html_text, source_url))
     article_soup = BeautifulSoup("<article></article>", choose_parser())
     article = article_soup.find("article")
     if not isinstance(article, Tag):
@@ -517,7 +547,7 @@ def _cleaned_article_html(
     return str(article), title, container_text_length, section_hints, abstract_sections
 
 
-def _abstract_sections(container: Tag, html_text: str) -> list[dict[str, str]]:
+def _abstract_sections(container: Tag, html_metadata: Mapping[str, Any]) -> list[dict[str, str]]:
     abstract_node = container.select_one(".article-abstract")
     if isinstance(abstract_node, Tag):
         paragraphs = [
@@ -527,16 +557,25 @@ def _abstract_sections(container: Tag, html_text: str) -> list[dict[str, str]]:
         ]
         if paragraphs:
             return [{"heading": "Abstract", "text": normalize_text(" ".join(paragraphs))}]
-    abstract = normalize_text(str(parse_html_metadata(html_text, "").get("abstract") or ""))
+    abstract = normalize_text(str(html_metadata.get("abstract") or ""))
     return [{"heading": "Abstract", "text": abstract}] if abstract else []
 
 
 def extract_page_title(html_text: str) -> str:
     metadata = parse_html_metadata(html_text, "")
+    soup = BeautifulSoup(html_text, choose_parser())
+    return _extract_page_title_from_soup(soup, metadata=metadata)
+
+
+def _extract_page_title_from_soup(
+    soup: BeautifulSoup,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+) -> str:
+    metadata = metadata or {}
     title = normalize_text(str(metadata.get("title") or ""))
     if title:
         return title
-    soup = BeautifulSoup(html_text, choose_parser())
     return short_text(soup.find("h1")) or ""
 
 
@@ -634,6 +673,15 @@ def extract_references(html_text: str) -> list[dict[str, Any]]:
 
 def extract_keywords(html_text: str) -> list[str]:
     soup = BeautifulSoup(html_text, choose_parser())
+    metadata = parse_html_metadata(html_text, "")
+    return _extract_keywords_from_soup(soup, metadata=metadata)
+
+
+def _extract_keywords_from_soup(
+    soup: BeautifulSoup,
+    *,
+    metadata: Mapping[str, Any] | None = None,
+) -> list[str]:
     keywords: list[str] = []
     for node in soup.select(".keywords li"):
         if not isinstance(node, Tag):
@@ -641,8 +689,7 @@ def extract_keywords(html_text: str) -> list[str]:
         value = normalize_text(node.get_text(" ", strip=True)).strip(" ,;")
         if value and value not in keywords:
             keywords.append(value)
-    metadata = parse_html_metadata(html_text, "")
-    for value in metadata.get("keywords") or []:
+    for value in (metadata or {}).get("keywords") or []:
         keyword = normalize_text(str(value))
         if keyword and keyword not in keywords:
             keywords.append(keyword)
@@ -717,10 +764,18 @@ def extract_markdown(
     *,
     metadata: Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
-    merged_metadata = merge_metadata_with_html(metadata, html_text, source_url)
-    article_html, title, container_text_length, section_hints, abstract_sections = _cleaned_article_html(
+    soup = BeautifulSoup(html_text, choose_parser())
+    html_metadata = parse_html_metadata(html_text, source_url)
+    merged_metadata = _merge_metadata_with_parsed_html(
+        metadata,
+        html_metadata,
+        doi=str((metadata or {}).get("doi") or html_metadata.get("doi") or "") or None,
+    )
+    article_html, title, container_text_length, section_hints, abstract_sections = _cleaned_article_html_from_soup(
+        soup,
         html_text,
         source_url,
+        html_metadata=html_metadata,
     )
     if not title:
         title = normalize_text(str(merged_metadata.get("title") or ""))
@@ -735,6 +790,8 @@ def extract_markdown(
     if title and f"# {title}" not in markdown:
         markdown = f"# {title}\n\n{markdown}".strip()
     references = extract_references(article_html)
+    if references and not merged_metadata.get("references"):
+        merged_metadata["references"] = references
     extracted_assets = extract_scoped_html_assets(
         article_html,
         source_url,
@@ -778,7 +835,7 @@ def extract_markdown(
         "container_text_length": container_text_length,
         "availability_diagnostics": diagnostics.to_dict(),
         "extracted_authors": extract_authors(html_text),
-        "keywords": extract_keywords(html_text),
+        "keywords": _extract_keywords_from_soup(soup, metadata=html_metadata),
         "references": references,
         "extracted_assets": extracted_assets,
     }

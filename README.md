@@ -36,7 +36,7 @@
 
 项目边界：
 
-- 不替代主题检索、文献推荐或综述生成；但可在这些流程中抓取和核验候选论文全文，增强后续分析质量。
+- 不替代主题检索、文献推荐或综述生成；开放式搜索可先形成候选，当后续需要阅读、总结、比较、核验可读性或获取全文时，再把 DOI、URL、标题、arXiv ID 或引用条目交给 paper-fetch 抓取和核验候选论文全文。
 - 不绕过付费墙或访问授权；可用性取决于 provider、凭据和本机运行环境。
 - Wiley、Science、PNAS、AMS、Annual Reviews、ACS、IOP、AIP、MDPI 的浏览器路径统一使用 CloakBrowser。
 - 用户可以自行 fork 后添加新出版社，见 [`onboarding/README.md`](onboarding/README.md)，但是需要人工审核确定全文获取、markdown 转换质量等能力。

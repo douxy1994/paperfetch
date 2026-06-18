@@ -212,6 +212,7 @@ def _insert_mathml_from_script(script: Any) -> bool:
     )
     if not normalize_text(str(raw_mathml or "")):
         return False
+    # MathJax stores raw MathML markup in script text; parse the fragment into DOM.
     fragment = BeautifulSoup(str(raw_mathml or ""), choose_parser())
     math_node = fragment.find("math")
     if not isinstance(math_node, Tag) or not _math_node_has_payload(math_node):
@@ -242,6 +243,7 @@ def _math_node_from_mathml_script(node: Any) -> Any:
     raw_mathml = node.string if node.string is not None else node.decode_contents()
     if not normalize_text(str(raw_mathml or "")):
         return None
+    # MathJax stores raw MathML markup in script text; parse the fragment into DOM.
     fragment = BeautifulSoup(str(raw_mathml or ""), choose_parser())
     math_node = fragment.find("math")
     return math_node if isinstance(math_node, Tag) else None

@@ -24,6 +24,7 @@ from ..extraction.html.assets import (
 )
 from ..extraction.html.parsing import choose_parser
 from ..extraction.html.semantics import normalize_section_title
+from ..http.headers import header_value
 from ..utils import normalize_text
 from ._html_asset_engine import (
     HtmlAssetExtractionPolicy,
@@ -511,7 +512,10 @@ def figure_download_candidates(
                     retry_on_rate_limit=True,
                     retry_on_transient=True,
                 )
-                page_html = decode_html(response["body"])
+                page_html = decode_html(
+                    response["body"],
+                    content_type=header_value(response.get("headers"), "content-type"),
+                )
                 page_url = str(response["url"] or figure_page_url)
             full_size_url = extract_full_size_figure_image_url(page_html, page_url)
             if full_size_url:

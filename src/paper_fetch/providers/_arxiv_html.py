@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from typing import Any
 from collections.abc import Mapping
@@ -17,6 +18,7 @@ from ..quality.html_availability import assess_plain_text_fulltext_availability
 from ..quality.reason_codes import FULLTEXT
 from ..reason_codes import NO_RESULT
 from ..utils import normalize_text
+from ._arxiv_parsing import ARXIV_HTML_PARSER
 from ._html_section_markdown import render_clean_text_from_html, render_container_markdown, render_heading_text_from_html
 from .base import ProviderFailure
 
@@ -109,8 +111,7 @@ def _arxiv_select_one(node: Any, selector_group: str) -> Any:
 def _clean_arxiv_frontmatter_text(node: Any, *, remove_line_breaks: bool = True) -> str:
     if not isinstance(node, Tag):
         return ""
-    clone_soup = BeautifulSoup(str(node), "html.parser")
-    clone = clone_soup.find()
+    clone = copy.deepcopy(node)
     if not isinstance(clone, Tag):
         return ""
     for selector in _arxiv_ar5iv_selectors("frontmatter_noise"):
@@ -370,7 +371,7 @@ def _extract_arxiv_html_markdown(
     *,
     metadata: Mapping[str, Any],
 ) -> ArxivHtmlExtraction:
-    soup = BeautifulSoup(html_text, "html.parser")
+    soup = BeautifulSoup(html_text, ARXIV_HTML_PARSER)
     article = _arxiv_select_one(soup, "article_root") or soup.find("article")
     if not isinstance(article, Tag):
         raise ProviderFailure(

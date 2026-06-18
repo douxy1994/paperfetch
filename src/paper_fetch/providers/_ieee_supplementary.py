@@ -24,6 +24,7 @@ from ..extraction.html.assets.supplementary import (
 )
 from ..extraction.html.parsing import choose_parser
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, RequestFailure
+from ..http.headers import header_value
 from ..publisher_identity import normalize_doi
 from ..utils import empty_asset_results, normalize_text, strip_html_tags
 from ._ieee_metadata import IeeeLandingAttempt, _landing_metadata_has_multimedia_scope
@@ -189,7 +190,12 @@ def fetch_ieee_multimedia_assets(
             timeout=timeout,
             retry_on_transient=True,
         )
-        payload = json.loads(decode_html(bytes(response.get("body") or b"")))
+        payload = json.loads(
+            decode_html(
+                bytes(response.get("body") or b""),
+                content_type=header_value(response.get("headers"), "content-type"),
+            )
+        )
     except (RequestFailure, TypeError, ValueError):
         return []
     if not isinstance(payload, Mapping):

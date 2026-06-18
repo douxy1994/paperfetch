@@ -300,6 +300,41 @@ class ProviderFetchResultTemplateTests(unittest.TestCase):
         self.assertIn("Automatic conversion works", result.content.markdown_text or "")
         self.assertIn("Automatic conversion works", result.article.to_ai_markdown())
 
+    def test_base_fetch_result_decodes_html_with_payload_charset(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        body = (
+            "<html><body><article><h1>Charset Article</h1><h2>Results</h2><p>"
+            + ("Café conversion works. " * 80)
+            + "</p></article></body></html>"
+        ).encode("iso-8859-1")
+
+        class LatinHtmlClient(_TemplateClient):
+            def fetch_raw_fulltext(self, doi, metadata, *, context=None):
+                del doi, metadata, context
+                return RawFulltextPayload(
+                    provider="template",
+                    source_url="https://example.test/article",
+                    content_type="text/html; charset=iso-8859-1",
+                    body=body,
+                    content=ProviderContent(
+                        route_kind="html",
+                        source_url="https://example.test/article",
+                        content_type="text/html; charset=iso-8859-1",
+                        body=body,
+                    ),
+                    trace=trace_from_markers(["fulltext:template_html_ok"]),
+                )
+
+        result = LatinHtmlClient().fetch_result(
+            "10.5555/template",
+            {"doi": "10.5555/template", "title": "Charset Article"},
+            None,
+        )
+
+        self.assertIsNotNone(result.content)
+        assert result.content is not None
+        self.assertIn("Café conversion works", result.content.markdown_text or "")
+
     def test_runtime_parse_cache_returns_copies_for_mutable_payloads(self) -> None:
         context = RuntimeContext(env={})
         key = context.build_parse_cache_key(

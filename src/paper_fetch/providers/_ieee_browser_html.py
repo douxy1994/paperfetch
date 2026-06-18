@@ -132,9 +132,12 @@ def fetch_ieee_browser_html_payload(
                 continue
             if not isinstance(body, (bytes, bytearray)) or not body:
                 continue
-            html_text = decode_html(bytes(body))
             source_url = ieee_url._absolute_ieee_url(str(getattr(response, "url", "") or rest_url), rest_url)
             response_headers = _playwright_response_headers(response)
+            html_text = decode_html(
+                bytes(body),
+                content_type=header_value(response_headers, "content-type"),
+            )
             response_status = _playwright_response_status(response)
             payload_source = "rest_response"
             break

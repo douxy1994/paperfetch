@@ -84,6 +84,12 @@ class StaticSkillTests(unittest.TestCase):
 
         self.assertEqual(metadata["name"], "paper-fetch-skill")
         self.assertIn("description", metadata)
+        description = metadata["description"]
+        self.assertIn("web search", description)
+        self.assertIn("候选论文", description)
+        self.assertIn("全文", description)
+        self.assertIn("需要阅读", description)
+        self.assertIn("不替代开放式领域检索", description)
 
     def test_static_skill_entrypoint_stays_thin_and_points_at_references(self) -> None:
         text = STATIC_SKILL_PATH.read_text(encoding="utf-8")
@@ -96,6 +102,10 @@ class StaticSkillTests(unittest.TestCase):
         self.assertIn("has_fulltext", text)
         self.assertIn("provider_status", text)
         self.assertIn("参考文献列表", text)
+        self.assertIn("搜索工具只负责发现候选", text)
+        self.assertIn("普通上下文阅读/总结不因保存策略缺失而阻塞", text)
+        self.assertIn("ProviderSpec.requires_browser_runtime=True", text)
+        self.assertNotIn("当前 `wiley`", text)
         self.assertIn("不要仅因为本地没有 PDF", text)
         self.assertIn("references/environment.md", text)
         self.assertIn("references/cli-fallback.md", text)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from functools import partial
 import re
 from typing import Any
@@ -107,8 +108,7 @@ def _clean_acs_markdown_chrome(markdown_text: str) -> str:
 
 def _clean_reference_text(node: Tag) -> str:
     citation = node.select_one(".NLM_citation") or node
-    clone_soup = BeautifulSoup(str(citation), choose_parser())
-    clone = clone_soup.find()
+    clone = copy.deepcopy(citation)
     if not isinstance(clone, Tag):
         return ""
     for selector in (

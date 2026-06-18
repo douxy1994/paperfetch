@@ -21,7 +21,9 @@ from ..models.markdown import image_reference_candidates, image_references_match
 from ..publisher_identity import normalize_doi
 from ..quality.html_signals import TextMarkerRule, TextMarkerSignalSet
 from ..utils import normalize_text
-from ._html_references import extract_numbered_references_from_html
+from ._html_references import (
+    extract_numbered_references_from_soup,
+)
 from . import browser_workflow
 
 
@@ -233,6 +235,13 @@ def extract_pdf_candidate_urls_from_html(
     source_url: str,
 ) -> list[str]:
     soup = BeautifulSoup(html_text, choose_parser())
+    return _extract_pdf_candidate_urls_from_soup(soup, source_url)
+
+
+def _extract_pdf_candidate_urls_from_soup(
+    soup: BeautifulSoup,
+    source_url: str,
+) -> list[str]:
     candidates: list[str] = []
     for selector, attribute in (
         ("meta[name='citation_pdf_url']", "content"),
@@ -294,11 +303,19 @@ def extract_title(html_text: str, source_url: str | None = None) -> str | None:
 
 
 def extract_references(html_text: str) -> list[dict[str, str | None]]:
-    references = extract_numbered_references_from_html(html_text)
+    soup = BeautifulSoup(html_text, choose_parser())
+    references = _extract_references_from_soup(soup)
+    if not references:
+        references = _extract_references_from_metadata(parse_html_metadata(html_text, ""))
     if references:
         return references
+    return _extract_references_from_metadata(parse_html_metadata(html_text, ""))
 
-    soup = BeautifulSoup(html_text, choose_parser())
+
+def _extract_references_from_soup(soup: BeautifulSoup) -> list[dict[str, str | None]]:
+    references = extract_numbered_references_from_soup(soup)
+    if references:
+        return references
     containers = [
         node
         for node in soup.select(
@@ -327,7 +344,12 @@ def extract_references(html_text: str) -> list[dict[str, str | None]]:
     if parsed:
         return parsed
 
-    metadata = parse_html_metadata(html_text, "")
+    return []
+
+
+def _extract_references_from_metadata(metadata: Mapping[str, Any]) -> list[dict[str, str | None]]:
+    parsed: list[dict[str, str | None]] = []
+    seen: set[str] = set()
     raw_meta = metadata.get("raw_meta")
     values = []
     if isinstance(raw_meta, Mapping):
@@ -383,6 +405,10 @@ def _parse_citation_reference_meta(value: Any) -> dict[str, str | None]:
 
 def extract_figure_captions(html_text: str) -> list[str]:
     soup = BeautifulSoup(html_text, choose_parser())
+    return _extract_figure_captions_from_soup(soup)
+
+
+def _extract_figure_captions_from_soup(soup: BeautifulSoup) -> list[str]:
     captions: list[str] = []
     for node in soup.select("figure figcaption, .figure .caption, .article-figure .caption"):
         if not isinstance(node, Tag):
@@ -556,6 +582,7 @@ def extract_markdown(
     *,
     metadata: Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
+    soup = BeautifulSoup(html_text, choose_parser())
     html_title = extract_title(html_text, source_url)
     metadata_for_extraction = dict(metadata or {})
     if html_title and _metadata_title_allows_html_title(
@@ -577,15 +604,19 @@ def extract_markdown(
     authors = extract_authors(html_text)
     if authors:
         finalized["extracted_authors"] = authors
-    figure_captions = extract_figure_captions(html_text)
+    figure_captions = _extract_figure_captions_from_soup(soup)
     if figure_captions:
         finalized["figure_captions"] = figure_captions
         markdown_text = _append_missing_figure_captions(markdown_text, figure_captions)
-    references = extract_references(html_text)
+    references = _extract_references_from_soup(soup)
+    if not references:
+        references = _extract_references_from_metadata(parse_html_metadata(html_text, ""))
     if references:
         finalized["references"] = references
         markdown_text = _append_references_markdown(markdown_text, references)
-    pdf_candidates = pdf_candidate_urls(metadata or {}, source_url=source_url, html_text=html_text)
+    pdf_candidates = pdf_candidate_urls(metadata or {}, source_url=source_url)
+    for candidate in _extract_pdf_candidate_urls_from_soup(soup, source_url):
+        _append_unique(pdf_candidates, candidate)
     if pdf_candidates:
         finalized["pdf_candidates"] = pdf_candidates
     return markdown_text, finalized

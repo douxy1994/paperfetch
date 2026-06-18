@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass
 from html import escape
 import re
@@ -312,6 +313,10 @@ def _repair_royal_math_text(line: str) -> str:
 
 def _clean_article_body(html_text: str) -> tuple[str, int]:
     soup = BeautifulSoup(html_text, choose_parser())
+    return _clean_article_body_from_soup(soup)
+
+
+def _clean_article_body_from_soup(soup: BeautifulSoup) -> tuple[str, int]:
     body = _first_article_body(soup)
     if body is None:
         return "", 0
@@ -407,8 +412,8 @@ def citation_references_from_metadata(metadata: Mapping[str, Any]) -> list[dict[
 
 
 def _parse_html_reference_node(node: Tag) -> dict[str, Any] | None:
-    soup = BeautifulSoup(str(node), choose_parser())
-    ref = soup.select_one(".ref") or soup
+    cloned = copy.deepcopy(node)
+    ref = cloned.select_one(".ref") or cloned
     for selector in (".label", ".citation-links", ".ref-links", ".cit-extra"):
         for item in list(ref.select(selector)):
             item.decompose()
@@ -429,6 +434,10 @@ def _parse_html_reference_node(node: Tag) -> dict[str, Any] | None:
 
 def html_references_from_ref_list(html_text: str) -> list[dict[str, Any]]:
     soup = BeautifulSoup(html_text, choose_parser())
+    return html_references_from_ref_list_soup(soup)
+
+
+def html_references_from_ref_list_soup(soup: BeautifulSoup) -> list[dict[str, Any]]:
     references: list[dict[str, Any]] = []
     seen: set[str] = set()
     for node in soup.select(".ref-list .ref"):
@@ -453,6 +462,22 @@ def merge_metadata_with_html(
     doi: str | None = None,
 ) -> dict[str, Any]:
     html_metadata = parse_html_metadata(html_text, source_url)
+    references = html_references_from_ref_list(html_text)
+    return _merge_metadata_with_parsed_html(
+        base_metadata,
+        html_metadata,
+        doi=doi,
+        references=references,
+    )
+
+
+def _merge_metadata_with_parsed_html(
+    base_metadata: Mapping[str, Any] | None,
+    html_metadata: Mapping[str, Any],
+    *,
+    doi: str | None = None,
+    references: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     merged = merge_html_metadata(base_metadata, html_metadata)
     if doi and not merged.get("doi"):
         merged["doi"] = normalize_doi(doi)
@@ -461,8 +486,7 @@ def merge_metadata_with_html(
     doi_value = normalize_doi(str(doi or merged.get("doi") or html_metadata.get("doi") or ""))
     if html_title and doi_value and normalize_doi(current_title) == doi_value:
         merged["title"] = html_title
-    html_references = html_references_from_ref_list(html_text)
-    references = html_references or citation_references_from_metadata(merged)
+    references = references or citation_references_from_metadata(merged)
     if references and not merged.get("references"):
         merged["references"] = references
     return dict(merged)
@@ -649,8 +673,15 @@ def extract_markdown(
     metadata: Mapping[str, Any] | None = None,
     asset_profile: AssetProfile = "body",
 ) -> RoyalSocietyHtmlExtraction:
-    merged_metadata = merge_metadata_with_html(metadata, html_text, source_url)
-    cleaned_html, body_text_length = _clean_article_body(html_text)
+    soup = BeautifulSoup(html_text, choose_parser())
+    html_metadata = parse_html_metadata(html_text, source_url)
+    html_references = html_references_from_ref_list_soup(soup)
+    merged_metadata = _merge_metadata_with_parsed_html(
+        metadata,
+        html_metadata,
+        references=html_references,
+    )
+    cleaned_html, body_text_length = _clean_article_body_from_soup(soup)
     if not cleaned_html:
         return RoyalSocietyHtmlExtraction(
             html_text="",

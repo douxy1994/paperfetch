@@ -607,7 +607,10 @@ class SpringerClient(ProviderClient):
             )
             return _springer_table_image_markdown(asset, label=fallback_label), None, asset
 
-        table_html = _springer_html.decode_html(response["body"])
+        table_html = _springer_html.decode_html(
+            response["body"],
+            content_type=_springer_response_content_type(response),
+        )
         soup = BeautifulSoup(table_html, choose_parser())
         table = soup.select_one(".c-article-table-container table, table")
         if isinstance(table, Tag):
@@ -720,7 +723,10 @@ class SpringerClient(ProviderClient):
             f"https://doi.org/{urllib.parse.quote(normalized_doi, safe='')}",
         )
         response, response_url = self._fetch_html_response(landing_url)
-        html_text = _springer_html.decode_html(response["body"])
+        html_text = _springer_html.decode_html(
+            response["body"],
+            content_type=_springer_response_content_type(response),
+        )
         html_metadata = _springer_html.parse_html_metadata(html_text, response_url)
         merged_metadata = _springer_html.merge_html_metadata(metadata, html_metadata)
         if not merged_metadata.get("doi"):
@@ -859,7 +865,10 @@ class SpringerClient(ProviderClient):
             asset_profile=asset_profile,
         )
         if not article_assets:
-            html_text = _springer_html.decode_html(raw_payload.body)
+            html_text = _springer_html.decode_html(
+                raw_payload.body,
+                content_type=raw_payload.content_type,
+            )
             title = normalize_text(str((content.merged_metadata or {}).get("title") if content is not None and content.merged_metadata else metadata.get("title") or ""))
             asset_body_html, asset_supplementary_html = _springer_html.extract_asset_html_scopes(
                 html_text,

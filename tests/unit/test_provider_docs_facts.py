@@ -17,13 +17,13 @@ ONBOARDING_README_PATH = REPO_ROOT / "onboarding" / "README.md"
 MCP_INSTRUCTIONS_PATH = REPO_ROOT / "src" / "paper_fetch" / "mcp" / "_instructions.py"
 PROVIDER_CATALOG_PATH = REPO_ROOT / "src" / "paper_fetch" / "provider_catalog.py"
 CLOAKBROWSER_PROVIDER_PATH = REPO_ROOT / "src" / "paper_fetch" / "providers" / "_cloakbrowser.py"
+SKILL_ENTRYPOINT_PATH = REPO_ROOT / "skills" / "paper-fetch-skill" / "SKILL.md"
 BROWSER_FACT_DOC_PATHS = (
     REPO_ROOT / "README.md",
     REPO_ROOT / "docs" / "README.md",
     REPO_ROOT / "docs" / "deployment.md",
     REPO_ROOT / "docs" / "providers.md",
     REPO_ROOT / "docs" / "architecture" / "overview.md",
-    REPO_ROOT / "skills" / "paper-fetch-skill" / "SKILL.md",
     REPO_ROOT / "skills" / "paper-fetch-skill" / "references" / "failure-handling.md",
     REPO_ROOT / "skills" / "paper-fetch-skill" / "references" / "tool-contract.md",
 )
@@ -123,6 +123,23 @@ def test_human_docs_cover_catalog_browser_runtime_providers() -> None:
             "runtime providers: "
             + ", ".join(missing)
         )
+
+
+def test_skill_entrypoint_uses_catalog_browser_runtime_boundary() -> None:
+    text = _read(SKILL_ENTRYPOINT_PATH)
+
+    assert "ProviderSpec.requires_browser_runtime=True" in text
+    assert "provider_status()" in text
+    listed = [
+        spec.name
+        for spec in _browser_provider_specs()
+        if _provider_is_mentioned(text, spec.name)
+    ]
+    assert not listed, (
+        "Thin SKILL.md should point at catalog-derived browser runtime policy "
+        "instead of keeping a static provider table: "
+        + ", ".join(listed)
+    )
 
 
 def test_human_docs_cover_public_source_provider_map() -> None:

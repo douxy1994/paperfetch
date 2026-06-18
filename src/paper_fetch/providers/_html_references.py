@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 from typing import Any
 
@@ -152,8 +153,7 @@ def _reference_text(node: Any) -> str:
     if not isinstance(content_node, Tag):
         return ""
     active_node = content_node
-    clone_soup = BeautifulSoup(str(content_node), choose_parser())
-    clone = clone_soup.find()
+    clone = copy.deepcopy(content_node)
     if isinstance(clone, Tag):
         for selector in REFERENCE_NOISE_SELECTORS:
             for match in clone.select(selector):
@@ -200,6 +200,10 @@ def extract_numbered_references_from_html(html_text: str) -> list[dict[str, str 
         return []
 
     soup = BeautifulSoup(html_text, choose_parser())
+    return extract_numbered_references_from_soup(soup)
+
+
+def extract_numbered_references_from_soup(soup: Any) -> list[dict[str, str | None]]:
     references: list[dict[str, str | None]] = []
     seen: set[tuple[str, str]] = set()
 

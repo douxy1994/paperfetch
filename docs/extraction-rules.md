@@ -1,6 +1,6 @@
 # 提取与渲染规则
 
-修订日期：2026-05-19
+修订日期：2026-06-18
 
 这份文档解决：
 
@@ -133,6 +133,7 @@ metadata
 | [表格展平或列表降级](#rule-table-flatten-or-list) | 共享 table helper 无 DOI 级 replay；已有 `_scenarios/table_flatten_or_list`。 | 新增 publisher 真实复杂表 replay。 | 非 Elsevier / Springer 的 rowspan、colspan 或无法展平 table HTML。 |
 | [Availability section contract](#rule-keep-data-availability-once) | body metrics 与 section hints 分支已有 `_scenarios/availability_body_metrics` 和 `_scenarios/section_hints_availability`；无单一 DOI replay 覆盖全部形态。 | 真实页面只含 availability 却被误判全文，或 provider 产出非 literal heading 的 section hint 回归。 | 只含 Data / Code Availability、正文为空或极短的 HTML replay；或带 section hint 的 provider extraction replay。 |
 | [LaTeX normalization](#rule-formula-latex-normalization) | normalize 分支无 DOI 级 replay；已有 `_scenarios/formula_latex_normalization`。 | 真实 MathML 转换产出新 KaTeX 不兼容宏。 | 包含 publisher-specific MathML 宏或 mtext 转义的 XML / HTML。 |
+| [HTML bytes 解码和清洗 fallback 边界](#rule-html-byte-decoding-and-cleanup-bounds) | 当前无稳定 DOI 样本；已有 unit tests 锁定 charset 顺序、provider raw HTML 解码、no-root cheap cleanup、raw trafilatura 上限和 ORCID 常量。 | 真实 publisher HTML 出现非 UTF-8 charset、无内容根大页面或 raw fallback 性能回归。 | 带 HTTP charset/meta charset 的原始 HTML replay，或 no-root 大 HTML replay。 |
 | `royalsocietypublishing` docs sync | manifest docs.extraction_rules_summary is null; no unstable DOI rule row required yet. | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/royalsocietypublishing.yml` |
 | `annualreviews` | HTML fixture replay 已覆盖 `#html_fulltext` / `#itemFullTextId` 全文容器、`.articleSection` 正文段落、Annual Reviews figure/table 节点和 references；清洗链 proposal 已通过 `check-cleaning-proposal`。 | Annual Reviews 需要 provider-owned HTML extraction：选择动态全文容器，移除导航、访问 UI、PDF/PPT 操作、section menu、reference resolver 链接和动态 shell/comment 噪声，并在渲染前规范化章节标题、figure caption 与 table caption；通用 Atypon 抽取不足以维护这些结构。 | 继续补充稳定 table/formula/supplementary DOI 样本；PowerPoint 链接明确排除在 supplementary scope 之外。 |
 | `plos` docs sync | manifest docs.extraction_rules_summary is null; no unstable DOI rule row required yet. | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/plos.yml` |
@@ -149,6 +150,29 @@ metadata
 - 反爬 / 访问阻断文本中的通用 token 统一维护在 `COMMON_ACCESS_BLOCK_TOKENS`，provider 规则只追加自身增量，避免把通用 challenge 语义复制到单个 provider。
 
 资产渲染与诊断 contract 由 [正文已内联 figure 时不再重复追加尾部 Figures 附录](#rule-no-trailing-figures-appendix)、[Markdown 图片 alt 只保留短标签](#rule-short-markdown-image-alt-labels)、[已下载的正文图片和公式图片要改写成正文附近的本地链接](#rule-rewrite-inline-figure-links) 和 [下载资产必须保留诊断字段](#rule-asset-download-diagnostic-fields) 共同维护；[图片下载必须验证真实图片内容](#rule-image-download-validates-real-images) 独立约束 payload 真实性和 preview acceptance。
+
+<a id="rule-html-byte-decoding-and-cleanup-bounds"></a>
+### HTML bytes 解码和清洗 fallback 边界
+
+- 这条规则约束的是：HTML/JSON bytes 转文本必须优先保留真实字符集，通用 HTML cleanup 在无内容根时不能对整页逐节点跑噪声分类，raw trafilatura fallback 不能无上限处理大型原文 HTML。
+- 如果违反，用户会看到：非 UTF-8 页面出现乱码；无 `article/main/[role=main]` 的大页面清洗异常变慢；cleaned HTML 已经很小但 raw fallback 又把数 MB 原文交给 trafilatura，导致抓取延迟放大。
+- 它对应的阶段是：`provider-html-or-xml-extraction`、`html-cleanup`、`markdown-normalization`。
+- Owner：`paper_fetch.extraction.html._runtime` 与 `paper_fetch.providers.base.ProviderClient`。
+- 代表性 HTML / XML：
+  - 当前无稳定 DOI 样本，直接见对应测试；后续出现真实 charset 或 no-root 性能回归时补入 replay fixture。
+- 对应测试：
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_decode_html_uses_http_charset_after_utf8_fails`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_decode_html_reads_meta_charset_after_utf8_fails`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_decode_html_uses_charset_normalizer_before_replace_fallback`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_decode_html_short_circuits_valid_utf8`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_no_root_cleanup_skips_per_node_classification`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_raw_trafilatura_fallback_skips_large_raw_html`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_orcid_href_pattern_is_module_constant_used_by_pruning`
+  - [`../tests/unit/test_provider_fetch_result_template.py`](../tests/unit/test_provider_fetch_result_template.py) 中的 `test_base_fetch_result_decodes_html_with_payload_charset`
+- 边界说明：
+  - 解码顺序固定为 UTF-8 BOM / UTF-8、HTTP charset、HTML meta charset、`charset-normalizer`、UTF-8 replacement fallback。
+  - no-root cheap cleanup 仍会删除 drop tags、cleanup selectors、extraction cleanup selectors 和 ORCID links；它只跳过逐节点 `should_drop_html_element()` 分类。
+  - raw trafilatura fallback 默认上限是 `RAW_TRAFILATURA_FALLBACK_CHAR_LIMIT = 1_000_000` 字符；超过上限时跳过 raw fallback，但 cleaned HTML 的 parser fallback 仍继续执行。
 
 <a id="rule-keep-semantic-parent-heading"></a>
 ### 保留语义父节标题

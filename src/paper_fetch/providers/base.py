@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from collections.abc import Mapping
 
 from ..artifacts import ArtifactStore
-from ..extraction.html import render_html_markdown
+from ..extraction.html import decode_html, render_html_markdown
 from ..http import RequestFailure
 from ..models import ArticleModel, AssetProfile
 from ..runtime import RuntimeContext
@@ -533,13 +533,17 @@ class ProviderClient:
         context: RuntimeContext,
     ) -> RawFulltextPayload:
         content = raw_payload.content
-        content_type = normalize_text(content.content_type if content is not None else raw_payload.content_type).lower()
+        payload_content_type = content.content_type if content is not None else raw_payload.content_type
+        content_type = normalize_text(payload_content_type).lower()
         if "html" not in content_type:
             return raw_payload
         if content is not None and normalize_text(content.markdown_text):
             return raw_payload
 
-        html_text = bytes(raw_payload.body or b"").decode("utf-8", errors="replace").strip()
+        html_text = decode_html(
+            bytes(raw_payload.body or b""),
+            content_type=payload_content_type,
+        ).strip()
         if not html_text:
             return raw_payload
 

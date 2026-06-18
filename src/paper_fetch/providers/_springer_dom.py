@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import re
 import urllib.parse
 from typing import Any
@@ -186,8 +187,8 @@ SPRINGER_PEER_REVIEW_TOKENS = (
 )
 
 
-def decode_html(body: bytes) -> str:
-    return _decode_html(body)
+def decode_html(body: bytes, *, content_type: str | None = None) -> str:
+    return _decode_html(body, content_type=content_type)
 
 
 _SPRINGER_BASE_FIRST_SCALAR_KEYS = frozenset(
@@ -355,8 +356,7 @@ def _normalized_root_html(html_text: str) -> tuple[str, Any]:
     )
     if root is None:
         root = soup.body or soup
-    candidate_soup = BeautifulSoup(str(root), choose_parser())
-    active_root = candidate_soup.body or candidate_soup
+    active_root = copy.deepcopy(root)
     prune_html_tree(active_root)
     _remove_springer_ai_alt_disclaimers(active_root)
     return str(active_root), active_root

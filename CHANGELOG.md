@@ -6,6 +6,20 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.4.0 - 2026-06-18
+
+### Changed
+
+- Refined the packaged skill instructions: paper-fetch now explicitly applies to DOI, URL, arXiv ID, title, citation, and search-generated candidate workflows that need reading, summarization, comparison, translation, critique, full-text fetch, or readability checks; ordinary read/summarize tasks default to no local save unless the user asks for archival output, and browser-runtime guidance now follows `ProviderSpec.requires_browser_runtime` instead of a hard-coded provider list.
+- Hardened HTML byte decoding across provider and asset fetch paths: `decode_html()` now honors UTF-8 BOM/UTF-8, HTTP `Content-Type` charset, HTML meta charset, `charset-normalizer`, and UTF-8 replacement fallback, with Springer, IEEE, browser workflow, generic provider, and figure-page paths passing response content type where available.
+- Reduced repeated HTML parsing and DOM cloning overhead in Annual Reviews, Royal Society Publishing, IOP, shared author/reference helpers, and arXiv helpers. Pure BeautifulSoup string-reparse clones now use bs4 node copies, while raw MathML fragment parsing remains explicit for AMS.
+- Centralized arXiv official HTML parser selection through `ARXIV_HTML_PARSER = choose_parser()` after fixture tests confirmed the `lxml` parser path remains compatible.
+
+### Fixed
+
+- Made generic HTML cleanup cheaper on pages without `article`, `main`, or `role=main`: no-root cleanup now skips per-node noise classification while retaining tag, selector, and ORCID removal, and content-root selection avoids repeated full-subtree text extraction.
+- Capped raw trafilatura fallback at `1_000_000` characters so large original HTML is no longer sent to trafilatura after cleaned HTML fails; cleaned fallback parsing still runs.
+
 ## 2.3.0 - 2026-06-14
 
 ### Added

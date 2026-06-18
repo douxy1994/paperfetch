@@ -295,7 +295,10 @@ class IeeeClient(ProviderClient):
             raise map_request_failure(exc) from exc
         response_url = ieee_url._absolute_ieee_url(str(response.get("url") or rest_url), rest_url)
         body = bytes(response.get("body") or b"")
-        html_text = decode_html(body)
+        html_text = decode_html(
+            body,
+            content_type=header_value(response.get("headers"), "content-type"),
+        )
         extraction = ieee_html._extract_ieee_html(
             html_text,
             response_url,

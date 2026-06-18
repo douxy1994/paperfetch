@@ -284,9 +284,12 @@ def _append_fragment(destination: Tag, html_text: str) -> None:
 
 
 def _copy_node(node: Tag) -> Tag | None:
-    copied = BeautifulSoup(str(node), choose_parser())
-    found = copied.find(node.name)
-    return found if isinstance(found, Tag) else None
+    copied = copy.deepcopy(node)
+    if not isinstance(copied, Tag):
+        return None
+    wrapper = BeautifulSoup("", choose_parser())
+    wrapper.append(copied)
+    return copied
 
 
 def _article_container_html(

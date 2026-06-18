@@ -6,6 +6,20 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.4.0 - 2026-06-18
+
+### 变更
+
+- 调整随包 skill 指令：paper-fetch 现在明确适用于 DOI、URL、arXiv ID、标题、引用条目，以及搜索工具已产生候选且需要阅读、总结、比较、翻译、批判、获取全文或核验可读性的流程；普通阅读/总结任务默认不本地保存，只有用户要求归档输出时才确认保存策略；browser runtime 指引也改为跟随 `ProviderSpec.requires_browser_runtime`，不再维护硬编码 provider 名单。
+- 加固 provider 与资产抓取路径中的 HTML bytes 解码：`decode_html()` 现在会依次处理 UTF-8 BOM/UTF-8、HTTP `Content-Type` charset、HTML meta charset、`charset-normalizer` 和 UTF-8 replacement 兜底；Springer、IEEE、browser workflow、通用 provider 与 figure-page 路径也会在可用时传入响应 content type。
+- 减少 Annual Reviews、Royal Society Publishing、IOP、共享作者/参考文献 helper 与 arXiv helper 中的重复 HTML 解析和 DOM clone 开销。纯 BeautifulSoup 字符串重解析 clone 已改为使用 bs4 node copy，AMS 的 raw MathML fragment 解析仍保持显式处理。
+- 将 arXiv official HTML parser 选择集中到 `ARXIV_HTML_PARSER = choose_parser()`，并通过 fixture 测试确认 `lxml` parser 路径仍兼容。
+
+### 修复
+
+- 优化无 `article`、`main` 或 `role=main` 页面上的通用 HTML cleanup：no-root cleanup 现在跳过逐节点噪声分类，同时保留 tag、selector 与 ORCID 移除；content-root 选择也避免重复的整棵子树文本提取。
+- 为 raw trafilatura fallback 增加 `1_000_000` 字符上限；cleaned HTML 失败后，超大的原始 HTML 不再传给 trafilatura，但 cleaned fallback parser 仍会继续运行。
+
 ## 2.3.0 - 2026-06-14
 
 ### 新增

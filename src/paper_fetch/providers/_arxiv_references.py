@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 import re
 
@@ -11,7 +12,6 @@ from ..models.markdown import normalize_markdown_text
 from ..utils import normalize_text
 from ._arxiv_html import (
     ArxivSemanticPreparation,
-    BeautifulSoup,
     Tag,
     _arxiv_ar5iv_selectors,
     _arxiv_node_classes,
@@ -77,8 +77,7 @@ def _extract_reference_title(node: Any) -> str | None:
 def _clean_arxiv_reference_node(node: Any) -> Any:
     if not isinstance(node, Tag):
         return None
-    clone_soup = BeautifulSoup(str(node), "html.parser")
-    clone = clone_soup.find()
+    clone = copy.deepcopy(node)
     if not isinstance(clone, Tag):
         return None
 
@@ -343,8 +342,7 @@ def _render_arxiv_table_block(node: Any) -> tuple[str, bool, bool]:
 def _clean_arxiv_listing_line_node(line_node: Any) -> Any:
     if not isinstance(line_node, Tag):
         return None
-    clone_soup = BeautifulSoup(str(line_node), "html.parser")
-    clone = clone_soup.find()
+    clone = copy.deepcopy(line_node)
     if not isinstance(clone, Tag):
         return None
     for selector in _arxiv_ar5iv_selectors("listing_noise"):
