@@ -6,6 +6,12 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.4.1 - 2026-06-20
+
+### Changed
+
+- Bumped the CloakBrowser dependency floor to `0.3.32`, improving browser-route adaptation to publisher anti-bot and automation-detection changes; all users are encouraged to update.
+
 ## 2.4.0 - 2026-06-18
 
 ### Changed

@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "paper-fetch-skill"
-version = "2.4.0"
+version = "2.4.1"
 description = "AI-friendly paper fetch tooling"
 readme = "README.md"
 requires-python = ">=3.11"
 dependencies = [
   "beautifulsoup4>=4.14,<5",
   "cachetools>=6,<8",
-  "cloakbrowser>=0.3.28,<0.4",
+  "cloakbrowser>=0.3.32,<0.4",
   "filetype>=1.2,<2",
   "filelock>=3.20,<4",
   "imagesize>=1.4,<3",
