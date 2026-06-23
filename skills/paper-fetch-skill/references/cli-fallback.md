@@ -1,5 +1,19 @@
 # CLI Fallback
 
+If MCP is unavailable, the CLI is the fallback path. Prefer re-registering the MCP server so the agent regains `resolve_paper` / `fetch_paper` / `provider_status` and friends; only fall back to the CLI when MCP cannot be brought up (no host available, broken runtime, or the user explicitly wants shell output).
+
+Registering the stdio MCP server into a host (run from the repo root):
+
+```bash
+./scripts/install-claude-skill.sh --register-mcp        # Claude Code
+./scripts/install-codex-skill.sh --register-mcp         # Codex
+./scripts/install-antigravity-skill.sh --register-mcp   # Antigravity (agy)
+./scripts/install-zcode-skill.sh --register-mcp         # ZCode
+./scripts/install-hermes-skill.sh --register-mcp        # Hermes Agent
+```
+
+Add `--env-file ~/.config/paper-fetch/.env` to bind provider credentials, and `--project` for a project-scoped install. Restart the host afterward so it rescans skills and MCP config.
+
 If MCP is unavailable, use:
 
 ```bash
