@@ -7,9 +7,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[2]
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 CI_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "ci.yml"
-DAILY_CLOAKBROWSER_CANARY_WORKFLOW = (
-    REPO_ROOT / ".github" / "workflows" / "daily-cloakbrowser-canary.yml"
-)
 LINUX_OFFLINE_VERIFY = REPO_ROOT / "scripts" / "verify-offline-package.sh"
 DEV_PREFLIGHT = REPO_ROOT / "scripts" / "dev-preflight.sh"
 
@@ -32,39 +29,6 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("scripts/validate_extraction_rules.py", preflight)
         self.assertIn("tests/integration -q", preflight)
         self.assertIn("--durations=30", workflow)
-
-    def test_daily_cloakbrowser_canary_rotates_browser_samples_and_opens_issues(self) -> None:
-        workflow = DAILY_CLOAKBROWSER_CANARY_WORKFLOW.read_text(encoding="utf-8")
-
-        self.assertIn("schedule:", workflow)
-        self.assertIn('cron: "23 3 * * *"', workflow)
-        self.assertIn("workflow_dispatch:", workflow)
-        self.assertIn("issues: write", workflow)
-        self.assertIn(
-            "from tests.provider_benchmark_samples import provider_benchmark_sample",
-            workflow,
-        )
-        for provider in (
-            "wiley",
-            "science",
-            "pnas",
-            "ams",
-            "mdpi",
-            "annualreviews",
-            "acs",
-            "iop",
-            "aip",
-        ):
-            self.assertIn(f'"{provider}"', workflow)
-        self.assertNotIn('"ieee"', workflow)
-        self.assertIn("paper-fetch \\", workflow)
-        self.assertIn("--format json", workflow)
-        self.assertIn("--artifact-mode none", workflow)
-        self.assertIn("--asset-profile none", workflow)
-        self.assertIn("quality.has_fulltext is not true", workflow)
-        self.assertIn("source mismatch: expected", workflow)
-        self.assertIn("gh issue create", workflow)
-        self.assertIn("GH_TOKEN: ${{ github.token }}", workflow)
 
     def test_windows_offline_ci_uses_current_provider_status_entrypoint(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")

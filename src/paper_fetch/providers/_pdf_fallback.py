@@ -393,7 +393,7 @@ def fetch_pdf_with_browser(
                 seed_urls=seed_urls,
                 context=context,
                 _allow_thread_handoff=False,
-                _use_runtime_browser=False,
+                _use_runtime_browser=_use_runtime_browser,
             ).result()
 
     if not candidate_urls:

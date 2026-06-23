@@ -16,6 +16,7 @@ from paper_fetch.providers import (
     _pdf_common,
     _pdf_fallback,
 )
+from paper_fetch.runtime import RuntimeContext
 from tests.unit._paper_fetch_support import RecordingTransport
 
 
@@ -263,6 +264,102 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(result.final_url, "https://example.org/downloaded/article.pdf")
         self.assertEqual(len(new_context_thread_ids), 1)
         self.assertNotEqual(new_context_thread_ids[0], main_thread_id)
+
+    def test_pdf_fallback_thread_handoff_reuses_runtime_browser_config(self) -> None:
+        pdf_url = "https://example.org/article.pdf"
+        main_thread_id = threading.get_ident()
+        new_context_thread_ids: list[int] = []
+
+        class FakeDownload:
+            suggested_filename = "article.pdf"
+
+            def save_as(self, path: str) -> None:
+                Path(path).write_bytes(b"%PDF-1.7 cloakbrowser")
+
+        class FakeDownloadInfo:
+            value = FakeDownload()
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, exc_type, exc, tb) -> None:
+                return None
+
+        class FakePage:
+            url = "https://example.org/downloaded/article.pdf"
+
+            def expect_download(self, *, timeout: int):
+                return FakeDownloadInfo()
+
+            def goto(self, url: str, **kwargs):
+                return mock.Mock()
+
+        class FakeBrowserContext:
+            def new_page(self) -> FakePage:
+                return FakePage()
+
+            def close(self) -> None:
+                return None
+
+        def fake_new_browser_context_for_config(*args, **kwargs):
+            with self.assertRaises(RuntimeError):
+                asyncio.get_running_loop()
+            new_context_thread_ids.append(threading.get_ident())
+            return FakeBrowserContext()
+
+        async def run_fetch(
+            artifact_dir: Path,
+            runtime_context: RuntimeContext,
+            profile_dir: Path,
+            user_data_dir: Path,
+        ) -> _pdf_common.PdfFetchResult:
+            return _pdf_fallback.fetch_pdf_with_browser(
+                [pdf_url],
+                artifact_dir=artifact_dir,
+                headless=True,
+                profile_dir=profile_dir,
+                user_data_dir=user_data_dir,
+                context=runtime_context,
+            )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_path = Path(tmpdir)
+            runtime_context = RuntimeContext(env={})
+            profile_dir = tmp_path / "profile"
+            user_data_dir = tmp_path / "user-data"
+            with (
+                mock.patch.object(
+                    runtime_context,
+                    "new_browser_context_for_config",
+                    side_effect=fake_new_browser_context_for_config,
+                ) as mocked_runtime_new_context,
+                mock.patch(
+                    "paper_fetch.runtime_browser.BrowserContextManager.new_context",
+                    side_effect=AssertionError("runtime browser config should be reused"),
+                ),
+                mock.patch.object(
+                    _pdf_fallback,
+                    "pdf_fetch_result_from_bytes",
+                    return_value=_pdf_common.PdfFetchResult(
+                        source_url=pdf_url,
+                        final_url="https://example.org/downloaded/article.pdf",
+                        pdf_bytes=b"%PDF-1.7 cloakbrowser",
+                        markdown_text="# Example\n\n## Results\n\nBody text",
+                        suggested_filename="article.pdf",
+                    ),
+                ),
+            ):
+                result = asyncio.run(
+                    run_fetch(tmp_path, runtime_context, profile_dir, user_data_dir)
+                )
+
+        self.assertEqual(result.final_url, "https://example.org/downloaded/article.pdf")
+        mocked_runtime_new_context.assert_called_once()
+        self.assertEqual(len(new_context_thread_ids), 1)
+        self.assertNotEqual(new_context_thread_ids[0], main_thread_id)
+        call_kwargs = mocked_runtime_new_context.call_args.kwargs
+        self.assertEqual(call_kwargs["profile_dir"], profile_dir)
+        self.assertEqual(call_kwargs["user_data_dir"], user_data_dir)
 
     def test_seeded_browser_pdf_fallback_tries_browser_like_http_first(self) -> None:
         pdf_url = "https://pubs.acs.org/doi/pdf/10.1021/example"

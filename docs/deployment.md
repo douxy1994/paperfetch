@@ -63,18 +63,6 @@ CI 自动发布规则：
 - 手动运行 workflow 时，只有在 `v*` tag 上显式设置 `publish_release=true` 才会发布，确保 release tag 和本次构建产物来自同一个 commit。
 - 发布使用 workflow 内置的 `GITHUB_TOKEN`，release job 单独声明 `contents: write` 和 `actions: read` 权限，不需要额外 PAT。
 
-### 每日 CloakBrowser Canary
-
-`.github/workflows/daily-cloakbrowser-canary.yml` 每天通过 GitHub Actions schedule 跑一次 live canary，也支持 `workflow_dispatch` 手动触发。该 workflow 每天从 Wiley、Science、PNAS、AMS、MDPI、Annual Reviews、ACS、IOP、AIP 的现有 benchmark 样本中轮换 1 篇，使用 `paper-fetch` CLI 抓取 JSON 输出，并校验 `source` 和 `quality.has_fulltext`，用于尽早发现 CloakBrowser / browser workflow 链路退化。
-
-运行要求：
-
-- 需要仓库 secret `CROSSREF_MAILTO`。
-- workflow 使用 GitHub-hosted Ubuntu runner，安装 Python 依赖和 Chromium 系统依赖后，由 `cloakbrowser` 管理 headless Chrome。
-- 默认不纳入 IEEE canary，因为 IEEE live 全文依赖合法授权网络或浏览器态，容易把授权环境变化误报为 browser runtime 故障。
-- 失败时使用 workflow 内置 `GITHUB_TOKEN` 创建 GitHub Issue，并尽量打上 `cloakbrowser-canary` 和 `ci-failure` label；不需要 SMTP 或额外邮件服务。
-- 这是 live 外部状态监控，不属于 push / pull request 的常规 unit 或 integration gate；publisher 限流、站点变更和网络故障都可能触发 Issue，需要人工判断是否为代码回归。
-
 主包版本号同步清单：
 
 - `pyproject.toml` 的 `[project].version` 是 Python 包和离线构建脚本读取的主版本来源。
