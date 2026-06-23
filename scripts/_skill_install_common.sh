@@ -29,6 +29,8 @@ pf_skill_user_base() {
         claude) printf '%s\n' "$HOME/.claude" ;;
         codex) printf '%s\n' "${CODEX_HOME:-$HOME/.codex}" ;;
         antigravity) printf '%s\n' "${ANTIGRAVITY_HOME:-$HOME/.gemini/antigravity-cli}" ;;
+        zcode) printf '%s\n' "${ZCODE_HOME:-$HOME/.zcode}" ;;
+        hermes) printf '%s\n' "${HERMES_HOME:-$HOME/.hermes}" ;;
         *) pf_skill_die "Unsupported skill host: $PF_HOST" ;;
     esac
 }
@@ -149,9 +151,12 @@ pf_skill_copy_static_skill() {
 pf_skill_unregister_if_requested() {
     rm -rf "$PF_SKILL_DIR"
     pf_skill_log "Removed $PF_SKILL_DIR"
-    if [ "$PF_REGISTER_MCP" = "1" ]; then
-        pf_host_unregister_mcp
-    fi
+    # Uninstalling should always clean up a matching MCP registration that this
+    # installer created previously, regardless of whether --register-mcp was
+    # passed together with --uninstall. Host unregisterers are no-ops when the
+    # server entry is absent (or the host CLI/config is missing), so this is
+    # safe to run unconditionally.
+    pf_host_unregister_mcp
 }
 
 pf_skill_print_next_steps() {
