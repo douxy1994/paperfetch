@@ -159,6 +159,9 @@ class _ThreadLocalSharedBrowserFileDocumentFetcher(_ThreadLocalSharedDocumentFet
     ) -> None:
         super().__init__(
             log_event="browser_workflow_file_fetcher_thread_created",
+            requires_caller_thread=(
+                runtime_context is not None and use_runtime_shared_browser
+            ),
             fetcher_factory=lambda: _SharedBrowserFileDocumentFetcher(
                 browser_context_seed_getter=browser_context_seed_getter,
                 seed_urls_getter=seed_urls_getter,

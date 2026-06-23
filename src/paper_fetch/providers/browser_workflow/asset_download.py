@@ -314,7 +314,11 @@ def _run_browser_asset_download_attempt(
                 **supplementary_kwargs,
             )
 
-        serial_browser_assets = bool(attempt_settings.get("serial_browser_assets"))
+        serial_browser_assets = bool(
+            attempt_settings.get("serial_browser_assets")
+            or _requires_caller_thread(image_document_fetcher)
+            or _requires_caller_thread(file_document_fetcher)
+        )
         if attempt_body_assets and attempt_supplementary_assets and not serial_browser_assets:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 body_future = executor.submit(download_body_assets)
@@ -369,6 +373,10 @@ def _build_attempt_document_fetcher(
         profile_dir=getattr(recovery.runtime, "profile_dir", None),
         user_data_dir=getattr(recovery.runtime, "user_data_dir", None),
     )
+
+
+def _requires_caller_thread(fetcher: Any) -> bool:
+    return bool(getattr(fetcher, "requires_caller_thread", False))
 
 
 def _seed_urls_for(

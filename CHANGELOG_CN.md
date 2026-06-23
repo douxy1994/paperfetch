@@ -22,7 +22,7 @@
 - 浏览器后端从直接持有 `cloakbrowser.launch()` 改为 CDP-backed `BrowserContextManager`；HTML 抓取、browser-backed 资产下载、fast HTML preflight 和 seeded PDF/ePDF fallback 会尽量复用 runtime keyed browser manager。
 - managed browser 启动改为通过 `cloakbrowser.ensure_binary()` 和本地 Chrome CDP endpoint；`CLOAKBROWSER_HEADLESS`、`CLOAKBROWSER_BINARY_PATH`、`CLOAKBROWSER_PROFILE_DIR`、`CLOAKBROWSER_USER_DATA_DIR` 作用于该 managed 路径。
 - 外部 CDP 模式改为借用浏览器中已有 context，并尽量注入 storage-state cookies；文档明确说明 user agent、viewport 等 new-context 参数可能不会作用到 borrowed context。
-- 外部 CDP context 被借用时，browser-backed 资产下载改为串行执行；managed CDP 模式仍会为各抓取阶段或 worker 打开隔离的 context/page。
+- runtime-shared browser-backed 资产下载在 managed 和外部 CDP 模式下都改为串行执行，打开隔离 context/page，但不再把 Playwright sync 对象跨 worker thread 传递；普通 HTTP 资产下载仍按配置并发。
 - AMS authentication 和抓取改为与其它 browser-backed provider 使用同一套 provider-scoped storage-state 模型；`PAPER_FETCH_AMS_STORAGE_STATE_JSON` 现在是 legacy override，不再是必需配置。
 - `paper-fetch auth` 的旧 AMS 专用参数（`--state-json`、`--env-file`、`--no-env-write`、`--wait-seconds`）改为不再支持的兼容占位；profile/storage-state 位置现在由 browser runtime 目录配置控制。
 - Browser provider status 检查和 MCP/skill 文档从 CloakBrowser launch 术语调整为 CDP browser runtime / Playwright dependency 术语，并明确外部 endpoint 与 managed browser 行为边界。
@@ -33,7 +33,8 @@
 ### 修复
 
 - 修复 managed headless Chrome 启动：当 CloakBrowser 没有产出 headless 参数时，paper-fetch 会补上 Chrome 原生 `--headless=new`，避免 Wiley 等普通 browser-backed CLI 抓取弹出可见浏览器窗口。
-- 修复 browser-backed image/file fetcher 在 managed CDP 模式下各自启动独立 Chrome 的问题；现在复用 runtime keyed browser manager，避免同 profile 文件锁死锁，同时保持每个 worker 的 context/page 隔离。
+- 修复 browser-backed image/file fetcher 在 managed CDP 模式下各自启动独立 Chrome 的问题；现在复用 runtime keyed browser manager，避免同 profile 文件锁死锁，同时保持隔离 context/page。
+- 修复批量和单篇 CLI 中 browser-backed figure 资产下载跨线程复用 runtime-shared Playwright/CDP 对象的问题，消除 `greenlet` / `TargetClosed` 异常，并确保 CloakBrowser-backed provider 的本地图表资产能正常落盘。
 - managed browser profile 文件锁新增超时，避免另一个 managed browser 已持有同一 profile 目录时永久阻塞。
 - 修复 CDP startup polling：当 `/json/version` 已响应但 `webSocketDebuggerUrl` 暂时为空时，不再无 sleep 忙等。
 - 修复 fast HTML preflight、browser-backed asset fetcher 和 browser PDF fallback 的配置传递，确保 binary path、CDP endpoint、profile 目录、user-data 目录和 storage-state 能一致传给 browser context manager。

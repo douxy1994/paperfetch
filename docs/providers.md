@@ -639,7 +639,7 @@ CLI、Python API、MCP 当前统一采用这些默认值：
 - 通用 HTML figure 与 supplementary 下载使用 `paper_fetch.extraction.html.assets.state` 状态机。
 - cookie-aware opener/request 统一在 `paper_fetch.extraction.html.assets.requester` 中处理。
 - 网络、opener 或浏览器 document fallback resolve 阶段可并发执行。
-- Browser workflow 的并发资产下载复用同一个 runtime keyed CDP browser manager，并为每个 worker 线程创建私有 page/context；显式 `CLOAKBROWSER_CDP_ENDPOINT` 会连接已运行浏览器，缺少 endpoint 时会通过 cloakbrowser 自动启动受控 Chrome。
+- Browser workflow 的 runtime-shared browser-backed 资产下载复用同一个 runtime keyed CDP browser manager，并在调用线程串行创建隔离 page/context，避免跨线程复用 Playwright sync 对象；普通 HTTP 资产下载仍可并发。显式 `CLOAKBROWSER_CDP_ENDPOINT` 会连接已运行浏览器，缺少 endpoint 时会通过 cloakbrowser 自动启动受控 Chrome。
 - 文件写入、文件名去重、`source_data/` 分流和失败诊断收集仍串行执行。
 - 输出顺序、fallback 候选顺序、`article.assets[*]` 与 `quality.asset_failures` shape 保持稳定。
 - Elsevier XML object references 也使用“网络并发、写入串行”约束。
@@ -959,7 +959,7 @@ IEEE direct REST HTML / clean-browser HTML / direct HTTP PDF / seeded-browser PD
 - 可选显式入口，用于所有 browser workflow provider。
 - 指向已经运行中的 Chrome/CloakBrowser DevTools Protocol endpoint，例如手动启动浏览器时输出的 `ws://127.0.0.1:9222/devtools/browser/...`。
 - 配置后，browser workflow 的 HTML 抓取、browser-backed 正文/补充资产下载和 seeded PDF/ePDF fallback 会连接该浏览器并在现有 browser context 中新开页面抓取；抓取结束会关闭自己打开的页面并断开连接，不关闭操作者的浏览器窗口。
-- 外部 CDP 模式优先借用现有 browser context；storage-state 中的 cookies 会尽量注入，但 `PAPER_FETCH_BROWSER_USER_AGENT`、viewport 等新 context 参数不保证生效，应以外部浏览器当前状态为准。为避免多个 worker 同时操作同一个外部 context，browser-backed 资产下载会串行化。
+- 外部 CDP 模式优先借用现有 browser context；storage-state 中的 cookies 会尽量注入，但 `PAPER_FETCH_BROWSER_USER_AGENT`、viewport 等 new-context 参数不保证生效，应以外部浏览器当前状态为准。managed 和外部 CDP 的 runtime-shared browser-backed 资产下载都会串行化，以避免跨线程复用 Playwright sync 对象；普通 HTTP 资产下载仍按配置并发。
 - 未配置时，paper-fetch 通过 `cloakbrowser.ensure_binary()` 下载/定位 Chrome，并自动启动受控本机 CDP 浏览器；默认按 publisher 持久化 storage-state，该子进程随 runtime close 关闭。
 
 #### `PAPER_FETCH_WILEY_STORAGE_STATE_JSON`

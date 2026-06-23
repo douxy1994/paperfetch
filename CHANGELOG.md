@@ -22,7 +22,7 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 - Changed the browser backend from direct `cloakbrowser.launch()` ownership to a CDP-backed `BrowserContextManager`; HTML fetches, browser-backed asset downloads, fast HTML preflight, and seeded PDF/ePDF fallbacks now share the runtime keyed browser manager where possible.
 - Changed managed browser startup to use `cloakbrowser.ensure_binary()` and a local Chrome CDP endpoint; `CLOAKBROWSER_HEADLESS`, `CLOAKBROWSER_BINARY_PATH`, `CLOAKBROWSER_PROFILE_DIR`, and `CLOAKBROWSER_USER_DATA_DIR` now apply to that managed path.
 - Changed external CDP mode to borrow the browser's existing context, inject storage-state cookies where possible, and document that new-context options such as user agent and viewport may be ignored by the borrowed context.
-- Changed browser-backed asset downloads to run serially when an external CDP context is borrowed, while managed CDP mode still opens isolated context/page instances per fetch stage or worker.
+- Changed runtime-shared browser-backed asset downloads to run serially in both managed and external CDP modes, opening isolated context/page instances without moving Playwright sync objects across worker threads; ordinary HTTP asset downloads still use the configured concurrency.
 - Changed AMS authentication and fetching to use the same provider-scoped storage-state model as other browser-backed providers; `PAPER_FETCH_AMS_STORAGE_STATE_JSON` is now a legacy override instead of a required setup step.
 - Changed `paper-fetch auth` legacy AMS-only options (`--state-json`, `--env-file`, `--no-env-write`, `--wait-seconds`) to unsupported compatibility stubs; profile/storage-state location is now controlled by the browser runtime directory configuration.
 - Changed browser provider status checks and MCP/skill documentation from CloakBrowser launch terminology to CDP browser runtime / Playwright dependency terminology, including explicit external endpoint and managed-browser behavior.
@@ -33,7 +33,8 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 ### Fixed
 
 - Fixed managed headless Chrome startup so paper-fetch appends Chrome's native `--headless=new` flag when CloakBrowser omits a headless argument, preventing ordinary browser-backed CLI fetches such as Wiley from opening a visible browser window.
-- Fixed browser-backed image and file fetchers so managed CDP mode reuses the runtime keyed browser manager instead of starting independent Chrome instances, avoiding same-profile lock deadlocks and preserving per-worker context isolation.
+- Fixed browser-backed image and file fetchers so managed CDP mode reuses the runtime keyed browser manager instead of starting independent Chrome instances, avoiding same-profile lock deadlocks while preserving isolated context/page use.
+- Fixed browser-backed figure asset downloads in batch and single-paper CLI runs so runtime-shared Playwright/CDP objects stay on their owning caller thread, eliminating `greenlet`/`TargetClosed` failures and preserving local figure asset output for CloakBrowser-backed providers.
 - Fixed managed browser profile locking to use a timeout instead of blocking forever when another managed browser already owns the profile directory.
 - Fixed CDP startup polling so a responsive `/json/version` endpoint with a temporarily missing `webSocketDebuggerUrl` no longer spins without sleeping.
 - Fixed fast HTML preflight, browser-backed asset fetchers, and browser PDF fallback to carry binary path, CDP endpoint, profile directory, user-data directory, and storage-state configuration consistently into the browser context manager.

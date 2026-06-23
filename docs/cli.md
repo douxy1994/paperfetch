@@ -12,7 +12,7 @@ paper-fetch --query "10.1186/1471-2105-11-421"
 
 ## Browser 登录态
 
-Browser workflow 优先连接已运行浏览器的 CDP endpoint；未配置时会通过 cloakbrowser 首次下载/定位 Chrome，并自动启动受控 CDP 浏览器。默认 managed 模式在同一个 runtime 内复用一个按 provider/browser 配置 keyed 的 browser manager，并为 HTML、PDF fallback 和资产 worker 分别打开隔离 context/page；不会为每个资产 fetcher 再启动一个 Chrome。自动浏览器默认按 publisher 复用本地 `publisher-browser-profiles/<provider>/storage-state.json`，以减少 Science/Wiley 等站点的冷启动 challenge；相关目录变量主要覆盖 managed Chrome 启动目录和 storage-state 保存位置，不承诺完整复用浏览器 profile 的其它状态。需要复用手动验证过的浏览器时，可先启动 Chrome/CloakBrowser 并设置 `CLOAKBROWSER_CDP_ENDPOINT`；外部 CDP 模式以现有 browser context 为准，storage-state 中的 cookies 会尽量注入，UA、viewport 等新 context 参数不保证生效，browser-backed 资产下载会串行化以避免多个 worker 同时操作同一个外部 context：
+Browser workflow 优先连接已运行浏览器的 CDP endpoint；未配置时会通过 cloakbrowser 首次下载/定位 Chrome，并自动启动受控 CDP 浏览器。默认 managed 模式在同一个 runtime 内复用一个按 provider/browser 配置 keyed 的 browser manager，并为 HTML、PDF fallback 和 runtime-shared browser-backed 资产下载打开隔离 context/page；不会为每个资产 fetcher 再启动一个 Chrome。自动浏览器默认按 publisher 复用本地 `publisher-browser-profiles/<provider>/storage-state.json`，以减少 Science/Wiley 等站点的冷启动 challenge；相关目录变量主要覆盖 managed Chrome 启动目录和 storage-state 保存位置，不承诺完整复用浏览器 profile 的其它状态。需要复用手动验证过的浏览器时，可先启动 Chrome/CloakBrowser 并设置 `CLOAKBROWSER_CDP_ENDPOINT`；外部 CDP 模式以现有 browser context 为准，storage-state 中的 cookies 会尽量注入，UA、viewport 等新 context 参数不保证生效。managed 和外部 CDP 的 runtime-shared browser-backed 资产下载都会串行化，以避免跨线程复用 Playwright sync 对象；普通 HTTP 资产下载仍按配置并发：
 
 ```bash
 /path/to/chrome \

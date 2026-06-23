@@ -19,6 +19,9 @@ logger = logging.getLogger("paper_fetch.providers.browser_workflow")
 class _MemoizedImageDocumentFetcher:
     def __init__(self, fetcher: Any) -> None:
         self._fetcher = fetcher
+        self.requires_caller_thread = bool(
+            getattr(fetcher, "requires_caller_thread", False)
+        )
         self._lock = threading.Lock()
         self._payload_by_url: dict[str, dict[str, Any]] = {}
         self._failure_by_url: dict[str, dict[str, Any]] = {}

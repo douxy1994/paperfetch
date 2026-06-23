@@ -134,6 +134,7 @@ def test_threaded_image_fetcher_uses_thread_private_browser_when_runtime_context
         fetcher.close()
         fetcher.close()
 
+    assert fetcher.requires_caller_thread is False
     assert result is not None
     runtime_context.new_browser_context.assert_not_called()
     assert len(browsers) == 1
@@ -251,6 +252,7 @@ def test_image_fetcher_uses_runtime_keyed_context_when_shared_browser_enabled() 
         runtime_context.close()
 
     assert result is not None
+    assert fetcher.requires_caller_thread is True
     runtime_context.new_browser_context_for_config.assert_called_once()
     call_kwargs = runtime_context.new_browser_context_for_config.call_args.kwargs
     assert call_kwargs["cdp_endpoint"] == "ws://127.0.0.1:9222/devtools/browser/test"
@@ -291,6 +293,14 @@ def test_image_fetcher_uses_runtime_env_cdp_endpoint_for_keyed_context() -> None
     assert result is not None
     call_kwargs = runtime_context.new_browser_context_for_config.call_args.kwargs
     assert call_kwargs["cdp_endpoint"] == "ws://127.0.0.1:9222/devtools/browser/env"
+
+
+def test_memoized_image_fetcher_preserves_caller_thread_requirement() -> None:
+    inner_fetcher = mock.Mock()
+    inner_fetcher.requires_caller_thread = True
+    fetcher = browser_workflow._MemoizedImageDocumentFetcher(inner_fetcher)
+
+    assert fetcher.requires_caller_thread is True
 
 
 def test_threaded_file_fetcher_uses_thread_private_browser_when_runtime_context_exists() -> None:

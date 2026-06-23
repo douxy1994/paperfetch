@@ -1530,6 +1530,57 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertEqual(len(thread_ids), 1)
         self.assertNotEqual(thread_ids[0], main_thread_id)
 
+    def test_download_assets_figure_kind_with_caller_thread_fetcher_stays_on_caller_thread(self) -> None:
+        image_url = "https://example.test/runtime-shared-figure.png"
+        main_thread_id = threading.get_ident()
+
+        class CallerThreadFetcher:
+            requires_caller_thread = True
+
+            def __init__(self) -> None:
+                self.thread_ids: list[int] = []
+
+            def __call__(self, current_url: str, _asset: dict[str, object]) -> dict[str, object]:
+                self.thread_ids.append(threading.get_ident())
+                return {
+                    "status_code": 200,
+                    "headers": {"content-type": "image/png"},
+                    "body": b"\x89PNG\r\n\x1a\ncaller-thread",
+                    "url": current_url,
+                }
+
+            def failure_for(self, _image_url: str) -> dict[str, object] | None:
+                return None
+
+        fetcher = CallerThreadFetcher()
+        assets = [
+            {
+                "kind": "figure",
+                "heading": "Figure 1",
+                "caption": "Caller thread",
+                "url": image_url,
+                "preview_url": image_url,
+                "section": "body",
+            }
+        ]
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = asset_impl.download_assets(asset_impl.FIGURE_KIND,
+                RecordingTransport({}),
+                article_id="10.1000/example",
+                assets=assets,
+                output_dir=Path(tmpdir),
+                user_agent="unit-test",
+                asset_profile="body",
+                candidate_builder=lambda *_args, **kwargs: [kwargs["asset"]["url"]],
+                image_document_fetcher=fetcher,
+                asset_download_concurrency=4,
+            )
+
+        self.assertEqual(result["asset_failures"], [])
+        self.assertEqual(len(result["assets"]), 1)
+        self.assertEqual(fetcher.thread_ids, [main_thread_id])
+
     def test_download_assets_figure_kind_with_image_document_fetcher_single_asset_survives_main_thread_conflict(self) -> None:
         image_url = "https://example.test/browser-conflict.png"
 

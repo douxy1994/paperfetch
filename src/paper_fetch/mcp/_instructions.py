@@ -52,7 +52,7 @@ SKILL_ENVIRONMENT_VARIABLES: tuple[tuple[str, str], ...] = (
     ),
     (
         "CLOAKBROWSER_CDP_ENDPOINT",
-        "Optional Chrome DevTools Protocol endpoint for browser workflows; when set, the existing browser context state wins over new context options and browser-backed asset downloads are serialized; when unset, paper-fetch downloads/starts a managed CloakBrowser Chrome and reuses one keyed browser manager with isolated contexts/pages.",
+        "Optional Chrome DevTools Protocol endpoint for browser workflows; when set, the existing browser context state wins over new context options and browser-backed asset downloads are serialized; when unset, paper-fetch downloads/starts a managed CloakBrowser Chrome and reuses one keyed browser manager with isolated contexts/pages while keeping runtime-shared browser-backed asset downloads serialized.",
     ),
     (
         "CLOAKBROWSER_HEADLESS",

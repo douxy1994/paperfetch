@@ -52,6 +52,10 @@ ImageDocumentFetcher = Callable[[str, Mapping[str, Any]], dict[str, Any] | None]
 FileDocumentFetcher = Callable[[str, Mapping[str, Any]], dict[str, Any] | None]
 
 
+def _requires_caller_thread(fetcher: Any) -> bool:
+    return bool(getattr(fetcher, "requires_caller_thread", False))
+
+
 def _fetch_document_fallback(
     kind: AssetDownloadKind,
     fetcher: ImageDocumentFetcher | FileDocumentFetcher | None,
@@ -635,7 +639,14 @@ def download_assets(
     active_seed_urls = _active_seed_urls(seed_urls, browser_context_seed)
     active_document_fetcher = document_fetcher
     if active_document_fetcher is None:
-        active_document_fetcher = image_document_fetcher if kind.file_document_fetcher_kind == "image" else file_document_fetcher
+        active_document_fetcher = (
+            image_document_fetcher
+            if kind.file_document_fetcher_kind == "image"
+            else file_document_fetcher
+        )
+    document_fetcher_requires_caller_thread = _requires_caller_thread(
+        active_document_fetcher
+    )
 
     active_candidate_builder = candidate_builder or figure_download_candidates
 
@@ -665,8 +676,14 @@ def download_assets(
             opener_requester=active_opener_requester,
             candidate_url_resolver=candidate_url_resolver,
         ),
-        asset_download_concurrency=asset_download_concurrency,
-        force_worker_thread=kind.name == "figure" and active_document_fetcher is not None,
+        asset_download_concurrency=1
+        if document_fetcher_requires_caller_thread
+        else asset_download_concurrency,
+        force_worker_thread=(
+            kind.name == "figure"
+            and active_document_fetcher is not None
+            and not document_fetcher_requires_caller_thread
+        ),
     )
     return _collect_downloads_from_resolutions(
         resolved_results,

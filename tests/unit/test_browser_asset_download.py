@@ -315,6 +315,78 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
             [{"kind": "supplementary", "download_url": "supplement.pdf"}],
         )
 
+    def test_run_browser_asset_download_attempt_serializes_caller_thread_fetchers(
+        self,
+    ) -> None:
+        plan = BrowserAssetDownloadPlan(
+            article_id="10.5555/example",
+            output_dir=Path("/tmp/browser-assets"),
+            asset_profile="all",
+            body_assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 1",
+                    "url": "https://example.test/figure.png",
+                    "section": "body",
+                }
+            ],
+            supplementary_assets=[
+                {
+                    "kind": "supplementary",
+                    "heading": "Supplement",
+                    "source_url": "https://example.test/supplement.pdf",
+                    "section": "supplementary",
+                }
+            ],
+        )
+        recovery = BrowserAssetRecoveryContext(
+            runtime=SimpleNamespace(headless=True),
+            provider="science",
+            user_agent="test-agent",
+            browser_context_seed={"browser_final_url": "https://example.test/final"},
+            browser_cookies=[],
+            active_seed_urls=["https://example.test/article"],
+        )
+        main_thread_id = threading.get_ident()
+        call_order: list[object] = []
+        image_fetcher = mock.Mock()
+        image_fetcher.requires_caller_thread = True
+
+        def download_assets(kind, *_args, **_kwargs):
+            self.assertEqual(threading.get_ident(), main_thread_id)
+            call_order.append(kind)
+            if kind is FIGURE_KIND:
+                return {
+                    "assets": [{"kind": "figure", "download_url": "figure.png"}],
+                    "asset_failures": [],
+                }
+            self.assertEqual(call_order, [FIGURE_KIND, SUPPLEMENTARY_KIND])
+            return {
+                "assets": [
+                    {"kind": "supplementary", "download_url": "supplement.pdf"}
+                ],
+                "asset_failures": [],
+            }
+
+        result = run_browser_asset_download_attempt(
+            plan,
+            recovery,
+            image_fetcher_factory=mock.Mock(return_value=image_fetcher),
+            file_fetcher_factory=mock.Mock(return_value=None),
+            opener_requester={},
+            deps=browser_workflow_deps(download_assets=download_assets),
+        )
+
+        self.assertEqual(call_order, [FIGURE_KIND, SUPPLEMENTARY_KIND])
+        self.assertEqual(
+            result.body_results,
+            [{"kind": "figure", "download_url": "figure.png"}],
+        )
+        self.assertEqual(
+            result.supplementary_results,
+            [{"kind": "supplementary", "download_url": "supplement.pdf"}],
+        )
+
     def test_browser_workflow_asset_retry_policy_skips_deterministic_failures(
         self,
     ) -> None:

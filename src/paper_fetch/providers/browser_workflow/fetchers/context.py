@@ -202,6 +202,9 @@ class _BaseBrowserDocumentFetcher:
         self._headless = headless
         self._runtime_context = runtime_context
         self._use_runtime_shared_browser = use_runtime_shared_browser
+        self.requires_caller_thread = (
+            runtime_context is not None and use_runtime_shared_browser
+        )
         self._binary_path = normalize_text(binary_path) or None
         self._cdp_endpoint = normalize_text(cdp_endpoint) or None
         self._profile_dir = Path(profile_dir).expanduser() if profile_dir is not None else None
@@ -325,9 +328,11 @@ class _ThreadLocalSharedDocumentFetcher:
         *,
         fetcher_factory: Callable[[], _BaseBrowserDocumentFetcher],
         log_event: str,
+        requires_caller_thread: bool = False,
     ) -> None:
         self._fetcher_factory = fetcher_factory
         self._log_event = log_event
+        self.requires_caller_thread = bool(requires_caller_thread)
         self._thread_local = threading.local()
         self._lock = threading.Lock()
         self._fetchers: list[_BaseBrowserDocumentFetcher] = []
