@@ -1,51 +1,73 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
-from types import SimpleNamespace
 
 from paper_fetch import auth
+from paper_fetch.config import XDG_DATA_HOME_ENV_VAR
+from paper_fetch.providers.base import ProviderFailure
 
 
 class _FakeAuthPage:
-    url = "https://journals.ametsoc.org/view/journals/mwre/example.xml"
-
     def __init__(self) -> None:
+        self.url = "about:blank"
         self.goto_calls: list[tuple[str, dict[str, object]]] = []
         self.closed = False
 
     def goto(self, url: str, **kwargs) -> None:
+        self.url = url
         self.goto_calls.append((url, dict(kwargs)))
 
     def title(self) -> str:
-        return "AMS Article"
+        return "Publisher Article"
 
     def close(self) -> None:
         self.closed = True
 
 
 class _FakeAuthContext:
-    def __init__(self, state_payload: str) -> None:
+    def __init__(self) -> None:
         self.page = _FakeAuthPage()
-        self.state_payload = state_payload
         self.storage_state_path: str | None = None
         self.closed = False
+        self.state_payload = {
+            "cookies": [
+                {"name": "cf_clearance", "value": "wiley", "domain": ".wiley.com", "path": "/"},
+                {"name": "sid", "value": "ams", "domain": ".ametsoc.org", "path": "/"},
+                {"name": "other", "value": "no", "domain": ".example.test", "path": "/"},
+            ],
+            "origins": [
+                {"origin": "https://onlinelibrary.wiley.com", "localStorage": [{"name": "ok", "value": "1"}]},
+                {"origin": "https://journals.ametsoc.org", "localStorage": [{"name": "ams", "value": "1"}]},
+                {"origin": "https://example.test", "localStorage": [{"name": "no", "value": "1"}]},
+            ],
+        }
 
     def new_page(self) -> _FakeAuthPage:
         return self.page
 
-    def storage_state(self, *, path: str) -> None:
+    def storage_state(self, *, path: str | None = None):
+        if path is None:
+            return self.state_payload
         self.storage_state_path = path
-        Path(path).write_text(self.state_payload, encoding="utf-8")
+        Path(path).write_text(json.dumps(self.state_payload), encoding="utf-8")
 
     def close(self) -> None:
         self.closed = True
 
 
-class _FakeAuthBrowser:
+class _FakeAuthBrowserManager:
+    instances: list[_FakeAuthBrowserManager] = []
+
     def __init__(self) -> None:
-        self.context = _FakeAuthContext('{"cookies":[],"origins":[]}')
+        self.context = _FakeAuthContext()
+        self.binary_path: str | None = None
+        self.cdp_endpoint: str | None = None
+        self.profile_dir: Path | None = None
+        self.user_data_dir: Path | None = None
         self.new_context_kwargs: dict[str, object] = {}
         self.closed = False
+        self.instances.append(self)
 
     def new_context(self, **kwargs):
         self.new_context_kwargs = dict(kwargs)
@@ -55,14 +77,34 @@ class _FakeAuthBrowser:
         self.closed = True
 
 
-class _FakeCloakBrowserModule:
-    def __init__(self) -> None:
-        self.browser = _FakeAuthBrowser()
-        self.launch_kwargs: dict[str, object] = {}
+def _install_fake_browser_manager(monkeypatch) -> type[_FakeAuthBrowserManager]:
+    _FakeAuthBrowserManager.instances = []
 
-    def launch(self, **kwargs):
-        self.launch_kwargs = dict(kwargs)
-        return self.browser
+    class FakeManager(_FakeAuthBrowserManager):
+        def __init__(
+            self,
+            *,
+            binary_path: str | None = None,
+            cdp_endpoint: str | None = None,
+            profile_dir: Path | None = None,
+            user_data_dir: Path | None = None,
+        ) -> None:
+            super().__init__()
+            self.binary_path = binary_path
+            self.cdp_endpoint = cdp_endpoint
+            self.profile_dir = profile_dir
+            self.user_data_dir = user_data_dir
+
+    monkeypatch.setattr(auth, "BrowserContextManager", FakeManager)
+    return FakeManager
+
+
+def _patch_auth_runtime(monkeypatch, tmp_path, env: dict[str, str] | None = None) -> None:
+    runtime_env = {XDG_DATA_HOME_ENV_VAR: str(tmp_path / "xdg")}
+    if env is not None:
+        runtime_env.update(env)
+    monkeypatch.setattr(auth, "build_runtime_env", lambda: dict(runtime_env))
+    monkeypatch.setattr(auth._cloakbrowser, "ensure_runtime_ready", lambda _runtime: None)
 
 
 def test_upsert_env_file_updates_existing_values(tmp_path) -> None:
@@ -90,65 +132,145 @@ def test_upsert_env_file_updates_existing_values(tmp_path) -> None:
     )
 
 
-def test_authenticate_ams_saves_storage_state_and_env_file(monkeypatch, tmp_path) -> None:
-    fake_module = _FakeCloakBrowserModule()
-    state_path = tmp_path / "ams" / "storage-state.json"
-    env_file = tmp_path / ".env"
+def test_authenticate_provider_profile_ams_uses_provider_profile_not_legacy_env(monkeypatch, tmp_path) -> None:
+    legacy_state_path = tmp_path / "legacy" / "ams-storage-state.json"
+    fake_manager = _install_fake_browser_manager(monkeypatch)
 
-    monkeypatch.setattr(auth, "build_runtime_env", lambda: {})
-    monkeypatch.setattr(
-        auth._cloakbrowser,
-        "_import_cloakbrowser",
-        lambda: fake_module,
-    )
-    monkeypatch.setattr(
-        auth,
-        "wait_for_atypon_body_dom_ready",
-        lambda *_args, **_kwargs: SimpleNamespace(ready=True),
+    _patch_auth_runtime(
+        monkeypatch,
+        tmp_path,
+        {
+            "CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/auth",
+            "PAPER_FETCH_AMS_STORAGE_STATE_JSON": str(legacy_state_path),
+        },
     )
 
-    result = auth.authenticate_ams(
-        state_json=state_path,
-        env_file=env_file,
-        wait_seconds=1,
-        target_url="https://journals.ametsoc.org/doi/10.1175/MWR-D-10-05037.1",
+    result = auth.authenticate_provider_profile(
+        provider="ams",
+        confirm=lambda _prompt: None,
     )
 
+    profile_dir = tmp_path / "xdg" / "paper-fetch" / "publisher-browser-profiles" / "ams"
+    storage_state_path = profile_dir / "storage-state.json"
     assert result.provider == "ams"
-    assert result.storage_state_path == state_path
-    assert result.env_written is True
-    assert result.env_file_path == env_file
-    assert result.verified is True
-    assert state_path.read_text(encoding="utf-8") == '{"cookies":[],"origins":[]}'
-    assert f'PAPER_FETCH_AMS_STORAGE_STATE_JSON="{state_path}"' in env_file.read_text(encoding="utf-8")
-    assert fake_module.launch_kwargs["headless"] is False
-    assert "storage_state" not in fake_module.browser.new_context_kwargs
-    assert fake_module.browser.context.storage_state_path == str(state_path)
-
-
-def test_authenticate_ams_reuses_configured_state_path(monkeypatch, tmp_path) -> None:
-    fake_module = _FakeCloakBrowserModule()
-    state_path = tmp_path / "configured" / "storage-state.json"
-
-    monkeypatch.setattr(
-        auth,
-        "build_runtime_env",
-        lambda: {"PAPER_FETCH_AMS_STORAGE_STATE_JSON": str(state_path)},
-    )
-    monkeypatch.setattr(
-        auth._cloakbrowser,
-        "_import_cloakbrowser",
-        lambda: fake_module,
-    )
-    monkeypatch.setattr(
-        auth,
-        "wait_for_atypon_body_dom_ready",
-        lambda *_args, **_kwargs: SimpleNamespace(ready=True),
-    )
-
-    result = auth.authenticate_ams(write_env=False, wait_seconds=1)
-
-    assert result.storage_state_path == state_path
+    assert result.profile_dir == profile_dir
+    assert result.storage_state_path == storage_state_path
     assert result.env_written is False
     assert result.env_file_path is None
-    assert state_path.read_text(encoding="utf-8") == '{"cookies":[],"origins":[]}'
+    assert result.verified is True
+    assert result.final_url == auth.AMS_AUTH_URL
+    assert not legacy_state_path.exists()
+    assert json.loads(storage_state_path.read_text(encoding="utf-8")) == {
+        "cookies": [{"name": "sid", "value": "ams", "domain": ".ametsoc.org", "path": "/"}],
+        "origins": [{"origin": "https://journals.ametsoc.org", "localStorage": [{"name": "ams", "value": "1"}]}],
+    }
+    manager = fake_manager.instances[0]
+    assert manager.cdp_endpoint == "ws://127.0.0.1:9222/devtools/browser/auth"
+    assert manager.user_data_dir == profile_dir
+    assert manager.new_context_kwargs["headless"] is False
+    assert "storage_state" not in manager.new_context_kwargs
+    assert manager.context.page.goto_calls == [
+        (auth.AMS_AUTH_URL, {"wait_until": "domcontentloaded", "timeout": 120000})
+    ]
+    assert manager.context.storage_state_path is None
+    assert manager.context.page.closed is True
+    assert manager.context.closed is True
+    assert manager.closed is True
+
+
+def test_browser_auth_provider_names_uses_runtime_catalog() -> None:
+    names = auth.browser_auth_provider_names()
+
+    assert "wiley" in names
+    assert "ams" in names
+    assert "arxiv" not in names
+
+
+def test_provider_label_uses_catalog_display_name() -> None:
+    assert auth._provider_label("iop") == "IOP Publishing"
+    assert auth._provider_label("aip") == "AIP Publishing"
+    assert auth._provider_label("mdpi") == "MDPI"
+    assert auth._provider_label("annualreviews") == "Annual Reviews"
+
+
+def test_authenticate_provider_profile_uses_sample_headed_profile_and_storage(monkeypatch, tmp_path) -> None:
+    fake_manager = _install_fake_browser_manager(monkeypatch)
+    _patch_auth_runtime(monkeypatch, tmp_path)
+    prompts: list[str] = []
+
+    result = auth.authenticate_provider_profile(
+        provider="wiley",
+        confirm=lambda prompt: prompts.append(prompt),
+    )
+
+    profile_dir = tmp_path / "xdg" / "paper-fetch" / "publisher-browser-profiles" / "wiley"
+    storage_state_path = profile_dir / "storage-state.json"
+    assert result.provider == "wiley"
+    assert result.profile_dir == profile_dir
+    assert result.storage_state_path == storage_state_path
+    assert result.env_written is False
+    assert result.env_file_path is None
+    assert result.final_url == auth.AUTH_TARGETS["wiley"].url
+    manager = fake_manager.instances[0]
+    assert manager.cdp_endpoint is None
+    assert manager.user_data_dir == profile_dir
+    assert manager.new_context_kwargs["headless"] is False
+    assert "storage_state" not in manager.new_context_kwargs
+    assert manager.context.page.goto_calls == [
+        (auth.AUTH_TARGETS["wiley"].url, {"wait_until": "domcontentloaded", "timeout": 120000})
+    ]
+    assert prompts and str(profile_dir) in prompts[0]
+    assert str(storage_state_path) in prompts[0]
+    assert json.loads(storage_state_path.read_text(encoding="utf-8")) == {
+        "cookies": [{"name": "cf_clearance", "value": "wiley", "domain": ".wiley.com", "path": "/"}],
+        "origins": [
+            {"origin": "https://onlinelibrary.wiley.com", "localStorage": [{"name": "ok", "value": "1"}]}
+        ],
+    }
+
+
+def test_authenticate_provider_profile_url_override(monkeypatch, tmp_path) -> None:
+    fake_manager = _install_fake_browser_manager(monkeypatch)
+    _patch_auth_runtime(monkeypatch, tmp_path)
+    target_url = "https://onlinelibrary.wiley.com/doi/full/10.1111/example"
+
+    result = auth.authenticate_provider_profile(
+        provider="wiley",
+        target_url=target_url,
+        timeout_ms=45000,
+        browser_user_agent="Mozilla/5.0 auth-test",
+        confirm=lambda _prompt: None,
+    )
+
+    manager = fake_manager.instances[0]
+    assert manager.context.page.goto_calls == [(target_url, {"wait_until": "domcontentloaded", "timeout": 45000})]
+    assert manager.new_context_kwargs["user_agent"] == "Mozilla/5.0 auth-test"
+    assert result.final_url == target_url
+
+
+def test_authenticate_provider_profile_rejects_non_browser_provider() -> None:
+    try:
+        auth.authenticate_provider_profile(provider="arxiv", confirm=None)
+    except ProviderFailure as exc:
+        assert exc.code == "error"
+        assert "Unsupported auth provider" in str(exc)
+        assert "wiley" in str(exc)
+    else:
+        raise AssertionError("expected non-browser provider auth to fail")
+
+
+def test_authenticate_provider_profile_allows_url_for_catalog_provider_without_sample(monkeypatch, tmp_path) -> None:
+    fake_manager = _install_fake_browser_manager(monkeypatch)
+    _patch_auth_runtime(monkeypatch, tmp_path)
+    monkeypatch.setattr(auth, "browser_auth_provider_names", lambda: ("newbrowser",))
+    target_url = "https://example.test/article"
+
+    result = auth.authenticate_provider_profile(
+        provider="newbrowser",
+        target_url=target_url,
+        confirm=lambda _prompt: None,
+    )
+
+    assert result.provider == "newbrowser"
+    assert result.final_url == target_url
+    assert fake_manager.instances[0].context.page.goto_calls[0][0] == target_url

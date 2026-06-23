@@ -1,2 +1,2 @@
 -e .[dev]
-cloakbrowser>=0.3.32,<0.4
+cloakbrowser>=0.4,<0.5

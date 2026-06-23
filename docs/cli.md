@@ -8,32 +8,39 @@
 paper-fetch --query "10.1186/1471-2105-11-421"
 ```
 
-`--query` 可以是 DOI、论文 landing URL 或标题查询。CLI 默认会优先尝试全文；如果全文不可用，可能返回摘要或 metadata-only 结果。MDPI 的经典数字 URL（例如 `https://www.mdpi.com/2072-4292/18/10/1673`）会先按已知 ISSN 到 journal code 映射推导 DOI；MDPI DOI / DOI URL 也会在 provider 阶段反推对应的数字 article URL，再进入 MDPI CloakBrowser provider，避免解析阶段被 MDPI direct HTTP/CDN 403 阻断；未知 ISSN 仍按通用 landing URL 解析。
+`--query` 可以是 DOI、论文 landing URL 或标题查询。CLI 默认会优先尝试全文；如果全文不可用，可能返回摘要或 metadata-only 结果。MDPI 的经典数字 URL（例如 `https://www.mdpi.com/2072-4292/18/10/1673`）会先按已知 ISSN 到 journal code 映射推导 DOI；MDPI DOI / DOI URL 也会在 provider 阶段反推对应的数字 article URL，再进入 MDPI CDP browser provider，避免解析阶段被 MDPI direct HTTP/CDN 403 阻断；未知 ISSN 仍按通用 landing URL 解析。
 
-## AMS 登录态
+## Browser 登录态
 
-AMS browser workflow 需要显式 storage-state JSON。首次抓取 AMS 前，在有桌面显示的终端运行：
-
-```bash
-paper-fetch auth ams
-```
-
-该命令会打开 headed CloakBrowser，进入 AMS 样例文章页，等待操作者完成合法站点验证，然后保存 storage-state JSON，并默认把 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 写入 `~/.config/paper-fetch/.env`。自定义位置：
+Browser workflow 优先连接已运行浏览器的 CDP endpoint；未配置时会通过 cloakbrowser 首次下载/定位 Chrome，并自动启动受控 CDP 浏览器。默认 managed 模式在同一个 runtime 内复用一个按 provider/browser 配置 keyed 的 browser manager，并为 HTML、PDF fallback 和资产 worker 分别打开隔离 context/page；不会为每个资产 fetcher 再启动一个 Chrome。自动浏览器默认按 publisher 复用本地 `publisher-browser-profiles/<provider>/storage-state.json`，以减少 Science/Wiley 等站点的冷启动 challenge；相关目录变量主要覆盖 managed Chrome 启动目录和 storage-state 保存位置，不承诺完整复用浏览器 profile 的其它状态。需要复用手动验证过的浏览器时，可先启动 Chrome/CloakBrowser 并设置 `CLOAKBROWSER_CDP_ENDPOINT`；外部 CDP 模式以现有 browser context 为准，storage-state 中的 cookies 会尽量注入，UA、viewport 等新 context 参数不保证生效，browser-backed 资产下载会串行化以避免多个 worker 同时操作同一个外部 context：
 
 ```bash
-paper-fetch auth ams \
-  --state-json ~/.local/share/paper-fetch/auth/ams/storage-state.json \
-  --env-file /path/to/.env
+/path/to/chrome \
+  --user-data-dir "$HOME/.cache/paper-fetch/browser-profile" \
+  --remote-debugging-address=127.0.0.1 \
+  --remote-debugging-port=9222 \
+  --no-first-run
+
+export CLOAKBROWSER_CDP_ENDPOINT="ws://127.0.0.1:9222/devtools/browser/..."
 ```
+
+如果自动过盾失败，可用通用手动 fallback 打开 headed browser：
+
+```bash
+paper-fetch auth <provider>
+paper-fetch auth wiley --url "https://onlinelibrary.wiley.com/doi/full/10.1111/example"
+```
+
+`provider` 来自 browser runtime catalog，例如 `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi`。未传 `--url` 时打开内置样例文章；传入 `--url` 时打开用户指定的失败文章页。命令强制 headed 模式，打印 managed Chrome 启动目录和 storage-state 路径，用户在浏览器中完成合法登录或验证后，在终端按 Enter 保存过滤后的本地 storage-state 并退出。
 
 常用参数：
 
-- `--no-env-write`：只保存 JSON，不改 `.env`。
+- `--url <url>`：覆盖内置样例文章，打开具体失败文章页。
 - `--timeout-ms <ms>`：设置浏览器导航超时。
-- `--wait-seconds <seconds>`：设置等待 AMS 正文 DOM 的时间。
 - `--browser-user-agent <ua>`：仅本次认证使用的 browser UA。
+- 旧 `--state-json` / `--env-file` / `--no-env-write` / `--wait-seconds` 不再支持；如需改保存位置，使用 `CLOAKBROWSER_PROFILE_DIR` 或 `CLOAKBROWSER_USER_DATA_DIR`。
 
-storage-state JSON 只保存浏览器 storage state，不绕过权限，也不是跨机器通用凭据；站点 session 可能按时间、网络、设备或浏览器指纹失效。
+storage-state JSON 是主要复用状态，只是本地辅助状态，不绕过权限，也不是跨机器通用凭据；站点 session 可能按时间、网络、设备或浏览器指纹失效。未配置持久凭证不会阻止正常抓取；抓取仍会按当前 browser workflow 和 provider PDF / abstract-only / metadata fallback 运行。手动 auth 后再次抓取同一 provider 会复用同一个 publisher storage-state 文件。
 
 ## 批量抓取
 

@@ -184,12 +184,12 @@ SERVER_SCRIPT = textwrap.dedent(
                         build_provider_status_check(
                             "runtime_env",
                             "not_configured",
-                            "wiley CloakBrowser runtime requires the cloakbrowser Python package.",
+                            "wiley browser runtime requires Playwright and CloakBrowser packages.",
                         ),
                         build_provider_status_check(
-                            "cloakbrowser_dependency",
+                            "playwright_dependency",
                             "not_configured",
-                            "CloakBrowser Python package is not installed.",
+                            "Playwright Python package is not installed.",
                         ),
                     ],
                 )
@@ -204,12 +204,12 @@ SERVER_SCRIPT = textwrap.dedent(
                         build_provider_status_check(
                             "runtime_env",
                             "not_configured",
-                            "science CloakBrowser runtime requires the cloakbrowser Python package.",
+                            "science browser runtime requires Playwright and CloakBrowser packages.",
                         ),
                         build_provider_status_check(
-                            "cloakbrowser_dependency",
+                            "playwright_dependency",
                             "not_configured",
-                            "CloakBrowser Python package is not installed.",
+                            "Playwright Python package is not installed.",
                         ),
                     ],
                 )
@@ -223,9 +223,9 @@ SERVER_SCRIPT = textwrap.dedent(
                     checks=[
                         build_provider_status_check("runtime_env", "ok", "pnas runtime environment is configured."),
                         build_provider_status_check(
-                            "cloakbrowser_dependency",
+                            "playwright_dependency",
                             "ok",
-                            "CloakBrowser Python package is importable; browser launch is not probed.",
+                            "Playwright Python package is importable; CDP connection is not probed.",
                         ),
                     ],
                 )
@@ -308,12 +308,12 @@ SERVER_SCRIPT = textwrap.dedent(
                         build_provider_status_check(
                             "runtime_env",
                             "not_configured",
-                            "ams CloakBrowser runtime requires the cloakbrowser Python package.",
+                            "ams browser runtime requires Playwright and CloakBrowser packages.",
                         ),
                         build_provider_status_check(
-                            "cloakbrowser_dependency",
+                            "playwright_dependency",
                             "not_configured",
-                            "CloakBrowser Python package is not installed.",
+                            "Playwright Python package is not installed.",
                         ),
                     ],
                 )

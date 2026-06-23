@@ -3,8 +3,7 @@ param(
     [string]$Action = "Install",
     [string]$InstallRoot,
     [string]$LogPath,
-    [switch]$SkipSmoke,
-    [switch]$ProbeLaunch
+    [switch]$SkipSmoke
 )
 
 Set-StrictMode -Version Latest
@@ -63,7 +62,12 @@ function Normalize-McpEnvKeys {
     $filtered = New-Object System.Collections.Generic.List[string]
     $seenHeadless = $false
     foreach ($key in $script:McpEnvKeys) {
-        if ($key -eq "PLAYWRIGHT_BROWSERS_PATH") {
+        if ($key -in @(
+            "PLAYWRIGHT_BROWSERS_PATH",
+            "CLOAKBROWSER_BINARY_PATH",
+            "CLOAKBROWSER_PROFILE_DIR",
+            "CLOAKBROWSER_USER_DATA_DIR"
+        )) {
             continue
         }
         if ($key -eq "CLOAKBROWSER_HEADLESS") {
@@ -270,7 +274,10 @@ function Write-ManagedEnvFile {
         }
     }
     $lines.Add("PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'")
-    $lines.Add("# CLOAKBROWSER_BINARY_PATH='C:/path/to/preinstalled/browser.exe'")
+    $lines.Add("# Optional: connect to an already-running Chrome/CloakBrowser CDP endpoint.")
+    $lines.Add("# CLOAKBROWSER_CDP_ENDPOINT='ws://127.0.0.1:9222/devtools/browser/...'")
+    $lines.Add("# Optional: use a preinstalled Chrome/CloakBrowser binary instead of cloakbrowser download.")
+    $lines.Add("# CLOAKBROWSER_BINARY_PATH='C:/path/to/chrome.exe'")
     $lines.Add($OfflineManagedEnd)
     [System.IO.File]::WriteAllLines($target, $lines, [System.Text.UTF8Encoding]::new($false))
 }
@@ -615,29 +622,15 @@ payload = provider_status_payload()
 assert "providers" in payload
 '@
 
-    $cloakbrowserCheck = @'
-from pathlib import Path
-import os
-import sys
-
+    $browserRuntimeCheck = @'
 import cloakbrowser
+import playwright
+from paper_fetch.runtime_browser import BrowserContextManager
 
-assert hasattr(cloakbrowser, "launch")
-binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
-if binary_path:
-    path = Path(binary_path)
-    assert path.is_file(), binary_path
-
-if len(sys.argv) > 1 and sys.argv[1] == "probe-launch":
-    headless = os.environ.get("CLOAKBROWSER_HEADLESS", "true").strip().lower() not in {"0", "false", "no", "off"}
-    browser = cloakbrowser.launch(headless=headless)
-    browser.close()
+assert hasattr(cloakbrowser, "ensure_binary")
+assert BrowserContextManager is not None
 '@
-    $args = @()
-    if ($ProbeLaunch) {
-        $args += "probe-launch"
-    }
-    Invoke-RuntimePythonScript -Script $cloakbrowserCheck -Arguments $args
+    Invoke-RuntimePythonScript -Script $browserRuntimeCheck
     Invoke-Checked -FilePath $texmath -Arguments @("--help")
     Invoke-Checked -FilePath $node -Arguments @("--version")
 }

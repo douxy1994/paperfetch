@@ -314,7 +314,8 @@ def _run_browser_asset_download_attempt(
                 **supplementary_kwargs,
             )
 
-        if attempt_body_assets and attempt_supplementary_assets:
+        serial_browser_assets = bool(attempt_settings.get("serial_browser_assets"))
+        if attempt_body_assets and attempt_supplementary_assets and not serial_browser_assets:
             with ThreadPoolExecutor(max_workers=2) as executor:
                 body_future = executor.submit(download_body_assets)
                 supplementary_future = executor.submit(download_supplementary_assets)
@@ -363,6 +364,10 @@ def _build_attempt_document_fetcher(
         browser_user_agent=attempt_seed.get("browser_user_agent")
         or getattr(recovery.runtime, "user_agent", None),
         headless=getattr(recovery.runtime, "headless", True),
+        binary_path=getattr(recovery.runtime, "binary_path", None),
+        cdp_endpoint=getattr(recovery.runtime, "cdp_endpoint", None),
+        profile_dir=getattr(recovery.runtime, "profile_dir", None),
+        user_data_dir=getattr(recovery.runtime, "user_data_dir", None),
     )
 
 

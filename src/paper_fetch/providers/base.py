@@ -772,9 +772,9 @@ class ProviderClient:
                     "browser_runtime",
                     browser_runtime_status,
                     (
-                        "CloakBrowser browser runtime is configured; browser launch is not probed."
+                        "CDP browser runtime is configured; CDP connection is not probed."
                         if browser_runtime_status == OK
-                        else "CloakBrowser browser runtime is not configured."
+                        else "CDP browser runtime is not configured."
                     ),
                     missing_env=runtime_status.missing_env,
                     details={

@@ -55,7 +55,13 @@ class McpPayloadCacheTests(unittest.TestCase):
                 for entry in providers
             )
         )
-        self.assertTrue(any(entry["provider"] == "science" and entry["status"] == "ready" for entry in providers))
+        self.assertTrue(
+            any(
+                entry["provider"] == "science"
+                and entry["status"] == "ready"
+                for entry in providers
+            )
+        )
         self.assertTrue(all(entry["checks"] for entry in providers))
     def test_fetch_paper_payload_uses_default_arguments_and_mcp_download_dir(self) -> None:
         captured: dict[str, object] = {}

@@ -13,6 +13,13 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Callable, Mapping
 
+from ..config import (
+    CLOAKBROWSER_BINARY_PATH_ENV_VAR,
+    CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR,
+    CLOAKBROWSER_PROFILE_DIR_ENV_VAR,
+    CLOAKBROWSER_USER_DATA_DIR_ENV_VAR,
+    build_runtime_env,
+)
 from ..http import (
     DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
     HttpTransport,
@@ -37,6 +44,7 @@ from ._pdf_common import (
     pdf_fetch_result_from_bytes,
     sanitize_storage_state,
 )
+from .browser_runtime.seed import filter_browser_cookies_for_url
 import contextlib
 
 PdfFallbackResult = PdfFetchResult
@@ -357,6 +365,10 @@ def fetch_pdf_with_browser(
     browser_user_agent: str | None = None,
     headless: bool = True,
     referer: str | None = None,
+    binary_path: str | None = None,
+    cdp_endpoint: str | None = None,
+    profile_dir: Path | str | None = None,
+    user_data_dir: Path | str | None = None,
     storage_state_path: Path | None = None,
     seed_urls: list[str] | None = None,
     context: RuntimeContext | None = None,
@@ -373,6 +385,10 @@ def fetch_pdf_with_browser(
                 browser_user_agent=browser_user_agent,
                 headless=headless,
                 referer=referer,
+                binary_path=binary_path,
+                cdp_endpoint=cdp_endpoint,
+                profile_dir=profile_dir,
+                user_data_dir=user_data_dir,
                 storage_state_path=storage_state_path,
                 seed_urls=seed_urls,
                 context=context,
@@ -434,11 +450,31 @@ def fetch_pdf_with_browser(
     browser_context = None
     try:
         if context is not None and _use_runtime_browser:
-            browser_context = context.new_browser_context(headless=headless, **context_kwargs)
+            if isinstance(context, RuntimeContext) and any(value is not None for value in (binary_path, cdp_endpoint, profile_dir, user_data_dir)):
+                browser_context = context.new_browser_context_for_config(
+                    headless=headless,
+                    binary_path=binary_path,
+                    cdp_endpoint=cdp_endpoint,
+                    profile_dir=profile_dir,
+                    user_data_dir=user_data_dir,
+                    **context_kwargs,
+                )
+            else:
+                browser_context = context.new_browser_context(headless=headless, **context_kwargs)
         else:
             from ..runtime_browser import BrowserContextManager
 
-            manager = BrowserContextManager()
+            runtime_env = build_runtime_env()
+            endpoint = normalize_text(cdp_endpoint) or normalize_text(runtime_env.get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR))
+            active_binary_path = normalize_text(binary_path) or normalize_text(runtime_env.get(CLOAKBROWSER_BINARY_PATH_ENV_VAR))
+            active_profile_dir = normalize_text(str(profile_dir or "")) or normalize_text(runtime_env.get(CLOAKBROWSER_PROFILE_DIR_ENV_VAR))
+            active_user_data_dir = normalize_text(str(user_data_dir or "")) or normalize_text(runtime_env.get(CLOAKBROWSER_USER_DATA_DIR_ENV_VAR))
+            manager = BrowserContextManager(
+                binary_path=active_binary_path or None,
+                cdp_endpoint=endpoint or None,
+                profile_dir=Path(active_profile_dir).expanduser() if active_profile_dir else None,
+                user_data_dir=Path(active_user_data_dir).expanduser() if active_user_data_dir else None,
+            )
             browser_context = manager.new_context(headless=headless, **context_kwargs)
 
         if browser_cookies:
@@ -509,9 +545,18 @@ def fetch_pdf_with_browser(
                         http_retry_candidates.append(normalized_candidate)
                 if http_retry_candidates:
                     try:
-                        context_cookies = browser_context.cookies()
+                        context_cookies = browser_context.cookies([html_base_url])
+                    except TypeError:
+                        try:
+                            context_cookies = browser_context.cookies()
+                        except Exception:
+                            context_cookies = list(browser_cookies or [])
                     except Exception:
                         context_cookies = list(browser_cookies or [])
+                    context_cookies = filter_browser_cookies_for_url(
+                        list(context_cookies or []),
+                        html_base_url,
+                    )
                     http_referer = normalize_text(referer) or normalize_text(html_base_url)
                     http_headers = _browser_navigation_pdf_headers(
                         user_agent=active_user_agent,

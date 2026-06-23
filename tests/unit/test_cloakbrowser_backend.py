@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import replace
+import json
 import os
 from unittest import mock
 
-from paper_fetch import _cloakbrowser_runtime
+import pytest
+
+from paper_fetch import runtime_browser
 from paper_fetch.providers import _cloakbrowser, browser_runtime
 from paper_fetch.providers.browser_workflow.html_extraction import (
     _fetch_browser_html_payload,
@@ -134,14 +137,34 @@ class _FakeContext:
         self.page = _FakePage()
         self.closed = False
         self.storage_state_path: str | None = None
+        self.storage_state_payload = {
+            "cookies": [
+                {"name": "cf_clearance", "value": "secret", "domain": ".science.org", "path": "/"},
+                {"name": "sid", "value": "unrelated", "domain": ".unrelated.test", "path": "/"},
+            ],
+            "origins": [
+                {"origin": "https://www.science.org", "localStorage": [{"name": "ok", "value": "1"}]},
+                {"origin": "https://unrelated.test", "localStorage": [{"name": "no", "value": "1"}]},
+            ],
+        }
 
     def new_page(self) -> _FakePage:
         return self.page
 
-    def cookies(self) -> list[dict[str, str]]:
-        return [{"name": "cf_clearance", "value": "secret", "domain": ".science.org", "path": "/"}]
+    def cookies(self, urls=None) -> list[dict[str, str]]:
+        if urls:
+            url = str(urls[0])
+            if "science.org" in url:
+                return [{"name": "cf_clearance", "value": "secret", "domain": ".science.org", "path": "/"}]
+            return []
+        return [
+            {"name": "cf_clearance", "value": "secret", "domain": ".science.org", "path": "/"},
+            {"name": "sid", "value": "unrelated", "domain": ".unrelated.test", "path": "/"},
+        ]
 
-    def storage_state(self, *, path: str) -> None:
+    def storage_state(self, *, path: str | None = None):
+        if path is None:
+            return self.storage_state_payload
         self.storage_state_path = path
         with open(path, "w", encoding="utf-8") as handle:
             handle.write("{}")
@@ -153,6 +176,7 @@ class _FakeContext:
 class _FakeBrowser:
     def __init__(self) -> None:
         self.context = _FakeContext()
+        self.contexts = [self.context]
         self.new_context_kwargs: dict[str, object] = {}
         self.closed = False
 
@@ -166,14 +190,42 @@ class _FakeBrowser:
 
 class _FakeCloakBrowserModule:
     def __init__(self) -> None:
+        global _ACTIVE_FAKE_BROWSER
         self.browser = _FakeBrowser()
+        _ACTIVE_FAKE_BROWSER = self.browser
+        self.persistent_context = _FakeContext()
         self.launch_kwargs: dict[str, object] = {}
+        self.persistent_context_kwargs: dict[str, object] = {}
         self.launch_binary_path: str | None = None
+        self.persistent_binary_path: str | None = None
+        self.persistent_user_data_dir: object | None = None
 
     def launch(self, **kwargs):
         self.launch_kwargs = dict(kwargs)
         self.launch_binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
         return self.browser
+
+    def launch_persistent_context(self, user_data_dir, **kwargs):
+        self.persistent_user_data_dir = user_data_dir
+        self.persistent_context_kwargs = dict(kwargs)
+        self.persistent_binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
+        return self.persistent_context
+
+
+_ACTIVE_FAKE_BROWSER: _FakeBrowser | None = None
+
+
+@pytest.fixture(autouse=True)
+def _patch_cdp_browser(monkeypatch):
+    global _ACTIVE_FAKE_BROWSER
+    _ACTIVE_FAKE_BROWSER = None
+
+    def connect(_endpoint: str):
+        return _ACTIVE_FAKE_BROWSER or _FakeBrowser()
+
+    monkeypatch.setattr(runtime_browser, "connect_browser_over_cdp", connect)
+    yield
+    _ACTIVE_FAKE_BROWSER = None
 
 
 def _runtime_config(tmp_path):
@@ -184,6 +236,7 @@ def _runtime_config(tmp_path):
         headless=True,
         user_agent="paper-fetch-test/1",
         timeout_ms=12345,
+        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
     )
 
 
@@ -195,6 +248,7 @@ def _runtime_config_without_browser_user_agent(tmp_path):
         headless=True,
         user_agent=None,
         timeout_ms=12345,
+        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
     )
 
 
@@ -206,6 +260,7 @@ def _wiley_runtime_config(tmp_path):
         headless=True,
         user_agent="paper-fetch-test/1",
         timeout_ms=12345,
+        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
     )
 
 
@@ -259,11 +314,11 @@ def test_fetch_html_with_cloakbrowser_returns_existing_html_contract(tmp_path) -
     assert result.title == "Example Article"
     assert result.browser_context_seed["browser_user_agent"] == "paper-fetch-test/1"
     assert result.browser_context_seed["browser_cookies"][0]["name"] == "cf_clearance"
-    assert fake_module.launch_kwargs["headless"] is True
-    assert fake_module.browser.new_context_kwargs["user_agent"] == "paper-fetch-test/1"
+    assert fake_module.launch_kwargs == {}
+    assert fake_module.browser.new_context_kwargs == {}
     assert fake_module.browser.context.page.aborted_media is True
     assert fake_module.browser.context.page.continued_document is True
-    assert fake_module.browser.context.closed is True
+    assert fake_module.browser.context.closed is False
     assert fake_module.browser.closed is True
 
 
@@ -284,9 +339,14 @@ def test_fetch_html_with_cloakbrowser_reuses_and_saves_storage_state(tmp_path) -
             wait_seconds=0,
         )
 
-    assert fake_module.browser.new_context_kwargs["storage_state"] == str(state_path)
-    assert fake_module.browser.context.storage_state_path == str(state_path)
-    assert state_path.read_text(encoding="utf-8") == "{}"
+    assert fake_module.browser.context.storage_state_path is None
+    saved_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert saved_state["cookies"] == [
+        {"name": "cf_clearance", "value": "secret", "domain": ".science.org", "path": "/"}
+    ]
+    assert saved_state["origins"] == [
+        {"origin": "https://www.science.org", "localStorage": [{"name": "ok", "value": "1"}]}
+    ]
 
 
 def test_fetch_html_with_cloakbrowser_prefers_explicit_storage_state_path(tmp_path) -> None:
@@ -310,14 +370,83 @@ def test_fetch_html_with_cloakbrowser_prefers_explicit_storage_state_path(tmp_pa
             wait_seconds=0,
         )
 
-    assert fake_module.browser.new_context_kwargs["storage_state"] == str(explicit_state_path)
-    assert fake_module.browser.context.storage_state_path == str(explicit_state_path)
+    assert fake_module.browser.context.storage_state_path is None
+    saved_state = json.loads(explicit_state_path.read_text(encoding="utf-8"))
+    assert saved_state["cookies"] == []
+    assert saved_state["origins"] == []
     assert not (user_data_dir / "storage-state.json").exists()
+
+
+def test_fetch_html_with_cloakbrowser_ignores_legacy_profile_dir_in_cdp_mode(tmp_path) -> None:
+    fake_module = _FakeCloakBrowserModule()
+    profile_dir = tmp_path / "persistent-profile"
+    state_path = tmp_path / "wiley-state.json"
+    state_path.write_text('{"cookies":[]}', encoding="utf-8")
+    config = replace(
+        _wiley_runtime_config(tmp_path),
+        profile_dir=profile_dir,
+        storage_state_path=state_path,
+        binary_path="/tmp/cloakbrowser-chrome",
+    )
+
+    with mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module):
+        _cloakbrowser.fetch_html_with_cloakbrowser(
+            ["https://onlinelibrary.wiley.com/doi/full/10.1111/gcb.70541"],
+            publisher="wiley",
+            config=config,
+            disable_media=True,
+            wait_seconds=0,
+        )
+
+    assert fake_module.launch_kwargs == {}
+    assert fake_module.persistent_user_data_dir is None
+    assert fake_module.persistent_context_kwargs == {}
+    assert fake_module.browser.context.storage_state_path is None
+    saved_state = json.loads(state_path.read_text(encoding="utf-8"))
+    assert saved_state["cookies"] == []
+    assert saved_state["origins"] == []
+    assert fake_module.browser.context.closed is False
+    assert fake_module.browser.closed is True
+
+
+def test_fetch_html_with_cloakbrowser_uses_cdp_endpoint_without_launching_browser(tmp_path) -> None:
+    fake_module = _FakeCloakBrowserModule()
+    config = replace(
+        _wiley_runtime_config(tmp_path),
+        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
+        profile_dir=tmp_path / "ignored-profile",
+    )
+    endpoints: list[str] = []
+
+    def fake_connect(endpoint: str):
+        endpoints.append(endpoint)
+        return fake_module.browser
+
+    with (
+        mock.patch.object(runtime_browser, "connect_browser_over_cdp", side_effect=fake_connect),
+        mock.patch.object(_cloakbrowser, "_import_cloakbrowser", side_effect=AssertionError("launch not used")),
+    ):
+        result = _cloakbrowser.fetch_html_with_cloakbrowser(
+            ["https://onlinelibrary.wiley.com/doi/full/10.1111/gcb.70541"],
+            publisher="wiley",
+            config=config,
+            disable_media=True,
+            wait_seconds=0,
+        )
+
+    assert result.final_url == "https://onlinelibrary.wiley.com/doi/full/10.1111/gcb.70541"
+    assert endpoints == ["ws://127.0.0.1:9222/devtools/browser/test"]
+    assert fake_module.launch_kwargs == {}
+    assert fake_module.persistent_context_kwargs == {}
+    assert fake_module.browser.closed is True
+    assert fake_module.browser.context.closed is False
+    assert fake_module.browser.context.page.closed is True
 
 
 def test_load_runtime_config_accepts_cloakbrowser_user_data_dir(tmp_path) -> None:
     config = _cloakbrowser.load_runtime_config(
         {
+            "CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test",
             "CLOAKBROWSER_USER_DATA_DIR": str(tmp_path / "profile"),
             "CLOAKBROWSER_TIMEOUT_MS": "15000",
         },
@@ -329,23 +458,84 @@ def test_load_runtime_config_accepts_cloakbrowser_user_data_dir(tmp_path) -> Non
     assert config.timeout_ms == 15000
 
 
-def test_load_runtime_config_requires_ams_storage_state_json() -> None:
-    try:
-        _cloakbrowser.load_runtime_config({}, provider="ams", doi="10.1175/example")
-    except _cloakbrowser.ProviderFailure as exc:
-        assert exc.code == "not_configured"
-        assert exc.missing_env == ["PAPER_FETCH_AMS_STORAGE_STATE_JSON"]
-    else:
-        raise AssertionError("expected AMS storage state configuration failure")
+def test_load_runtime_config_accepts_wiley_profile_dir(tmp_path) -> None:
+    config = _cloakbrowser.load_runtime_config(
+        {
+            "CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test",
+            "PAPER_FETCH_WILEY_PROFILE_DIR": str(tmp_path / "wiley-profile"),
+        },
+        provider="wiley",
+        doi="10.1111/example",
+    )
+
+    assert config.profile_dir == tmp_path / "wiley-profile"
+
+
+def test_load_runtime_config_accepts_generic_cloakbrowser_profile_dir(tmp_path) -> None:
+    config = _cloakbrowser.load_runtime_config(
+        {
+            "CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test",
+            "CLOAKBROWSER_PROFILE_DIR": str(tmp_path / "shared-profile"),
+        },
+        provider="science",
+        doi="10.1126/example",
+    )
+
+    assert config.profile_dir == tmp_path / "shared-profile"
+
+
+def test_storage_state_path_uses_profile_dir_when_user_data_dir_is_not_set(tmp_path) -> None:
+    config = replace(
+        _runtime_config(tmp_path),
+        profile_dir=tmp_path / "shared-profile",
+        user_data_dir=None,
+        storage_state_path=None,
+    )
+
+    assert _cloakbrowser._storage_state_path(config) == tmp_path / "shared-profile" / "storage-state.json"
+
+
+def test_load_runtime_config_accepts_cdp_endpoint() -> None:
+    config = _cloakbrowser.load_runtime_config(
+        {"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"},
+        provider="wiley",
+        doi="10.1111/example",
+    )
+
+    assert config.cdp_endpoint == "ws://127.0.0.1:9222/devtools/browser/test"
+
+
+def test_load_runtime_config_allows_auto_managed_cdp_browser() -> None:
+    config = _cloakbrowser.load_runtime_config({}, provider="ams", doi="10.1175/example")
+
+    assert config.cdp_endpoint is None
 
 
 def test_load_runtime_config_accepts_ams_storage_state_json(tmp_path) -> None:
     state_path = tmp_path / "ams-state.json"
     state_path.write_text('{"cookies":[]}', encoding="utf-8")
     config = _cloakbrowser.load_runtime_config(
-        {"PAPER_FETCH_AMS_STORAGE_STATE_JSON": str(state_path)},
+        {
+            "CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test",
+            "PAPER_FETCH_AMS_STORAGE_STATE_JSON": str(state_path),
+        },
         provider="ams",
         doi="10.1175/example",
+    )
+
+    assert config.storage_state_path == state_path
+
+
+def test_load_runtime_config_accepts_wiley_storage_state_json(tmp_path) -> None:
+    state_path = tmp_path / "wiley-state.json"
+    state_path.write_text('{"cookies":[]}', encoding="utf-8")
+    config = _cloakbrowser.load_runtime_config(
+        {
+            "CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test",
+            "PAPER_FETCH_WILEY_STORAGE_STATE_JSON": str(state_path),
+        },
+        provider="wiley",
+        doi="10.1111/example",
     )
 
     assert config.storage_state_path == state_path
@@ -449,7 +639,7 @@ def test_fetch_html_with_cloakbrowser_omits_user_agent_when_not_configured(tmp_p
     assert result.browser_context_seed["browser_user_agent"] is None
 
 
-def test_fetch_html_with_cloakbrowser_applies_config_binary_path_during_launch(tmp_path, monkeypatch) -> None:
+def test_fetch_html_with_cloakbrowser_ignores_config_binary_path_in_cdp_mode(tmp_path, monkeypatch) -> None:
     fake_module = _FakeCloakBrowserModule()
     config = replace(_runtime_config(tmp_path), binary_path="/tmp/chrome")
     monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
@@ -463,7 +653,8 @@ def test_fetch_html_with_cloakbrowser_applies_config_binary_path_during_launch(t
             wait_seconds=0,
         )
 
-    assert fake_module.launch_binary_path == "/tmp/chrome"
+    assert fake_module.launch_binary_path is None
+    assert fake_module.launch_kwargs == {}
     assert "CLOAKBROWSER_BINARY_PATH" not in os.environ
 
 
@@ -644,9 +835,9 @@ def test_fetch_html_with_browser_marks_diagnostic(tmp_path) -> None:
         mock.patch.object(_cloakbrowser, "_import_cloakbrowser", return_value=fake_module),
         mock.patch.object(
             context,
-            "new_browser_context",
+            "new_browser_context_for_config",
             return_value=fake_module.browser.context,
-        ) as new_browser_context,
+        ) as new_browser_context_for_config,
     ):
         _html_result, payload = _fetch_browser_html_payload(
             _FakeWorkflowClient(),
@@ -657,7 +848,7 @@ def test_fetch_html_with_browser_marks_diagnostic(tmp_path) -> None:
             wait_seconds=0,
         )
 
-    new_browser_context.assert_called_once()
+    new_browser_context_for_config.assert_called_once()
     assert fake_module.launch_kwargs == {}
     assert payload.content is not None
     assert payload.content.diagnostics["html_fetcher"] == "cloakbrowser"
@@ -689,30 +880,26 @@ def test_fetch_html_with_cloakbrowser_returns_image_payload(tmp_path) -> None:
     assert result.image_payload == image_payload
 
 
-def test_probe_runtime_status_reports_missing_cloakbrowser_dependency() -> None:
+def test_probe_runtime_status_reports_missing_playwright_dependency() -> None:
     with (
         mock.patch.object(_cloakbrowser, "_dependency_available", return_value=False),
         mock.patch.object(_cloakbrowser, "_dependency_details", return_value={"probe": "importlib.find_spec"}),
     ):
-        result = _cloakbrowser.probe_runtime_status({}, provider="science")
+        result = _cloakbrowser.probe_runtime_status(
+            {"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"},
+            provider="science",
+        )
 
     checks = {check.name: check for check in result.checks}
     assert result.status == "not_configured"
     assert checks["runtime_env"].status == "not_configured"
-    assert checks["cloakbrowser_dependency"].status == "not_configured"
+    assert checks["playwright_dependency"].status == "not_configured"
 
 
-def test_import_cloakbrowser_suppresses_welcome_banner(monkeypatch) -> None:
-    import cloakbrowser.download
+def test_import_cloakbrowser_helper_returns_package() -> None:
+    module = _cloakbrowser._import_cloakbrowser()
 
-    calls: list[str] = []
-    monkeypatch.setattr(_cloakbrowser_runtime, "_WELCOME_SUPPRESSED", False)
-    monkeypatch.setattr(cloakbrowser.download, "_show_welcome", lambda: calls.append("welcome"))
-
-    _cloakbrowser._import_cloakbrowser()
-    cloakbrowser.download._show_welcome()
-
-    assert calls == []
+    assert hasattr(module, "ensure_binary")
 
 
 def test_browser_runtime_module_imports() -> None:

@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from typing import Any
-import contextlib
 
 
 _SUPPRESS_LOCK = threading.Lock()

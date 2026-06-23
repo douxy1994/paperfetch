@@ -104,11 +104,19 @@ def bootstrap_browser_workflow(
 
     if profile.direct_playwright_html_preflight:
         try:
+            if result.runtime is None:
+                result.runtime = deps.load_runtime_config(
+                    client.env,
+                    provider=client.name,
+                    doi=normalized_doi,
+                )
+                deps.ensure_runtime_ready(result.runtime)
             html_result = deps.fetch_html_with_fast_browser(
                 html_candidates,
                 publisher=client.name,
                 user_agent=client.browser_user_agent,
                 context=context,
+                browser_config=result.runtime,
             )
             result.browser_context_seed = html_result.browser_context_seed
             markdown_text, extraction = deps._cached_browser_workflow_markdown(
@@ -154,12 +162,13 @@ def bootstrap_browser_workflow(
             )
 
     try:
-        result.runtime = deps.load_runtime_config(
-            client.env,
-            provider=client.name,
-            doi=normalized_doi,
-        )
-        deps.ensure_runtime_ready(result.runtime)
+        if result.runtime is None:
+            result.runtime = deps.load_runtime_config(
+                client.env,
+                provider=client.name,
+                doi=normalized_doi,
+            )
+            deps.ensure_runtime_ready(result.runtime)
     except ProviderFailure as exc:
         if not allow_runtime_failure:
             raise

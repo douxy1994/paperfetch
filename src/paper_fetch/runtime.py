@@ -15,6 +15,9 @@ from collections.abc import Hashable, Mapping
 from .artifacts import DEFAULT_ARTIFACT_MODE, ArtifactMode, ArtifactStore
 from .config import (
     CLOAKBROWSER_BINARY_PATH_ENV_VAR,
+    CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR,
+    CLOAKBROWSER_PROFILE_DIR_ENV_VAR,
+    CLOAKBROWSER_USER_DATA_DIR_ENV_VAR,
     HTTP_DISK_CACHE_DIR_ENV_VAR,
     HTTP_DISK_CACHE_ENV_VAR,
     HTTP_DISK_CACHE_MAX_AGE_DAYS_ENV_VAR,
@@ -131,6 +134,11 @@ class RuntimeContext:
     _stage_timing_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _browser_context_manager_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
     _browser_context_manager: BrowserContextManager | None = field(default=None, init=False, repr=False)
+    _browser_context_managers: dict[tuple[str, str, str, str], BrowserContextManager] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         self.env = build_runtime_env() if self.env is None else dict(self.env)
@@ -163,17 +171,36 @@ class RuntimeContext:
         return self.clients
 
     def playwright_browser(self, *, headless: bool = True) -> Any:
-        """Return a lazily started shared CloakBrowser browser."""
+        """Return a lazily attached shared CDP browser."""
 
         return self._browser_lifecycle().browser(headless=headless)
 
     def new_browser_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any:
-        """Create an isolated browser context from the shared CloakBrowser browser."""
+        """Create a browser context from the shared CDP browser."""
 
         return self._browser_lifecycle().new_context(headless=headless, **context_kwargs)
 
+    def new_browser_context_for_config(
+        self,
+        *,
+        headless: bool = True,
+        binary_path: str | None = None,
+        cdp_endpoint: str | None = None,
+        profile_dir: Path | str | None = None,
+        user_data_dir: Path | str | None = None,
+        **context_kwargs: Any,
+    ) -> Any:
+        """Create a context from a browser lifecycle keyed by runtime browser config."""
+
+        return self._browser_lifecycle_for_config(
+            binary_path=binary_path,
+            cdp_endpoint=cdp_endpoint,
+            profile_dir=profile_dir,
+            user_data_dir=user_data_dir,
+        ).new_context(headless=headless, **context_kwargs)
+
     def new_playwright_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any:
-        """Create an isolated browser context from the shared CloakBrowser browser."""
+        """Create a browser context from the shared CDP browser."""
 
         return self.new_browser_context(headless=headless, **context_kwargs)
 
@@ -182,15 +209,74 @@ class RuntimeContext:
 
         with self._browser_context_manager_lock:
             manager = self._browser_context_manager
+            keyed_managers = list(self._browser_context_managers.values())
+            self._browser_context_managers.clear()
+            self._browser_context_manager = None
+        seen: set[int] = set()
         if manager is not None:
+            seen.add(id(manager))
             manager.close()
+        for keyed_manager in keyed_managers:
+            if id(keyed_manager) in seen:
+                continue
+            seen.add(id(keyed_manager))
+            keyed_manager.close()
 
     def _browser_lifecycle(self) -> BrowserContextManager:
         with self._browser_context_manager_lock:
             if self._browser_context_manager is None:
+                cdp_endpoint = str((self.env or {}).get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR, "")).strip() or None
                 binary_path = str((self.env or {}).get(CLOAKBROWSER_BINARY_PATH_ENV_VAR, "")).strip() or None
-                self._browser_context_manager = BrowserContextManager(binary_path=binary_path)
+                profile_dir_value = str((self.env or {}).get(CLOAKBROWSER_PROFILE_DIR_ENV_VAR, "")).strip()
+                user_data_dir_value = str((self.env or {}).get(CLOAKBROWSER_USER_DATA_DIR_ENV_VAR, "")).strip()
+                self._browser_context_manager = BrowserContextManager(
+                    binary_path=binary_path,
+                    cdp_endpoint=cdp_endpoint,
+                    profile_dir=Path(profile_dir_value).expanduser() if profile_dir_value else None,
+                    user_data_dir=Path(user_data_dir_value).expanduser() if user_data_dir_value else None,
+                )
             return self._browser_context_manager
+
+    def _browser_lifecycle_for_config(
+        self,
+        *,
+        binary_path: str | None,
+        cdp_endpoint: str | None,
+        profile_dir: Path | str | None,
+        user_data_dir: Path | str | None,
+    ) -> BrowserContextManager:
+        key = self._browser_lifecycle_key(
+            binary_path=binary_path,
+            cdp_endpoint=cdp_endpoint,
+            profile_dir=profile_dir,
+            user_data_dir=user_data_dir,
+        )
+        with self._browser_context_manager_lock:
+            manager = self._browser_context_managers.get(key)
+            if manager is None:
+                manager = BrowserContextManager(
+                    binary_path=str(binary_path or "").strip() or None,
+                    cdp_endpoint=str(cdp_endpoint or "").strip() or None,
+                    profile_dir=Path(profile_dir).expanduser() if profile_dir is not None else None,
+                    user_data_dir=Path(user_data_dir).expanduser() if user_data_dir is not None else None,
+                )
+                self._browser_context_managers[key] = manager
+            return manager
+
+    @staticmethod
+    def _browser_lifecycle_key(
+        *,
+        binary_path: str | None,
+        cdp_endpoint: str | None,
+        profile_dir: Path | str | None,
+        user_data_dir: Path | str | None,
+    ) -> tuple[str, str, str, str]:
+        return (
+            str(binary_path or "").strip(),
+            str(cdp_endpoint or "").strip(),
+            str(Path(profile_dir).expanduser()) if profile_dir is not None else "",
+            str(Path(user_data_dir).expanduser()) if user_data_dir is not None else "",
+        )
 
     def close(self) -> None:
         self.close_playwright()

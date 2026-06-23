@@ -6,6 +6,40 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.5.0 - 2026-06-23
+
+This release refactors the CloakBrowser browser path around CDP-managed Chrome reuse and improves anti-bot/challenge resilience through provider-scoped browser state, shared runtime context management, and safer external-browser attachment.
+
+### Added
+
+- Added optional `CLOAKBROWSER_CDP_ENDPOINT` support for attaching browser workflows to an already-running Chrome/CloakBrowser instance over CDP.
+- Added managed Chrome startup through CloakBrowser when no endpoint is configured, including provider-scoped profile/storage-state reuse under `publisher-browser-profiles/<provider>`.
+- Added provider-scoped browser authentication with `paper-fetch auth <provider>` for browser-backed providers, including built-in sample URLs, `--url` overrides, headed manual verification, and local storage-state saving without requiring `.env` writes.
+- Added `CLOAKBROWSER_PROFILE_DIR` plus legacy Wiley storage/profile environment variable awareness so existing user configuration can be identified while the managed CDP path defaults to provider-scoped state.
+
+### Changed
+
+- Changed the browser backend from direct `cloakbrowser.launch()` ownership to a CDP-backed `BrowserContextManager`; HTML fetches, browser-backed asset downloads, fast HTML preflight, and seeded PDF/ePDF fallbacks now share the runtime keyed browser manager where possible.
+- Changed managed browser startup to use `cloakbrowser.ensure_binary()` and a local Chrome CDP endpoint; `CLOAKBROWSER_HEADLESS`, `CLOAKBROWSER_BINARY_PATH`, `CLOAKBROWSER_PROFILE_DIR`, and `CLOAKBROWSER_USER_DATA_DIR` now apply to that managed path.
+- Changed external CDP mode to borrow the browser's existing context, inject storage-state cookies where possible, and document that new-context options such as user agent and viewport may be ignored by the borrowed context.
+- Changed browser-backed asset downloads to run serially when an external CDP context is borrowed, while managed CDP mode still opens isolated context/page instances per fetch stage or worker.
+- Changed AMS authentication and fetching to use the same provider-scoped storage-state model as other browser-backed providers; `PAPER_FETCH_AMS_STORAGE_STATE_JSON` is now a legacy override instead of a required setup step.
+- Changed `paper-fetch auth` legacy AMS-only options (`--state-json`, `--env-file`, `--no-env-write`, `--wait-seconds`) to unsupported compatibility stubs; profile/storage-state location is now controlled by the browser runtime directory configuration.
+- Changed browser provider status checks and MCP/skill documentation from CloakBrowser launch terminology to CDP browser runtime / Playwright dependency terminology, including explicit external endpoint and managed-browser behavior.
+- Changed offline installers, offline package builders, and CI smoke checks to validate Playwright, CloakBrowser `ensure_binary`, and `BrowserContextManager` instead of probing the removed direct `cloakbrowser.launch()` path.
+- Changed generated offline environment files and installer messages to document `CLOAKBROWSER_CDP_ENDPOINT`, managed Chrome startup, default `CLOAKBROWSER_HEADLESS`, and browser user-agent defaults for browser-backed publishers.
+- Changed the CloakBrowser dependency constraint to `cloakbrowser>=0.4,<0.5`.
+
+### Fixed
+
+- Fixed browser-backed image and file fetchers so managed CDP mode reuses the runtime keyed browser manager instead of starting independent Chrome instances, avoiding same-profile lock deadlocks and preserving per-worker context isolation.
+- Fixed managed browser profile locking to use a timeout instead of blocking forever when another managed browser already owns the profile directory.
+- Fixed CDP startup polling so a responsive `/json/version` endpoint with a temporarily missing `webSocketDebuggerUrl` no longer spins without sleeping.
+- Fixed fast HTML preflight, browser-backed asset fetchers, and browser PDF fallback to carry binary path, CDP endpoint, profile directory, user-data directory, and storage-state configuration consistently into the browser context manager.
+- Fixed seeded PDF fallback HTTP retry cookies to request and filter cookies for the target URL before replaying the PDF request.
+- Fixed provider status handling so managed browser mode can report browser-backed providers as ready without requiring a preconfigured external endpoint or AMS storage-state JSON, while still rejecting invalid managed binary paths and malformed CDP endpoints.
+- Fixed offline installer activation and MCP environment registration so managed CDP browser variables are exported consistently and obsolete profile/binary variables are not propagated as MCP env keys.
+
 ## 2.4.1 - 2026-06-20
 
 ### Changed

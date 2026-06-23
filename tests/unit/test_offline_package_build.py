@@ -35,7 +35,7 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertNotIn("-m playwright install chromium", script)
         self.assertIn("Creating macOS tar.gz archive", script)
 
-    def test_posix_manifest_and_readme_document_cloakbrowser_binary_policy(self) -> None:
+    def test_posix_manifest_and_readme_document_cdp_browser_policy(self) -> None:
         script = BUILD_OFFLINE_PACKAGE.read_text(encoding="utf-8")
         manifest_block = script[script.index("payload = {") : script.index("(staging / \"offline-manifest.json\")")]
 
@@ -48,6 +48,7 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertIn('"arch": target_arch', manifest_block)
         self.assertIn("README.offline.md", script)
         self.assertIn('PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64)', script)
+        self.assertIn("CLOAKBROWSER_CDP_ENDPOINT", script)
         self.assertIn("CLOAKBROWSER_BINARY_PATH", script)
         self.assertNotIn('# PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0', script)
         self.assertNotIn('"source_snapshot"', manifest_block)
@@ -65,7 +66,7 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertNotIn("sed -i \"s|__CLOAKBROWSER_HEADLESS__", script)
         self.assertNotIn("sed -i", script)
 
-    def test_posix_offline_verifier_uses_cloakbrowser_smoke(self) -> None:
+    def test_posix_offline_verifier_uses_browser_runtime_smoke(self) -> None:
         script = VERIFY_OFFLINE_PACKAGE.read_text(encoding="utf-8")
 
         self.assertIn("offline-installer.sh|offline-bundle.tar.gz", script)
@@ -78,7 +79,10 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertIn("Offline install should not include the build wheelhouse", script)
         self.assertIn("Purge did not remove the install directory", script)
         self.assertIn("import cloakbrowser", script)
-        self.assertIn('assert hasattr(cloakbrowser, "launch")', script)
+        self.assertIn("import playwright", script)
+        self.assertIn("from paper_fetch.runtime_browser import BrowserContextManager", script)
+        self.assertIn('assert hasattr(cloakbrowser, "ensure_binary")', script)
+        self.assertNotIn('assert hasattr(cloakbrowser, "launch")', script)
         self.assertIn("CLOAKBROWSER_HEADLESS=true", script)
         self.assertNotIn(".venv/bin", script)
         self.assertNotIn("sessions.list", script)
@@ -105,7 +109,7 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertNotIn("Add-PlaywrightChromium", script)
         self.assertNotIn("-m playwright install chromium", script)
 
-    def test_windows_wrappers_and_manifest_publish_only_cloakbrowser_runtime(self) -> None:
+    def test_windows_wrappers_and_manifest_publish_cdp_browser_policy(self) -> None:
         script = BUILD_OFFLINE_PACKAGE_WINDOWS.read_text(encoding="utf-8")
         wrapper_block = script[script.index("function Write-CmdWrappers") : script.index("function Add-SkillAgentManifest")]
         manifest_block = script[script.index("components = [ordered]@{") : script.index("installer = [ordered]@{")]
@@ -115,6 +119,7 @@ class OfflinePackageBuildTests(unittest.TestCase):
         self.assertIn("command_wrappers = \"bin\"", manifest_block)
         self.assertIn("cloakbrowser = [ordered]@{", manifest_block)
         self.assertIn("PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64)", script)
+        self.assertIn("CLOAKBROWSER_CDP_ENDPOINT", script)
         self.assertNotIn("# PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0", script)
         self.assertNotIn("project_wheels", manifest_block)
         self.assertNotIn("wheelhouse_count", manifest_block)

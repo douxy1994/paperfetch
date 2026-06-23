@@ -1,195 +1,426 @@
 from __future__ import annotations
 
 import inspect
-import os
-import sys
-import threading
+import logging
 from types import SimpleNamespace
 from typing import Any
+from unittest import mock
 
-from paper_fetch import _cloakbrowser_runtime
+from paper_fetch import runtime as runtime_module
 from paper_fetch import runtime_browser
 from paper_fetch.runtime import RuntimeContext
 from paper_fetch.runtime_browser import BrowserContextManager
 
 
-class _FakeBrowser:
-    def __init__(self, *, headless: bool, locale: str) -> None:
-        self.headless = headless
-        self.locale = locale
-        self.context_kwargs: list[dict[str, Any]] = []
+class _FakeCdpContext:
+    def __init__(self) -> None:
         self.close_count = 0
+        self.pages: list[SimpleNamespace] = []
+        self.cookies: list[dict[str, Any]] = []
 
-    def new_context(self, **kwargs: Any) -> Any:
-        self.context_kwargs.append(dict(kwargs))
-        return SimpleNamespace(kwargs=dict(kwargs))
+    def new_page(self) -> SimpleNamespace:
+        page = SimpleNamespace(closed=False)
+        self.pages.append(page)
+        return page
+
+    def add_cookies(self, cookies: list[dict[str, Any]]) -> None:
+        self.cookies.extend([dict(cookie) for cookie in cookies])
 
     def close(self) -> None:
         self.close_count += 1
 
 
-def test_browser_reused_across_calls(monkeypatch) -> None:
-    launches: list[_FakeBrowser] = []
+class _FakeCdpBrowser:
+    def __init__(self, contexts: list[_FakeCdpContext] | None = None) -> None:
+        self.contexts = list(contexts or [])
+        self.new_context_kwargs: list[dict[str, Any]] = []
+        self.close_count = 0
 
-    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
-        browser = _FakeBrowser(headless=headless, locale=locale)
-        launches.append(browser)
-        return browser
+    def new_context(self, **kwargs: Any) -> _FakeCdpContext:
+        context = _FakeCdpContext()
+        self.contexts.append(context)
+        self.new_context_kwargs.append(dict(kwargs))
+        return context
 
-    monkeypatch.setattr("cloakbrowser.launch", launch)
-    lifecycle = BrowserContextManager()
-
-    first_context = lifecycle.new_context(headless=True, locale="en-US")
-    second_context = lifecycle.new_context(headless=True, viewport={"width": 800})
-
-    assert len(launches) == 1
-    assert launches[0].headless is True
-    assert launches[0].locale == "en-US"
-    assert first_context.kwargs == {"locale": "en-US"}
-    assert second_context.kwargs == {"viewport": {"width": 800}}
-    assert launches[0].context_kwargs == [{"locale": "en-US"}, {"viewport": {"width": 800}}]
+    def close(self) -> None:
+        self.close_count += 1
 
 
-def test_headless_change_restarts_browser(monkeypatch) -> None:
-    launches: list[_FakeBrowser] = []
+def test_browser_manager_auto_starts_managed_cdp_browser(monkeypatch, tmp_path) -> None:
+    cdp_browser = _FakeCdpBrowser([_FakeCdpContext()])
+    endpoints: list[str] = []
+    popen_calls: list[list[str]] = []
 
-    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
-        browser = _FakeBrowser(headless=headless, locale=locale)
-        launches.append(browser)
-        return browser
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.terminated = False
+            self.killed = False
 
-    monkeypatch.setattr("cloakbrowser.launch", launch)
-    lifecycle = BrowserContextManager()
+        def poll(self):
+            return self.returncode
 
-    first_browser = lifecycle.browser(headless=True)
-    second_browser = lifecycle.browser(headless=False)
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = 0
 
-    assert len(launches) == 2
-    assert first_browser is launches[0]
-    assert second_browser is launches[1]
-    assert first_browser.close_count == 1
-    assert second_browser.close_count == 0
-    assert second_browser.headless is False
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self) -> None:
+            self.killed = True
+            self.returncode = -9
+
+    process = _FakeProcess()
+
+    def popen(command: list[str], **_kwargs: Any) -> _FakeProcess:
+        popen_calls.append(list(command))
+        return process
+
+    def connect(endpoint: str) -> _FakeCdpBrowser:
+        endpoints.append(endpoint)
+        return cdp_browser
+
+    monkeypatch.setattr(runtime_browser, "_resolve_cloakbrowser_binary", lambda _binary_path=None: "/tmp/chrome")
+    monkeypatch.setattr(runtime_browser, "_unused_tcp_port", lambda: 9333)
+    monkeypatch.setattr(runtime_browser.subprocess, "Popen", popen)
+    monkeypatch.setattr(runtime_browser, "_wait_for_cdp_endpoint", lambda **_kwargs: "ws://127.0.0.1:9333/devtools/browser/managed")
+    monkeypatch.setattr(runtime_browser, "connect_browser_over_cdp", connect)
+
+    profile_dir = tmp_path / "profile"
+    lifecycle = BrowserContextManager(profile_dir=profile_dir)
+    context = lifecycle.new_context(headless=True, locale="en-US")
+    context.close()
+    lifecycle.close()
+    profile_lock = runtime_browser._profile_lock_for_dir(profile_dir)
+    profile_lock.acquire(timeout=0)
+    profile_lock.release()
+
+    assert endpoints == ["ws://127.0.0.1:9333/devtools/browser/managed"]
+    assert cdp_browser.new_context_kwargs == [{"locale": "en-US"}]
+    assert popen_calls[0][0] == "/tmp/chrome"
+    assert f"--user-data-dir={tmp_path / 'profile'}" in popen_calls[0]
+    assert "--remote-debugging-port=9333" in popen_calls[0]
+    assert process.terminated is True
+    assert cdp_browser.close_count == 1
 
 
-def test_browser_manager_applies_binary_path_only_during_launch(monkeypatch) -> None:
-    launches: list[str | None] = []
+def test_browser_manager_restarts_managed_browser_when_headless_changes(monkeypatch, tmp_path) -> None:
+    cdp_browsers = [_FakeCdpBrowser([]), _FakeCdpBrowser([])]
+    endpoints: list[str] = []
+    popen_calls: list[list[str]] = []
+    processes: list[Any] = []
+    ports = iter([9333, 9444])
 
-    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
-        launches.append(os.environ.get("CLOAKBROWSER_BINARY_PATH"))
-        return _FakeBrowser(headless=headless, locale=locale)
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.terminated = False
 
-    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
-    monkeypatch.setattr("cloakbrowser.launch", launch)
-    lifecycle = BrowserContextManager(binary_path="/tmp/chrome")
+        def poll(self):
+            return self.returncode
 
-    lifecycle.browser(headless=True)
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = 0
 
-    assert launches == ["/tmp/chrome"]
-    assert "CLOAKBROWSER_BINARY_PATH" not in os.environ
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    def popen(command: list[str], **_kwargs: Any) -> _FakeProcess:
+        process = _FakeProcess()
+        processes.append(process)
+        popen_calls.append(list(command))
+        return process
+
+    def build_args(*, headless: bool, profile_dir, port: int) -> list[str]:
+        return [
+            f"--headless={str(headless).lower()}",
+            f"--user-data-dir={profile_dir}",
+            f"--remote-debugging-port={port}",
+        ]
+
+    def connect(endpoint: str) -> _FakeCdpBrowser:
+        endpoints.append(endpoint)
+        return cdp_browsers[len(endpoints) - 1]
+
+    monkeypatch.setattr(runtime_browser, "_resolve_cloakbrowser_binary", lambda _binary_path=None: "/tmp/chrome")
+    monkeypatch.setattr(runtime_browser, "_unused_tcp_port", lambda: next(ports))
+    monkeypatch.setattr(runtime_browser, "_build_managed_chrome_args", build_args)
+    monkeypatch.setattr(runtime_browser.subprocess, "Popen", popen)
+    monkeypatch.setattr(
+        runtime_browser,
+        "_wait_for_cdp_endpoint",
+        lambda *, port, **_kwargs: f"ws://127.0.0.1:{port}/devtools/browser/managed",
+    )
+    monkeypatch.setattr(runtime_browser, "connect_browser_over_cdp", connect)
+
+    lifecycle = BrowserContextManager(profile_dir=tmp_path / "profile")
+    lifecycle.new_context(headless=True).close()
+    lifecycle.new_context(headless=False).close()
+    lifecycle.close()
+
+    assert endpoints == [
+        "ws://127.0.0.1:9333/devtools/browser/managed",
+        "ws://127.0.0.1:9444/devtools/browser/managed",
+    ]
+    assert popen_calls[0][1] == "--headless=true"
+    assert popen_calls[1][1] == "--headless=false"
+    assert cdp_browsers[0].close_count == 1
+    assert cdp_browsers[1].close_count == 1
+    assert [process.terminated for process in processes] == [True, True]
 
 
-def test_browser_manager_serializes_binary_path_env_during_launch(monkeypatch) -> None:
-    launches: list[str | None] = []
-    errors: list[BaseException] = []
-    launch_lock = threading.Lock()
-    first_launch_entered = threading.Event()
-    allow_first_launch_exit = threading.Event()
-    second_thread_started = threading.Event()
-    second_launch_entered = threading.Event()
+def test_browser_manager_terminates_managed_browser_when_cdp_connect_fails(monkeypatch, tmp_path) -> None:
+    class _FakeProcess:
+        def __init__(self) -> None:
+            self.returncode = None
+            self.terminated = False
 
-    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
-        binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
-        with launch_lock:
-            launches.append(binary_path)
-        if binary_path == "/tmp/chrome-a":
-            first_launch_entered.set()
-            if not allow_first_launch_exit.wait(timeout=5):
-                raise AssertionError("timed out waiting to release first browser launch")
-        if binary_path == "/tmp/chrome-b":
-            second_launch_entered.set()
-        return _FakeBrowser(headless=headless, locale=locale)
+        def poll(self):
+            return self.returncode
 
-    def open_browser(binary_path: str, *, started: threading.Event | None = None) -> None:
-        if started is not None:
-            started.set()
-        try:
-            BrowserContextManager(binary_path=binary_path).browser(headless=True)
-        except BaseException as exc:
-            errors.append(exc)
+        def terminate(self) -> None:
+            self.terminated = True
+            self.returncode = 0
 
-    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
-    monkeypatch.setattr("cloakbrowser.launch", launch)
-    first_thread = threading.Thread(target=open_browser, args=("/tmp/chrome-a",))
-    second_thread = threading.Thread(
-        target=open_browser,
-        args=("/tmp/chrome-b",),
-        kwargs={"started": second_thread_started},
+        def wait(self, timeout=None):
+            return self.returncode
+
+        def kill(self) -> None:
+            self.returncode = -9
+
+    process = _FakeProcess()
+
+    monkeypatch.setattr(runtime_browser, "_resolve_cloakbrowser_binary", lambda _binary_path=None: "/tmp/chrome")
+    monkeypatch.setattr(runtime_browser, "_unused_tcp_port", lambda: 9333)
+    monkeypatch.setattr(runtime_browser.subprocess, "Popen", lambda *_args, **_kwargs: process)
+    monkeypatch.setattr(
+        runtime_browser,
+        "_wait_for_cdp_endpoint",
+        lambda **_kwargs: "ws://127.0.0.1:9333/devtools/browser/managed",
+    )
+    monkeypatch.setattr(
+        runtime_browser,
+        "connect_browser_over_cdp",
+        mock.Mock(side_effect=RuntimeError("connect failed")),
     )
 
-    first_thread.start()
-    assert first_launch_entered.wait(timeout=2)
-    second_thread.start()
-    assert second_thread_started.wait(timeout=2)
-    assert not second_launch_entered.wait(timeout=0.1)
+    profile_dir = tmp_path / "profile"
+    lifecycle = BrowserContextManager(profile_dir=profile_dir)
+    try:
+        lifecycle.new_context(headless=True)
+    except RuntimeError as exc:
+        assert str(exc) == "connect failed"
+    else:  # pragma: no cover - assertion reports the unexpected success path
+        raise AssertionError("expected CDP connect failure")
+    profile_lock = runtime_browser._profile_lock_for_dir(profile_dir)
+    profile_lock.acquire(timeout=0)
+    profile_lock.release()
 
-    allow_first_launch_exit.set()
-    first_thread.join(timeout=2)
-    second_thread.join(timeout=2)
-
-    assert not first_thread.is_alive()
-    assert not second_thread.is_alive()
-    assert errors == []
-    assert launches == ["/tmp/chrome-a", "/tmp/chrome-b"]
-    assert "CLOAKBROWSER_BINARY_PATH" not in os.environ
+    assert process.terminated is True
 
 
-def test_runtime_context_passes_env_binary_path_to_browser_manager(monkeypatch) -> None:
-    launches: list[str | None] = []
+def test_browser_manager_profile_lock_timeout_reports_error(monkeypatch, tmp_path) -> None:
+    class _BlockingLock:
+        def acquire(self, *, timeout: float) -> None:
+            assert timeout == 0
+            raise runtime_browser.Timeout("locked")
 
-    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
-        launches.append(os.environ.get("CLOAKBROWSER_BINARY_PATH"))
-        return _FakeBrowser(headless=headless, locale=locale)
+        def release(self) -> None:  # pragma: no cover - should not be reached
+            raise AssertionError("profile lock should not be released when acquire fails")
 
-    monkeypatch.delenv("CLOAKBROWSER_BINARY_PATH", raising=False)
-    monkeypatch.setattr("cloakbrowser.launch", launch)
-    context = RuntimeContext(env={"CLOAKBROWSER_BINARY_PATH": "/tmp/chrome"})
+    monkeypatch.setattr(runtime_browser, "_resolve_cloakbrowser_binary", lambda _binary_path=None: "/tmp/chrome")
+    monkeypatch.setattr(runtime_browser, "_profile_lock_for_dir", lambda _profile_dir: _BlockingLock())
+    popen = mock.Mock()
+    monkeypatch.setattr(runtime_browser.subprocess, "Popen", popen)
+
+    profile_dir = tmp_path / "profile"
+    lifecycle = BrowserContextManager(
+        profile_dir=profile_dir,
+        profile_lock_timeout_seconds=0,
+    )
+    try:
+        lifecycle.new_context(headless=True)
+    except RuntimeError as exc:
+        assert "Timed out waiting for managed Chrome profile lock" in str(exc)
+        assert str(profile_dir / runtime_browser.PROFILE_LOCK_FILENAME) in str(exc)
+    else:  # pragma: no cover - assertion reports the unexpected success path
+        raise AssertionError("expected profile lock timeout")
+
+    popen.assert_not_called()
+
+
+def test_browser_manager_reuses_existing_cdp_context_without_closing_it(monkeypatch) -> None:
+    cdp_context = _FakeCdpContext()
+    cdp_browser = _FakeCdpBrowser([cdp_context])
+    endpoints: list[str] = []
+
+    def connect(endpoint: str) -> _FakeCdpBrowser:
+        endpoints.append(endpoint)
+        return cdp_browser
+
+    monkeypatch.setattr(runtime_browser, "connect_browser_over_cdp", connect)
+    lifecycle = BrowserContextManager(cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test")
+
+    context = lifecycle.new_context(headless=True, locale="en-US")
+    page = context.new_page()
+    context.close()
+    second_context = lifecycle.new_context(headless=False)
+    lifecycle.close()
+
+    assert endpoints == ["ws://127.0.0.1:9222/devtools/browser/test"]
+    assert page in cdp_context.pages
+    assert second_context.new_page() in cdp_context.pages
+    assert cdp_browser.new_context_kwargs == []
+    assert cdp_context.close_count == 0
+    assert cdp_browser.close_count == 1
+
+
+def test_browser_manager_injects_storage_state_cookies_into_external_context(monkeypatch) -> None:
+    cdp_context = _FakeCdpContext()
+    cdp_browser = _FakeCdpBrowser([cdp_context])
+    monkeypatch.setattr(
+        runtime_browser,
+        "connect_browser_over_cdp",
+        lambda _endpoint: cdp_browser,
+    )
+    lifecycle = BrowserContextManager(cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test")
+
+    context = lifecycle.new_context(
+        headless=True,
+        storage_state={
+            "cookies": [
+                {
+                    "name": "session",
+                    "value": "seed",
+                    "domain": ".example.test",
+                    "path": "/",
+                }
+            ]
+        },
+    )
+    context.close()
+    lifecycle.close()
+
+    assert cdp_context.cookies == [
+        {
+            "name": "session",
+            "value": "seed",
+            "domain": ".example.test",
+            "path": "/",
+        }
+    ]
+    assert cdp_context.close_count == 0
+    assert cdp_browser.new_context_kwargs == []
+
+
+def test_browser_manager_logs_ignored_external_context_options(monkeypatch, caplog) -> None:
+    cdp_context = _FakeCdpContext()
+    cdp_browser = _FakeCdpBrowser([cdp_context])
+    monkeypatch.setattr(
+        runtime_browser,
+        "connect_browser_over_cdp",
+        lambda _endpoint: cdp_browser,
+    )
+    caplog.set_level(logging.DEBUG, logger="paper_fetch.runtime_browser")
+    lifecycle = BrowserContextManager(cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test")
+
+    context = lifecycle.new_context(
+        headless=True,
+        user_agent="Mozilla/5.0 ignored",
+        storage_state="/tmp/ignored-state.json",
+    )
+    context.close()
+    lifecycle.close()
+
+    assert "cdp_external_context_ignored_options" in caplog.text
+    assert "keys=user_agent" in caplog.text
+
+
+def test_browser_manager_creates_owned_context_when_cdp_browser_has_no_contexts(monkeypatch) -> None:
+    cdp_browser = _FakeCdpBrowser([])
+    monkeypatch.setattr(
+        runtime_browser,
+        "connect_browser_over_cdp",
+        lambda _endpoint: cdp_browser,
+    )
+    lifecycle = BrowserContextManager(cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test")
+
+    context = lifecycle.new_context(headless=True, locale="en-US")
+    context.close()
+    lifecycle.close()
+
+    assert len(cdp_browser.contexts) == 1
+    assert cdp_browser.new_context_kwargs == [{"locale": "en-US"}]
+    assert cdp_browser.contexts[0].close_count == 1
+    assert cdp_browser.close_count == 1
+
+
+def test_runtime_context_passes_env_cdp_endpoint_to_browser_manager(monkeypatch) -> None:
+    cdp_context = _FakeCdpContext()
+    cdp_browser = _FakeCdpBrowser([cdp_context])
+    endpoints: list[str] = []
+
+    def connect(endpoint: str) -> _FakeCdpBrowser:
+        endpoints.append(endpoint)
+        return cdp_browser
+
+    monkeypatch.setattr(runtime_browser, "connect_browser_over_cdp", connect)
+    context = RuntimeContext(env={"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"})
 
     try:
-        context.new_browser_context(headless=True)
+        borrowed = context.new_browser_context(headless=True)
+        borrowed.close()
     finally:
         context.close()
 
-    assert launches == ["/tmp/chrome"]
-    assert "CLOAKBROWSER_BINARY_PATH" not in os.environ
+    assert endpoints == ["ws://127.0.0.1:9222/devtools/browser/test"]
+    assert cdp_context.close_count == 0
+    assert cdp_browser.close_count == 1
 
 
-def test_cloakbrowser_welcome_banner_is_suppressed(monkeypatch, capsys) -> None:
-    import cloakbrowser.download
+def test_runtime_context_caches_browser_managers_by_runtime_config(monkeypatch, tmp_path) -> None:
+    created: list[dict[str, Any]] = []
 
-    monkeypatch.setattr(_cloakbrowser_runtime, "_WELCOME_SUPPRESSED", False)
+    class FakeLifecycle:
+        def __init__(self, **kwargs: Any) -> None:
+            self.kwargs = dict(kwargs)
+            self.close_count = 0
+            created.append(self.kwargs)
 
-    def noisy_welcome() -> None:
-        sys.stderr.write("CloakBrowser donation banner\n")
+        def new_context(self, **kwargs: Any) -> tuple[str, dict[str, Any], dict[str, Any]]:
+            return "context", self.kwargs, dict(kwargs)
 
-    monkeypatch.setattr(cloakbrowser.download, "_show_welcome", noisy_welcome)
+        def close(self) -> None:
+            self.close_count += 1
 
-    launches: list[_FakeBrowser] = []
+    monkeypatch.setattr(runtime_module, "BrowserContextManager", FakeLifecycle)
+    context = RuntimeContext(env={})
 
-    def launch(*, headless: bool, locale: str) -> _FakeBrowser:
-        cloakbrowser.download._show_welcome()
-        browser = _FakeBrowser(headless=headless, locale=locale)
-        launches.append(browser)
-        return browser
+    first = context.new_browser_context_for_config(
+        headless=True,
+        profile_dir=tmp_path / "science-profile",
+        locale="en-US",
+    )
+    second = context.new_browser_context_for_config(
+        headless=False,
+        profile_dir=tmp_path / "science-profile",
+        viewport={"width": 800},
+    )
+    third = context.new_browser_context_for_config(
+        headless=True,
+        profile_dir=tmp_path / "pnas-profile",
+    )
+    context.close()
 
-    monkeypatch.setattr("cloakbrowser.launch", launch)
-    lifecycle = BrowserContextManager()
-
-    lifecycle.browser(headless=True)
-
-    captured = capsys.readouterr()
-    assert launches
-    assert "CloakBrowser donation banner" not in captured.err
+    assert first[1] is second[1]
+    assert first[1]["profile_dir"] == tmp_path / "science-profile"
+    assert third[1]["profile_dir"] == tmp_path / "pnas-profile"
+    assert len(created) == 2
 
 
 def test_runtime_context_recommended_browser_context_entrypoint() -> None:
@@ -221,7 +452,8 @@ def test_runtime_context_recommended_browser_context_entrypoint() -> None:
     ]
 
 
-def test_no_direct_sync_playwright_usage() -> None:
-    source = inspect.getsource(runtime_browser)
+def test_sync_playwright_usage_is_confined_to_cdp_connector() -> None:
+    source = inspect.getsource(runtime_browser.connect_browser_over_cdp)
 
-    assert "sync_playwright(" not in source
+    assert "sync_playwright(" in source
+    assert "connect_over_cdp" in source

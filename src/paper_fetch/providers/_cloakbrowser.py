@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import importlib
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
 import json
@@ -12,16 +13,20 @@ import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from collections.abc import Mapping
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup
 
-from .._cloakbrowser_runtime import import_cloakbrowser
 from ..config import (
     AMS_STORAGE_STATE_JSON_ENV_VAR,
     CLOAKBROWSER_BINARY_PATH_ENV_VAR,
+    CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR,
     CLOAKBROWSER_HEADLESS_ENV_VAR,
+    CLOAKBROWSER_PROFILE_DIR_ENV_VAR,
     CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
     CLOAKBROWSER_USER_DATA_DIR_ENV_VAR,
+    WILEY_STORAGE_STATE_JSON_ENV_VAR,
+    WILEY_PROFILE_DIR_ENV_VAR,
     build_browser_user_agent,
     parse_positive_int_env,
     resolve_user_data_dir,
@@ -35,9 +40,15 @@ from ..quality.html_availability import choose_parser, extract_page_title
 from ..quality.html_signals import looks_like_abstract_redirect
 from ..quality.reason_codes import REDIRECTED_TO_ABSTRACT
 from ..reason_codes import ERROR, NOT_CONFIGURED, OK, READY
-from ..runtime_browser import browser_context_options, browser_page_user_agent, cloakbrowser_binary_path_env
+from ..runtime_browser import (
+    BrowserContextManager,
+    browser_context_options,
+    browser_page_user_agent,
+    is_borrowed_browser_context,
+)
 from ..utils import normalize_text, provider_display_name, sanitize_filename
 from .browser_runtime.seed import (
+    filter_browser_cookies_for_url,
     merge_browser_context_seeds,
     normalize_browser_cookies_for_playwright,
 )
@@ -89,30 +100,37 @@ def _browser_workflow_label(provider: str) -> str:
 
 def _dependency_available() -> bool:
     try:
-        return importlib_util.find_spec("cloakbrowser") is not None
+        return importlib_util.find_spec("playwright") is not None and importlib_util.find_spec("cloakbrowser") is not None
     except (ModuleNotFoundError, ValueError):
         return False
 
 
 def _dependency_details() -> dict[str, Any]:
-    details: dict[str, Any] = {"probe": "importlib.find_spec"}
-    if _dependency_available():
+    details: dict[str, Any] = {
+        "probe": "importlib.find_spec",
+        "packages": {
+            "playwright": importlib_util.find_spec("playwright") is not None,
+            "cloakbrowser": importlib_util.find_spec("cloakbrowser") is not None,
+        },
+    }
+    for package, available in details["packages"].items():
+        if not available:
+            continue
         try:
-            details["version"] = importlib_metadata.version("cloakbrowser")
+            details[f"{package}_version"] = importlib_metadata.version(package)
         except importlib_metadata.PackageNotFoundError:
-            details["version"] = None
+            details[f"{package}_version"] = None
     return details
 
 
 def _import_cloakbrowser() -> Any:
     try:
-        cloakbrowser = import_cloakbrowser()
+        return importlib.import_module("cloakbrowser")
     except Exception as exc:
         raise ProviderFailure(
             NOT_CONFIGURED,
             f"CloakBrowser Python package is not importable: {exc}",
         ) from exc
-    return cloakbrowser
 
 
 def _env_flag_false(value: str | None) -> bool:
@@ -124,26 +142,80 @@ def _configured_binary_path(env: Mapping[str, str]) -> str | None:
     return value or None
 
 
+def _configured_cdp_endpoint(env: Mapping[str, str]) -> str | None:
+    value = env.get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR, "").strip()
+    return value or None
+
+
 def _configured_user_data_dir(env: Mapping[str, str]) -> Path | None:
     value = env.get(CLOAKBROWSER_USER_DATA_DIR_ENV_VAR, "").strip()
     return Path(value).expanduser() if value else None
 
 
-def _configured_storage_state_path(env: Mapping[str, str], *, provider: str) -> Path | None:
-    if normalize_text(provider).lower() != "ams":
-        return None
-    value = env.get(AMS_STORAGE_STATE_JSON_ENV_VAR, "").strip()
+def _default_provider_user_data_dir(env: Mapping[str, str], *, provider: str) -> Path:
+    provider_key = sanitize_filename(normalize_text(provider).lower() or "browser")
+    return resolve_user_data_dir(env) / "publisher-browser-profiles" / provider_key
+
+
+_PROVIDER_PROFILE_DIR_ENV_VARS = {
+    "wiley": WILEY_PROFILE_DIR_ENV_VAR,
+}
+
+
+def _configured_profile_dir(env: Mapping[str, str], *, provider: str) -> Path | None:
+    provider_key = normalize_text(provider).lower()
+    provider_env_var = _PROVIDER_PROFILE_DIR_ENV_VARS.get(provider_key)
+    if provider_env_var is not None:
+        provider_value = env.get(provider_env_var, "").strip()
+        if provider_value:
+            return Path(provider_value).expanduser()
+    value = env.get(CLOAKBROWSER_PROFILE_DIR_ENV_VAR, "").strip()
     return Path(value).expanduser() if value else None
 
 
-def _validate_binary_path(binary_path: str | None) -> None:
-    if not binary_path:
+_PROVIDER_STORAGE_STATE_ENV_VARS = {
+    "ams": AMS_STORAGE_STATE_JSON_ENV_VAR,
+    "wiley": WILEY_STORAGE_STATE_JSON_ENV_VAR,
+}
+
+
+def _configured_storage_state_path(env: Mapping[str, str], *, provider: str) -> Path | None:
+    env_var = _PROVIDER_STORAGE_STATE_ENV_VARS.get(normalize_text(provider).lower())
+    if env_var is None:
+        return None
+    value = env.get(env_var, "").strip()
+    return Path(value).expanduser() if value else None
+
+
+def _validate_binary_path(binary_path: str | None, *, require_launch_binary: bool) -> None:
+    if not require_launch_binary or not binary_path:
         return
     path = Path(binary_path).expanduser()
-    if not path.is_file() or not os.access(path, os.X_OK):
+    if not path.is_file():
         raise ProviderFailure(
             NOT_CONFIGURED,
-            f"{CLOAKBROWSER_BINARY_PATH_ENV_VAR} is set but does not point to an executable browser binary.",
+            f"{CLOAKBROWSER_BINARY_PATH_ENV_VAR} is set but does not point to a file: {path}",
+        )
+    if os.name != "nt" and not os.access(path, os.X_OK):
+        raise ProviderFailure(
+            NOT_CONFIGURED,
+            f"{CLOAKBROWSER_BINARY_PATH_ENV_VAR} is set but is not executable: {path}",
+        )
+
+
+def _validate_cdp_endpoint(endpoint: str | None, *, provider: str) -> None:
+    normalized = normalize_text(endpoint)
+    if not normalized:
+        return
+    parsed = urlparse(normalized)
+    if parsed.scheme not in {"ws", "wss", "http", "https"} or not parsed.hostname:
+        workflow_label = _browser_workflow_label(provider)
+        raise ProviderFailure(
+            NOT_CONFIGURED,
+            (
+                f"{workflow_label} has invalid {CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR}: "
+                "expected a ws://, wss://, http://, or https:// URL with a host."
+            ),
         )
 
 
@@ -153,22 +225,17 @@ def _validate_storage_state_path(
     provider: str,
     require_storage_state: bool,
 ) -> None:
-    if normalize_text(provider).lower() != "ams" or not require_storage_state:
-        return
+    env_var = _PROVIDER_STORAGE_STATE_ENV_VARS.get(normalize_text(provider).lower())
     if storage_state_path is None:
-        raise ProviderFailure(
-            NOT_CONFIGURED,
-            (
-                "AMS browser workflow requires a storage-state JSON. "
-                f"Run `paper-fetch auth ams` or set {AMS_STORAGE_STATE_JSON_ENV_VAR}."
-            ),
-            missing_env=[AMS_STORAGE_STATE_JSON_ENV_VAR],
-        )
+        return
+    if not storage_state_path.is_file() and not require_storage_state:
+        return
+    env_label = env_var or "storage-state JSON"
     if not storage_state_path.is_file():
         raise ProviderFailure(
             NOT_CONFIGURED,
             (
-                f"{AMS_STORAGE_STATE_JSON_ENV_VAR} is set but does not point to a readable "
+                f"{env_label} is set but does not point to a readable "
                 f"storage-state JSON file: {storage_state_path}"
             ),
         )
@@ -177,12 +244,12 @@ def _validate_storage_state_path(
     except Exception as exc:
         raise ProviderFailure(
             NOT_CONFIGURED,
-            f"{AMS_STORAGE_STATE_JSON_ENV_VAR} is not valid JSON: {storage_state_path}",
+            f"{env_label} is not valid JSON: {storage_state_path}",
         ) from exc
     if not isinstance(payload, Mapping):
         raise ProviderFailure(
             NOT_CONFIGURED,
-            f"{AMS_STORAGE_STATE_JSON_ENV_VAR} must point to a JSON object: {storage_state_path}",
+            f"{env_label} must point to a JSON object: {storage_state_path}",
         )
 
 
@@ -191,12 +258,18 @@ def load_runtime_config(
     *,
     provider: str,
     doi: str,
-    require_storage_state: bool = True,
+    require_storage_state: bool = False,
 ) -> CloakBrowserRuntimeConfig:
     headless = not _env_flag_false(env.get(CLOAKBROWSER_HEADLESS_ENV_VAR))
     artifact_dir = resolve_user_data_dir(env) / "publisher-browser-artifacts" / provider / sanitize_filename(doi)
     binary_path = _configured_binary_path(env)
-    _validate_binary_path(binary_path)
+    cdp_endpoint = _configured_cdp_endpoint(env)
+    _validate_cdp_endpoint(cdp_endpoint, provider=provider)
+    _validate_binary_path(binary_path, require_launch_binary=cdp_endpoint is None)
+    profile_dir = _configured_profile_dir(env, provider=provider)
+    user_data_dir = _configured_user_data_dir(env)
+    if cdp_endpoint is None and profile_dir is None and user_data_dir is None:
+        user_data_dir = _default_provider_user_data_dir(env, provider=provider)
     storage_state_path = _configured_storage_state_path(env, provider=provider)
     _validate_storage_state_path(
         storage_state_path,
@@ -215,21 +288,20 @@ def load_runtime_config(
             default=DEFAULT_CLOAKBROWSER_TIMEOUT_MS,
         ),
         binary_path=binary_path,
-        user_data_dir=_configured_user_data_dir(env),
+        cdp_endpoint=cdp_endpoint,
+        profile_dir=profile_dir,
+        user_data_dir=user_data_dir,
         storage_state_path=storage_state_path,
     )
 
 
 def ensure_runtime_ready(config: CloakBrowserRuntimeConfig) -> None:
-    _validate_binary_path(config.binary_path)
-    try:
-        _import_cloakbrowser()
-    except ProviderFailure as exc:
-        workflow_label = _browser_workflow_label(config.provider)
+    del config
+    if not _dependency_available():
         raise ProviderFailure(
             NOT_CONFIGURED,
-            f"{workflow_label} requires the cloakbrowser Python package. {exc.message}",
-        ) from exc
+            "Browser workflow requires the playwright and cloakbrowser Python packages.",
+        )
 
 
 def _runtime_probe_details(
@@ -255,8 +327,17 @@ def _runtime_probe_details(
             default=DEFAULT_CLOAKBROWSER_TIMEOUT_MS,
         ),
         "binary_path_configured": bool(config.binary_path if config is not None else _configured_binary_path(env)),
+        "cdp_endpoint_configured": bool(
+            config.cdp_endpoint if config is not None else _configured_cdp_endpoint(env)
+        ),
+        "profile_dir_configured": bool(
+            config.profile_dir if config is not None else _configured_profile_dir(env, provider=provider)
+        ),
         "user_data_dir_configured": bool(config.user_data_dir if config is not None else _configured_user_data_dir(env)),
         "storage_state_json_configured": bool(storage_state_path),
+        "auto_cdp_browser_enabled": not bool(
+            config.cdp_endpoint if config is not None else _configured_cdp_endpoint(env)
+        ),
     }
     if storage_state_path is not None:
         details["storage_state_json_exists"] = storage_state_path.is_file()
@@ -281,9 +362,9 @@ def probe_runtime_status(
                 "runtime_env",
                 OK if dependency_available else NOT_CONFIGURED,
                 (
-                    f"{provider} CloakBrowser runtime environment is configured."
+                    f"{provider} CDP browser runtime environment is configured."
                     if dependency_available
-                    else f"{provider} CloakBrowser runtime requires the cloakbrowser Python package."
+                    else f"{provider} CDP browser runtime requires the playwright and cloakbrowser Python packages."
                 ),
                 details=runtime_details,
             )
@@ -297,18 +378,18 @@ def probe_runtime_status(
     if dependency_available:
         checks.append(
             build_provider_status_check(
-                "cloakbrowser_dependency",
+                "playwright_dependency",
                 OK,
-                "CloakBrowser Python package is importable; browser launch is not probed.",
+                "Playwright and CloakBrowser Python packages are importable; CDP connection is not probed.",
                 details=dependency_details,
             )
         )
     else:
         checks.append(
             build_provider_status_check(
-                "cloakbrowser_dependency",
+                "playwright_dependency",
                 NOT_CONFIGURED,
-                "CloakBrowser Python package is not installed.",
+                "Playwright or CloakBrowser Python package is not installed.",
                 details=dependency_details,
             )
         )
@@ -586,13 +667,22 @@ def _capture_image_payload(
 
 
 def _context_seed(context: Any, *, final_url: str, user_agent: str | None) -> dict[str, Any]:
+    already_filtered = False
     try:
-        cookies = context.cookies()
+        cookies = context.cookies([final_url])
+        already_filtered = True
+    except TypeError:
+        try:
+            cookies = context.cookies()
+        except Exception:
+            cookies = []
     except Exception:
         cookies = []
+    if not already_filtered:
+        cookies = filter_browser_cookies_for_url(list(cookies or []), final_url)
     return {
         "browser_cookies": normalize_browser_cookies_for_playwright(
-            list(cookies or []),
+            cookies,
             fallback_url=final_url,
         ),
         "browser_user_agent": normalize_text(user_agent) or None,
@@ -610,9 +700,10 @@ def _safe_close(value: Any) -> None:
 def _storage_state_path(config: CloakBrowserRuntimeConfig) -> Path | None:
     if config.storage_state_path is not None:
         return config.storage_state_path
-    if config.user_data_dir is None:
+    profile_dir = config.profile_dir or config.user_data_dir
+    if profile_dir is None:
         return None
-    return config.user_data_dir / "storage-state.json"
+    return Path(profile_dir).expanduser() / "storage-state.json"
 
 
 def _storage_context_options(config: CloakBrowserRuntimeConfig) -> dict[str, Any]:
@@ -622,12 +713,68 @@ def _storage_context_options(config: CloakBrowserRuntimeConfig) -> dict[str, Any
     return {"storage_state": str(storage_state_path)}
 
 
-def _save_storage_state(context: Any, config: CloakBrowserRuntimeConfig) -> None:
+def _storage_origin_matches_url(origin: Mapping[str, Any], url: str | None) -> bool:
+    origin_url = normalize_text(str(origin.get("origin") or ""))
+    target_url = normalize_text(url)
+    if not origin_url or not target_url:
+        return True
+    try:
+        from urllib.parse import urlparse
+
+        origin_host = normalize_text(urlparse(origin_url).hostname or "").lower()
+        target_host = normalize_text(urlparse(target_url).hostname or "").lower()
+    except Exception:
+        return True
+    return bool(origin_host and target_host and (origin_host == target_host or target_host.endswith(f".{origin_host}")))
+
+
+def _filtered_storage_state_payload(context: Any, *, url: str) -> Mapping[str, Any] | None:
+    try:
+        payload = context.storage_state()
+    except TypeError:
+        return None
+    except Exception:
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    filtered = dict(payload)
+    payload_cookies = payload.get("cookies")
+    cookies = payload_cookies if isinstance(payload_cookies, list) else []
+    filtered["cookies"] = filter_browser_cookies_for_url(cookies, url)
+    payload_origins = payload.get("origins")
+    origins = payload_origins if isinstance(payload_origins, list) else []
+    filtered["origins"] = [
+        origin
+        for origin in origins
+        if isinstance(origin, Mapping) and _storage_origin_matches_url(origin, url)
+    ]
+    return filtered
+
+
+def _save_storage_state(
+    context: Any,
+    config: CloakBrowserRuntimeConfig,
+    *,
+    filter_url: str | None = None,
+) -> None:
     storage_state_path = _storage_state_path(config)
     if context is None or storage_state_path is None:
         return
+    if is_borrowed_browser_context(context) and not normalize_text(filter_url):
+        return
     try:
         storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+        active_filter_url = normalize_text(filter_url)
+        if active_filter_url:
+            filtered_payload = _filtered_storage_state_payload(context, url=active_filter_url)
+            if filtered_payload is not None:
+                storage_state_path.write_text(
+                    json.dumps(filtered_payload, ensure_ascii=False, indent=2),
+                    encoding="utf-8",
+                )
+                return
+            if is_borrowed_browser_context(context):
+                return
         context.storage_state(path=str(storage_state_path))
     except Exception:
         logger.debug(
@@ -657,18 +804,14 @@ def fetch_html_with_cloakbrowser(
     if return_image_payload:
         disable_media = False
 
-    try:
-        cloakbrowser = _import_cloakbrowser()
-    except ProviderFailure as exc:
-        raise CloakBrowserFailure(NOT_CONFIGURED, exc.message) from exc
-
     last_failure: CloakBrowserFailure | None = None
     latest_browser_context_seed: Mapping[str, Any] | None = None
+    latest_storage_state_url: str | None = None
     timeout_ms = max_timeout_ms or config.timeout_ms
     artifact_dir = config.artifact_dir / "cloakbrowser"
     configured_user_agent = normalize_text(config.user_agent)
 
-    browser = None
+    manager = None
     browser_context = None
     page = None
     try:
@@ -678,19 +821,35 @@ def fetch_html_with_cloakbrowser(
                 **_storage_context_options(config),
             )
             if runtime_context is not None:
-                browser_context = runtime_context.new_browser_context(
-                    headless=config.headless,
-                    **context_kwargs,
-                )
+                from ..runtime import RuntimeContext
+
+                if isinstance(runtime_context, RuntimeContext):
+                    browser_context = runtime_context.new_browser_context_for_config(
+                        headless=config.headless,
+                        binary_path=config.binary_path,
+                        cdp_endpoint=config.cdp_endpoint,
+                        profile_dir=config.profile_dir,
+                        user_data_dir=config.user_data_dir,
+                        **context_kwargs,
+                    )
+                else:
+                    browser_context = runtime_context.new_browser_context(
+                        headless=config.headless,
+                        **context_kwargs,
+                    )
             else:
-                with cloakbrowser_binary_path_env(config.binary_path):
-                    browser = cloakbrowser.launch(headless=config.headless, locale="en-US")
-                browser_context = browser.new_context(**context_kwargs)
+                manager = BrowserContextManager(
+                    binary_path=config.binary_path,
+                    cdp_endpoint=config.cdp_endpoint,
+                    profile_dir=config.profile_dir,
+                    user_data_dir=config.user_data_dir,
+                )
+                browser_context = manager.new_context(headless=config.headless, **context_kwargs)
             page = browser_context.new_page()
         except Exception as exc:
             raise CloakBrowserFailure(
-                "cloakbrowser_launch_failed",
-                normalize_text(str(exc)) or "CloakBrowser failed to launch.",
+                "cdp_browser_connection_failed",
+                normalize_text(str(exc)) or "CDP browser connection failed.",
             ) from exc
 
         def route_handler(route: Any) -> None:
@@ -778,6 +937,7 @@ def fetch_html_with_cloakbrowser(
                 ):
                     page.wait_for_timeout(max(0, int(wait_seconds)) * 1000)
                 final_url = normalize_text(str(getattr(page, "url", "") or "")) or normalized_url
+                latest_storage_state_url = final_url
                 html = str(page.content() or "")
                 title = normalize_text(str(page.title() or "")) or extract_page_title(
                     BeautifulSoup(html, choose_parser())
@@ -869,10 +1029,10 @@ def fetch_html_with_cloakbrowser(
                 image_payload=image_payload,
             )
     finally:
-        _save_storage_state(browser_context, config)
+        _save_storage_state(browser_context, config, filter_url=latest_storage_state_url)
         _safe_close(page)
         _safe_close(browser_context)
-        _safe_close(browser)
+        _safe_close(manager)
 
     if last_failure is None and latest_browser_context_seed is not None:
         last_failure = CloakBrowserFailure(

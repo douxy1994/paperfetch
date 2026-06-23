@@ -100,6 +100,7 @@ fi
 
 log "Verifying user shell, skill, and MCP registration"
 grep -F -q "export PAPER_FETCH_ENV_FILE=\"$INSTALL_ROOT/offline.env\"" "$FAKE_HOME/.bashrc"
+grep -F -q "export CLOAKBROWSER_HEADLESS=\"true\"" "$FAKE_HOME/.bashrc"
 grep -F -q "$INSTALL_ROOT/bin" "$FAKE_HOME/.bashrc"
 grep -F -q "$INSTALL_ROOT/formula-tools/bin" "$FAKE_HOME/.bashrc"
 [ -f "$FAKE_HOME/.codex/skills/paper-fetch-skill/SKILL.md" ] || die "Codex skill was not installed."
@@ -120,18 +121,15 @@ log "Verifying command entrypoints"
 paper-fetch --help >/dev/null
 texmath --help >/dev/null
 
-log "Verifying CloakBrowser package entrypoint"
+log "Verifying browser runtime package entrypoint"
 "$RUNTIME_PYTHON" - <<'PY'
-import os
-from pathlib import Path
-
 import cloakbrowser
+import playwright
 
-assert hasattr(cloakbrowser, "launch")
-binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
-if binary_path:
-    path = Path(binary_path)
-    assert path.is_file(), binary_path
+from paper_fetch.runtime_browser import BrowserContextManager
+
+assert hasattr(cloakbrowser, "ensure_binary")
+assert BrowserContextManager is not None
 PY
 
 log "Verifying provider_status payload entrypoint"

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 from collections.abc import Mapping
+import urllib.parse
 
 from ...utils import normalize_text
 import contextlib
@@ -78,6 +79,37 @@ def normalize_browser_cookies_for_playwright(
         if normalized_cookie is not None:
             normalized.append(normalized_cookie)
     return normalized
+
+
+def browser_cookie_matches_url(cookie: Mapping[str, Any], url: str | None) -> bool:
+    normalized_url = normalize_text(url)
+    if not normalized_url:
+        return True
+    parsed = urllib.parse.urlparse(normalized_url)
+    host = normalize_text(parsed.hostname or "").lower()
+    if not host:
+        return True
+
+    domain = normalize_text(str(cookie.get("domain") or "")).lower().lstrip(".")
+    if domain:
+        return host == domain or host.endswith(f".{domain}")
+
+    cookie_url = normalize_text(str(cookie.get("url") or ""))
+    if cookie_url:
+        cookie_host = normalize_text(urllib.parse.urlparse(cookie_url).hostname or "").lower()
+        return bool(cookie_host and (host == cookie_host or host.endswith(f".{cookie_host}")))
+    return True
+
+
+def filter_browser_cookies_for_url(
+    cookies: list[dict[str, Any]] | None,
+    url: str | None,
+) -> list[dict[str, Any]]:
+    return [
+        cookie
+        for cookie in cookies or []
+        if isinstance(cookie, dict) and browser_cookie_matches_url(cookie, url)
+    ]
 
 
 def merge_browser_context_seeds(*seeds: Mapping[str, Any] | None) -> dict[str, Any]:

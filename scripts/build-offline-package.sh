@@ -23,7 +23,7 @@ Builds a CPython 3.11-3.14 offline runtime package containing:
   - command wrappers under bin/
   - private Python launcher under runtime/paper-fetch-python
   - texmath under formula-tools/
-  - cloakbrowser Python package; the CloakBrowser browser binary is not bundled
+  - cloakbrowser Python package, which downloads/locates the Chrome binary on first browser-backed use
 Linux builds produce a self-extracting .sh installer. macOS builds produce a .tar.gz bundle.
 EOF
 }
@@ -170,7 +170,7 @@ build_project_runtime() {
   "$PYTHON_BIN" -m compileall -q "$site_packages"
 
   PYTHONPATH="$site_packages${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PYTHON_BIN" -X utf8 -c 'import cloakbrowser; import paper_fetch; import paper_fetch.mcp.server; assert hasattr(cloakbrowser, "launch")'
+    "$PYTHON_BIN" -X utf8 -c 'import cloakbrowser; import playwright; import paper_fetch; import paper_fetch.mcp.server; from paper_fetch.runtime_browser import BrowserContextManager; assert hasattr(cloakbrowser, "ensure_binary"); assert BrowserContextManager is not None'
 }
 
 bundle_formula_tools() {
@@ -262,17 +262,17 @@ write_offline_readme() {
 
 This package includes an installed Python runtime under `runtime/site-packages`, a private Python launcher at `runtime/paper-fetch-python`, command wrappers under `bin/`, and formula tools.
 The `bin/` directory exposes paper-fetch commands only; it does not include a generic `python` wrapper.
-It does not redistribute the CloakBrowser browser binary.
+It does not redistribute a browser binary for browser-backed providers; cloakbrowser downloads or locates Chrome on first use.
 EOF
 
   printf '\n%s\n\n' "$install_line" >> "$staging/README.offline.md"
 
   cat >> "$staging/README.offline.md" <<'EOF'
-The first browser-backed fetch may need network access so CloakBrowser can download its runtime. In restricted environments, preinstall a compatible browser runtime and set `CLOAKBROWSER_BINARY_PATH` before using browser-backed providers.
-
-The installer writes `PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"` into `offline.env` by default for CloakBrowser-backed AGU/Wiley fetches.
-
+Browser-backed providers auto-start a managed cloakbrowser Chrome when `CLOAKBROWSER_CDP_ENDPOINT` is unset.
+Set `CLOAKBROWSER_CDP_ENDPOINT` only when you want to reuse an already-running browser, or set `CLOAKBROWSER_BINARY_PATH` to use a preinstalled Chrome binary.
 Set `CLOAKBROWSER_HEADLESS=false` only when running with a display-capable session.
+
+The installer writes `CLOAKBROWSER_HEADLESS=true` and `PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"` into `offline.env` by default for browser-backed publisher fetches.
 EOF
 }
 

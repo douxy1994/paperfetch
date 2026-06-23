@@ -23,12 +23,13 @@ from ._paper_fetch_support import build_envelope, sample_article
 class CliTests(unittest.TestCase):
     def test_auth_ams_subcommand_invokes_auth_helper(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            state_path = Path(tmpdir) / "ams-state.json"
-            env_file = Path(tmpdir) / ".env"
+            state_path = Path(tmpdir) / "publisher-browser-profiles" / "ams" / "storage-state.json"
+            profile_dir = state_path.parent
             auth_result = SimpleNamespace(
                 storage_state_path=state_path,
-                env_written=True,
-                env_file_path=env_file,
+                profile_dir=profile_dir,
+                env_written=False,
+                env_file_path=None,
                 verified=True,
                 final_url="https://journals.ametsoc.org/view/journals/mwre/example.xml",
             )
@@ -39,12 +40,6 @@ class CliTests(unittest.TestCase):
                 "paper_fetch.py",
                 "auth",
                 "ams",
-                "--state-json",
-                str(state_path),
-                "--env-file",
-                str(env_file),
-                "--wait-seconds",
-                "30",
                 "--timeout-ms",
                 "120000",
             ]
@@ -52,9 +47,9 @@ class CliTests(unittest.TestCase):
                 with (
                     mock.patch.object(
                         paper_fetch_cli,
-                        "authenticate_ams",
+                        "authenticate_provider_profile",
                         return_value=auth_result,
-                    ) as auth,
+                    ) as authenticate,
                     contextlib.redirect_stdout(stdout),
                     contextlib.redirect_stderr(stderr),
                 ):
@@ -65,13 +60,97 @@ class CliTests(unittest.TestCase):
             self.assertEqual(exit_code, 0)
             self.assertEqual(stderr.getvalue(), "")
             self.assertIn("AMS storage state:", stdout.getvalue())
-            auth.assert_called_once()
-            kwargs = auth.call_args.kwargs
-            self.assertEqual(kwargs["state_json"], state_path)
-            self.assertEqual(kwargs["env_file"], env_file)
-            self.assertEqual(kwargs["wait_seconds"], 30)
+            self.assertIn("AMS profile dir:", stdout.getvalue())
+            authenticate.assert_called_once()
+            kwargs = authenticate.call_args.kwargs
+            self.assertEqual(kwargs["provider"], "ams")
+            self.assertIsNone(kwargs["target_url"])
             self.assertEqual(kwargs["timeout_ms"], 120000)
-            self.assertTrue(kwargs["write_env"])
+            self.assertIsNone(kwargs["browser_user_agent"])
+
+    def test_auth_wiley_subcommand_invokes_generic_auth_helper(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state_path = Path(tmpdir) / "storage-state.json"
+            profile_dir = Path(tmpdir) / "publisher-browser-profiles" / "wiley"
+            target_url = "https://onlinelibrary.wiley.com/doi/full/10.1111/example"
+            auth_result = SimpleNamespace(
+                storage_state_path=state_path,
+                profile_dir=profile_dir,
+                env_written=False,
+                env_file_path=None,
+                verified=True,
+                final_url=target_url,
+            )
+            stdout = io.StringIO()
+            stderr = io.StringIO()
+            original_argv = sys.argv
+            sys.argv = [
+                "paper_fetch.py",
+                "auth",
+                "wiley",
+                "--url",
+                target_url,
+                "--timeout-ms",
+                "45000",
+                "--browser-user-agent",
+                "Mozilla/5.0 auth-test",
+            ]
+            try:
+                with (
+                    mock.patch.object(
+                        paper_fetch_cli,
+                        "authenticate_provider_profile",
+                        return_value=auth_result,
+                    ) as authenticate,
+                    contextlib.redirect_stdout(stdout),
+                    contextlib.redirect_stderr(stderr),
+                ):
+                    exit_code = paper_fetch_cli.main()
+            finally:
+                sys.argv = original_argv
+
+            self.assertEqual(exit_code, 0)
+            self.assertEqual(stderr.getvalue(), "")
+            rendered = stdout.getvalue()
+            self.assertIn("Wiley storage state:", rendered)
+            self.assertIn("Wiley profile dir:", rendered)
+            self.assertIn("Persistent browser state is optional; fetches still run without it.", rendered)
+            authenticate.assert_called_once()
+            kwargs = authenticate.call_args.kwargs
+            self.assertEqual(kwargs["provider"], "wiley")
+            self.assertEqual(kwargs["target_url"], target_url)
+            self.assertEqual(kwargs["timeout_ms"], 45000)
+            self.assertEqual(kwargs["browser_user_agent"], "Mozilla/5.0 auth-test")
+
+    def test_auth_rejects_legacy_ams_only_args_for_all_providers(self) -> None:
+        cases = (
+            ("ams", "--state-json", "state.json"),
+            ("ams", "--env-file", ".env"),
+            ("ams", "--no-env-write"),
+            ("ams", "--wait-seconds", "30"),
+            ("wiley", "--state-json", "state.json"),
+            ("wiley", "--env-file", ".env"),
+            ("wiley", "--no-env-write"),
+            ("wiley", "--wait-seconds", "30"),
+        )
+        for case in cases:
+            with self.subTest(case=case):
+                stderr = io.StringIO()
+                original_argv = sys.argv
+                sys.argv = ["paper_fetch.py", "auth", *case]
+                try:
+                    with (
+                        mock.patch.object(paper_fetch_cli, "authenticate_provider_profile") as authenticate,
+                        contextlib.redirect_stderr(stderr),
+                        self.assertRaises(SystemExit) as raised,
+                    ):
+                        paper_fetch_cli.main()
+                finally:
+                    sys.argv = original_argv
+
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("no longer supported", stderr.getvalue())
+                authenticate.assert_not_called()
 
     def test_auth_ams_subcommand_reports_provider_failure(self) -> None:
         stdout = io.StringIO()
@@ -82,7 +161,7 @@ class CliTests(unittest.TestCase):
             with (
                 mock.patch.object(
                     paper_fetch_cli,
-                    "authenticate_ams",
+                    "authenticate_provider_profile",
                     side_effect=ProviderFailure("not_configured", "CloakBrowser missing."),
                 ),
                 contextlib.redirect_stdout(stdout),

@@ -101,7 +101,7 @@ Usage:
 Options:
   --install-dir <path>    Install runtime files here. Default: ~/.local/share/paper-fetch-skill.
   --preset=headless|headful
-                            Select CloakBrowser headless/headful runtime env. Default: headless.
+                            Select managed browser headless/headful runtime env. Default: headless.
   --user-config           Also merge the offline runtime block into ~/.config/paper-fetch/.env.
   --no-user-config        Do not touch ~/.config/paper-fetch/.env. This is the default.
   --reuse-env-file <path> Use an existing offline.env without modifying it.
@@ -111,9 +111,9 @@ Options:
   -h, --help              Show this help.
 
 Environment:
-  CLOAKBROWSER_HEADLESS     Set to false for a headful CloakBrowser runtime.
-  CLOAKBROWSER_BINARY_PATH  Optional path to a preinstalled browser binary; when set,
-                            CloakBrowser runtime download is skipped.
+  CLOAKBROWSER_HEADLESS     Set to false for a headful managed CloakBrowser runtime.
+  CLOAKBROWSER_CDP_ENDPOINT Optional endpoint for an already-running Chrome/CloakBrowser.
+                            When unset, paper-fetch downloads/starts a managed Chrome via cloakbrowser.
 EOF
 }
 
@@ -122,7 +122,7 @@ normalize_mcp_env_keys() {
   local filtered=()
   for key in "${MCP_ENV_KEYS[@]}"; do
     case "$key" in
-      PLAYWRIGHT_BROWSERS_PATH)
+      PLAYWRIGHT_BROWSERS_PATH|CLOAKBROWSER_BINARY_PATH|CLOAKBROWSER_PROFILE_DIR|CLOAKBROWSER_USER_DATA_DIR)
         continue
         ;;
       CLOAKBROWSER_HEADLESS)
@@ -348,14 +348,6 @@ check_preset_requirements() {
   host_platform >/dev/null || die "This offline bundle supports Linux and macOS only; detected $(uname -s)."
 }
 
-cloakbrowser_headless_value() {
-  if [ "$PRESET" = "headful" ]; then
-    printf 'false\n'
-  else
-    printf 'true\n'
-  fi
-}
-
 check_bundle_assets() {
   require_dir "$BUNDLE_ROOT/runtime/site-packages"
   require_file "$BUNDLE_ROOT/runtime/site-packages/paper_fetch/__init__.py"
@@ -383,6 +375,14 @@ mathml_node_bin() {
     printf '%s\n' "$bundled_node"
   else
     command -v node || printf 'node\n'
+  fi
+}
+
+cloakbrowser_headless_value() {
+  if [ "$PRESET" = "headful" ]; then
+    printf 'false\n'
+  else
+    printf 'true\n'
   fi
 }
 
@@ -837,7 +837,10 @@ write_managed_env_file() {
     printf 'PAPER_FETCH_FORMULA_TOOLS_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/formula-tools")"
     printf 'CLOAKBROWSER_HEADLESS=%s\n' "$(quote_env_value "$(cloakbrowser_headless_value)")"
     printf 'PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"\n'
-    printf '# CLOAKBROWSER_BINARY_PATH="/absolute/path/to/preinstalled/browser"\n'
+    printf '# Optional: connect to an already-running Chrome/CloakBrowser CDP endpoint.\n'
+    printf '# CLOAKBROWSER_CDP_ENDPOINT="ws://127.0.0.1:9222/devtools/browser/..."\n'
+    printf '# Optional: use a preinstalled Chrome/CloakBrowser binary instead of cloakbrowser download.\n'
+    printf '# CLOAKBROWSER_BINARY_PATH="/absolute/path/to/chrome"\n'
     printf '%s\n' "$MANAGED_END"
   } >> "$tmp"
 
@@ -846,7 +849,8 @@ write_managed_env_file() {
 
 write_activate_script() {
   local target="$INSTALL_ROOT/activate-offline.sh"
-  local offline_env_literal target_tmp
+  local offline_env_literal headless_value target_tmp
+  headless_value="$(cloakbrowser_headless_value)"
 
   if [ "$REUSE_ENV_FILE" = "1" ]; then
     offline_env_literal="$(quote_env_value "$OFFLINE_ENV_FILE")"
@@ -876,7 +880,7 @@ export PYTHONPATH="\$INSTALL_ROOT/runtime/site-packages\${PYTHONPATH:+:\$PYTHONP
 export PAPER_FETCH_ENV_FILE=$offline_env_literal
 export PAPER_FETCH_DOWNLOAD_DIR="\$INSTALL_ROOT/downloads"
 export PAPER_FETCH_FORMULA_TOOLS_DIR="\$INSTALL_ROOT/formula-tools"
-export CLOAKBROWSER_HEADLESS="\${CLOAKBROWSER_HEADLESS:-$(cloakbrowser_headless_value)}"
+export CLOAKBROWSER_HEADLESS="\${CLOAKBROWSER_HEADLESS:-$headless_value}"
 export PYTHONUTF8="\${PYTHONUTF8:-1}"
 export PYTHONIOENCODING="\${PYTHONIOENCODING:-utf-8}"
 EOF
@@ -910,33 +914,19 @@ export CLOAKBROWSER_HEADLESS="${CLOAKBROWSER_HEADLESS:-__CLOAKBROWSER_HEADLESS__
 export PYTHONUTF8="${PYTHONUTF8:-1}"
 export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
 EOF
+  fi
+  if [ "$REUSE_ENV_FILE" != "1" ]; then
     target_tmp="$(mktemp)"
-    awk -v headless="$(cloakbrowser_headless_value)" '{ gsub(/__CLOAKBROWSER_HEADLESS__/, headless); print }' "$target" > "$target_tmp"
+    awk -v headless="$headless_value" '{ gsub(/__CLOAKBROWSER_HEADLESS__/, headless); print }' "$target" > "$target_tmp"
     mv "$target_tmp" "$target"
   fi
   chmod +x "$target"
 }
 
-check_cloakbrowser_package() {
+check_browser_runtime_package() {
   local runtime_python
   runtime_python="$(mcp_python_bin)"
-  "$runtime_python" -c 'import cloakbrowser; assert hasattr(cloakbrowser, "launch")'
-  if [ -n "${CLOAKBROWSER_BINARY_PATH:-}" ] && [ ! -x "$CLOAKBROWSER_BINARY_PATH" ]; then
-    die "CLOAKBROWSER_BINARY_PATH is set but is not executable: $CLOAKBROWSER_BINARY_PATH"
-  fi
-}
-
-warm_cloakbrowser_runtime() {
-  local runtime_python
-  runtime_python="$(mcp_python_bin)"
-  if [ -n "${CLOAKBROWSER_BINARY_PATH:-}" ]; then
-    log "Using preconfigured CLOAKBROWSER_BINARY_PATH; skipping CloakBrowser runtime download"
-    [ -x "$CLOAKBROWSER_BINARY_PATH" ] || die "CLOAKBROWSER_BINARY_PATH is set but is not executable: $CLOAKBROWSER_BINARY_PATH"
-    return 0
-  fi
-  log "Checking CloakBrowser package availability"
-  "$runtime_python" -c 'import cloakbrowser; assert hasattr(cloakbrowser, "launch")' \
-    || warn "CloakBrowser package check failed; set CLOAKBROWSER_BINARY_PATH to a preinstalled binary before browser-backed fetches if needed."
+  "$runtime_python" -c 'import cloakbrowser; import playwright; from paper_fetch.runtime_browser import BrowserContextManager; assert hasattr(cloakbrowser, "ensure_binary"); assert BrowserContextManager is not None'
 }
 
 run_smoke_checks() {
@@ -947,7 +937,7 @@ run_smoke_checks() {
   log "Running local smoke checks"
   "$INSTALL_ROOT/bin/paper-fetch" --help >/dev/null
   "$INSTALL_ROOT/formula-tools/bin/texmath" --help >/dev/null
-  check_cloakbrowser_package
+  check_browser_runtime_package
   for key in "${MCP_ENV_KEYS[@]}"; do
     env_args+=("$key=$(mcp_env_value "$key")")
   done
@@ -1028,8 +1018,6 @@ main() {
   install_runtime_payload
   write_runtime_python_file
 
-  warm_cloakbrowser_runtime
-
   if [ "$REUSE_ENV_FILE" = "1" ]; then
     log "Reusing offline.env without modifying it: $OFFLINE_ENV_FILE"
   else
@@ -1058,7 +1046,7 @@ main() {
   echo "Install directory: $INSTALL_ROOT"
   echo "Open a new shell, or activate the current one with: source $INSTALL_ROOT/activate-offline.sh"
   echo "CloakBrowser headless: $(cloakbrowser_headless_value)"
-  echo "Optional runtime override: set CLOAKBROWSER_BINARY_PATH in $OFFLINE_ENV_FILE before first browser fetch."
+  echo "Browser-backed providers auto-start cloakbrowser Chrome unless CLOAKBROWSER_CDP_ENDPOINT points at an existing browser."
   echo "Restart Codex, Claude Code, and the Antigravity CLI so they rescan skills and MCP registration."
   echo "Elsevier setup: request a key at https://dev.elsevier.com/, then add ELSEVIER_API_KEY=\"...\" to $OFFLINE_ENV_FILE before fetching Elsevier papers."
 }

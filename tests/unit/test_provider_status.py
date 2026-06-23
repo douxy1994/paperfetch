@@ -19,6 +19,8 @@ from paper_fetch.providers.science import ScienceClient
 from paper_fetch.providers.springer import SpringerClient
 from paper_fetch.providers.wiley import WILEY_TDM_CLIENT_TOKEN_ENV_VAR, WileyClient
 
+CDP_ENV = {"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"}
+
 
 class DummyTransport:
     pass
@@ -102,18 +104,18 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertEqual(checks["pdf_fallback"].details["mode"], "direct_http_pdf")
         self.assertEqual(set(checks), {"metadata_api", "html_route", "pdf_fallback"})
 
-    def test_wiley_browser_runtime_ready_without_extra_env(self) -> None:
+    def test_wiley_browser_runtime_ready_with_cdp_endpoint(self) -> None:
         with mock.patch.object(
             _cloakbrowser, "_dependency_available", return_value=True
         ):
-            result = WileyClient(DummyTransport(), {}).probe_status()
+            result = WileyClient(DummyTransport(), dict(CDP_ENV)).probe_status()
         checks = {check.name: check for check in result.checks}
 
         self.assertEqual(result.status, "ready")
         self.assertTrue(result.available)
         self.assertEqual(result.missing_env, [])
         self.assertEqual(checks["runtime_env"].status, "ok")
-        self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
+        self.assertEqual(checks["playwright_dependency"].status, "ok")
         self.assertEqual(checks["tdm_api_token"].status, "ok")
 
     def test_wiley_missing_runtime_and_token_is_not_configured_when_cloakbrowser_is_missing(
@@ -129,7 +131,7 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertFalse(result.available)
         self.assertIn(WILEY_TDM_CLIENT_TOKEN_ENV_VAR, result.missing_env)
         self.assertEqual(checks["runtime_env"].status, "not_configured")
-        self.assertEqual(checks["cloakbrowser_dependency"].status, "not_configured")
+        self.assertEqual(checks["playwright_dependency"].status, "not_configured")
         self.assertEqual(checks["tdm_api_token"].status, "not_configured")
 
     def test_wiley_status_is_partial_when_only_tdm_token_is_configured(self) -> None:
@@ -137,20 +139,20 @@ class ProviderStatusTests(unittest.TestCase):
             _cloakbrowser, "_dependency_available", return_value=False
         ):
             result = WileyClient(
-                DummyTransport(), {WILEY_TDM_CLIENT_TOKEN_ENV_VAR: "secret"}
+                DummyTransport(), {**CDP_ENV, WILEY_TDM_CLIENT_TOKEN_ENV_VAR: "secret"}
             ).probe_status()
         checks = {check.name: check for check in result.checks}
 
         self.assertEqual(result.status, "partial")
         self.assertTrue(result.available)
         self.assertEqual(checks["runtime_env"].status, "not_configured")
-        self.assertEqual(checks["cloakbrowser_dependency"].status, "not_configured")
+        self.assertEqual(checks["playwright_dependency"].status, "not_configured")
         self.assertEqual(checks["tdm_api_token"].status, "ok")
 
     def test_wiley_status_is_ready_when_html_runtime_and_tdm_token_are_ready(
         self,
     ) -> None:
-        env = {WILEY_TDM_CLIENT_TOKEN_ENV_VAR: "secret"}
+        env = {**CDP_ENV, WILEY_TDM_CLIENT_TOKEN_ENV_VAR: "secret"}
         with mock.patch.object(
             _cloakbrowser, "_dependency_available", return_value=True
         ):
@@ -161,7 +163,7 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertTrue(result.available)
         self.assertTrue(all(check.status == "ok" for check in checks.values()))
 
-    def test_browser_workflow_providers_are_ready_without_extra_env(self) -> None:
+    def test_browser_workflow_providers_are_ready_with_cdp_endpoint(self) -> None:
         for provider in ("science", "pnas", "acs", "aip"):
             with (
                 self.subTest(provider=provider),
@@ -169,30 +171,31 @@ class ProviderStatusTests(unittest.TestCase):
                     _cloakbrowser, "_dependency_available", return_value=True
                 ),
             ):
-                result = self._browser_client(provider, {}).probe_status()
+                result = self._browser_client(provider, dict(CDP_ENV)).probe_status()
                 checks = {check.name: check for check in result.checks}
 
                 self.assertEqual(result.status, "ready")
                 self.assertTrue(result.available)
                 self.assertEqual(result.missing_env, [])
                 self.assertEqual(checks["runtime_env"].status, "ok")
-                self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
+                self.assertEqual(checks["playwright_dependency"].status, "ok")
 
-    def test_ams_browser_runtime_requires_storage_state_json(self) -> None:
+    def test_ams_browser_runtime_allows_auto_managed_cdp_browser(self) -> None:
         with mock.patch.object(
             _cloakbrowser, "_dependency_available", return_value=True
         ):
             result = AmsClient(DummyTransport(), {}).probe_status()
         checks = {check.name: check for check in result.checks}
 
-        self.assertEqual(result.status, "not_configured")
-        self.assertFalse(result.available)
-        self.assertEqual(result.missing_env, [config.AMS_STORAGE_STATE_JSON_ENV_VAR])
-        self.assertEqual(checks["runtime_env"].status, "not_configured")
-        self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
+        self.assertEqual(result.status, "ready")
+        self.assertTrue(result.available)
+        self.assertEqual(result.missing_env, [])
+        self.assertEqual(checks["runtime_env"].status, "ok")
+        self.assertEqual(checks["playwright_dependency"].status, "ok")
+        self.assertTrue(checks["runtime_env"].details["auto_cdp_browser_enabled"])
 
     def test_ams_browser_runtime_rejects_invalid_storage_state_json(self) -> None:
-        env = {config.AMS_STORAGE_STATE_JSON_ENV_VAR: __file__}
+        env = {**CDP_ENV, config.AMS_STORAGE_STATE_JSON_ENV_VAR: __file__}
         with mock.patch.object(
             _cloakbrowser, "_dependency_available", return_value=True
         ):
@@ -208,7 +211,7 @@ class ProviderStatusTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "ams-state.json"
             state_path.write_text('{"cookies":[]}', encoding="utf-8")
-            env = {config.AMS_STORAGE_STATE_JSON_ENV_VAR: str(state_path)}
+            env = {**CDP_ENV, config.AMS_STORAGE_STATE_JSON_ENV_VAR: str(state_path)}
             with mock.patch.object(
                 _cloakbrowser, "_dependency_available", return_value=True
             ):
@@ -219,7 +222,7 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertTrue(result.available)
         self.assertEqual(result.missing_env, [])
         self.assertEqual(checks["runtime_env"].status, "ok")
-        self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
+        self.assertEqual(checks["playwright_dependency"].status, "ok")
 
     def test_browser_workflow_providers_missing_cloakbrowser_are_not_configured(
         self,
@@ -237,10 +240,26 @@ class ProviderStatusTests(unittest.TestCase):
                 self.assertEqual(result.status, "not_configured")
                 self.assertEqual(checks["runtime_env"].status, "not_configured")
                 self.assertEqual(
-                    checks["cloakbrowser_dependency"].status, "not_configured"
+                    checks["playwright_dependency"].status, "not_configured"
                 )
 
-    def test_browser_workflow_provider_rejects_invalid_cloakbrowser_binary_path(
+    def test_browser_workflow_provider_ignores_legacy_invalid_cloakbrowser_binary_path(
+        self,
+    ) -> None:
+        env = {**CDP_ENV, config.CLOAKBROWSER_BINARY_PATH_ENV_VAR: "/definitely/missing/chrome"}
+        with mock.patch.object(
+            _cloakbrowser, "_dependency_available", return_value=True
+        ):
+            result = ScienceClient(DummyTransport(), env).probe_status()
+        checks = {check.name: check for check in result.checks}
+
+        self.assertEqual(result.status, "ready")
+        self.assertTrue(result.available)
+        self.assertEqual(checks["runtime_env"].status, "ok")
+        self.assertEqual(checks["runtime_env"].details["binary_path_configured"], True)
+        self.assertEqual(checks["playwright_dependency"].status, "ok")
+
+    def test_browser_workflow_provider_rejects_invalid_cloakbrowser_binary_path_for_managed_browser(
         self,
     ) -> None:
         env = {config.CLOAKBROWSER_BINARY_PATH_ENV_VAR: "/definitely/missing/chrome"}
@@ -255,12 +274,27 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertEqual(checks["runtime_env"].status, "not_configured")
         self.assertIn("CLOAKBROWSER_BINARY_PATH", checks["runtime_env"].message)
         self.assertEqual(checks["runtime_env"].details["binary_path_configured"], True)
-        self.assertEqual(checks["cloakbrowser_dependency"].status, "ok")
+        self.assertEqual(checks["playwright_dependency"].status, "ok")
+
+    def test_browser_workflow_provider_rejects_invalid_cdp_endpoint(self) -> None:
+        env = {config.CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR: "not-a-url"}
+        with mock.patch.object(
+            _cloakbrowser, "_dependency_available", return_value=True
+        ):
+            result = ScienceClient(DummyTransport(), env).probe_status()
+        checks = {check.name: check for check in result.checks}
+
+        self.assertEqual(result.status, "not_configured")
+        self.assertFalse(result.available)
+        self.assertEqual(checks["runtime_env"].status, "not_configured")
+        self.assertIn("CLOAKBROWSER_CDP_ENDPOINT", checks["runtime_env"].message)
+        self.assertEqual(checks["runtime_env"].details["cdp_endpoint_configured"], True)
+        self.assertEqual(checks["playwright_dependency"].status, "ok")
 
     def test_browser_workflow_providers_ignore_unrelated_rate_limit_env(self) -> None:
         for provider in ("science", "pnas", "acs", "aip"):
             with self.subTest(provider=provider):
-                env = {"PAPER_FETCH_UNUSED_RATE_LIMIT_SECONDS": "60"}
+                env = {**CDP_ENV, "PAPER_FETCH_UNUSED_RATE_LIMIT_SECONDS": "60"}
 
                 with mock.patch.object(
                     _cloakbrowser, "_dependency_available", return_value=True
@@ -280,7 +314,7 @@ class ProviderStatusTests(unittest.TestCase):
                     _cloakbrowser, "_dependency_available", return_value=True
                 ),
             ):
-                result = self._browser_client(provider, {}).probe_status()
+                result = self._browser_client(provider, dict(CDP_ENV)).probe_status()
 
                 self.assertEqual(result.status, "ready")
                 self.assertTrue(result.available)

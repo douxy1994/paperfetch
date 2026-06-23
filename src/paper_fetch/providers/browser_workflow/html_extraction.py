@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import logging
 import time
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from collections.abc import Callable, Mapping
 
+from ...config import (
+    CLOAKBROWSER_BINARY_PATH_ENV_VAR,
+    CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR,
+    CLOAKBROWSER_PROFILE_DIR_ENV_VAR,
+    CLOAKBROWSER_USER_DATA_DIR_ENV_VAR,
+    build_runtime_env,
+)
 from ...extraction.html.assets import extract_scoped_html_assets
 from ...extraction.html.signals import HtmlExtractionFailure, detect_html_block, summarize_html
 from ...metadata.types import ProviderMetadata
@@ -168,6 +176,7 @@ def fetch_html_with_fast_browser(
     headless: bool = True,
     timeout_ms: int = _FAST_BROWSER_HTML_TIMEOUT_MS,
     context: RuntimeContext | None = None,
+    browser_config: Any | None = None,
 ) -> BrowserFetchedHtml:
     if not candidate_urls:
         raise HtmlExtractionFailure("empty_html_attempts", "No publisher HTML candidates were attempted.")
@@ -180,15 +189,34 @@ def fetch_html_with_fast_browser(
     try:
         context_kwargs = browser_context_options(user_agent=configured_user_agent)
         try:
-            if context is not None:
+            if context is not None and browser_config is not None and isinstance(context, RuntimeContext):
+                browser_context = context.new_browser_context_for_config(
+                    headless=headless,
+                    binary_path=getattr(browser_config, "binary_path", None),
+                    cdp_endpoint=getattr(browser_config, "cdp_endpoint", None),
+                    profile_dir=getattr(browser_config, "profile_dir", None),
+                    user_data_dir=getattr(browser_config, "user_data_dir", None),
+                    **context_kwargs,
+                )
+            elif context is not None:
                 browser_context = context.new_browser_context(headless=headless, **context_kwargs)
             else:
-                manager = BrowserContextManager()
+                runtime_env = build_runtime_env()
+                endpoint = normalize_text(getattr(browser_config, "cdp_endpoint", None)) or normalize_text(runtime_env.get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR))
+                binary_path = normalize_text(getattr(browser_config, "binary_path", None)) or normalize_text(runtime_env.get(CLOAKBROWSER_BINARY_PATH_ENV_VAR))
+                profile_dir = normalize_text(str(getattr(browser_config, "profile_dir", "") or "")) or normalize_text(runtime_env.get(CLOAKBROWSER_PROFILE_DIR_ENV_VAR))
+                user_data_dir = normalize_text(str(getattr(browser_config, "user_data_dir", "") or "")) or normalize_text(runtime_env.get(CLOAKBROWSER_USER_DATA_DIR_ENV_VAR))
+                manager = BrowserContextManager(
+                    binary_path=binary_path or None,
+                    cdp_endpoint=endpoint or None,
+                    profile_dir=Path(profile_dir).expanduser() if profile_dir else None,
+                    user_data_dir=Path(user_data_dir).expanduser() if user_data_dir else None,
+                )
                 browser_context = manager.new_context(headless=headless, **context_kwargs)
         except Exception as exc:
             raise HtmlExtractionFailure(
                 "browser_runtime_unavailable",
-                f"CloakBrowser runtime is not available for fast {publisher} HTML preflight: {exc}",
+                f"CDP browser runtime is not available for fast {publisher} HTML preflight: {exc}",
             ) from exc
         page = browser_context.new_page()
 

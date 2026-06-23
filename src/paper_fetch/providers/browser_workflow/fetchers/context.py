@@ -7,6 +7,15 @@ import threading
 from typing import Any
 from collections.abc import Callable, Mapping
 
+from pathlib import Path
+
+from ....config import (
+    CLOAKBROWSER_BINARY_PATH_ENV_VAR,
+    CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR,
+    CLOAKBROWSER_PROFILE_DIR_ENV_VAR,
+    CLOAKBROWSER_USER_DATA_DIR_ENV_VAR,
+    build_runtime_env,
+)
 from ....logging_utils import emit_structured_log
 from ....runtime import RuntimeContext
 from ....runtime_browser import browser_context_options
@@ -81,9 +90,33 @@ def _new_browser_context(
     headless: bool,
     user_agent: str | None,
     use_runtime_shared_browser: bool = True,
+    binary_path: str | None = None,
+    cdp_endpoint: str | None = None,
+    profile_dir: str | Path | None = None,
+    user_data_dir: str | Path | None = None,
 ) -> tuple[Any | None, Any | None, Any]:
     context_kwargs = browser_context_options(user_agent=user_agent)
     if runtime_context is not None and use_runtime_shared_browser:
+        if isinstance(runtime_context, RuntimeContext):
+            browser_env = _resolve_browser_env(
+                cdp_endpoint,
+                runtime_context=runtime_context,
+                binary_path=binary_path,
+                profile_dir=profile_dir,
+                user_data_dir=user_data_dir,
+            )
+            return (
+                None,
+                None,
+                runtime_context.new_browser_context_for_config(
+                    headless=headless,
+                    binary_path=browser_env["binary_path"],
+                    cdp_endpoint=browser_env["cdp_endpoint"],
+                    profile_dir=browser_env["profile_dir"],
+                    user_data_dir=browser_env["user_data_dir"],
+                    **context_kwargs,
+                ),
+            )
         return (
             None,
             None,
@@ -92,13 +125,61 @@ def _new_browser_context(
 
     from ....runtime_browser import BrowserContextManager
 
-    manager = BrowserContextManager()
+    browser_env = _resolve_browser_env(
+        cdp_endpoint,
+        runtime_context=runtime_context,
+        binary_path=binary_path,
+        profile_dir=profile_dir,
+        user_data_dir=user_data_dir,
+    )
+    manager = BrowserContextManager(
+        binary_path=browser_env["binary_path"],
+        cdp_endpoint=browser_env["cdp_endpoint"],
+        profile_dir=Path(browser_env["profile_dir"]).expanduser() if browser_env["profile_dir"] else None,
+        user_data_dir=Path(browser_env["user_data_dir"]).expanduser() if browser_env["user_data_dir"] else None,
+    )
     try:
         browser_context = manager.new_context(headless=headless, **context_kwargs)
     except Exception:
         manager.close()
         raise
     return manager, None, browser_context
+
+
+def _resolve_cdp_endpoint(
+    cdp_endpoint: str | None,
+    *,
+    runtime_context: RuntimeContext | None,
+) -> str | None:
+    endpoint = normalize_text(cdp_endpoint)
+    if endpoint:
+        return endpoint
+    runtime_env = getattr(runtime_context, "env", None)
+    if isinstance(runtime_env, Mapping):
+        endpoint = normalize_text(runtime_env.get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR))
+        if endpoint:
+            return endpoint
+    endpoint = normalize_text(build_runtime_env().get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR))
+    return endpoint or None
+
+
+def _resolve_browser_env(
+    cdp_endpoint: str | None,
+    *,
+    runtime_context: RuntimeContext | None,
+    binary_path: str | Path | None = None,
+    profile_dir: str | Path | None = None,
+    user_data_dir: str | Path | None = None,
+) -> dict[str, str | None]:
+    runtime_env = getattr(runtime_context, "env", None)
+    env = runtime_env if isinstance(runtime_env, Mapping) else build_runtime_env()
+    return {
+        "binary_path": normalize_text(str(binary_path or "")) or normalize_text(env.get(CLOAKBROWSER_BINARY_PATH_ENV_VAR)) or None,
+        "cdp_endpoint": _resolve_cdp_endpoint(cdp_endpoint, runtime_context=runtime_context),
+        "profile_dir": normalize_text(str(profile_dir or "")) or normalize_text(env.get(CLOAKBROWSER_PROFILE_DIR_ENV_VAR)) or None,
+        "user_data_dir": normalize_text(str(user_data_dir or "")) or normalize_text(env.get(CLOAKBROWSER_USER_DATA_DIR_ENV_VAR)) or None,
+    }
+
 
 class _BaseBrowserDocumentFetcher:
     def __init__(
@@ -110,6 +191,10 @@ class _BaseBrowserDocumentFetcher:
         headless: bool = True,
         runtime_context: RuntimeContext | None = None,
         use_runtime_shared_browser: bool = True,
+        binary_path: str | None = None,
+        cdp_endpoint: str | None = None,
+        profile_dir: str | Path | None = None,
+        user_data_dir: str | Path | None = None,
     ) -> None:
         self._browser_context_seed_getter = browser_context_seed_getter
         self._seed_urls_getter = seed_urls_getter
@@ -117,6 +202,10 @@ class _BaseBrowserDocumentFetcher:
         self._headless = headless
         self._runtime_context = runtime_context
         self._use_runtime_shared_browser = use_runtime_shared_browser
+        self._binary_path = normalize_text(binary_path) or None
+        self._cdp_endpoint = normalize_text(cdp_endpoint) or None
+        self._profile_dir = Path(profile_dir).expanduser() if profile_dir is not None else None
+        self._user_data_dir = Path(user_data_dir).expanduser() if user_data_dir is not None else None
         self._browser_manager = None
         self._context = None
         self._page = None
@@ -160,6 +249,10 @@ class _BaseBrowserDocumentFetcher:
                 headless=self._headless,
                 user_agent=active_user_agent,
                 use_runtime_shared_browser=self._use_runtime_shared_browser,
+                binary_path=self._binary_path,
+                cdp_endpoint=self._cdp_endpoint,
+                profile_dir=self._profile_dir,
+                user_data_dir=self._user_data_dir,
             )
             self._sync_context_cookies()
             self._page = self._context.new_page()

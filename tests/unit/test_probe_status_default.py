@@ -56,7 +56,10 @@ def test_default_probe_status_without_requirements_is_ready(monkeypatch: Any) ->
     catalog = _catalog("s10_plain")
     _install_catalog(monkeypatch, catalog)
 
-    result = _client(catalog).probe_status()
+    result = _client(
+        catalog,
+        env={"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"},
+    ).probe_status()
 
     assert result.status == READY
     assert result.available is True
@@ -70,7 +73,10 @@ def test_default_probe_status_reports_missing_env(monkeypatch: Any) -> None:
     catalog = _catalog("s10_env_missing", env_requirements=("S10_REQUIRED_TOKEN",))
     _install_catalog(monkeypatch, catalog)
 
-    result = _client(catalog).probe_status()
+    result = _client(
+        catalog,
+        env={"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"},
+    ).probe_status()
 
     assert result.status == NOT_CONFIGURED
     assert result.available is False
@@ -109,12 +115,15 @@ def test_default_probe_status_checks_playwright_requirement(monkeypatch: Any) ->
     monkeypatch.setattr("paper_fetch.providers.base.importlib.util.find_spec", fake_find_spec)
     monkeypatch.setattr(_cloakbrowser, "_dependency_available", lambda: True)
 
-    result = _client(catalog).probe_status()
+    result = _client(
+        catalog,
+        env={"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"},
+    ).probe_status()
 
     checks = {check.name: check for check in result.checks}
     assert result.status == READY
     assert checks["playwright"].status == OK
-    assert find_spec_calls == ["playwright.sync_api"]
+    assert find_spec_calls == ["playwright.sync_api", "playwright", "cloakbrowser"]
 
 
 def test_default_probe_status_checks_browser_runtime_without_launch(monkeypatch: Any) -> None:
@@ -125,7 +134,10 @@ def test_default_probe_status_checks_browser_runtime_without_launch(monkeypatch:
     _install_catalog(monkeypatch, catalog)
     monkeypatch.setattr(_cloakbrowser, "_dependency_available", lambda: True)
 
-    result = _client(catalog, env={"CLOAKBROWSER_HEADLESS": "true"}).probe_status()
+    result = _client(
+        catalog,
+        env={"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"},
+    ).probe_status()
 
     checks = {check.name: check for check in result.checks}
     assert result.status == READY
@@ -135,5 +147,5 @@ def test_default_probe_status_checks_browser_runtime_without_launch(monkeypatch:
     )
     assert [check["name"] for check in checks["browser_runtime"].details["checks"]] == [
         "runtime_env",
-        "cloakbrowser_dependency",
+        "playwright_dependency",
     ]

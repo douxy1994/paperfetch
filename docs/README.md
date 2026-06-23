@@ -143,7 +143,7 @@
 - 常见值包括 `full_size`、`preview`。旧的通用 HTTP-first 路径仍可能保留 `playwright_canvas_fallback` 诊断，但 `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 HTML 资产主链路不再输出这个 tier。
 - `preview` 不是天然错误；当宽高满足阈值且 `source_trail` 有 preview accepted 轨迹时，是可接受降级。
 - preview 降级仍必须导出自包含 Markdown；如果正文图片链接能映射到已下载本地资产，最终 `.md` 不应残留远端图片 URL。
-- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 challenge 恢复链路会先复用预热正文页中目标 `<img>` 的 canvas 导出；目标图存在但尚未加载时，会先在同一正文页执行带凭据的 `fetch()` 拉取原图字节，再退回图片 URL 直连候选；只接受能识别为图片的 CloakBrowser image payload，包括浏览器导出的 PNG 和原始 SVG；不会再把图片文档 screenshot 裁剪成正文图片资产，也不会把 challenge HTML 保存成图片。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 challenge 恢复链路会先复用预热正文页中目标 `<img>` 的 canvas 导出；目标图存在但尚未加载时，会先在同一正文页执行带凭据的 `fetch()` 拉取原图字节，再退回图片 URL 直连候选；只接受能识别为图片的 CDP browser image payload，包括浏览器导出的 PNG 和原始 SVG；不会再把图片文档 screenshot 裁剪成正文图片资产，也不会把 challenge HTML 保存成图片。
 - live review 中，只有公式图片发生 preview fallback 时不自动归为 `asset_download_failure`；figure/table preview fallback 仍需要 accepted 轨迹或其它证据才能降噪。资产下载 warning、`asset_failures` 轨迹或 `quality.asset_failures` 会归为 `asset_download_failure`。
 
 ### `semantic_losses`

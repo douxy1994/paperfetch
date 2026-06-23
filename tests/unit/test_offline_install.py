@@ -106,7 +106,6 @@ def _fake_python_script(version: str) -> str:
     PAPER_FETCH_DOWNLOAD_DIR
     PAPER_FETCH_FORMULA_TOOLS_DIR
     MATHML_TO_LATEX_NODE_BIN
-    CLOAKBROWSER_HEADLESS
     OUT
         exit 0
       fi
@@ -255,7 +254,7 @@ class OfflineInstallTests(unittest.TestCase):
             check=False,
         )
 
-    def test_default_install_writes_cloakbrowser_env(self) -> None:
+    def test_default_install_writes_cdp_browser_env_hint(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle, fake_bin, home = self._create_bundle(Path(tmpdir))
             user_env = home / ".config" / "paper-fetch" / ".env"
@@ -266,13 +265,15 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertEqual(user_env.read_text(encoding="utf-8"), 'ELSEVIER_API_KEY="secret"\n')
             offline_env = (bundle / "offline.env").read_text(encoding="utf-8")
-            self.assertIn('CLOAKBROWSER_HEADLESS="true"', offline_env)
             self.assertIn('PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64)', offline_env)
             self.assertNotIn("# PAPER_FETCH_BROWSER_USER_AGENT", offline_env)
-            self.assertIn("CLOAKBROWSER_BINARY_PATH", offline_env)
+            self.assertIn('CLOAKBROWSER_CDP_ENDPOINT="ws://127.0.0.1:9222/devtools/browser/..."', offline_env)
+            self.assertIn('CLOAKBROWSER_HEADLESS="true"', offline_env)
+            self.assertIn('CLOAKBROWSER_BINARY_PATH="/absolute/path/to/chrome"', offline_env)
             self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH", offline_env)
             self.assertEqual((bundle / "runtime" / "python-bin").read_text(encoding="utf-8"), f"{fake_bin / 'python3'}\n")
             self.assertIn("CloakBrowser headless: true", result.stdout)
+            self.assertIn("Browser-backed providers auto-start cloakbrowser Chrome", result.stdout)
 
     def test_default_install_copies_runtime_to_user_data_dir(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -329,7 +330,7 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertNotIn("/old/downloads", offline_env)
             self.assertIn(f'PAPER_FETCH_DOWNLOAD_DIR="{install_root / "downloads"}"', offline_env)
 
-    def test_shell_startup_blocks_use_cloakbrowser_headless(self) -> None:
+    def test_shell_startup_blocks_set_headless_without_legacy_browser_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle, fake_bin, home = self._create_bundle(Path(tmpdir))
 
@@ -341,8 +342,8 @@ class OfflineInstallTests(unittest.TestCase):
             bashrc = (home / ".bashrc").read_text(encoding="utf-8")
             fish_config = (home / ".config" / "fish" / "conf.d" / "paper-fetch-offline.fish").read_text(encoding="utf-8")
             self.assertIn(f'export PAPER_FETCH_ENV_FILE="{bundle / "offline.env"}"', bashrc)
-            self.assertIn('export CLOAKBROWSER_HEADLESS="true"', bashrc)
             self.assertIn(f'set -gx PAPER_FETCH_ENV_FILE "{bundle / "offline.env"}"', fish_config)
+            self.assertIn('export CLOAKBROWSER_HEADLESS="true"', bashrc)
             self.assertIn('set -gx CLOAKBROWSER_HEADLESS "true"', fish_config)
             self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH", bashrc + fish_config)
 
@@ -355,7 +356,7 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("--preset must be headless or headful", result.stderr)
 
-    def test_macos_bundle_accepts_headful_preset_without_display(self) -> None:
+    def test_macos_bundle_headful_preset_sets_headless_false(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle, fake_bin, home = self._create_bundle(
                 Path(tmpdir),
@@ -374,9 +375,12 @@ class OfflineInstallTests(unittest.TestCase):
             )
 
             self.assertEqual(result.returncode, 0, result.stderr)
-            self.assertIn('CLOAKBROWSER_HEADLESS="false"', (bundle / "offline.env").read_text(encoding="utf-8"))
+            offline_env = (bundle / "offline.env").read_text(encoding="utf-8")
+            self.assertIn("CLOAKBROWSER_CDP_ENDPOINT", offline_env)
+            self.assertIn('CLOAKBROWSER_HEADLESS="false"', offline_env)
+            self.assertIn("CloakBrowser headless: false", result.stdout)
 
-    def test_cli_registration_uses_cloakbrowser_env(self) -> None:
+    def test_cli_registration_uses_offline_env_with_headless_without_legacy_browser_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bundle, fake_bin, home = self._create_bundle(root)
@@ -395,6 +399,7 @@ class OfflineInstallTests(unittest.TestCase):
                 codex_add,
             )
             self.assertIn("CLOAKBROWSER_HEADLESS=true", codex_add)
+            self.assertFalse(any(arg.startswith("CLOAKBROWSER_BINARY_PATH=") for arg in codex_add))
             self.assertFalse(any("PLAYWRIGHT_BROWSERS_PATH" in arg for arg in codex_add))
             claude_add = next(call for call in calls if call[:3] == ["claude", "mcp", "add"])
             self.assertIn("-s", claude_add)
@@ -403,7 +408,7 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertLess(claude_add.index("--"), claude_add.index("paper-fetch"))
             self.assertIn(f"PAPER_FETCH_ENV_FILE={bundle / 'offline.env'}", claude_add)
 
-    def test_missing_codex_cli_writes_config_toml_without_playwright_runtime_key(self) -> None:
+    def test_missing_codex_cli_writes_config_toml_with_headless_without_browser_paths(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             bundle, fake_bin, home = self._create_bundle(Path(tmpdir))
 
@@ -416,9 +421,10 @@ class OfflineInstallTests(unittest.TestCase):
             self.assertIn(f'PAPER_FETCH_ENV_FILE = "{bundle / "offline.env"}"', config)
             self.assertIn('MATHML_TO_LATEX_NODE_BIN = "', config)
             self.assertIn('CLOAKBROWSER_HEADLESS = "true"', config)
+            self.assertNotIn("CLOAKBROWSER_BINARY_PATH", config)
             self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH", config)
 
-    def test_reuse_env_file_keeps_file_untouched_and_activate_script_sets_cloakbrowser_default(self) -> None:
+    def test_reuse_env_file_keeps_file_untouched_and_activate_script_sets_runtime_dirs(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             root = Path(tmpdir)
             bundle, fake_bin, home = self._create_bundle(root)
@@ -438,8 +444,8 @@ class OfflineInstallTests(unittest.TestCase):
                     "-lc",
                     (
                         f'source "{bundle / "activate-offline.sh"}"; '
-                        'printf "%s\\n%s\\n%s\\n" '
-                        '"$PAPER_FETCH_ENV_FILE" "$PAPER_FETCH_DOWNLOAD_DIR" "$CLOAKBROWSER_HEADLESS"'
+                        'printf "%s\\n%s\\n" '
+                        '"$PAPER_FETCH_ENV_FILE" "$PAPER_FETCH_DOWNLOAD_DIR"'
                     ),
                 ],
                 text=True,
@@ -447,7 +453,7 @@ class OfflineInstallTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(probe.returncode, 0, probe.stderr)
-            self.assertEqual(probe.stdout.splitlines(), [str(reused_env), str(bundle / "downloads"), "true"])
+            self.assertEqual(probe.stdout.splitlines(), [str(reused_env), str(bundle / "downloads")])
 
             zsh = shutil.which("zsh")
             if zsh:
@@ -457,8 +463,8 @@ class OfflineInstallTests(unittest.TestCase):
                         "-lc",
                         (
                             f'source "{bundle / "activate-offline.sh"}"; '
-                            'printf "%s\\n%s\\n%s\\n" '
-                            '"$PAPER_FETCH_ENV_FILE" "$PAPER_FETCH_DOWNLOAD_DIR" "$CLOAKBROWSER_HEADLESS"'
+                            'printf "%s\\n%s\\n" '
+                            '"$PAPER_FETCH_ENV_FILE" "$PAPER_FETCH_DOWNLOAD_DIR"'
                         ),
                     ],
                     text=True,
@@ -466,7 +472,7 @@ class OfflineInstallTests(unittest.TestCase):
                     check=False,
                 )
                 self.assertEqual(zsh_probe.returncode, 0, zsh_probe.stderr)
-                self.assertEqual(zsh_probe.stdout.splitlines(), [str(reused_env), str(bundle / "downloads"), "true"])
+                self.assertEqual(zsh_probe.stdout.splitlines(), [str(reused_env), str(bundle / "downloads")])
 
     def test_activate_script_is_sourceable_from_macos_default_zsh(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -489,8 +495,8 @@ class OfflineInstallTests(unittest.TestCase):
                     "-lc",
                     (
                         f'source "{bundle / "activate-offline.sh"}"; '
-                        'printf "%s\\n%s\\n%s\\n" '
-                        '"$PAPER_FETCH_ENV_FILE" "$PAPER_FETCH_DOWNLOAD_DIR" "$CLOAKBROWSER_HEADLESS"'
+                        'printf "%s\\n%s\\n" '
+                        '"$PAPER_FETCH_ENV_FILE" "$PAPER_FETCH_DOWNLOAD_DIR"'
                     ),
                 ],
                 text=True,
@@ -498,7 +504,7 @@ class OfflineInstallTests(unittest.TestCase):
                 check=False,
             )
             self.assertEqual(probe.returncode, 0, probe.stderr)
-            self.assertEqual(probe.stdout.splitlines(), [str(bundle / "offline.env"), str(bundle / "downloads"), "true"])
+            self.assertEqual(probe.stdout.splitlines(), [str(bundle / "offline.env"), str(bundle / "downloads")])
 
     def test_uninstall_removes_user_level_integrations_without_deleting_bundle_data(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -582,12 +588,13 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertNotIn("python -m playwright install chromium", combined)
         self.assertNotIn("-m playwright install chromium", combined)
         self.assertNotIn("cloakbrowser.ensure_runtime()", combined)
-        self.assertIn('assert hasattr(cloakbrowser, "launch")', combined)
+        self.assertNotIn('assert hasattr(cloakbrowser, "launch")', combined)
+        self.assertIn("from paper_fetch.runtime_browser import BrowserContextManager", combined)
 
-    def test_windows_installer_helper_uses_cloakbrowser_smoke_and_optional_launch_probe(self) -> None:
+    def test_windows_installer_helper_uses_cdp_browser_runtime_smoke(self) -> None:
         script = WINDOWS_INSTALLER_HELPER.read_text(encoding="utf-8")
 
-        self.assertIn("[switch]$ProbeLaunch", script)
+        self.assertNotIn("[switch]$ProbeLaunch", script)
         self.assertIn("[string]$LogPath", script)
         self.assertIn("Invoke-InstallerStep", script)
         self.assertIn('Invoke-InstallerStep -Name "smoke checks"', script)
@@ -599,15 +606,22 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertIn("[System.Guid]::NewGuid()", script)
         self.assertIn("Remove-Item -LiteralPath $scriptPath -Force -ErrorAction SilentlyContinue", script)
         self.assertIn("Invoke-RuntimePythonScript -Script @'", script)
-        self.assertIn("Invoke-RuntimePythonScript -Script $cloakbrowserCheck -Arguments $args", script)
+        self.assertIn("Invoke-RuntimePythonScript -Script $browserRuntimeCheck", script)
         self.assertIn("import cloakbrowser", script)
-        self.assertIn('assert hasattr(cloakbrowser, "launch")', script)
+        self.assertIn("import playwright", script)
+        self.assertIn("from paper_fetch.runtime_browser import BrowserContextManager", script)
+        self.assertIn('assert hasattr(cloakbrowser, "ensure_binary")', script)
+        self.assertNotIn('assert hasattr(cloakbrowser, "launch")', script)
         self.assertIn("PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64)", script)
         self.assertNotIn("# PAPER_FETCH_BROWSER_USER_AGENT", script)
-        self.assertIn("CLOAKBROWSER_BINARY_PATH", script)
-        self.assertIn("probe-launch", script)
+        self.assertIn("CLOAKBROWSER_CDP_ENDPOINT", script)
+        self.assertIn("# CLOAKBROWSER_BINARY_PATH", script)
+        self.assertNotIn("os.environ.get(\"CLOAKBROWSER_BINARY_PATH\")", script)
+        self.assertNotIn("probe-launch", script)
         self.assertIn("MATHML_TO_LATEX_NODE_BIN", script)
         self.assertIn("playwright/driver/node.exe", script)
+        self.assertIn("CLOAKBROWSER_HEADLESS = \"true\"", script)
+        self.assertIn("CLOAKBROWSER_HEADLESS", script)
         self.assertIn('@("--version")', script)
         self.assertIn('$args += @("--", $McpName, $python, "-X", "utf8", "-m", "paper_fetch.mcp.server")', script)
         self.assertIn('$args = @("mcp", "add", "-s", "user")', script)
@@ -616,15 +630,18 @@ class OfflineInstallTests(unittest.TestCase):
         self.assertNotIn("sessions.list", script)
         self.assertNotIn("playwright.sync_api", script)
 
-    def test_windows_offline_installer_declares_cloakbrowser_env_without_playwright_runtime_path(self) -> None:
+    def test_windows_offline_installer_declares_cdp_env_hint_without_playwright_runtime_path(self) -> None:
         script = WINDOWS_INSTALLER.read_text(encoding="utf-8")
 
-        self.assertIn("CLOAKBROWSER_HEADLESS", script)
-        self.assertIn("CLOAKBROWSER_BINARY_PATH", script)
+        self.assertIn("CLOAKBROWSER_CDP_ENDPOINT", script)
+        self.assertIn("CLOAKBROWSER_HEADLESS='true'", script)
+        self.assertIn("$env:CLOAKBROWSER_HEADLESS = \"true\"", script)
+        self.assertIn("# CLOAKBROWSER_BINARY_PATH", script)
+        self.assertNotIn("CLOAKBROWSER_BINARY_PATH is set", script)
         self.assertIn("MATHML_TO_LATEX_NODE_BIN", script)
         self.assertIn("playwright/driver/node.exe", script)
         self.assertIn("bundled node.exe --version failed", script)
-        self.assertIn("Test-CloakBrowserPackage", script)
+        self.assertIn("Test-BrowserRuntimePackage", script)
         self.assertNotIn("PLAYWRIGHT_BROWSERS_PATH =", script)
 
     def test_windows_inno_installer_cleans_old_payload_and_restores_offline_env_before_helper(self) -> None:

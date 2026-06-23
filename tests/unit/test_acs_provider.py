@@ -235,9 +235,12 @@ def test_acs_markdown_review_contract_markers() -> None:
 
 def test_acs_probe_status_uses_browser_runtime_requirements() -> None:
     with mock.patch.object(_cloakbrowser, "_dependency_available", return_value=True):
-        result = AcsClient(transport=None, env={}).probe_status()
+        result = AcsClient(
+            transport=None,
+            env={"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/test"},
+        ).probe_status()
 
     checks = {check.name: check for check in result.checks}
     assert result.status == "ready"
     assert checks["runtime_env"].status == "ok"
-    assert checks["cloakbrowser_dependency"].status == "ok"
+    assert checks["playwright_dependency"].status == "ok"

@@ -1748,6 +1748,78 @@ class ProviderRequestOptionsTests(unittest.TestCase):
             [html_assets.FIGURE_KIND, html_assets.SUPPLEMENTARY_KIND],
         )
 
+    def test_browser_workflow_external_cdp_asset_downloads_are_serial(self) -> None:
+        doi = "10.1126/science.assets"
+        runtime = browser_runtime.BrowserRuntimeConfig(
+            provider="science",
+            doi=doi,
+            artifact_dir=Path("/tmp/artifacts"),
+            headless=True,
+            user_agent="paper-fetch-test/1",
+            cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
+        )
+        raw_payload = RawFulltextPayload(
+            provider="science",
+            source_url="https://www.science.org/doi/full/10.1126/science.assets",
+            content_type="text/html",
+            body=b"<html></html>",
+            content=ProviderContent(
+                route_kind="html",
+                source_url="https://www.science.org/doi/full/10.1126/science.assets",
+                content_type="text/html",
+                body=b"<html></html>",
+                browser_context_seed={
+                    "browser_final_url": "https://www.science.org/doi/full/10.1126/science.assets"
+                },
+            ),
+        )
+        mocked_download_assets = mock.Mock(return_value={"assets": [], "asset_failures": []})
+        deps = browser_workflow_deps(
+            load_runtime_config=mock.Mock(return_value=runtime),
+            ensure_runtime_ready=mock.Mock(),
+            _cached_browser_workflow_assets=mock.Mock(
+                return_value=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "url": "https://example.test/figure.png",
+                        "section": "body",
+                    },
+                    {
+                        "kind": "supplementary",
+                        "heading": "Supplement 1",
+                        "url": "https://example.test/supplement.pdf",
+                        "section": "supplementary",
+                    },
+                ]
+            ),
+            download_assets=mocked_download_assets,
+        )
+        client = browser_workflow.BrowserWorkflowClient(
+            RecordingTransport({}), {}, deps=deps
+        )
+        client.name = "science"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = client.download_related_assets(
+                doi,
+                {"doi": doi, "title": "Asset Concurrency"},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="body",
+                context=RuntimeContext(env={"PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY": "6"}),
+            )
+
+        self.assertEqual(result, {"assets": [], "asset_failures": []})
+        self.assertEqual(
+            [call.kwargs["asset_download_concurrency"] for call in mocked_download_assets.call_args_list],
+            [1, 1],
+        )
+        self.assertEqual(
+            [call.args[0] for call in mocked_download_assets.call_args_list],
+            [html_assets.FIGURE_KIND, html_assets.SUPPLEMENTARY_KIND],
+        )
+
     def test_shared_browser_file_fetcher_records_cloudflare_challenge_without_recovery(self) -> None:
         file_url = "https://example.test/supplement.pdf"
         article_url = "https://example.test/article"

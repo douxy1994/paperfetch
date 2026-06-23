@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import cache
 from pathlib import Path
 import re
@@ -9,12 +10,11 @@ from unittest import mock
 
 from paper_fetch import config
 from paper_fetch.models import article_from_markdown
-from paper_fetch.providers import _ams_html, _cloakbrowser, browser_runtime, browser_workflow
+from paper_fetch.providers import _ams_html, browser_runtime, browser_workflow
 from paper_fetch.providers.ams import AmsClient
 from paper_fetch.providers.atypon_browser_workflow.markdown import (
     extract_atypon_browser_workflow_markdown,
 )
-from paper_fetch.providers.base import ProviderFailure
 from tests.golden_criteria import golden_criteria_asset, golden_criteria_sample_for_doi
 from tests.unit._browser_workflow_deps import install_browser_workflow_deps
 from tests.unit._paper_fetch_support import fulltext_pdf_bytes
@@ -115,7 +115,7 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
             ],
         }
 
-    def test_ams_without_browser_runtime_is_not_configured(self) -> None:
+    def test_ams_without_cdp_endpoint_uses_auto_managed_browser_runtime(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "ams-state.json"
             state_path.write_text('{"cookies":[]}', encoding="utf-8")
@@ -123,22 +123,43 @@ class AmsProviderTests(AtyponBrowserWorkflowProviderTestCase):
                 transport=None,
                 env={config.AMS_STORAGE_STATE_JSON_ENV_VAR: str(state_path)},
             )
-
-            with (
-                mock.patch.object(
-                    _cloakbrowser,
-                    "_import_cloakbrowser",
-                    side_effect=ProviderFailure("not_configured", "CloakBrowser missing."),
+            runtime = replace(self._runtime_config(tmpdir, "ams", AMS_DOI), cdp_endpoint=None)
+            mocked_html = mock.Mock(
+                return_value=browser_runtime.BrowserFetchedHtml(
+                    source_url=AMS_LANDING_URL,
+                    final_url=AMS_LANDING_URL,
+                    html=(
+                        "<html><head><meta name='citation_author' content='Ada Example'></head>"
+                        "<body><article><section id='bodymatter'><h2>Results</h2>"
+                        "<p>Body text.</p></section></article></body></html>"
+                    ),
+                    response_status=200,
+                    response_headers={"content-type": "text/html"},
+                    title=AMS_TITLE,
+                    summary="AMS full text",
+                    browser_context_seed={},
+                )
+            )
+            mocked_pdf = mock.Mock()
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_browser=mocked_html,
+                extract_atypon_browser_workflow_markdown=mock.Mock(
+                    return_value=(
+                        f"# {AMS_TITLE}\n\n## Results\n\n" + ("Body text " * 120),
+                        {"title": AMS_TITLE},
+                    )
                 ),
-                self.assertRaisesRegex(
-                    Exception,
-                    "AMS browser workflow requires the cloakbrowser Python package",
-                ) as caught,
-            ):
-                client.fetch_raw_fulltext(AMS_DOI, self._metadata())
+                fetch_pdf_with_browser=mocked_pdf,
+            )
 
-        self.assertEqual(caught.exception.code, "not_configured")
-        self.assertEqual(caught.exception.missing_env, [])
+            raw_payload = client.fetch_raw_fulltext(AMS_DOI, self._metadata())
+
+        mocked_pdf.assert_not_called()
+        self.assertEqual(_payload_route(raw_payload), "html")
+        self.assertIsNone(mocked_html.call_args.kwargs["config"].cdp_endpoint)
 
     def test_ams_html_route_uses_browser_runtime_and_ignores_citation_xml_url(self) -> None:
         client = AmsClient(transport=None, env={})

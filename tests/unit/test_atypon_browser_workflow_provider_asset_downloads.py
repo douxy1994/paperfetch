@@ -1,6 +1,8 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+from dataclasses import replace
+
 from ._atypon_browser_workflow_provider_support import *
 from paper_fetch.runtime import RuntimeContext
 
@@ -64,7 +66,11 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
             }
         )
         with tempfile.TemporaryDirectory() as tmpdir:
-            runtime = self._runtime_config(tmpdir, "ams", "10.1175/jcli-d-23-0738.1")
+            cdp_endpoint = "ws://127.0.0.1:9222/devtools/browser/ams-assets"
+            runtime = replace(
+                self._runtime_config(tmpdir, "ams", "10.1175/jcli-d-23-0738.1"),
+                cdp_endpoint=cdp_endpoint,
+            )
             raw_payload = _typed_raw_payload(
                 provider="ams",
                 source_url=landing_url,
@@ -109,6 +115,7 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 rendered = article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
 
         mocked_builder.assert_called_once()
+        self.assertEqual(mocked_builder.call_args.kwargs["cdp_endpoint"], cdp_endpoint)
         mocked_opener.assert_not_called()
         mocked_request.assert_not_called()
         shared_fetcher.assert_called_once()
@@ -340,7 +347,11 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         }
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            runtime = self._runtime_config(tmpdir, "science", SCIENCE_SAMPLE.doi)
+            cdp_endpoint = "ws://127.0.0.1:9222/devtools/browser/science-assets"
+            runtime = replace(
+                self._runtime_config(tmpdir, "science", SCIENCE_SAMPLE.doi),
+                cdp_endpoint=cdp_endpoint,
+            )
             raw_payload = _typed_raw_payload(
                 provider="science",
                 source_url=SCIENCE_SAMPLE.landing_url,
@@ -375,8 +386,10 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         mocked_request.assert_called_once()
         mocked_image_builder.assert_called_once()
         mocked_file_builder.assert_called_once()
-        self.assertFalse(mocked_image_builder.call_args.kwargs["use_runtime_shared_browser"])
-        self.assertFalse(mocked_file_builder.call_args.kwargs["use_runtime_shared_browser"])
+        self.assertTrue(mocked_image_builder.call_args.kwargs["use_runtime_shared_browser"])
+        self.assertTrue(mocked_file_builder.call_args.kwargs["use_runtime_shared_browser"])
+        self.assertEqual(mocked_image_builder.call_args.kwargs["cdp_endpoint"], cdp_endpoint)
+        self.assertEqual(mocked_file_builder.call_args.kwargs["cdp_endpoint"], cdp_endpoint)
         self.assertTrue(mocked_file_builder.call_args.kwargs["thread_local"])
         self.assertEqual(transport.calls, [])
         shared_image_fetcher.assert_called_once()
@@ -388,7 +401,7 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         )
         self.assertEqual(result["assets"][1]["download_tier"], "supplementary_file")
         self.assertEqual(result["asset_failures"], [])
-    def test_browser_asset_fetchers_do_not_use_runtime_shared_browser(self) -> None:
+    def test_browser_asset_fetchers_reuse_runtime_keyed_browser_manager(self) -> None:
         figure_url = "https://www.science.org/images/large/figure1.png"
         supplementary_url = "https://www.science.org/doi/suppl/10.1126/science.sample/suppl_file/appendix.pdf"
         html = f"""
@@ -431,7 +444,10 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 download_dir=Path(tmpdir),
             )
             runtime_context.new_browser_context = mock.Mock(
-                side_effect=AssertionError("shared runtime browser should not be used")
+                side_effect=AssertionError("unkeyed runtime browser should not be used")
+            )
+            runtime_context.new_browser_context_for_config = mock.Mock(
+                wraps=runtime_context.new_browser_context_for_config
             )
             raw_payload = _typed_raw_payload(
                 provider="science",
@@ -486,6 +502,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 )
 
         runtime_context.new_browser_context.assert_not_called()
+        self.assertEqual(runtime_context.new_browser_context_for_config.call_count, 2)
+        self.assertEqual(len(runtime_context._browser_context_managers), 1)
         self.assertEqual(transport.calls, [])
         self.assertEqual(
             [asset["kind"] for asset in result["assets"]],

@@ -13,9 +13,8 @@ from typing import Any
 from collections.abc import Mapping
 
 from .auth import (
-    AMS_AUTH_URL,
-    DEFAULT_AUTH_WAIT_SECONDS,
-    authenticate_ams,
+    authenticate_provider_profile,
+    browser_auth_provider_names,
 )
 from .artifacts import ArtifactMode, ArtifactStore
 from .config import build_runtime_env, resolve_cli_download_dir
@@ -24,7 +23,7 @@ from .providers.base import ProviderFailure
 from .reason_codes import ERROR, NO_ACCESS, RATE_LIMITED
 from .runtime import build_http_transport_for_context
 from .service import FetchStrategy, PaperFetchFailure, fetch_paper
-from .utils import _extract_year, format_paper_stem
+from .utils import _extract_year, format_paper_stem, provider_display_name
 from .workflow.pipeline import FetchPipeline, MarkdownSaveSpec
 from .workflow.request_builder import build_fetch_pipeline_request
 from .workflow.rendering import rewrite_markdown_asset_links
@@ -491,7 +490,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description=(
             "Fetch AI-friendly full text for a paper by DOI, URL, or title. "
-            "Use `paper-fetch auth ams` to prepare AMS browser storage state."
+            "Use CLOAKBROWSER_CDP_ENDPOINT for browser-backed providers."
         )
     )
     query_group = parser.add_mutually_exclusive_group(required=True)
@@ -572,76 +571,90 @@ def build_auth_parser() -> argparse.ArgumentParser:
         prog="paper-fetch auth",
         description="Manage publisher browser authentication state.",
     )
-    subparsers = parser.add_subparsers(dest="provider", required=True)
-    ams = subparsers.add_parser(
-        "ams",
-        help="Open a headed browser for AMS verification and save storage-state JSON.",
+    parser.add_argument(
+        "provider",
+        choices=browser_auth_provider_names(),
+        help="Browser-backed provider to open for manual authentication.",
     )
-    ams.add_argument(
-        "--state-json",
-        help="Path for the AMS storage-state JSON. Defaults to the paper-fetch user data directory.",
+    parser.add_argument(
+        "--url",
+        help="Publisher URL to open. Defaults to a built-in sample article for the provider.",
     )
-    ams.add_argument(
-        "--env-file",
-        help="Environment file to update. Defaults to ~/.config/paper-fetch/.env.",
-    )
-    ams.add_argument(
-        "--no-env-write",
-        action="store_true",
-        help="Do not update an environment file; only save the storage-state JSON.",
-    )
-    ams.add_argument(
+    parser.add_argument(
         "--timeout-ms",
         type=parse_positive_int_arg,
         default=None,
         help="CloakBrowser navigation timeout in milliseconds.",
     )
-    ams.add_argument(
-        "--wait-seconds",
-        type=parse_positive_int_arg,
-        default=DEFAULT_AUTH_WAIT_SECONDS,
-        help="Seconds to wait for AMS article body after navigation.",
-    )
-    ams.add_argument(
+    parser.add_argument(
         "--browser-user-agent",
         help="Browser-only User-Agent override for this authentication run.",
     )
-    ams.add_argument(
-        "--url",
-        default=AMS_AUTH_URL,
-        help="AMS URL to open for verification.",
+    parser.add_argument(
+        "--state-json",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--env-file",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--no-env-write",
+        action="store_true",
+        help=argparse.SUPPRESS,
+    )
+    parser.add_argument(
+        "--wait-seconds",
+        type=parse_positive_int_arg,
+        default=None,
+        help=argparse.SUPPRESS,
     )
     return parser
 
 
-def run_auth_command(raw_args: list[str]) -> int:
-    parser = build_auth_parser()
-    args = parser.parse_args(raw_args)
-    if args.provider != "ams":
-        parser.error("unsupported auth provider")
-    result = authenticate_ams(
-        state_json=Path(args.state_json) if args.state_json else None,
-        env_file=Path(args.env_file) if args.env_file else None,
-        write_env=not args.no_env_write,
-        timeout_ms=args.timeout_ms,
-        wait_seconds=args.wait_seconds,
-        browser_user_agent=args.browser_user_agent,
-        target_url=args.url,
-    )
-    sys.stdout.write(f"AMS storage state: {result.storage_state_path}\n")
+def _write_auth_result(provider_key: str, provider_label: str, result) -> None:
+    sys.stdout.write(f"{provider_label} storage state: {result.storage_state_path}\n")
+    profile_dir = getattr(result, "profile_dir", None)
+    if profile_dir is not None:
+        sys.stdout.write(f"{provider_label} profile dir: {profile_dir}\n")
     if result.env_written and result.env_file_path is not None:
         sys.stdout.write(f"Environment updated: {result.env_file_path}\n")
     else:
         sys.stdout.write("Environment update skipped.\n")
     if result.verified:
-        sys.stdout.write("AMS verification detected: yes\n")
+        sys.stdout.write(f"{provider_label} verification detected: yes\n")
     else:
-        sys.stdout.write("AMS verification detected: no\n")
+        sys.stdout.write(f"{provider_label} verification detected: no\n")
         sys.stderr.write(
-            "Warning: AMS article body was not detected before timeout; rerun `paper-fetch auth ams` if fetches still hit verification.\n"
+            f"Warning: {provider_label} article body was not detected before timeout; rerun `paper-fetch auth {provider_key}` if fetches still hit verification.\n"
         )
     if result.final_url:
         sys.stdout.write(f"Final URL: {result.final_url}\n")
+    sys.stdout.write("Persistent browser state is optional; fetches still run without it.\n")
+
+
+def run_auth_command(raw_args: list[str]) -> int:
+    parser = build_auth_parser()
+    args = parser.parse_args(raw_args)
+    uses_legacy_ams_args = bool(
+        args.state_json
+        or args.env_file
+        or args.no_env_write
+        or args.wait_seconds is not None
+    )
+    if uses_legacy_ams_args:
+        parser.error(
+            "--state-json, --env-file, --no-env-write, and --wait-seconds are no longer supported; "
+            "auth now saves provider-scoped storage-state. Use CLOAKBROWSER_PROFILE_DIR "
+            "or CLOAKBROWSER_USER_DATA_DIR to override that location."
+        )
+    result = authenticate_provider_profile(
+        provider=args.provider,
+        target_url=args.url,
+        timeout_ms=args.timeout_ms,
+        browser_user_agent=args.browser_user_agent,
+    )
+    _write_auth_result(args.provider, provider_display_name(args.provider), result)
     return 0
 
 

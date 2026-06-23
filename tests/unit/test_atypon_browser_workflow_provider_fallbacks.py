@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import sys
 import types
+import os
 
 from ._atypon_browser_workflow_provider_support import *
 
@@ -126,7 +127,7 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         self.assertEqual(article.source, "pnas")
         self.assertIn("fulltext:pnas_html_ok", article.quality.source_trail)
 
-    def test_pnas_fast_preflight_uses_cloakbrowser(self) -> None:
+    def test_pnas_fast_preflight_uses_cdp_browser(self) -> None:
         class FakeResponse:
             status = 200
 
@@ -196,11 +197,33 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
             def close(self) -> None:
                 self.close_count += 1
 
+        class FakeChromium:
+            def __init__(self, browser: FakeBrowser) -> None:
+                self.browser = browser
+                self.connect_over_cdp_calls: list[str] = []
+
+            def connect_over_cdp(self, endpoint: str) -> FakeBrowser:
+                self.connect_over_cdp_calls.append(endpoint)
+                return self.browser
+
+        class FakePlaywright:
+            def __init__(self, browser: FakeBrowser) -> None:
+                self.chromium = FakeChromium(browser)
+                self.stop_count = 0
+
+            def stop(self) -> None:
+                self.stop_count += 1
+
+        class FakeSyncPlaywright:
+            def __init__(self, playwright: FakePlaywright) -> None:
+                self.playwright = playwright
+
+            def start(self) -> FakePlaywright:
+                return self.playwright
+
         fake_browser = FakeBrowser()
-        launch = mock.Mock(return_value=fake_browser)
-        cloakbrowser_module = types.ModuleType("cloakbrowser")
-        cloakbrowser_module.launch = launch
-        sync_playwright = mock.Mock(side_effect=AssertionError("stock Playwright should not be used"))
+        fake_playwright = FakePlaywright(fake_browser)
+        sync_playwright = mock.Mock(return_value=FakeSyncPlaywright(fake_playwright))
         sync_api_module = types.ModuleType("playwright.sync_api")
         sync_api_module.sync_playwright = sync_playwright
         playwright_module = types.ModuleType("playwright")
@@ -209,10 +232,12 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         with mock.patch.dict(
             sys.modules,
             {
-                "cloakbrowser": cloakbrowser_module,
                 "playwright": playwright_module,
                 "playwright.sync_api": sync_api_module,
             },
+        ), mock.patch.dict(
+            os.environ,
+            {"CLOAKBROWSER_CDP_ENDPOINT": "ws://127.0.0.1:9222/devtools/browser/pnas"},
         ):
             result = browser_workflow.fetch_html_with_fast_browser(
                 [PNAS_SAMPLE.landing_url],
@@ -220,14 +245,18 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
                 user_agent="Mozilla/5.0",
             )
 
-        launch.assert_called_once_with(headless=True, locale="en-US")
-        sync_playwright.assert_not_called()
+        sync_playwright.assert_called_once_with()
+        self.assertEqual(
+            fake_playwright.chromium.connect_over_cdp_calls,
+            ["ws://127.0.0.1:9222/devtools/browser/pnas"],
+        )
         self.assertEqual(fake_browser.new_context_calls[0]["user_agent"], "Mozilla/5.0")
         self.assertEqual(fake_browser.context.page.goto_calls[0]["wait_until"], "domcontentloaded")
         self.assertEqual(result.final_url, PNAS_SAMPLE.landing_url)
         self.assertEqual(result.browser_context_seed["browser_user_agent"], "Mozilla/5.0")
         self.assertEqual(fake_browser.context.close_count, 1)
         self.assertEqual(fake_browser.close_count, 1)
+        self.assertEqual(fake_playwright.stop_count, 1)
 
     def test_pnas_fast_preflight_skips_full_browser_path(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
@@ -269,7 +298,8 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         )
 
         mocked_fast.assert_called_once()
-        mocked_runtime.assert_not_called()
+        mocked_runtime.assert_called_once()
+        self.assertIs(mocked_fast.call_args.kwargs["browser_config"], mocked_runtime.return_value)
         mocked_browser.assert_not_called()
         self.assertIsNotNone(raw_payload.content)
         assert raw_payload.content is not None

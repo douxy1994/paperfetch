@@ -147,8 +147,11 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         year=2024,
         title="Human Influence Has Increased the Likelihood of Extreme Autumn Fire Weather in California",
         landing_url="https://journals.ametsoc.org/view/journals/clim/37/24/JCLI-D-23-0738.1.xml",
-        expected_source="ams_pdf",
-        accepted_live_source_trail_groups=(("fulltext:ams_pdf_fallback_ok",),),
+        expected_source="ams_html",
+        accepted_live_source_trail_groups=(
+            ("fulltext:ams_html_ok",),
+            ("fulltext:ams_pdf_fallback_ok",),
+        ),
         required_env=("CROSSREF_MAILTO",),
         fixture_name=golden_criteria_fixture(
             "10.1175/jcli-d-23-0738.1", "original.html"

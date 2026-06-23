@@ -380,7 +380,7 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 saved_bytes = Path(result["assets"][0]["path"]).read_bytes()
 
         mocked_builder.assert_called_once()
-        self.assertFalse(mocked_builder.call_args.kwargs["use_runtime_shared_browser"])
+        self.assertTrue(mocked_builder.call_args.kwargs["use_runtime_shared_browser"])
         mocked_opener.assert_not_called()
         mocked_request.assert_not_called()
         shared_fetcher.assert_called_once()

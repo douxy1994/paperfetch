@@ -6,6 +6,40 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.5.0 - 2026-06-23
+
+本版本重构 CloakBrowser 浏览器链路，统一切换到 CDP-managed Chrome 复用模型，并通过 provider-scoped 浏览器状态、共享 runtime context 管理和更安全的外部浏览器接入增强反爬/站点验证场景下的稳定性。
+
+### 新增
+
+- 新增可选 `CLOAKBROWSER_CDP_ENDPOINT`，browser workflow 可通过 CDP 连接已经运行的 Chrome/CloakBrowser。
+- 未配置 endpoint 时，新增通过 CloakBrowser 启动 managed Chrome，并默认在 `publisher-browser-profiles/<provider>` 下按出版社复用 profile/storage-state。
+- 新增按 provider 归属的 browser authentication：`paper-fetch auth <provider>` 支持 browser-backed provider、内置样例 URL、`--url` 覆盖、headed 手动验证，以及无需写 `.env` 的本地 storage-state 保存。
+- 新增 `CLOAKBROWSER_PROFILE_DIR`，并识别旧 Wiley storage/profile 环境变量；已有配置可被说明和兼容，managed CDP 路径默认使用 provider-scoped state。
+
+### 变更
+
+- 浏览器后端从直接持有 `cloakbrowser.launch()` 改为 CDP-backed `BrowserContextManager`；HTML 抓取、browser-backed 资产下载、fast HTML preflight 和 seeded PDF/ePDF fallback 会尽量复用 runtime keyed browser manager。
+- managed browser 启动改为通过 `cloakbrowser.ensure_binary()` 和本地 Chrome CDP endpoint；`CLOAKBROWSER_HEADLESS`、`CLOAKBROWSER_BINARY_PATH`、`CLOAKBROWSER_PROFILE_DIR`、`CLOAKBROWSER_USER_DATA_DIR` 作用于该 managed 路径。
+- 外部 CDP 模式改为借用浏览器中已有 context，并尽量注入 storage-state cookies；文档明确说明 user agent、viewport 等 new-context 参数可能不会作用到 borrowed context。
+- 外部 CDP context 被借用时，browser-backed 资产下载改为串行执行；managed CDP 模式仍会为各抓取阶段或 worker 打开隔离的 context/page。
+- AMS authentication 和抓取改为与其它 browser-backed provider 使用同一套 provider-scoped storage-state 模型；`PAPER_FETCH_AMS_STORAGE_STATE_JSON` 现在是 legacy override，不再是必需配置。
+- `paper-fetch auth` 的旧 AMS 专用参数（`--state-json`、`--env-file`、`--no-env-write`、`--wait-seconds`）改为不再支持的兼容占位；profile/storage-state 位置现在由 browser runtime 目录配置控制。
+- Browser provider status 检查和 MCP/skill 文档从 CloakBrowser launch 术语调整为 CDP browser runtime / Playwright dependency 术语，并明确外部 endpoint 与 managed browser 行为边界。
+- 离线安装器、离线包构建脚本和 CI smoke 检查改为验证 Playwright、CloakBrowser `ensure_binary` 和 `BrowserContextManager`，不再探测已移除的直接 `cloakbrowser.launch()` 路径。
+- 生成的离线环境文件和安装器提示改为说明 `CLOAKBROWSER_CDP_ENDPOINT`、managed Chrome 启动、默认 `CLOAKBROWSER_HEADLESS`，以及 browser-backed publisher 的 browser user-agent 默认值。
+- CloakBrowser 依赖约束调整为 `cloakbrowser>=0.4,<0.5`。
+
+### 修复
+
+- 修复 browser-backed image/file fetcher 在 managed CDP 模式下各自启动独立 Chrome 的问题；现在复用 runtime keyed browser manager，避免同 profile 文件锁死锁，同时保持每个 worker 的 context/page 隔离。
+- managed browser profile 文件锁新增超时，避免另一个 managed browser 已持有同一 profile 目录时永久阻塞。
+- 修复 CDP startup polling：当 `/json/version` 已响应但 `webSocketDebuggerUrl` 暂时为空时，不再无 sleep 忙等。
+- 修复 fast HTML preflight、browser-backed asset fetcher 和 browser PDF fallback 的配置传递，确保 binary path、CDP endpoint、profile 目录、user-data 目录和 storage-state 能一致传给 browser context manager。
+- 修复 seeded PDF fallback 的 HTTP retry cookie 处理：重放 PDF 请求前会按目标 URL 请求并过滤 cookies。
+- 修复 provider status 行为：managed browser 模式下不再要求预配置外部 endpoint 或 AMS storage-state JSON 即可把 browser-backed provider 判为 ready，同时仍会拒绝无效 managed binary path 和格式错误的 CDP endpoint。
+- 修复离线安装器 activation 与 MCP 环境注册，使 managed CDP browser 变量稳定导出，并避免把过时的 profile/binary 变量继续作为 MCP env key 传播。
+
 ## 2.4.1 - 2026-06-20
 
 ### 变更

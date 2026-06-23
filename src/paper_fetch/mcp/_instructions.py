@@ -31,8 +31,32 @@ SKILL_ENVIRONMENT_VARIABLES: tuple[tuple[str, str], ...] = (
         "Optional Wiley Text and Data Mining client token for the official Wiley PDF lane; browser PDF/ePDF fallback can still run without it when the local runtime is ready.",
     ),
     (
+        "PAPER_FETCH_WILEY_STORAGE_STATE_JSON",
+        "Legacy Wiley browser storage-state JSON; current managed default uses provider-scoped storage-state, while external CDP mode uses the existing browser context state.",
+    ),
+    (
+        "PAPER_FETCH_WILEY_PROFILE_DIR",
+        "Legacy Wiley profile override; current managed default uses provider-scoped storage-state; use CLOAKBROWSER_PROFILE_DIR only to override the managed Chrome startup/storage-state directory or CLOAKBROWSER_CDP_ENDPOINT for an external browser.",
+    ),
+    (
+        "CLOAKBROWSER_PROFILE_DIR",
+        "Optional startup/storage-state directory for the managed CloakBrowser Chrome when CLOAKBROWSER_CDP_ENDPOINT is unset.",
+    ),
+    (
+        "CLOAKBROWSER_BINARY_PATH",
+        "Optional preinstalled Chrome/CloakBrowser binary path; cloakbrowser uses it instead of downloading Chromium.",
+    ),
+    (
+        "CLOAKBROWSER_USER_DATA_DIR",
+        "Optional fallback startup/storage-state directory for the managed CloakBrowser Chrome when CLOAKBROWSER_PROFILE_DIR is unset.",
+    ),
+    (
+        "CLOAKBROWSER_CDP_ENDPOINT",
+        "Optional Chrome DevTools Protocol endpoint for browser workflows; when set, the existing browser context state wins over new context options and browser-backed asset downloads are serialized; when unset, paper-fetch downloads/starts a managed CloakBrowser Chrome and reuses one keyed browser manager with isolated contexts/pages.",
+    ),
+    (
         "CLOAKBROWSER_HEADLESS",
-        "Optional override (true/false) for the CloakBrowser browser runtime. Defaults to true.",
+        "Optional headed/headless override for the managed CloakBrowser Chrome when CLOAKBROWSER_CDP_ENDPOINT is unset.",
     ),
     (
         "CLOAKBROWSER_TIMEOUT_MS",
@@ -40,7 +64,7 @@ SKILL_ENVIRONMENT_VARIABLES: tuple[tuple[str, str], ...] = (
     ),
     (
         "PAPER_FETCH_BROWSER_USER_AGENT",
-        "Optional browser-only User-Agent override for CloakBrowser/Playwright contexts; use a normal Chrome UA for AGU/Wiley Cloudflare challenge issues.",
+        "Optional browser-only User-Agent override for managed Chromium/Playwright contexts; use a normal Chrome UA for AGU/Wiley Cloudflare challenge issues.",
     ),
     ("PAPER_FETCH_DOWNLOAD_DIR", "Overrides the default CLI/MCP download directory."),
     ("PAPER_FETCH_RUN_LIVE", "Test-only flag for live publisher integration checks."),
@@ -121,7 +145,7 @@ def server_instructions() -> str:
         "official Elsevier API PDF lane before degrading to metadata-only, publishing "
         "`elsevier_xml` on XML success and `elsevier_pdf` on PDF fallback success. `springer` keeps a provider-managed direct HTML route "
         "with direct HTTP PDF fallback, publishing `springer_html` on HTML success and `springer_pdf` on PDF fallback success. `wiley` keeps "
-        "the CloakBrowser HTML route, then seeded-browser publisher PDF/ePDF "
+        "the CDP browser HTML route, then CDP browser-seeded publisher PDF/ePDF "
         "fallback, and may still continue into the official Wiley TDM API PDF lane "
         "when `WILEY_TDM_CLIENT_TOKEN` is configured while publishing `wiley_browser`. `science`, "
         "`pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, and `mdpi` require the local browser runtime but no legacy local "
@@ -142,7 +166,7 @@ def server_instructions() -> str:
         "`asset_profile='body'` means provider-cleaned body figure/table/formula assets only, "
         "while `asset_profile='all'` additionally downloads supplementary files. "
         "Inline ImageContent still only comes from body figures. Wiley/Science/PNAS/AMS/Annual Reviews/ACS/IOP/AIP/MDPI support "
-        "`asset_profile=body|all` on successful CloakBrowser HTML routes and "
+        "`asset_profile=body|all` on successful CDP browser HTML routes and "
         "prefer full-size/original figures before falling back to previews, while "
         "their PDF/ePDF fallback routes remain text-only. Springer, IEEE, arXiv, and Copernicus PDF fallback "
         "routes are also text-only in this version. "
@@ -184,7 +208,7 @@ def fetch_tool_description() -> str:
         "the official Elsevier API PDF lane before degrading to metadata-only, publishing "
         "`elsevier_xml` on XML success and `elsevier_pdf` on PDF fallback success. `springer` uses provider-managed direct HTML and direct "
         "HTTP PDF fallback, publishing `springer_html` or `springer_pdf`. `wiley` keeps "
-        "CloakBrowser HTML first, then seeded-browser publisher PDF/ePDF "
+        "CDP browser HTML first, then CDP browser-seeded publisher PDF/ePDF "
         "fallback, and may still continue into the official Wiley TDM API PDF lane "
         "when `WILEY_TDM_CLIENT_TOKEN` is configured while publishing source "
         "`wiley_browser` on success. `science`, `pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, and `mdpi` routes use "
@@ -203,7 +227,7 @@ def fetch_tool_description() -> str:
         "`asset_profile='body'` means provider-cleaned body figure/table/formula assets only, "
         "while `asset_profile='all'` additionally downloads supplementary files; "
         "supplementary files are saved as assets but are not emitted as ImageContent. "
-        "Wiley/Science/PNAS/AMS/Annual Reviews/ACS/IOP/AIP/MDPI support body/all assets on successful CloakBrowser HTML routes while keeping "
+        "Wiley/Science/PNAS/AMS/Annual Reviews/ACS/IOP/AIP/MDPI support body/all assets on successful CDP browser HTML routes while keeping "
         "PDF/ePDF fallback text-only, and Springer/IEEE/arXiv/Copernicus PDF fallback is also text-only "
         "in this version. Set "
         "download_dir to isolate task-local downloads; the MCP server can also surface "

@@ -339,6 +339,7 @@ jobs:
           test -f "$install_root/runtime/site-packages/paper_fetch/__init__.py"
           test -x "$install_root/bin/paper-fetch"
           test -x "$install_root/bin/paper-fetch-install-formula-tools"
+          grep -F -q 'CLOAKBROWSER_CDP_ENDPOINT="ws://127.0.0.1:9222/devtools/browser/..."' "$install_root/offline.env"
           grep -F -q 'CLOAKBROWSER_HEADLESS="false"' "$install_root/offline.env"
           test -f "$layout_home/.gemini/antigravity-cli/skills/paper-fetch-skill/SKILL.md"
           test -f "$layout_home/.gemini/antigravity-cli/mcp_config.json"
@@ -392,29 +393,62 @@ jobs:
 
           HOME="$browser_home" \
           SHELL=/bin/bash \
-          CLOAKBROWSER_BINARY_PATH="$browser_binary" \
           "$bundle/install-offline.sh" --install-dir "$install_root" --preset=headless --no-user-config
 
           # shellcheck disable=SC1091
           source "$install_root/activate-offline.sh"
-          export CLOAKBROWSER_BINARY_PATH="$browser_binary"
-          export CLOAKBROWSER_HEADLESS="true"
-          export CLOAKBROWSER_USER_DATA_DIR="$browser_profile"
+          export PAPER_FETCH_BROWSER_BINARY="$browser_binary"
+          export PAPER_FETCH_BROWSER_PROFILE="$browser_profile"
 
           paper-fetch --help >/dev/null
           python - <<'PY'
-          from pathlib import Path
+          import json
           import os
+          from pathlib import Path
+          import subprocess
+          import time
+          import urllib.request
 
-          from paper_fetch._cloakbrowser_runtime import import_cloakbrowser
+          from paper_fetch.runtime_browser import BrowserContextManager
 
-          binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
+          binary_path = os.environ.get("PAPER_FETCH_BROWSER_BINARY")
           assert binary_path and Path(binary_path).is_file(), binary_path
+          profile = os.environ.get("PAPER_FETCH_BROWSER_PROFILE")
+          assert profile, profile
 
-          cloakbrowser = import_cloakbrowser()
-          browser = cloakbrowser.launch(headless=True)
+          port = 9222
+          browser = subprocess.Popen(
+              [
+                  binary_path,
+                  "--headless=new",
+                  f"--user-data-dir={profile}",
+                  "--remote-debugging-address=127.0.0.1",
+                  f"--remote-debugging-port={port}",
+                  "--no-first-run",
+                  "--no-default-browser-check",
+                  "about:blank",
+              ]
+          )
+          manager = None
           try:
-              context = browser.new_context()
+              endpoint = ""
+              for _ in range(60):
+                  try:
+                      with urllib.request.urlopen(
+                          f"http://127.0.0.1:{port}/json/version",
+                          timeout=1,
+                      ) as response:
+                          endpoint = json.loads(response.read().decode("utf-8"))[
+                              "webSocketDebuggerUrl"
+                          ]
+                          break
+                  except Exception:
+                      time.sleep(0.5)
+              assert endpoint.startswith("ws://127.0.0.1:"), endpoint
+
+              os.environ["CLOAKBROWSER_CDP_ENDPOINT"] = endpoint
+              manager = BrowserContextManager(cdp_endpoint=endpoint)
+              context = manager.new_context()
               try:
                   page = context.new_page()
                   page.goto("data:text/html,<title>paper-fetch macOS browser smoke</title><main>ok</main>")
@@ -422,7 +456,13 @@ jobs:
               finally:
                   context.close()
           finally:
-              browser.close()
+              if manager is not None:
+                  manager.close()
+              browser.terminate()
+              try:
+                  browser.wait(timeout=10)
+              except subprocess.TimeoutExpired:
+                  browser.kill()
           PY
 
       - name: Upload macOS offline package
@@ -610,18 +650,22 @@ jobs:
           & (Join-Path $installRoot "formula-tools/bin/texmath.exe") --help | Out-Null
           & $mathmlNode --version | Out-Null
 
-          $cloakbrowserCheck = @'
+          $browserRuntimeCheck = @'
           import cloakbrowser
+          import playwright
+          from paper_fetch.runtime_browser import BrowserContextManager
 
-          assert hasattr(cloakbrowser, "launch")
+          assert hasattr(cloakbrowser, "ensure_binary")
+          assert BrowserContextManager is not None
           '@
-          Invoke-RuntimePythonScript -Script $cloakbrowserCheck
+          Invoke-RuntimePythonScript -Script $browserRuntimeCheck
 
           $log = Get-Content -LiteralPath $fakeLog -Raw
           foreach ($expected in @(
             "codex mcp remove paper-fetch",
             "codex mcp add",
             "MATHML_TO_LATEX_NODE_BIN=$installRoot\runtime\Lib\site-packages\playwright\driver\node.exe",
+            "CLOAKBROWSER_HEADLESS=true",
             "claude mcp remove -s user paper-fetch",
             "claude mcp add -s user"
           )) {

@@ -38,12 +38,14 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertNotIn('& $runtimePython -X utf8 -c "import paper_fetch', workflow)
         self.assertNotIn("from paper_fetch.mcp.tools import provider_status_payload", workflow)
 
-    def test_windows_offline_ci_uses_cloakbrowser_package_smoke(self) -> None:
+    def test_windows_offline_ci_uses_browser_runtime_package_smoke(self) -> None:
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("import cloakbrowser", workflow)
-        self.assertIn('assert hasattr(cloakbrowser, "launch")', workflow)
-        self.assertIn("Invoke-RuntimePythonScript -Script $cloakbrowserCheck", workflow)
+        self.assertIn("import playwright", workflow)
+        self.assertIn("from paper_fetch.runtime_browser import BrowserContextManager", workflow)
+        self.assertIn('assert hasattr(cloakbrowser, "ensure_binary")', workflow)
+        self.assertIn("Invoke-RuntimePythonScript -Script $browserRuntimeCheck", workflow)
         self.assertNotIn("& $runtimePython -X utf8 -c $cloakbrowserCheck", workflow)
         self.assertNotIn("playwright.sync_api", workflow)
         self.assertNotIn("ms-playwright", workflow)
@@ -88,6 +90,7 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         self.assertIn("Build macOS offline package", workflow)
         self.assertIn("paper-fetch-skill-offline-macos-$package_arch-${{ matrix.python-tag }}.tar.gz", workflow)
         self.assertIn("--preset=headful", workflow)
+        self.assertIn('CLOAKBROWSER_CDP_ENDPOINT="ws://127.0.0.1:9222/devtools/browser/..."', workflow)
         self.assertIn('CLOAKBROWSER_HEADLESS="false"', workflow)
         self.assertIn("macOS runtime package must not include source/build path", workflow)
         self.assertIn("- offline-macos-install", workflow)
@@ -110,12 +113,14 @@ class CiReleaseWorkflowTests(unittest.TestCase):
         workflow = CI_WORKFLOW.read_text(encoding="utf-8")
 
         self.assertIn("Verify macOS installed package browser smoke", workflow)
-        self.assertIn("CLOAKBROWSER_BINARY_PATH=\"$browser_binary\"", workflow)
+        self.assertIn("PAPER_FETCH_BROWSER_BINARY=\"$browser_binary\"", workflow)
         self.assertIn("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome", workflow)
         self.assertIn("source \"$install_root/activate-offline.sh\"", workflow)
         self.assertIn("paper-fetch --help >/dev/null", workflow)
-        self.assertIn("from paper_fetch._cloakbrowser_runtime import import_cloakbrowser", workflow)
-        self.assertIn("cloakbrowser.launch(headless=True)", workflow)
+        self.assertIn("from paper_fetch.runtime_browser import BrowserContextManager", workflow)
+        self.assertIn("--remote-debugging-port", workflow)
+        self.assertIn("CLOAKBROWSER_CDP_ENDPOINT", workflow)
+        self.assertIn("BrowserContextManager(cdp_endpoint=endpoint)", workflow)
         self.assertIn("data:text/html,<title>paper-fetch macOS browser smoke</title>", workflow)
         self.assertIn("\n          from pathlib import Path\n", workflow)
         self.assertIn("\n          PY\n\n      - name: Upload macOS offline package", workflow)

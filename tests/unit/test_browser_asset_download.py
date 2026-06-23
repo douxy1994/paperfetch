@@ -79,7 +79,10 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
             ],
         )
         recovery = BrowserAssetRecoveryContext(
-            runtime=SimpleNamespace(headless=False),
+            runtime=SimpleNamespace(
+                headless=False,
+                cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
+            ),
             provider="science",
             user_agent="test-agent",
             browser_context_seed={
@@ -142,6 +145,14 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
         self.assertEqual(
             file_fetcher_factory.call_args.kwargs["attempt_supplementary_assets"],
             plan.supplementary_assets,
+        )
+        self.assertEqual(
+            image_fetcher_factory.call_args.kwargs["cdp_endpoint"],
+            "ws://127.0.0.1:9222/devtools/browser/test",
+        )
+        self.assertEqual(
+            file_fetcher_factory.call_args.kwargs["cdp_endpoint"],
+            "ws://127.0.0.1:9222/devtools/browser/test",
         )
         self.assertEqual(mocked_download_assets.call_count, 2)
         calls_by_kind = {call.args[0]: call for call in mocked_download_assets.call_args_list}
@@ -227,6 +238,74 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
             deps=browser_workflow_deps(download_assets=download_assets),
         )
 
+        self.assertEqual(
+            result.body_results,
+            [{"kind": "figure", "download_url": "figure.png"}],
+        )
+        self.assertEqual(
+            result.supplementary_results,
+            [{"kind": "supplementary", "download_url": "supplement.pdf"}],
+        )
+
+    def test_run_browser_asset_download_attempt_serializes_browser_assets_when_requested(
+        self,
+    ) -> None:
+        plan = BrowserAssetDownloadPlan(
+            article_id="10.5555/example",
+            output_dir=Path("/tmp/browser-assets"),
+            asset_profile="all",
+            body_assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 1",
+                    "url": "https://example.test/figure.png",
+                    "section": "body",
+                }
+            ],
+            supplementary_assets=[
+                {
+                    "kind": "supplementary",
+                    "heading": "Supplement",
+                    "source_url": "https://example.test/supplement.pdf",
+                    "section": "supplementary",
+                }
+            ],
+        )
+        recovery = BrowserAssetRecoveryContext(
+            runtime=SimpleNamespace(headless=True),
+            provider="science",
+            user_agent="test-agent",
+            browser_context_seed={"browser_final_url": "https://example.test/final"},
+            browser_cookies=[],
+            active_seed_urls=["https://example.test/article"],
+        )
+        call_order: list[object] = []
+
+        def download_assets(kind, *_args, **_kwargs):
+            call_order.append(kind)
+            if kind is FIGURE_KIND:
+                return {
+                    "assets": [{"kind": "figure", "download_url": "figure.png"}],
+                    "asset_failures": [],
+                }
+            self.assertEqual(call_order, [FIGURE_KIND, SUPPLEMENTARY_KIND])
+            return {
+                "assets": [
+                    {"kind": "supplementary", "download_url": "supplement.pdf"}
+                ],
+                "asset_failures": [],
+            }
+
+        result = run_browser_asset_download_attempt(
+            plan,
+            recovery,
+            image_fetcher_factory=mock.Mock(return_value=None),
+            file_fetcher_factory=mock.Mock(return_value=None),
+            opener_requester={"serial_browser_assets": True},
+            deps=browser_workflow_deps(download_assets=download_assets),
+        )
+
+        self.assertEqual(call_order, [FIGURE_KIND, SUPPLEMENTARY_KIND])
         self.assertEqual(
             result.body_results,
             [{"kind": "figure", "download_url": "figure.png"}],

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
 
@@ -12,6 +13,18 @@ from ...reason_codes import PDF_FALLBACK
 from ..base import ProviderContent, RawFulltextPayload
 from .fetchers import _choose_browser_seed_url
 from .shared import BrowserWorkflowDeps, default_browser_workflow_deps
+
+
+def _runtime_storage_state_path(runtime: Any) -> Any | None:
+    storage_state_path = getattr(runtime, "storage_state_path", None)
+    if storage_state_path is not None:
+        path = Path(storage_state_path).expanduser()
+        return path if path.is_file() else None
+    profile_dir = getattr(runtime, "profile_dir", None) or getattr(runtime, "user_data_dir", None)
+    if profile_dir is None:
+        return None
+    path = Path(profile_dir).expanduser() / "storage-state.json"
+    return path if path.is_file() else None
 
 
 def fetch_seeded_browser_pdf_payload(
@@ -58,6 +71,11 @@ def fetch_seeded_browser_pdf_payload(
         browser_user_agent=pdf_context_seed.get("browser_user_agent")
         or getattr(runtime, "user_agent", None),
         headless=runtime.headless,
+        binary_path=getattr(runtime, "binary_path", None),
+        cdp_endpoint=getattr(runtime, "cdp_endpoint", None),
+        profile_dir=getattr(runtime, "profile_dir", None),
+        user_data_dir=getattr(runtime, "user_data_dir", None),
+        storage_state_path=_runtime_storage_state_path(runtime),
         seed_urls=[seed_url] if seed_url else None,
         context=context,
     )

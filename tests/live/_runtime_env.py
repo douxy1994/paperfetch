@@ -17,5 +17,7 @@ def build_isolated_live_env(base_env: Mapping[str, str] | None = None) -> tuple[
 
 
 def require_cloakbrowser_or_skip(testcase) -> None:
+    if importlib.util.find_spec("playwright.sync_api") is None:
+        testcase.skipTest("Playwright Python package is not installed.")
     if importlib.util.find_spec("cloakbrowser") is None:
         testcase.skipTest("CloakBrowser Python package is not installed.")

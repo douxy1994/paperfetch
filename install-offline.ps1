@@ -63,7 +63,12 @@ function Normalize-McpEnvKeys {
     $filtered = New-Object System.Collections.Generic.List[string]
     $seenHeadless = $false
     foreach ($key in $script:McpEnvKeys) {
-        if ($key -eq "PLAYWRIGHT_BROWSERS_PATH") {
+        if ($key -in @(
+            "PLAYWRIGHT_BROWSERS_PATH",
+            "CLOAKBROWSER_BINARY_PATH",
+            "CLOAKBROWSER_PROFILE_DIR",
+            "CLOAKBROWSER_USER_DATA_DIR"
+        )) {
             continue
         }
         if ($key -eq "CLOAKBROWSER_HEADLESS") {
@@ -263,8 +268,11 @@ function New-ManagedEnvLines {
         "PAPER_FETCH_FORMULA_TOOLS_DIR=$(Quote-DotenvValue $formulaToolsDir)",
         "MATHML_TO_LATEX_NODE_BIN=$(Quote-DotenvValue $mathmlNode)",
         "CLOAKBROWSER_HEADLESS='true'",
-        "# PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'",
-        "# CLOAKBROWSER_BINARY_PATH='C:/path/to/preinstalled/browser.exe'",
+        "PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'",
+        "# Optional: connect to an already-running Chrome/CloakBrowser CDP endpoint.",
+        "# CLOAKBROWSER_CDP_ENDPOINT='ws://127.0.0.1:9222/devtools/browser/...'",
+        "# Optional: use a preinstalled Chrome/CloakBrowser binary instead of cloakbrowser download.",
+        "# CLOAKBROWSER_BINARY_PATH='C:/path/to/chrome.exe'",
         $ManagedEnd
     )
 }
@@ -358,39 +366,19 @@ if ([string]::IsNullOrWhiteSpace($env:CLOAKBROWSER_HEADLESS)) {
     [System.IO.File]::WriteAllText($target, $content, [System.Text.UTF8Encoding]::new($false))
 }
 
-function Test-CloakBrowserPackage {
+function Test-BrowserRuntimePackage {
     $venvPython = Join-Path $BundleRoot ".venv/Scripts/python.exe"
     $code = @'
-import os
-from pathlib import Path
-
 import cloakbrowser
+import playwright
+from paper_fetch.runtime_browser import BrowserContextManager
 
-assert hasattr(cloakbrowser, "launch")
-binary_path = os.environ.get("CLOAKBROWSER_BINARY_PATH")
-if binary_path:
-    path = Path(binary_path)
-    assert path.is_file(), binary_path
+assert hasattr(cloakbrowser, "ensure_binary")
+assert BrowserContextManager is not None
 '@
     & $venvPython -c $code
     if ($LASTEXITCODE -ne 0) {
-        Fail "CloakBrowser package smoke check failed."
-    }
-}
-
-function Invoke-CloakBrowserRuntimeWarmup {
-    $venvPython = Join-Path $BundleRoot ".venv/Scripts/python.exe"
-    if (-not [string]::IsNullOrWhiteSpace($env:CLOAKBROWSER_BINARY_PATH)) {
-        if (-not (Test-Path -LiteralPath $env:CLOAKBROWSER_BINARY_PATH -PathType Leaf)) {
-            Fail "CLOAKBROWSER_BINARY_PATH is set but is missing: $($env:CLOAKBROWSER_BINARY_PATH)"
-        }
-        Write-Log "Using preconfigured CLOAKBROWSER_BINARY_PATH; skipping CloakBrowser runtime download"
-        return
-    }
-    Write-Log "Checking CloakBrowser package availability"
-    & $venvPython -c 'import cloakbrowser; assert hasattr(cloakbrowser, "launch")'
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "CloakBrowser package check failed; set CLOAKBROWSER_BINARY_PATH to a preinstalled binary before browser-backed fetches if needed."
+        Fail "Browser runtime package smoke check failed."
     }
 }
 
@@ -412,7 +400,7 @@ function Run-SmokeChecks {
     if ($LASTEXITCODE -ne 0) {
         Fail "bundled node.exe --version failed."
     }
-    Test-CloakBrowserPackage
+    Test-BrowserRuntimePackage
 
     $env:PAPER_FETCH_ENV_FILE = Join-Path $BundleRoot "offline.env"
     $env:MATHML_TO_LATEX_NODE_BIN = Join-Path $BundleRoot ".venv/Lib/site-packages/playwright/driver/node.exe"
@@ -442,7 +430,6 @@ Verify-Checksums
 Check-BundleAssets
 $projectWheel = Find-ProjectWheel
 Install-ProjectVenv $projectWheel
-Invoke-CloakBrowserRuntimeWarmup
 
 Write-Log "Writing repo-local offline.env"
 Write-ManagedEnvFile (Join-Path $BundleRoot "offline.env")
@@ -462,5 +449,5 @@ $activateScript = Join-Path $BundleRoot "Activate-Offline.ps1"
 $offlineEnv = Join-Path $BundleRoot "offline.env"
 Write-Host "Activate it with: . $activateScript"
 Write-Host "CloakBrowser headless: true"
-Write-Host "Optional runtime override: set CLOAKBROWSER_BINARY_PATH in $offlineEnv before first browser fetch."
+Write-Host "Browser-backed providers auto-start cloakbrowser Chrome unless CLOAKBROWSER_CDP_ENDPOINT points at an existing browser."
 Write-Host "Elsevier setup: request a key at https://dev.elsevier.com/, then add ELSEVIER_API_KEY=`"...`" to $offlineEnv before fetching Elsevier papers."

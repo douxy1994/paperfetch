@@ -7,7 +7,12 @@ from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
 
-from ...config import build_browser_user_agent, build_user_agent, resolve_asset_download_concurrency
+from ...config import (
+    CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR,
+    build_browser_user_agent,
+    build_user_agent,
+    resolve_asset_download_concurrency,
+)
 from ...extraction.html import decode_html
 from ...extraction.html.signals import HtmlExtractionFailure
 from ...metadata.types import ProviderMetadata
@@ -464,7 +469,15 @@ class BrowserWorkflowClient(ProviderClient):
         browser_context_seed = merge_browser_context_seeds(
             content.browser_context_seed if content is not None else None
         )
-        asset_download_concurrency = resolve_asset_download_concurrency(context.env)
+        external_cdp_endpoint = bool(
+            normalize_text(getattr(runtime, "cdp_endpoint", None))
+            or normalize_text((getattr(context, "env", {}) or {}).get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR))
+        )
+        asset_download_concurrency = (
+            1
+            if external_cdp_endpoint
+            else resolve_asset_download_concurrency(context.env)
+        )
         recovery = BrowserAssetRecoveryContext(
             runtime=runtime,
             provider=self.name,
@@ -488,6 +501,7 @@ class BrowserWorkflowClient(ProviderClient):
             "transport": self.transport,
             "asset_download_concurrency": asset_download_concurrency,
             "figure_page_fetcher_factory": _MemoizedFigurePageFetcher,
+            "serial_browser_assets": external_cdp_endpoint,
         }
         image_fetcher_factory = partial(self._browser_asset_image_fetcher, context)
         file_fetcher_factory = partial(self._browser_asset_file_fetcher, context)
@@ -528,7 +542,11 @@ class BrowserWorkflowClient(ProviderClient):
             browser_user_agent=request["browser_user_agent"],
             headless=request["headless"],
             runtime_context=context,
-            use_runtime_shared_browser=False,
+            use_runtime_shared_browser=True,
+            binary_path=request.get("binary_path"),
+            cdp_endpoint=request.get("cdp_endpoint"),
+            profile_dir=request.get("profile_dir"),
+            user_data_dir=request.get("user_data_dir"),
         )
         # Figures fan out several candidate URLs per asset (full-size, figure
         # page, preview), so the same image URL is frequently fetched more than
@@ -551,7 +569,11 @@ class BrowserWorkflowClient(ProviderClient):
             browser_user_agent=request["browser_user_agent"],
             headless=request["headless"],
             runtime_context=context,
-            use_runtime_shared_browser=False,
+            use_runtime_shared_browser=True,
+            binary_path=request.get("binary_path"),
+            cdp_endpoint=request.get("cdp_endpoint"),
+            profile_dir=request.get("profile_dir"),
+            user_data_dir=request.get("user_data_dir"),
             thread_local=True,
         )
 
