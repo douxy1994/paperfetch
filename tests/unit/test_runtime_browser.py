@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import sys
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -10,6 +11,38 @@ from paper_fetch import runtime as runtime_module
 from paper_fetch import runtime_browser
 from paper_fetch.runtime import RuntimeContext
 from paper_fetch.runtime_browser import BrowserContextManager
+
+
+def test_managed_chrome_args_enforce_headless_when_cloakbrowser_omits_flag(monkeypatch, tmp_path) -> None:
+    def build_args(_fingerprint: bool, args: list[str], **_kwargs: Any) -> list[str]:
+        return ["--no-sandbox", *args, "--lang=en-US"]
+
+    monkeypatch.setitem(sys.modules, "cloakbrowser", SimpleNamespace(build_args=build_args))
+
+    args = runtime_browser._build_managed_chrome_args(
+        headless=True,
+        profile_dir=tmp_path / "profile",
+        port=9333,
+    )
+
+    assert "--headless=new" in args
+    assert f"--user-data-dir={tmp_path / 'profile'}" in args
+    assert "--remote-debugging-port=9333" in args
+
+
+def test_managed_chrome_args_keep_headed_mode_when_requested(monkeypatch, tmp_path) -> None:
+    def build_args(_fingerprint: bool, args: list[str], **_kwargs: Any) -> list[str]:
+        return ["--no-sandbox", *args, "--lang=en-US"]
+
+    monkeypatch.setitem(sys.modules, "cloakbrowser", SimpleNamespace(build_args=build_args))
+
+    args = runtime_browser._build_managed_chrome_args(
+        headless=False,
+        profile_dir=tmp_path / "profile",
+        port=9333,
+    )
+
+    assert "--headless=new" not in args
 
 
 class _FakeCdpContext:

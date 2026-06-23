@@ -32,6 +32,7 @@
 
 ### 修复
 
+- 修复 managed headless Chrome 启动：当 CloakBrowser 没有产出 headless 参数时，paper-fetch 会补上 Chrome 原生 `--headless=new`，避免 Wiley 等普通 browser-backed CLI 抓取弹出可见浏览器窗口。
 - 修复 browser-backed image/file fetcher 在 managed CDP 模式下各自启动独立 Chrome 的问题；现在复用 runtime keyed browser manager，避免同 profile 文件锁死锁，同时保持每个 worker 的 context/page 隔离。
 - managed browser profile 文件锁新增超时，避免另一个 managed browser 已持有同一 profile 目录时永久阻塞。
 - 修复 CDP startup polling：当 `/json/version` 已响应但 `webSocketDebuggerUrl` 暂时为空时，不再无 sleep 忙等。

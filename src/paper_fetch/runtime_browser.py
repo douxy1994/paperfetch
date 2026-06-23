@@ -124,7 +124,7 @@ def _build_managed_chrome_args(
     try:
         import cloakbrowser
 
-        return list(
+        built_args = list(
             cloakbrowser.build_args(
                 True,
                 args,
@@ -132,6 +132,13 @@ def _build_managed_chrome_args(
                 headless=headless,
             )
         )
+        has_headless_flag = any(
+            arg == "--headless" or arg.startswith("--headless=")
+            for arg in built_args
+        )
+        if headless and not has_headless_flag:
+            built_args.append("--headless=new")
+        return built_args
     except Exception:
         if headless:
             args.append("--headless=new")

@@ -32,6 +32,7 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 
 ### Fixed
 
+- Fixed managed headless Chrome startup so paper-fetch appends Chrome's native `--headless=new` flag when CloakBrowser omits a headless argument, preventing ordinary browser-backed CLI fetches such as Wiley from opening a visible browser window.
 - Fixed browser-backed image and file fetchers so managed CDP mode reuses the runtime keyed browser manager instead of starting independent Chrome instances, avoiding same-profile lock deadlocks and preserving per-worker context isolation.
 - Fixed managed browser profile locking to use a timeout instead of blocking forever when another managed browser already owns the profile directory.
 - Fixed CDP startup polling so a responsive `/json/version` endpoint with a temporarily missing `webSocketDebuggerUrl` no longer spins without sleeping.

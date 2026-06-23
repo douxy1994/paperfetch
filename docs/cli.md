@@ -33,6 +33,8 @@ paper-fetch auth wiley --url "https://onlinelibrary.wiley.com/doi/full/10.1111/e
 
 `provider` 来自 browser runtime catalog，例如 `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi`。未传 `--url` 时打开内置样例文章；传入 `--url` 时打开用户指定的失败文章页。命令强制 headed 模式，打印 managed Chrome 启动目录和 storage-state 路径，用户在浏览器中完成合法登录或验证后，在终端按 Enter 保存过滤后的本地 storage-state 并退出。
 
+普通 `paper-fetch --query ...` 抓取在未设置 `CLOAKBROWSER_HEADLESS=0` 且未配置外部 `CLOAKBROWSER_CDP_ENDPOINT` 时默认使用 managed headless Chrome，并确保启动参数包含 `--headless=new`。只有 `paper-fetch auth <provider>`、显式关闭 headless，或连接到已有 headed CDP 浏览器时才会显示浏览器窗口。
+
 常用参数：
 
 - `--url <url>`：覆盖内置样例文章，打开具体失败文章页。
