@@ -6,6 +6,13 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.5.1 - 2026-06-23
+
+### 修复
+
+- 修复 browser PDF fallback 在 async 线程切换后没有保留调用方 runtime browser 配置的问题；现在会继续复用 provider profile 和 user-data 目录等配置，而不是强制创建新的非 runtime browser context。
+- 新增 runtime-browser PDF fallback 路径的回归测试，确保线程切换后仍复用已配置的 runtime context。
+
 ## 2.5.0 - 2026-06-23
 
 本版本重构 CloakBrowser 浏览器链路，统一切换到 CDP-managed Chrome 复用模型，并通过 provider-scoped 浏览器状态、共享 runtime context 管理和更安全的外部浏览器接入增强反爬/站点验证场景下的稳定性。

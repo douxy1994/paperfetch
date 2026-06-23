@@ -6,6 +6,13 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.5.1 - 2026-06-23
+
+### Fixed
+
+- Fixed browser PDF fallback after async thread handoff so it preserves the caller's runtime browser configuration, including provider profile and user-data directories, instead of forcing a fresh non-runtime browser context.
+- Added regression coverage for the runtime-browser PDF fallback path to ensure thread handoff still reuses the configured runtime context.
+
 ## 2.5.0 - 2026-06-23
 
 This release refactors the CloakBrowser browser path around CDP-managed Chrome reuse and improves anti-bot/challenge resilience through provider-scoped browser state, shared runtime context management, and safer external-browser attachment.
