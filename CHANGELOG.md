@@ -6,6 +6,13 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.5.2 - 2026-06-24
+
+### Fixed
+
+- Fixed shared HTML cleanup so semantic attributes such as `data-title`, `alt`, `title`, and `aria-*` no longer trigger chrome noise filtering. This preserves valid body figures whose captions contain words such as "related", including Nature articles where Fig. 2 was dropped from Springer/Nature HTML extraction.
+- Added regression coverage to keep Springer/Nature body figure assets with semantic `data-title` text while continuing to remove real related/recommended article chrome identified by structural attributes.
+
 ## 2.5.1 - 2026-06-23
 
 ### Fixed

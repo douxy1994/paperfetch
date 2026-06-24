@@ -1359,6 +1359,33 @@ class SharedHtmlHelperTests(unittest.TestCase):
 
         self.assertNotIn("orcid.org", str(soup))
 
+    def test_prune_html_tree_ignores_semantic_attributes_for_noise_tokens(self) -> None:
+        soup = BeautifulSoup(
+            """
+            <article>
+              <div
+                class="c-article-section__figure"
+                id="figure-2"
+                data-title="Nature-related increases in PD."
+              >
+                <figure>
+                  <figcaption>Fig. 2: Nature-related increases in PD.</figcaption>
+                  <p>Current and additional default probability values.</p>
+                </figure>
+              </div>
+              <div class="related-articles" id="recommended-reading">
+                <p>Recommended articles</p>
+              </div>
+            </article>
+            """,
+            "html.parser",
+        )
+
+        html_runtime.prune_html_tree(soup)
+
+        self.assertIsNotNone(soup.find(id="figure-2"))
+        self.assertIsNone(soup.find(id="recommended-reading"))
+
     def test_extract_html_section_hints_reads_structural_data_availability(
         self,
     ) -> None:
