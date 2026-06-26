@@ -18,6 +18,10 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 - PDF fallback now honors `asset_profile=body|all` when artifact saving is enabled, exporting PDF-rendered body images to `body_assets/` and surfacing them in article assets/artifacts across direct HTTP and seeded-browser PDF routes.
 - PDF fallback source files now use stable, source-derived filenames instead of a single `downloaded.pdf`, reducing collisions when multiple fallback PDFs are materialized in the same artifact directory.
 
+### Fixed
+
+- Fixed IOP figure asset extraction so standard `_lr` / `_online` CDN image links are upgraded to `_hr` high-resolution candidates before preview fallback, allowing IOP HTML fetches such as `10.1088/1748-9326/ad560b` to save full-size body figures when available.
+
 ## 2.5.2 - 2026-06-24
 
 ### Fixed

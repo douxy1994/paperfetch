@@ -102,6 +102,10 @@ IOP_EXTRACTION_CLEANUP_SELECTORS = (
 IOP_FORMULA_CONTAINER_TOKENS = ("display-eqn", "inline-eqn", "tex")
 IOP_DISPLAY_FORMULA_SELECTORS = (".display-eqn",)
 IOP_ACCEPTED_FIGURE_PREVIEW_URL_TOKENS = ("_online.",)
+IOP_HIGH_RESOLUTION_FIGURE_URL_PATTERN = re.compile(
+    r"(?P<stem>.+)_(?:lr|online)(?P<suffix>\.(?:jpe?g|png|gif|webp))(?:[?#].*)?$",
+    re.IGNORECASE,
+)
 # SITE_UI_COPY_REGRESSION_MARKER: IOPScience article action labels; keep tied to provider cleanup tests.
 # STRUCTURAL_UI_COPY_HOOK: provider cleanup policy removes these only from IOP article chrome.
 IOP_MARKDOWN_PROMO_TOKENS = (
@@ -711,12 +715,41 @@ def _iop_figure_preview_is_accepted(asset: Mapping[str, Any]) -> bool:
     )
 
 
+def _iop_high_resolution_figure_url(value: str | None) -> str:
+    url = normalize_text(value)
+    if not url:
+        return ""
+    parsed = urlparse(url)
+    host = normalize_text(parsed.hostname or "").lower()
+    if not (host == "content.cld.iop.org" or host.endswith(".content.cld.iop.org")):
+        return ""
+    match = IOP_HIGH_RESOLUTION_FIGURE_URL_PATTERN.match(url)
+    if match is None:
+        return ""
+    return f"{match.group('stem')}_hr{match.group('suffix')}"
+
+
+def _augment_iop_figure_resolution_candidates(asset: Mapping[str, Any]) -> dict[str, Any]:
+    item = dict(asset)
+    if normalize_text(str(item.get("kind") or "")).lower() != "figure":
+        return item
+    if normalize_text(str(item.get("full_size_url") or "")):
+        return item
+
+    for field in ("preview_url", "url", "original_url", "source_url"):
+        high_resolution_url = _iop_high_resolution_figure_url(str(item.get(field) or ""))
+        if high_resolution_url:
+            item["full_size_url"] = high_resolution_url
+            break
+    return item
+
+
 def _mark_iop_accepted_figure_previews(
     assets: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
     marked: list[dict[str, Any]] = []
     for asset in assets:
-        item = dict(asset)
+        item = _augment_iop_figure_resolution_candidates(asset)
         if _iop_figure_preview_is_accepted(item):
             item["preview_accepted"] = True
         marked.append(item)

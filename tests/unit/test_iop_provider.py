@@ -375,6 +375,39 @@ def test_iop_suppresses_only_non_inline_asset_captions_already_in_markdown() -> 
     assert suppressed[1]["url"].endswith("fA1_online.jpg")
 
 
+def test_iop_extracts_high_resolution_candidate_from_standard_figure_url() -> None:
+    html = """
+    <article>
+      <figure>
+        <img src="https://content.cld.iop.org/journals/1748-9326/19/7/074035/revision2/erlad560bf1_lr.jpg" alt="Figure 1" />
+        <figcaption>Figure 1. Example caption.</figcaption>
+      </figure>
+      <figure>
+        <img src="https://content.cld.iop.org/journals/1748-9326/19/7/074035/revision2/erlad560bf2_online.jpg" alt="Figure 2" />
+        <figcaption>Figure 2. Example caption.</figcaption>
+      </figure>
+      <figure>
+        <img src="https://example.test/figure3_lr.jpg" alt="Figure 3" />
+        <figcaption>Figure 3. Non-IOP image.</figcaption>
+      </figure>
+    </article>
+    """
+
+    assets = _iop_html.extract_scoped_html_assets(
+        html,
+        IOP_SAMPLE_LANDING,
+        asset_profile="body",
+    )
+
+    assert assets[0]["url"].endswith("erlad560bf1_lr.jpg")
+    assert assets[0]["preview_url"].endswith("erlad560bf1_lr.jpg")
+    assert assets[0]["full_size_url"].endswith("erlad560bf1_hr.jpg")
+    assert assets[1]["url"].endswith("erlad560bf2_online.jpg")
+    assert assets[1]["preview_url"].endswith("erlad560bf2_online.jpg")
+    assert assets[1]["full_size_url"].endswith("erlad560bf2_hr.jpg")
+    assert "full_size_url" not in assets[2]
+
+
 def test_iop_real_replay_covers_table_and_formula_purposes() -> None:
     """rule: rule-iop-body-challenge-cleanup"""
     html = _golden_fixture_text(IOP_TABLE_FORMULA_DOI, "original.html")
@@ -451,6 +484,8 @@ def test_iop_real_replay_covers_table_and_formula_purposes() -> None:
     assert all(asset.get("preview_accepted") is True for asset in assets)
     assert any("qstac3460f1_online.jpg" in url for url in asset_urls)
     assert any("qstac3460f2_online.jpg" in url for url in asset_urls)
+    assert any(str(asset.get("full_size_url", "")).endswith("qstac3460f1_hr.jpg") for asset in assets)
+    assert any(str(asset.get("full_size_url", "")).endswith("qstac3460f2_hr.jpg") for asset in assets)
     assert not any("qstac3460eqn" in url or "qstac3460ieqn" in url for url in asset_urls)
 
 

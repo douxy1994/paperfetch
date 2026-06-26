@@ -18,6 +18,10 @@
 - PDF fallback 现在会在启用 artifact 保存且 `asset_profile=body|all` 时导出 PDF 正文图片到 `body_assets/`，并在 direct HTTP 与 seeded-browser PDF 路由中把这些图片同步暴露到 article assets/artifacts。
 - PDF fallback 来源文件现在使用根据 source 派生的稳定文件名，不再统一写成 `downloaded.pdf`，减少同一 artifact 目录内多个 PDF fallback 文件互相覆盖的风险。
 
+### 修复
+
+- 修复 IOP figure 资产抽取：标准 `_lr` / `_online` CDN 图片链接现在会先升级为 `_hr` 高分辨率候选，再进入预览图回退；因此 `10.1088/1748-9326/ad560b` 等 IOP HTML 抓取在高分辨率图可用时会保存 full-size 正文图片。
+
 ## 2.5.2 - 2026-06-24
 
 ### 修复
