@@ -6,6 +6,18 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.6.0 - 2026-06-26
+
+### 新增
+
+- 新增 Frontiers (`frontiers`) XML-first provider：支持 `10.3389/` 与 `frontiersin.org` 路由、canonical article 发现、共享 JATS 渲染、figure URL 重写、direct HTTP PDF fallback、`frontiers_xml` / `frontiers_pdf` source、manifest、文档和单测覆盖。
+- 新增 `paper-fetch --version`，并补充 CLI help 中 reference、asset 和 token 渲染选项说明。
+
+### 变更
+
+- PDF fallback 现在会在启用 artifact 保存且 `asset_profile=body|all` 时导出 PDF 正文图片到 `body_assets/`，并在 direct HTTP 与 seeded-browser PDF 路由中把这些图片同步暴露到 article assets/artifacts。
+- PDF fallback 来源文件现在使用根据 source 派生的稳定文件名，不再统一写成 `downloaded.pdf`，减少同一 artifact 目录内多个 PDF fallback 文件互相覆盖的风险。
+
 ## 2.5.2 - 2026-06-24
 
 ### 修复

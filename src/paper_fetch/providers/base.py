@@ -416,83 +416,88 @@ class ProviderClient:
         context = self._runtime_context(context, output_dir=output_dir)
         active_artifact_store = artifact_store or ArtifactStore.from_download_dir(output_dir)
         asset_output_dir = active_artifact_store.asset_download_dir
-        prepared = self.prepare_fetch_result_payload(doi, metadata, asset_profile=asset_profile, context=context)
-        prepared.raw_payload = self._sync_fetch_result_content_local_copy(prepared.raw_payload)
-        prepared = self.maybe_recover_fetch_result_payload(
-            doi,
-            metadata,
-            prepared,
-            asset_profile=asset_profile,
-            context=context,
-        )
-        prepared.raw_payload = self._sync_fetch_result_content_local_copy(prepared.raw_payload)
-        prepared.raw_payload = self.ensure_html_markdown(prepared.raw_payload, metadata, context=context)
-        raw_payload = prepared.raw_payload
-        content = raw_payload.content
-        artifact_policy = self.describe_artifacts(raw_payload)
-        downloaded_assets: list[Mapping[str, Any]] = []
-        asset_failures: list[Mapping[str, Any]] = []
-        warnings = list(prepared.result_warnings if prepared.result_warnings is not None else raw_payload.warnings)
-        trace = list(prepared.result_trace if prepared.result_trace is not None else raw_payload.trace)
-        if (
-            asset_output_dir is not None
-            and asset_profile != "none"
-            and artifact_policy.allow_related_assets
-            and self.should_download_related_assets_for_result(
-                raw_payload,
-                provisional_article=prepared.provisional_article,
-            )
-        ):
-            try:
-                asset_started_at = time.monotonic()
-                try:
-                    asset_results = self.download_related_assets(
-                        doi,
-                        metadata,
-                        raw_payload,
-                        asset_output_dir,
-                        asset_profile=asset_profile,
-                        context=context,
-                    )
-                finally:
-                    context.accumulate_stage_timing("asset_seconds", started_at=asset_started_at)
-                downloaded_assets = list(asset_results.get("assets") or [])
-                asset_failures = list(asset_results.get("asset_failures") or [])
-            except ProviderFailure as exc:
-                warnings.append(self.asset_download_failure_warning(exc))
-                trace.extend(trace_from_markers([download_marker(f"{self.name}_assets_failed")]))
-            except (RequestFailure, OSError) as exc:
-                warnings.append(self.asset_download_failure_warning(exc))
-                trace.extend(trace_from_markers([download_marker(f"{self.name}_assets_failed")]))
-        if prepared.provisional_article is not None and not downloaded_assets and not asset_failures:
-            article = prepared.provisional_article
-        else:
-            article = self.to_article_model(
+        previous_asset_profile = context.asset_profile
+        context.asset_profile = asset_profile
+        try:
+            prepared = self.prepare_fetch_result_payload(doi, metadata, asset_profile=asset_profile, context=context)
+            prepared.raw_payload = self._sync_fetch_result_content_local_copy(prepared.raw_payload)
+            prepared = self.maybe_recover_fetch_result_payload(
+                doi,
                 metadata,
+                prepared,
+                asset_profile=asset_profile,
+                context=context,
+            )
+            prepared.raw_payload = self._sync_fetch_result_content_local_copy(prepared.raw_payload)
+            prepared.raw_payload = self.ensure_html_markdown(prepared.raw_payload, metadata, context=context)
+            raw_payload = prepared.raw_payload
+            content = raw_payload.content
+            artifact_policy = self.describe_artifacts(raw_payload)
+            downloaded_assets: list[Mapping[str, Any]] = []
+            asset_failures: list[Mapping[str, Any]] = []
+            warnings = list(prepared.result_warnings if prepared.result_warnings is not None else raw_payload.warnings)
+            trace = list(prepared.result_trace if prepared.result_trace is not None else raw_payload.trace)
+            if (
+                asset_output_dir is not None
+                and asset_profile != "none"
+                and artifact_policy.allow_related_assets
+                and self.should_download_related_assets_for_result(
+                    raw_payload,
+                    provisional_article=prepared.provisional_article,
+                )
+            ):
+                try:
+                    asset_started_at = time.monotonic()
+                    try:
+                        asset_results = self.download_related_assets(
+                            doi,
+                            metadata,
+                            raw_payload,
+                            asset_output_dir,
+                            asset_profile=asset_profile,
+                            context=context,
+                        )
+                    finally:
+                        context.accumulate_stage_timing("asset_seconds", started_at=asset_started_at)
+                    downloaded_assets = list(asset_results.get("assets") or [])
+                    asset_failures = list(asset_results.get("asset_failures") or [])
+                except ProviderFailure as exc:
+                    warnings.append(self.asset_download_failure_warning(exc))
+                    trace.extend(trace_from_markers([download_marker(f"{self.name}_assets_failed")]))
+                except (RequestFailure, OSError) as exc:
+                    warnings.append(self.asset_download_failure_warning(exc))
+                    trace.extend(trace_from_markers([download_marker(f"{self.name}_assets_failed")]))
+            if prepared.provisional_article is not None and not downloaded_assets and not asset_failures:
+                article = prepared.provisional_article
+            else:
+                article = self.to_article_model(
+                    metadata,
+                    raw_payload,
+                    downloaded_assets=downloaded_assets,
+                    asset_failures=asset_failures,
+                    context=context,
+                )
+            article = self.finalize_fetch_result_article(
+                article,
+                raw_payload=raw_payload,
+                provisional_article=prepared.provisional_article,
+                finalize_warnings=prepared.finalize_warnings,
+            )
+            artifacts = self.describe_artifacts(
                 raw_payload,
                 downloaded_assets=downloaded_assets,
                 asset_failures=asset_failures,
-                context=context,
             )
-        article = self.finalize_fetch_result_article(
-            article,
-            raw_payload=raw_payload,
-            provisional_article=prepared.provisional_article,
-            finalize_warnings=prepared.finalize_warnings,
-        )
-        artifacts = self.describe_artifacts(
-            raw_payload,
-            downloaded_assets=downloaded_assets,
-            asset_failures=asset_failures,
-        )
-        return ProviderFetchResult(
-            provider=raw_payload.provider or self.name,
-            article=article,
-            content=content,
-            warnings=warnings,
-            trace=list(trace or trace_from_markers(article.quality.source_trail)),
-            artifacts=artifacts,
-        )
+            return ProviderFetchResult(
+                provider=raw_payload.provider or self.name,
+                article=article,
+                content=content,
+                warnings=warnings,
+                trace=list(trace or trace_from_markers(article.quality.source_trail)),
+                artifacts=artifacts,
+            )
+        finally:
+            context.asset_profile = previous_asset_profile
 
     def _runtime_context(self, context: RuntimeContext | None, *, output_dir: Path | None = None) -> RuntimeContext:
         if context is not None:

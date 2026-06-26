@@ -71,3 +71,7 @@ providers:
     display_source: aip_html
     status: implemented
     manifest_path: onboarding/manifests/aip.yml
+  - name: frontiers
+    display_source: frontiers_xml
+    status: implemented
+    manifest_path: onboarding/manifests/frontiers.yml

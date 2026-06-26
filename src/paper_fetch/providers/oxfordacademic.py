@@ -29,7 +29,14 @@ from ..utils import empty_asset_results, normalize_text
 from ..quality.html_availability import HtmlQualityAssessor, availability_failure_message
 from . import _oxfordacademic_html as oxford_html
 from ._payloads import build_provider_payload
-from ._pdf_common import PdfFetchFailure, default_pdf_headers, pdf_fetch_result_from_response
+from ._pdf_common import (
+    PdfFetchFailure,
+    default_pdf_headers,
+    pdf_asset_output_dir,
+    pdf_asset_profile_from_context,
+    pdf_fetch_result_assets,
+    pdf_fetch_result_from_response,
+)
 from ._registry import ProviderBundle, register_provider_bundle
 from ._waterfall import (
     DEFAULT_WATERFALL_CONTINUE_CODES,
@@ -144,7 +151,7 @@ class OxfordAcademicClient(ProviderClient):
                 build_provider_status_check(
                     PDF_FALLBACK,
                     OK,
-                    "Oxford Academic PDF fallback accepts only validated PDF responses and extracts text-only full text.",
+                    "Oxford Academic PDF fallback accepts only validated PDF responses; body/all asset requests can save exported PDF images when artifacts are enabled.",
                     details={"mode": "direct_http_pdf"},
                 ),
             ],
@@ -310,6 +317,7 @@ class OxfordAcademicClient(ProviderClient):
         html_text: str | None,
         html_failure_message: str,
         html_trace_markers: Sequence[str],
+        context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         candidates = self.pdf_candidates(
             doi,
@@ -318,12 +326,15 @@ class OxfordAcademicClient(ProviderClient):
             source_url=source_url,
         )
         last_failure: PdfFetchFailure | None = None
+        effective_asset_profile = pdf_asset_profile_from_context(context)
         for candidate in candidates:
             try:
                 response = self._request_pdf_candidate(candidate, referer=source_url)
                 pdf_result = pdf_fetch_result_from_response(
                     response,
                     artifact_dir=None,
+                    asset_profile=effective_asset_profile,
+                    asset_output_dir=pdf_asset_output_dir(context, asset_profile=effective_asset_profile),
                     source_url=candidate,
                     final_url=str(response.get("url") or candidate),
                     not_pdf_message=(
@@ -362,6 +373,7 @@ class OxfordAcademicClient(ProviderClient):
                 },
                 reason="Downloaded full text from the Oxford Academic public PDF fallback route.",
                 suggested_filename=pdf_result.suggested_filename,
+                extracted_assets=pdf_fetch_result_assets(pdf_result),
                 html_failure_message=html_failure_message,
                 content_needs_local_copy=True,
                 warnings=[
@@ -439,6 +451,7 @@ class OxfordAcademicClient(ProviderClient):
                 html_text=html_text,
                 html_failure_message=html_failure_message,
                 html_trace_markers=state.source_markers(),
+                context=runtime_context,
             )
 
         def final_failure(state: ProviderWaterfallState) -> ProviderFailure:
@@ -537,7 +550,7 @@ class OxfordAcademicClient(ProviderClient):
         diagnostics = dict(content.diagnostics if content is not None else {})
         extraction = diagnostics.get("extraction") if isinstance(diagnostics.get("extraction"), Mapping) else {}
         availability = diagnostics.get("availability_diagnostics")
-        assets = [] if route == PDF_FALLBACK else list(content.extracted_assets if content is not None else [])
+        assets = list(content.extracted_assets if content is not None else [])
         return article_from_markdown(
             source=source,
             metadata=merged_metadata,
@@ -574,10 +587,11 @@ class OxfordAcademicClient(ProviderClient):
     ) -> ProviderArtifacts:
         content = raw_payload.content
         text_only = normalize_text(content.route_kind if content is not None else "").lower() == PDF_FALLBACK
+        pdf_assets = list(content.extracted_assets if content is not None and text_only else [])
         return ProviderArtifacts(
-            assets=[dict(item) for item in (downloaded_assets or [])],
+            assets=[dict(item) for item in [*pdf_assets, *list(downloaded_assets or [])]],
             asset_failures=[dict(item) for item in (asset_failures or [])],
-            text_only=text_only,
+            text_only=text_only and not pdf_assets,
         )
 
 

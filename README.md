@@ -31,7 +31,7 @@
 
 - 支持 DOI、URL 和标题查询。
 - 输出结构化论文元数据、正文 Markdown、引用信息和本地缓存资源。
-- 支持 17 个出版社/平台全文 provider，包括 arXiv、Elsevier、Springer、Wiley、Science、PNAS、IEEE、Copernicus、AMS、MDPI、Royal Society Publishing、Annual Reviews、PLOS、Oxford Academic、ACS、IOP 和 AIP。
+- 支持 18 个出版社/平台全文 provider，包括 arXiv、Elsevier、Springer、Wiley、Science、PNAS、IEEE、Copernicus、AMS、MDPI、Royal Society Publishing、Annual Reviews、PLOS、Frontiers、Oxford Academic、ACS、IOP 和 AIP。
 - 在无法取得全文时返回带警告的仅摘要或仅元数据结果。
 
 项目边界：
@@ -260,13 +260,14 @@ paper-fetch-mcp
 
 - `--format markdown|json|both` 指定 stdout、`--output` 或 `--output-dir` 默认主输出文件的序列化格式，默认是 `markdown`。
 - `--query-file <path>` 启用批量抓取，每行一个 DOI、URL 或标题；空行和以 `#` 开头的注释行会被忽略。批量模式不向 stdout 输出正文，而是把每篇主输出写到输出目录，并生成 JSONL 汇总。
+- `--version` 输出当前安装的 `paper-fetch` 版本并退出。
 - `--output <path>` 把这份格式化结果写到指定文件；显式 `--output -` 表示打印到终端。
 - `--output-dir <dir>` 是默认主输出、Markdown、PDF fallback 来源文件和本地资产的保存目录；CLI 会在抓取前自动创建该目录，未显式传 `--output` 时，主输出会写到 `<doi>.md`、`<doi>.json` 或 `<doi>.both.json`，不再把正文打印到终端。
 - `--batch-concurrency <1..8>` 控制批量并发，默认 `1`；`--batch-results <path>` 可覆盖默认的 `<output-dir>/batch-results.jsonl`。
 - `--artifact-mode markdown-assets|all|none` 控制中间产物保留，CLI 默认是 `markdown-assets`：保存 Markdown、按 `--asset-profile` 保存资产，不保留 provider 原始 HTML/XML、fetch-envelope/cache JSON 或 HTTP textual cache；如果正文来自 PDF fallback，仍会保存 PDF 源文件便于溯源。
 - `--artifact-mode all` 保留旧行为：provider HTML/PDF、辅助 artifact、HTTP textual cache 等调试 artifact 都可落盘。
 - `--artifact-mode none` 不保存 provider artifact 或资产；显式 `--output <path>`、`--save-markdown`，以及未显式 `--output` 时由 `--output-dir` 承接的主输出仍可写文件。`--no-download` 保留兼容，但已弃用，等价于 `--artifact-mode none`。
-- `--asset-profile none|body|all` 控制本地内容资产下载范围，CLI 默认是 `body`：`none` 不下载本地资产但保留 Markdown 中可解析的远程图片链接，`body` 保存正文图片/图表/公式图片，`all` 额外保存补充材料。
+- `--asset-profile none|body|all` 控制本地内容资产下载范围，CLI 默认是 `body`：`none` 不下载本地资产但保留 Markdown 中可解析的远程图片链接，`body` 保存正文图片/图表/公式图片，`all` 额外保存补充材料；PDF fallback 在 `body` / `all` 且允许 artifact 落盘时会保存 `pymupdf4llm` 导出的正文图片到 `body_assets/`。
 
 完整命令组合、主输出与 artifact 的区别、错误输出和 exit code 见 [`docs/cli.md`](docs/cli.md)。
 

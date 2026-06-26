@@ -124,6 +124,7 @@ class RuntimeContext:
     clients: Mapping[str, object] | None = None
     download_dir: Path | None = None
     artifact_mode: ArtifactMode = DEFAULT_ARTIFACT_MODE
+    asset_profile: str | None = None
     cancel_check: Callable[[], bool] | None = None
     artifact_store: ArtifactStore | None = None
     fetch_cache: Any | None = None

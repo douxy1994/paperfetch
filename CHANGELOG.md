@@ -6,6 +6,18 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.6.0 - 2026-06-26
+
+### Added
+
+- Added Frontiers (`frontiers`) XML-first provider for `10.3389/` and `frontiersin.org`, with canonical article discovery, shared JATS rendering, figure URL rewriting, direct HTTP PDF fallback, `frontiers_xml` / `frontiers_pdf` sources, manifest, docs, and unit coverage.
+- Added `paper-fetch --version` plus CLI help text for reference, asset, and token rendering options.
+
+### Changed
+
+- PDF fallback now honors `asset_profile=body|all` when artifact saving is enabled, exporting PDF-rendered body images to `body_assets/` and surfacing them in article assets/artifacts across direct HTTP and seeded-browser PDF routes.
+- PDF fallback source files now use stable, source-derived filenames instead of a single `downloaded.pdf`, reducing collisions when multiple fallback PDFs are materialized in the same artifact directory.
+
 ## 2.5.2 - 2026-06-24
 
 ### Fixed

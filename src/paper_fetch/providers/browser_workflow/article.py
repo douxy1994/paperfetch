@@ -17,7 +17,7 @@ from ...publisher_identity import normalize_doi
 from ...runtime import RuntimeContext
 from ...tracing import fulltext_marker, merge_trace, source_trail_from_trace, trace_from_markers
 from ...utils import dedupe_authors, extend_unique, normalize_text
-from ...reason_codes import ABSTRACT_ONLY
+from ...reason_codes import ABSTRACT_ONLY, PDF_FALLBACK
 from .html_extraction import (
     _cached_browser_workflow_markdown,
     rewrite_inline_figure_links,
@@ -144,7 +144,12 @@ def browser_workflow_article_from_payload(
     trace = list(raw_payload.trace)
     doi = normalize_doi(metadata.get("doi"))
     source = client.article_source_for_payload(raw_payload)
-    assets = list(downloaded_assets or [])
+    route = normalize_text(content.route_kind if content is not None else "").lower()
+    assets = (
+        list(content.extracted_assets if content is not None else [])
+        if route == PDF_FALLBACK
+        else list(downloaded_assets or [])
+    )
     content_type = str(raw_payload.content_type or "").lower()
 
     if not markdown_text and "html" in content_type:

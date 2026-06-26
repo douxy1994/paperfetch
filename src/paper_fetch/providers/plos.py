@@ -29,7 +29,7 @@ from ..tracing import download_marker, fulltext_marker, trace_from_markers
 from ..utils import empty_asset_results, normalize_text
 from ._article_markdown_jats import parse_jats_xml
 from ._payloads import build_provider_payload
-from ._pdf_common import default_pdf_headers
+from ._pdf_common import default_pdf_headers, pdf_asset_output_dir, pdf_asset_profile_from_context, pdf_fetch_result_assets
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http
 from ._registry import ProviderBundle, register_provider_bundle
 from .base import (
@@ -307,7 +307,7 @@ class PlosClient(ProviderClient):
                 build_provider_status_check(
                     PDF_FALLBACK,
                     OK,
-                    "PLOS printable PDF fallback is available as text-only full text when XML is not usable.",
+                    "PLOS printable PDF fallback is available when XML is not usable; body/all asset requests can save exported PDF images when artifacts are enabled.",
                     details={"mode": "direct_http_pdf"},
                 ),
             ],
@@ -382,13 +382,17 @@ class PlosClient(ProviderClient):
         metadata: Mapping[str, Any],
         *,
         xml_failure_message: str,
+        context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         candidate = _pdf_candidate_url(doi)
+        effective_asset_profile = pdf_asset_profile_from_context(context)
         try:
             pdf_result = PdfFallbackStrategy(
                 transport=self.transport,
                 headers=default_pdf_headers(self.user_agent, referer=candidate),
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+                asset_profile=effective_asset_profile,
+                asset_output_dir=pdf_asset_output_dir(context, asset_profile=effective_asset_profile),
                 fetcher=fetch_pdf_over_http,
             ).fetch([candidate])
         except PdfFetchFailure as exc:
@@ -407,6 +411,7 @@ class PlosClient(ProviderClient):
             diagnostics={PDF_FALLBACK: {"candidates": [candidate]}},
             reason="Downloaded full text from the PLOS printable PDF fallback after XML was not usable.",
             suggested_filename=pdf_result.suggested_filename,
+            extracted_assets=pdf_fetch_result_assets(pdf_result),
             html_failure_message=xml_failure_message,
             warnings=[
                 f"PLOS XML route was not usable ({xml_failure_message}); used printable PDF fallback.",
@@ -426,7 +431,7 @@ class PlosClient(ProviderClient):
         *,
         context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
-        del context
+        context = self._runtime_context(context)
         failures: list[tuple[str, ProviderFailure]] = []
         try:
             return self._fetch_xml_payload(doi, metadata)
@@ -439,6 +444,7 @@ class PlosClient(ProviderClient):
                 doi,
                 metadata,
                 xml_failure_message=xml_failure.message,
+                context=context,
             )
         except ProviderFailure as exc:
             failures.append(("pdf", exc))
@@ -624,16 +630,15 @@ class PlosClient(ProviderClient):
         content = raw_payload.content
         if normalize_text(content.route_kind if content is not None else "").lower() != PDF_FALLBACK:
             return artifacts
+        pdf_assets = list(content.extracted_assets if content is not None else [])
         return ProviderArtifacts(
-            assets=list(artifacts.assets),
+            assets=[*list(artifacts.assets), *pdf_assets],
             asset_failures=list(artifacts.asset_failures),
             allow_related_assets=False,
-            text_only=True,
-            skip_warning=(
-                "PLOS PDF fallback currently returns text-only full text; "
-                "figure and supplementary asset downloads are not implemented for PDF fallback."
-            ),
-            skip_trace=trace_from_markers([download_marker("plos_assets_skipped_text_only")]),
+            text_only=not pdf_assets,
+            skip_trace=trace_from_markers([download_marker("plos_assets_skipped_text_only")])
+            if not pdf_assets
+            else [],
         )
 
 

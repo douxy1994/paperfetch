@@ -32,7 +32,13 @@ from ..utils import normalize_text
 from . import _wiley_html, browser_workflow
 from .browser_workflow.shared import BrowserWorkflowDeps, default_browser_workflow_deps
 from ._pdf_fallback import PdfFallbackFailure, PdfFallbackStrategy, fetch_pdf_over_http
-from ._pdf_common import PdfFetchResult, pdf_fetch_result_from_response
+from ._pdf_common import (
+    PdfFetchResult,
+    pdf_asset_output_dir,
+    pdf_asset_profile_from_context,
+    pdf_fetch_result_assets,
+    pdf_fetch_result_from_response,
+)
 from ._waterfall import (
     ProviderWaterfallStep,
     ProviderWaterfallState,
@@ -127,6 +133,8 @@ def _fetch_wiley_tdm_pdf_result(
     api_url: str,
     headers: Mapping[str, str],
     artifact_dir=None,
+    asset_profile="none",
+    asset_output_dir=None,
     timeout: int = DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
 ) -> PdfFetchResult:
     request_headers = {"Accept": PDF_ACCEPT_HEADER, **dict(headers)}
@@ -158,12 +166,16 @@ def _fetch_wiley_tdm_pdf_result(
             headers=request_headers,
             timeout=timeout,
             artifact_dir=artifact_dir,
+            asset_profile=asset_profile,
+            asset_output_dir=asset_output_dir,
             fetcher=fetch_pdf_over_http,
         ).fetch([redirected_url])
 
     return pdf_fetch_result_from_response(
         response,
         artifact_dir=artifact_dir,
+        asset_profile=asset_profile,
+        asset_output_dir=asset_output_dir,
         source_url=api_url,
         final_url=final_url,
         not_pdf_message="Wiley API PDF fallback did not return a PDF file.",
@@ -279,6 +291,7 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
 
             api_url = self._tdm_api_url(bootstrap.normalized_doi)
             try:
+                effective_asset_profile = pdf_asset_profile_from_context(context)
                 pdf_result = _fetch_wiley_tdm_pdf_result(
                     self.transport,
                     api_url=api_url,
@@ -286,6 +299,8 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
                     artifact_dir=(bootstrap.runtime.artifact_dir / "pdf_api_fallback")
                     if bootstrap.runtime is not None
                     else None,
+                    asset_profile=effective_asset_profile,
+                    asset_output_dir=pdf_asset_output_dir(context, asset_profile=effective_asset_profile),
                 )
             except PdfFallbackFailure as exc:
                 raise ProviderFailure(NO_RESULT, exc.message) from exc
@@ -304,6 +319,7 @@ class WileyClient(browser_workflow.BrowserWorkflowClient):
                     html_failure_reason=bootstrap.html_failure_reason,
                     html_failure_message=bootstrap.html_failure_message,
                     suggested_filename=pdf_result.suggested_filename,
+                    extracted_assets=pdf_fetch_result_assets(pdf_result),
                 ),
                 needs_local_copy=True,
             )

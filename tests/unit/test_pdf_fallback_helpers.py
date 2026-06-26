@@ -710,6 +710,89 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(result, "## Results\n\nExtracted PDF body.")
         self.assertEqual(calls[0]["errors"], "replace")
 
+    def test_render_pdf_markdown_result_does_not_write_images_for_asset_profile_none(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def fake_to_markdown(path: str, **kwargs) -> str:
+            self.assertEqual(path, "paper.pdf")
+            calls.append(dict(kwargs))
+            return "# Example\n\n" + ("body text " * 140)
+
+        fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}),
+        ):
+            result = _pdf_common.render_pdf_markdown_result(
+                Path("paper.pdf"),
+                asset_profile="none",
+                asset_output_dir=Path(tmpdir),
+                source_url="https://example.org/paper.pdf",
+            )
+
+        self.assertEqual(calls, [{}])
+        self.assertEqual(result.assets, [])
+
+    def test_render_pdf_markdown_result_writes_body_images_for_body_asset_profile(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            image_dir = output_dir / "body_assets"
+            image_path = image_dir / "paper-0001-00.png"
+
+            def fake_to_markdown(path: str, **kwargs) -> str:
+                self.assertEqual(path, "paper.pdf")
+                calls.append(dict(kwargs))
+                image_dir.mkdir(parents=True, exist_ok=True)
+                image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+                return f"# Example\n\n![]({image_path})\n\n" + ("body text " * 140)
+
+            fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+
+            with mock.patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}):
+                result = _pdf_common.render_pdf_markdown_result(
+                    Path("paper.pdf"),
+                    asset_profile="body",
+                    asset_output_dir=output_dir,
+                    source_url="https://example.org/paper.pdf",
+                )
+
+        self.assertEqual(calls[0]["write_images"], True)
+        self.assertEqual(calls[0]["image_path"], str(image_dir))
+        self.assertIn("![Figure 1](body_assets/paper-0001-00.png)", result.markdown_text)
+        self.assertEqual(len(result.assets), 1)
+        self.assertEqual(result.assets[0]["kind"], "figure")
+        self.assertEqual(result.assets[0]["section"], "body")
+        self.assertEqual(result.assets[0]["render_state"], "inline")
+        self.assertEqual(result.assets[0]["url"], "body_assets/paper-0001-00.png")
+        self.assertEqual(result.assets[0]["path"], str(image_path))
+
+    def test_pdf_fetch_result_from_bytes_does_not_keep_temp_images_without_asset_output_dir(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def fake_to_markdown(path: str, **kwargs) -> str:
+            self.assertTrue(path.endswith(".pdf"))
+            calls.append(dict(kwargs))
+            return "# Example\n\n" + ("body text " * 140)
+
+        fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+
+        with mock.patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}):
+            result = _pdf_common.pdf_fetch_result_from_bytes(
+                artifact_dir=None,
+                asset_profile="body",
+                asset_output_dir=None,
+                source_url="https://example.org/paper.pdf",
+                final_url="https://example.org/paper.pdf",
+                pdf_bytes=b"%PDF-1.7 body",
+                suggested_filename="paper.pdf",
+            )
+
+        self.assertEqual(calls, [{}])
+        self.assertEqual(result.assets, [])
+
     def test_transparent_pdf_markdown_protects_pymupdf_text_subprocess_decoding(self) -> None:
         calls: list[dict[str, object]] = []
 

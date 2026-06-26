@@ -11,6 +11,7 @@ from ...runtime import RuntimeContext
 from ...tracing import trace_from_markers
 from ...reason_codes import PDF_FALLBACK
 from ..base import ProviderContent, RawFulltextPayload
+from .._pdf_common import pdf_asset_output_dir, pdf_asset_profile_from_context, pdf_fetch_result_assets
 from .fetchers import _choose_browser_seed_url
 from .shared import BrowserWorkflowDeps, default_browser_workflow_deps
 
@@ -67,6 +68,8 @@ def fetch_seeded_browser_pdf_payload(
     pdf_result = deps.fetch_pdf_with_browser(
         pdf_candidates,
         artifact_dir=runtime.artifact_dir / artifact_subdir,
+        asset_profile=pdf_asset_profile_from_context(context),
+        asset_output_dir=pdf_asset_output_dir(context),
         browser_cookies=list(pdf_context_seed.get("browser_cookies") or []),
         browser_user_agent=pdf_context_seed.get("browser_user_agent")
         or getattr(runtime, "user_agent", None),
@@ -96,6 +99,7 @@ def fetch_seeded_browser_pdf_payload(
             html_failure_reason=html_failure_reason,
             html_failure_message=html_failure_message,
             suggested_filename=pdf_result.suggested_filename,
+            extracted_assets=pdf_fetch_result_assets(pdf_result),
         ),
         warnings=payload_warnings,
         trace=trace_from_markers(list(success_source_trail or [])),

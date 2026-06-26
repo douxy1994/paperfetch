@@ -169,6 +169,8 @@ CLI 默认：
 - `body`：默认值，保存正文图片、图表、公式图片等。
 - `all`：在正文资产之外，额外保存可识别的补充材料等相关资产。
 
+PDF fallback 在 `body` / `all` 且 artifact mode 允许资产落盘时，会保存 `pymupdf4llm` 从 PDF 导出的正文图片到 `body_assets/`；`none` 或 `--artifact-mode none` 保持不保存本地图片资产。
+
 当 artifact mode 或 `--no-download` 禁止资产落盘时，即使 `--asset-profile` 是 `body` 或 `all`，资产也不会保存。
 
 ## `--save-markdown`
@@ -204,7 +206,9 @@ paper-fetch --query "10.1016/test" \
 ## 渲染选项
 
 - `--include-refs none|top10|all` 控制 references 渲染范围。
+- `--asset-profile none|body|all` 控制本地内容资产范围；PDF fallback 在 `body` / `all` 下也会尝试保存 PDF 导出的正文图片。
 - `--max-tokens full_text|<positive-int>` 控制 Markdown 渲染预算，默认是 `full_text`。
+- `--version` 输出当前安装版本并退出。
 
 ## 默认目录
 

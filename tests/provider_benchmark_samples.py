@@ -228,6 +228,20 @@ PROVIDER_BENCHMARK_SAMPLES: dict[str, ProviderBenchmarkSample] = {
         ),
         fixture_kind="xml",
     ),
+    "frontiers": ProviderBenchmarkSample(
+        provider="frontiers",
+        doi="10.3389/fmars.2023.1101972",
+        year=2023,
+        title="Ocean acidification and warming modify stimulatory benthos effects on coastal ecosystem functioning",
+        landing_url="https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2023.1101972/full",
+        expected_source="frontiers_xml",
+        accepted_live_source_trail_groups=(
+            ("fulltext:frontiers_xml_ok",),
+            ("fulltext:frontiers_pdf_fallback_ok",),
+        ),
+        required_env=("CROSSREF_MAILTO",),
+        fixture_kind="xml",
+    ),
     "acs": ProviderBenchmarkSample(
         provider="acs",
         doi="10.1021/acsomega.4c03987",

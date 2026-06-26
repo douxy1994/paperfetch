@@ -619,17 +619,15 @@ class BrowserWorkflowClient(ProviderClient):
             != PDF_FALLBACK
         ):
             return artifacts
-        provider_label = self.provider_label()
+        pdf_assets = list(content.extracted_assets if content is not None else [])
         return ProviderArtifacts(
-            assets=list(artifacts.assets),
+            assets=[*list(artifacts.assets), *pdf_assets],
             asset_failures=list(artifacts.asset_failures),
             allow_related_assets=False,
-            text_only=True,
-            skip_warning=(
-                f"{provider_label} PDF fallback currently returns text-only full text; "
-                "figure and supplementary asset downloads are not implemented yet."
-            ),
+            text_only=not pdf_assets,
             skip_trace=trace_from_markers(
                 [download_marker(f"{self.name}_assets_skipped_text_only")]
-            ),
+            )
+            if not pdf_assets
+            else [],
         )

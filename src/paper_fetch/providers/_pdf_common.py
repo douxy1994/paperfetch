@@ -8,16 +8,22 @@ import re
 import subprocess
 import tempfile
 import threading
+import contextlib
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 from collections.abc import Mapping
+import hashlib
+import urllib.parse
 
 from ..common_patterns import WORD_TOKEN_PATTERN
 from ..http import PDF_ACCEPT_HEADER, is_pdf_content_type
+from ..models.markdown import replace_markdown_images
 from ..utils import normalize_text
 from .browser_runtime.seed import CLOUDFLARE_COOKIE_NAMES, _CLOUDFLARE_COOKIE_PREFIXES
+
+PdfAssetProfile = Literal["none", "body", "all"]
 
 
 @dataclass(frozen=True)
@@ -27,6 +33,17 @@ class PdfFetchResult:
     pdf_bytes: bytes
     markdown_text: str
     suggested_filename: str | None = None
+    assets: list[dict[str, Any]] = field(default_factory=list)
+
+
+def pdf_fetch_result_assets(pdf_result: Any) -> list[dict[str, Any]]:
+    assets = getattr(pdf_result, "assets", None)
+    if assets is None or isinstance(assets, Mapping | str | bytes | bytearray):
+        return []
+    try:
+        return [dict(item) for item in assets if isinstance(item, Mapping)]
+    except TypeError:
+        return []
 
 
 class PdfFetchFailure(Exception):
@@ -74,6 +91,12 @@ class _PdfTextLayerStats:
     transparent_words: int
 
 
+@dataclass(frozen=True)
+class PdfMarkdownRenderResult:
+    markdown_text: str
+    assets: list[dict[str, Any]] = field(default_factory=list)
+
+
 def sanitize_storage_state(path: Path) -> Path:
     payload = json.loads(path.read_text(encoding="utf-8"))
     cookies = payload.get("cookies", []) or []
@@ -110,6 +133,32 @@ def default_pdf_headers(user_agent: str, *, referer: str | None = None) -> dict[
     if referer:
         headers["Referer"] = referer
     return headers
+
+
+def pdf_asset_profile_from_context(
+    context: Any | None,
+    default: PdfAssetProfile = "none",
+) -> PdfAssetProfile:
+    value = normalize_text(getattr(context, "asset_profile", default)).lower()
+    if value in {"body", "all"}:
+        return value  # type: ignore[return-value]
+    return "none"
+
+
+def pdf_asset_output_dir(
+    context: Any | None,
+    *,
+    asset_profile: PdfAssetProfile | None = None,
+) -> Path | None:
+    effective_profile = asset_profile or pdf_asset_profile_from_context(context)
+    if effective_profile == "none":
+        return None
+    artifact_store = getattr(context, "artifact_store", None)
+    if artifact_store is not None:
+        output_dir = getattr(artifact_store, "asset_download_dir", None)
+        return Path(output_dir) if output_dir is not None else None
+    output_dir = getattr(context, "download_dir", None)
+    return Path(output_dir) if output_dir is not None else None
 
 
 def _pdf_word_count(text: str) -> int:
@@ -162,13 +211,22 @@ class _SubprocessTextDecodeReplace:
         _PYMUPDF_SUBPROCESS_PATCH_LOCK.release()
 
 
-def _render_default_pdf_markdown(pdf_path: Path) -> str:
+def _render_default_pdf_markdown(pdf_path: Path, *, image_dir: Path | None = None) -> str:
     try:
         import pymupdf4llm
     except Exception as exc:  # pragma: no cover - exercised by missing dependency integration tests
         raise PdfFetchFailure("missing_pymupdf4llm", "pymupdf4llm is not installed; cannot use PDF fallback.") from exc
+    kwargs: dict[str, Any] = {}
+    if image_dir is not None:
+        image_dir.mkdir(parents=True, exist_ok=True)
+        kwargs.update(
+            {
+                "write_images": True,
+                "image_path": str(image_dir),
+            }
+        )
     with _SubprocessTextDecodeReplace():
-        return str(pymupdf4llm.to_markdown(str(pdf_path)) or "")
+        return str(pymupdf4llm.to_markdown(str(pdf_path), **kwargs) or "")
 
 
 def _render_transparent_pdf_markdown(pdf_path: Path) -> str:
@@ -258,11 +316,134 @@ def _insufficient_pdf_markdown_failure(
     )
 
 
-def render_pdf_markdown(pdf_path: Path) -> str:
-    default_markdown = _render_default_pdf_markdown(pdf_path)
+def _pdf_image_dir(asset_output_dir: Path | None, asset_profile: PdfAssetProfile) -> Path | None:
+    if asset_profile == "none" or asset_output_dir is None:
+        return None
+    return asset_output_dir / "body_assets"
+
+
+def _resolve_pdf_image_reference(image_url: str, image_dir: Path) -> Path | None:
+    normalized = normalize_text(image_url)
+    if not normalized:
+        return None
+    parsed = urllib.parse.urlparse(normalized)
+    if parsed.scheme in {"http", "https", "data"}:
+        return None
+    raw_path = urllib.parse.unquote(parsed.path or normalized)
+    candidate = Path(raw_path)
+    candidates: list[Path] = []
+    if candidate.is_absolute():
+        candidates.append(candidate)
+    else:
+        candidates.extend(
+            [
+                Path.cwd() / candidate,
+                image_dir / candidate.name,
+            ]
+        )
+    image_dir_resolved = image_dir.resolve()
+    for item in candidates:
+        try:
+            resolved = item.resolve()
+        except OSError:
+            continue
+        if not resolved.is_file():
+            continue
+        try:
+            resolved.relative_to(image_dir_resolved)
+        except ValueError:
+            continue
+        return resolved
+    return None
+
+
+def _pdf_image_asset(
+    *,
+    path: Path,
+    heading: str,
+    source_url: str | None,
+) -> dict[str, Any]:
+    relative_url = f"body_assets/{path.name}"
+    asset: dict[str, Any] = {
+        "kind": "figure",
+        "heading": heading,
+        "url": relative_url,
+        "path": str(path),
+        "section": "body",
+        "render_state": "inline",
+        "download_tier": "full_size",
+        "download_url": relative_url,
+        "content_type": _content_type_from_image_path(path),
+    }
+    if source_url:
+        asset["source_url"] = source_url
+    with contextlib.suppress(OSError):
+        asset["downloaded_bytes"] = path.stat().st_size
+    return asset
+
+
+def _content_type_from_image_path(path: Path) -> str | None:
+    suffix = path.suffix.lower()
+    if suffix == ".png":
+        return "image/png"
+    if suffix in {".jpg", ".jpeg"}:
+        return "image/jpeg"
+    if suffix == ".gif":
+        return "image/gif"
+    if suffix == ".webp":
+        return "image/webp"
+    return None
+
+
+def _normalize_pdf_markdown_image_assets(
+    markdown_text: str,
+    *,
+    image_dir: Path | None,
+    source_url: str | None,
+) -> PdfMarkdownRenderResult:
+    if image_dir is None or not markdown_text:
+        return PdfMarkdownRenderResult(markdown_text=markdown_text, assets=[])
+
+    assets: list[dict[str, Any]] = []
+    seen_paths: set[Path] = set()
+
+    def replace_image(image) -> str:
+        path = _resolve_pdf_image_reference(image.url, image_dir)
+        if path is None:
+            return image.text
+        heading = normalize_text(image.alt) or f"Figure {len(assets) + 1}"
+        if path not in seen_paths:
+            seen_paths.add(path)
+            assets.append(
+                _pdf_image_asset(
+                    path=path,
+                    heading=heading,
+                    source_url=source_url,
+                )
+            )
+        return f"![{heading}](body_assets/{path.name})"
+
+    rewritten = replace_markdown_images(markdown_text, replace_image)
+    return PdfMarkdownRenderResult(markdown_text=rewritten, assets=assets)
+
+
+def render_pdf_markdown_result(
+    pdf_path: Path,
+    *,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
+    source_url: str | None = None,
+) -> PdfMarkdownRenderResult:
+    image_dir = _pdf_image_dir(asset_output_dir, asset_profile)
+    default_markdown = _render_default_pdf_markdown(pdf_path, image_dir=image_dir)
+    default_render = _normalize_pdf_markdown_image_assets(
+        default_markdown,
+        image_dir=image_dir,
+        source_url=source_url,
+    )
     default_quality = _pdf_markdown_quality(default_markdown)
     if default_quality.is_usable:
-        return default_markdown
+        return default_render
 
     text_layer_stats = _pdf_text_layer_stats(pdf_path)
     if _should_try_transparent_pdf_fallback(
@@ -276,7 +457,7 @@ def render_pdf_markdown(pdf_path: Path) -> str:
             default_quality.word_count * _TRANSPARENT_FALLBACK_WORD_FACTOR,
         )
         if legacy_quality.word_count >= min_legacy_words and not legacy_quality.license_only:
-            return legacy_markdown
+            return PdfMarkdownRenderResult(markdown_text=legacy_markdown, assets=[])
         raise _insufficient_pdf_markdown_failure(
             default_quality=default_quality,
             text_layer_stats=text_layer_stats,
@@ -284,11 +465,15 @@ def render_pdf_markdown(pdf_path: Path) -> str:
         )
 
     if not default_quality.has_text:
-        return default_markdown
+        return default_render
     raise _insufficient_pdf_markdown_failure(
         default_quality=default_quality,
         text_layer_stats=text_layer_stats,
     )
+
+
+def render_pdf_markdown(pdf_path: Path) -> str:
+    return render_pdf_markdown_result(pdf_path).markdown_text
 
 
 def looks_like_pdf_payload(content_type: str | None, payload: bytes, final_url: str | None = None) -> bool:
@@ -312,6 +497,8 @@ def pdf_fetch_result_from_response(
     response: Mapping[str, Any],
     *,
     artifact_dir: Path | None,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
     source_url: str,
     not_pdf_message: str,
     final_url: str | None = None,
@@ -343,6 +530,8 @@ def pdf_fetch_result_from_response(
 
     return pdf_fetch_result_from_bytes(
         artifact_dir=artifact_dir,
+        asset_profile=asset_profile,
+        asset_output_dir=asset_output_dir,
         source_url=source_url,
         final_url=resolved_final_url,
         pdf_bytes=pdf_bytes,
@@ -350,9 +539,35 @@ def pdf_fetch_result_from_response(
     )
 
 
+def _stable_pdf_filename(
+    *,
+    source_url: str,
+    final_url: str,
+    suggested_filename: str | None,
+) -> str:
+    candidates = [suggested_filename, final_url, source_url]
+    stem = ""
+    for candidate in candidates:
+        normalized = normalize_text(candidate)
+        if not normalized:
+            continue
+        parsed = urllib.parse.urlparse(normalized)
+        raw_name = urllib.parse.unquote(Path(parsed.path or normalized).name)
+        raw_stem = Path(raw_name).stem if raw_name else ""
+        raw_stem = re.sub(r"[^A-Za-z0-9._-]+", "_", raw_stem).strip("._-")
+        if raw_stem:
+            stem = raw_stem[:80]
+            break
+    digest_source = normalize_text(final_url) or normalize_text(source_url) or stem or "pdf"
+    digest = hashlib.sha1(digest_source.encode("utf-8", errors="ignore")).hexdigest()[:10]
+    return f"{stem or 'downloaded'}-{digest}.pdf"
+
+
 def pdf_fetch_result_from_bytes(
     *,
     artifact_dir: Path | None,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
     source_url: str,
     final_url: str,
     pdf_bytes: bytes,
@@ -363,7 +578,11 @@ def pdf_fetch_result_from_bytes(
         active_dir = Path(temp_dir) if temp_dir is not None else artifact_dir
         assert active_dir is not None
         active_dir.mkdir(parents=True, exist_ok=True)
-        pdf_path = active_dir / "downloaded.pdf"
+        pdf_path = active_dir / _stable_pdf_filename(
+            source_url=source_url,
+            final_url=final_url,
+            suggested_filename=suggested_filename,
+        )
         pdf_path.write_bytes(pdf_bytes)
         if not pdf_bytes.startswith(b"%PDF-"):
             pdf_path.unlink(missing_ok=True)
@@ -373,7 +592,13 @@ def pdf_fetch_result_from_bytes(
                 details={"source_url": source_url, "suggested_filename": suggested_filename},
             )
 
-        markdown_text = render_pdf_markdown(pdf_path)
+        render_result = render_pdf_markdown_result(
+            pdf_path,
+            asset_profile=asset_profile,
+            asset_output_dir=asset_output_dir,
+            source_url=final_url or source_url,
+        )
+        markdown_text = render_result.markdown_text
         if not normalize_text(markdown_text):
             raise PdfFetchFailure(
                 "empty_pdf_markdown",
@@ -387,4 +612,5 @@ def pdf_fetch_result_from_bytes(
             pdf_bytes=pdf_bytes,
             markdown_text=markdown_text,
             suggested_filename=suggested_filename,
+            assets=[dict(item) for item in render_result.assets],
         )
