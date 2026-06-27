@@ -4,7 +4,7 @@
 
 ## 使用原则
 
-Provider onboarding 以两个人工 gate 推进：先审核 access/waterfall 预案，再审核最终 Markdown 质量。中间的 discovery、purpose 覆盖、fixture capture、cleaning proposal、implementation、snapshot、fresh Markdown quality review、repair loop、sync-back 和 local acceptance 都应由 AI/coordinator 尽量自动完成；人类不再逐 fixture 编辑 review artifact。
+Provider onboarding 以两个人工 gate 推进：先审核 access/waterfall 预案，再审核最终 Markdown 质量。中间的 discovery、purpose 覆盖、fixture capture、cleaning proposal、implementation、snapshot、fresh Markdown quality review、repair loop、sync-back 和 local acceptance 都应由 AI/coordinator 尽量自动完成；人类无需逐 fixture 编辑 review artifact。
 
 第一个 gate 是 `waterfall-preflight-review`：AI 用 `prepare-human-preflight` 汇总合法访问、allowed runtime、waterfall 顺序、route success/rejection 条件、purpose coverage 和 null proof；人类只批准 access review 与 waterfall/purpose 预案。第二个 gate 是 `final-markdown-quality-review`：AI 完成所有机器 gate 后，人类只阅读当前 `extracted.md`、`markdown-quality.json`、fresh review 摘要和 purpose 覆盖表；确认后运行 `finalize-review-artifact --confirmed-final-quality`，由脚本机械写入 `onboarding/reviews/<provider>.yml` 中每个 fixture 的最终 signoff。
 
@@ -431,7 +431,7 @@ preflight 需要修改：<写清楚要改的 access/waterfall/purpose/null proof
 
 ### 目标
 
-让 AI 自动生成或验证 manifest fixture 覆盖、discovery proof、本地 fixture 和 cleaning evidence。该阶段不再设置单独人工审核点；低置信、矛盾、不可用或证据不足的样本应由 AI 自动替换、写入具体 rejection，或以 structured blocker 停下。
+让 AI 自动生成或验证 manifest fixture 覆盖、discovery proof、本地 fixture 和 cleaning evidence。该阶段没有单独人工审核点；低置信、矛盾、不可用或证据不足的样本应由 AI 自动替换、写入具体 rejection，或以 structured blocker 停下。
 
 ### `/goal` 提示词
 
@@ -492,7 +492,7 @@ preflight 需要修改：<写清楚要改的 access/waterfall/purpose/null proof
 - 自动执行 manifest-sync-back、provider-local acceptance、review/provider contract、bundle completeness、owner reuse、docs validation 和可用的 local runner gate，并生成 operator summary。
 
 边界：
-- 不能只信旧 markdown-quality.json、worker 总结或 bootstrap 草稿；必须回到当前 extracted.md、fresh review 和 run records。
+- 不能只信已有 markdown-quality.json、worker 总结或 bootstrap 草稿；必须回到当前 extracted.md、fresh review 和 run records。
 - 存在 fresh blocking issue、pending/fail quality report、缺少 provider-local 断言、asset contract 不满足或 review artifact 不一致时，不得通过。
 - 可以准备或更新 review artifact 中可由证据支持的字段；`markdown_semantic_reviewed: true` 只能在用户完成最终批量质量审核后，通过 `finalize-review-artifact --confirmed-final-quality` 机械写入。
 - 不触发 GitHub CI，不提交 commit。

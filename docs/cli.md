@@ -40,7 +40,7 @@ paper-fetch auth wiley --url "https://onlinelibrary.wiley.com/doi/full/10.1111/e
 - `--url <url>`：覆盖内置样例文章，打开具体失败文章页。
 - `--timeout-ms <ms>`：设置浏览器导航超时。
 - `--browser-user-agent <ua>`：仅本次认证使用的 browser UA。
-- 旧 `--state-json` / `--env-file` / `--no-env-write` / `--wait-seconds` 不再支持；如需改保存位置，使用 `CLOAKBROWSER_PROFILE_DIR` 或 `CLOAKBROWSER_USER_DATA_DIR`。
+- storage-state 保存位置通过 `CLOAKBROWSER_PROFILE_DIR` 或 `CLOAKBROWSER_USER_DATA_DIR` 覆盖。
 
 storage-state JSON 是主要复用状态，只是本地辅助状态，不绕过权限，也不是跨机器通用凭据；站点 session 可能按时间、网络、设备或浏览器指纹失效。未配置持久凭证不会阻止正常抓取；抓取仍会按当前 browser workflow 和 provider PDF / abstract-only / metadata fallback 运行。手动 auth 后再次抓取同一 provider 会复用同一个 publisher storage-state 文件。
 
@@ -89,7 +89,7 @@ paper-fetch --query-file ./queries.txt \
 - 未提供 `--output-dir` 且未显式传 `--output` 时，主输出打印到 stdout。
 - 提供 `--output-dir <dir>` 且未显式传 `--output` 时，主输出写入该目录，不打印正文到 stdout。
 - 显式 `--output -` 会强制打印到 stdout，即使同时提供 `--output-dir`。
-- 显式 `--output <path>` 会把主输出写到该路径，`--output-dir` 不再接管主输出。
+- 显式 `--output <path>` 会把主输出写到该路径，`--output-dir` 只作为 artifact / 资产目录。
 
 当 `--output-dir` 承接主输出时，默认文件名来自 DOI 或标题并经过安全化处理：
 
@@ -159,7 +159,7 @@ CLI 默认：
 
 `--artifact-mode none` 不保存 provider artifact 或资产；显式 `--output <path>`、`--save-markdown`，以及未显式 `--output` 时由 `--output-dir` 承接的主输出仍可写文件。
 
-`--no-download` 是兼容旧参数，等价于 `--artifact-mode none`。
+`--no-download` 等价于 `--artifact-mode none`。
 
 ## 资产下载
 

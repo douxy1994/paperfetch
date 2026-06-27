@@ -6,6 +6,21 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.6.2 - 2026-06-27
+
+### 变更
+
+- 刷新人读与 agent 文档，使 provider routing、browser runtime、artifact、cache、probe、onboarding 和 extraction-rule 契约都描述当前行为，不再保留过时迁移表述，并将 browser runtime 参考文档重命名为 `docs/browser-runtime.md`。
+- 更新 CLI 与 MCP 中 provider authentication、browser storage/profile override 的帮助文案，改为说明当前按 provider 归属的 storage-state 行为。
+
+### 修复
+
+- 更新 extraction-rule 校验逻辑，使刷新后的 extraction rules 从旧“兼容说明”表述切换到当前“兼容锚点”表述后，兼容锚点重定向仍会被接受。
+
+### 移除
+
+- 移除过时的 `problems.md` 实现任务草稿和已废弃的 `docs/legacy-browser-runtime.md` 参考文档。
+
 ## 2.6.1 - 2026-06-27
 
 ### 修复

@@ -32,11 +32,11 @@ SKILL_ENVIRONMENT_VARIABLES: tuple[tuple[str, str], ...] = (
     ),
     (
         "PAPER_FETCH_WILEY_STORAGE_STATE_JSON",
-        "Legacy Wiley browser storage-state JSON; current managed default uses provider-scoped storage-state, while external CDP mode uses the existing browser context state.",
+        "Optional Wiley browser storage-state JSON override; managed default uses provider-scoped storage-state, while external CDP mode uses the existing browser context state.",
     ),
     (
         "PAPER_FETCH_WILEY_PROFILE_DIR",
-        "Legacy Wiley profile override; current managed default uses provider-scoped storage-state; use CLOAKBROWSER_PROFILE_DIR only to override the managed Chrome startup/storage-state directory or CLOAKBROWSER_CDP_ENDPOINT for an external browser.",
+        "Optional Wiley profile override; managed default uses provider-scoped storage-state; use CLOAKBROWSER_PROFILE_DIR only to override the managed Chrome startup/storage-state directory or CLOAKBROWSER_CDP_ENDPOINT for an external browser.",
     ),
     (
         "CLOAKBROWSER_PROFILE_DIR",
@@ -148,7 +148,7 @@ def server_instructions() -> str:
         "the CDP browser HTML route, then CDP browser-seeded publisher PDF/ePDF "
         "fallback, and may still continue into the official Wiley TDM API PDF lane "
         "when `WILEY_TDM_CLIENT_TOKEN` is configured while publishing `wiley_browser`. `science`, "
-        "`pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, and `mdpi` require the local browser runtime but no legacy local "
+        "`pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, and `mdpi` require the local browser runtime but no provider-specific local "
         "rate-limit env vars; AMS publishes `ams_html` or `ams_pdf` and ignores `citation_xml_url`; Annual Reviews publishes `annualreviews_html` or `annualreviews_pdf`; ACS publishes `acs`; IOP publishes `iop_html` or `iop_pdf` and rejects Radware/hCaptcha challenge pages; AIP publishes `aip_html` or `aip_pdf`; MDPI publishes `mdpi_html` or `mdpi_pdf` and does not use an XML route. `ieee` uses "
         "landing metadata, the Xplore dynamic HTML endpoint, and direct HTTP PDF fallback, "
         "publishing `ieee_html` or `ieee_pdf` when those routes return usable full text. `arxiv` uses "

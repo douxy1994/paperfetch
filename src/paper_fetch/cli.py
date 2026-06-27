@@ -562,7 +562,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-download",
         action="store_true",
         help=(
-            "Deprecated alias for --artifact-mode none; disables provider artifacts and assets. "
+            "Alias for --artifact-mode none; disables provider artifacts and assets. "
             "Explicit --output, --output-dir primary output, or --save-markdown can still write files."
         ),
     )
@@ -683,16 +683,16 @@ def _write_auth_result(provider_key: str, provider_label: str, result) -> None:
 def run_auth_command(raw_args: list[str]) -> int:
     parser = build_auth_parser()
     args = parser.parse_args(raw_args)
-    uses_legacy_ams_args = bool(
+    uses_direct_storage_args = bool(
         args.state_json
         or args.env_file
         or args.no_env_write
         or args.wait_seconds is not None
     )
-    if uses_legacy_ams_args:
+    if uses_direct_storage_args:
         parser.error(
-            "--state-json, --env-file, --no-env-write, and --wait-seconds are no longer supported; "
-            "auth now saves provider-scoped storage-state. Use CLOAKBROWSER_PROFILE_DIR "
+            "--state-json, --env-file, --no-env-write, and --wait-seconds are unsupported for provider auth; "
+            "auth saves provider-scoped storage-state. Use CLOAKBROWSER_PROFILE_DIR "
             "or CLOAKBROWSER_USER_DATA_DIR to override that location."
         )
     result = authenticate_provider_profile(

@@ -24,7 +24,7 @@ Primary offline baselines:
 - `tests/fixtures/golden_criteria/_scenarios/`
   Minimal contract scenarios that exercise narrow parser behaviors without introducing extra real-article variance.
 
-Legacy synthetic fixtures may still exist in the tree for isolated mechanism tests, but content-oriented tests should migrate away from them and the provenance audit will reject synthetic fixture use in the registered content-test modules.
+Synthetic fixtures may exist in the tree for isolated mechanism tests, but content-oriented tests should use provenance-tracked real fixtures and the provenance audit rejects synthetic fixture use in the registered content-test modules.
 
 Sample-type audit checklist:
 

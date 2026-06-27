@@ -2,11 +2,11 @@
 
 Date: 2026-05-22
 
-本文件记录 tracked fixture 体积治理基线，并明确区分本地 ignored 杂物和已纳入 Git 的 fixture。当前阶段只建立可复核报告，不删除 fixture、不迁移 git-lfs、不改变测试读取路径。
+本文件记录 tracked fixture 体积治理基线，并明确区分本地 ignored 杂物和已纳入 Git 的 fixture。本报告只建立可复核基线，不删除 fixture、不迁移 git-lfs、不改变测试读取路径。
 
 ## 本地 ignored 杂物
 
-`scripts/clean-local-artifacts.sh --dry-run` 当前只报告 `.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`build`、`dist`、`.paper-fetch-runs`、`live-downloads`。这些目标由 `git check-ignore` 保护，清理它们不应产生 tracked diff。本次未执行实际删除。
+`scripts/clean-local-artifacts.sh --dry-run` 报告 `.pytest_cache`、`.ruff_cache`、`.mypy_cache`、`build`、`dist`、`.paper-fetch-runs`、`live-downloads`。这些目标由 `git check-ignore` 保护，清理它们不应产生 tracked diff。本报告不执行实际删除。
 
 当前本地目录体积快照：
 
@@ -17,7 +17,7 @@ Date: 2026-05-22
 ## Tracked Fixture 快照
 
 - `git ls-files tests/fixtures | wc -l`: 340
-- 本报告 top 40 均来自当前工作树；`tracked` 以 `git ls-files tests/fixtures` 判断。
+- 本报告 top 40 均来自工作树；`tracked` 以 `git ls-files tests/fixtures` 判断。
 
 | Size | Path | Type | Provider | Tracked | Known references | Suggested action |
 | --- | --- | --- | --- | --- | --- | --- |
@@ -67,5 +67,5 @@ Date: 2026-05-22
 - `keep`: 当前 fixture 体积与覆盖价值匹配，保留原路径。
 - `compress-evaluate`: 优先评估无损或可接受质量压缩，必须先确认对应 golden/unit 断言仍覆盖同一行为。
 - `minimize-evaluate`: 优先裁剪 HTML/XML 中与断言无关的站点 chrome 或重复片段，必须保留真实结构证据。
-- `lfs-evaluate`: 仅评估，不在本阶段迁移；迁移前需要确认安装、离线包和 CI checkout 策略。
+- `lfs-evaluate`: 仅评估，不在本报告内迁移；迁移前需要确认安装、离线包和 CI checkout 策略。
 - `reference-unknown` 表示自动引用识别没有找到稳定测试名，不代表可删除；处理前必须人工追踪调用链。

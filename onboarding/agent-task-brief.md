@@ -167,7 +167,7 @@ acceptance:
     - python3 scripts/propose_cleaning_chain.py --provider mdpi --check-contract
   live_review:
     required_for_provider_acceptance: true
-    policy: Future providers default to one provider subset live assets review; legacy non-risk providers are exempt.
+    policy: Future providers default to one provider subset live assets review; existing low-risk providers are exempt.
     command: PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_golden_criteria_live_review.py --providers mdpi
     source_contract: provider_manifest.route_sources
     markdown_contract: provider_manifest.markdown_contract
@@ -267,7 +267,7 @@ python3 scripts/scaffold_provider.py --from-manifest onboarding/manifests/mdpi.y
 
 Rules:
 
-- `--from-manifest` must not be combined with legacy scaffold inputs including `--name`, `--doi`, `--source`, `--fulltext-client`, or `--html-capable`.
+- `--from-manifest` must not be combined with direct scaffold inputs including `--name`, `--doi`, `--source`, `--fulltext-client`, or `--html-capable`.
 - Command stdout is JSON artifact summary.
 - If outputs already exist, `--merge-existing=safe` reuses identical files and complete existing provider files. Real conflicts still return `status: MERGE_PLAN` with existing paths, manifest sample conflicts, and diff previews.
 - Coordinator records `generated_files` and `docs_files` as upstream artifacts for `implement-provider`.

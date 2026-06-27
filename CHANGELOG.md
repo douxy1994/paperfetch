@@ -6,6 +6,21 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.6.2 - 2026-06-27
+
+### Changed
+
+- Refreshed the human- and agent-facing documentation to describe the current provider routing, browser runtime, artifact, cache, probe, onboarding, and extraction-rule contracts without stale migration wording, and renamed the browser runtime reference to `docs/browser-runtime.md`.
+- Updated CLI and MCP help text for provider authentication and browser storage/profile overrides to describe the current provider-scoped storage-state behavior.
+
+### Fixed
+
+- Updated extraction-rule validation so compatibility-anchor redirects remain accepted after the refreshed extraction rules converted the old "compatible note" wording to current anchor wording.
+
+### Removed
+
+- Removed the stale `problems.md` implementation task draft and the obsolete `docs/legacy-browser-runtime.md` reference.
+
 ## 2.6.1 - 2026-06-27
 
 ### Fixed

@@ -48,7 +48,7 @@ resolve
 
 - Provider 身份、路由信号、默认资产策略、status 顺序和 registry factory 统一来自 provider entry module 顶部注册的 `ProviderBundle`；`PROVIDER_CATALOG` 和 source map 由 bundle discovery 懒加载派生。
 - Provider 主链必须返回 typed payload：`ProviderContent`、`ProviderFetchResult`、`ProviderArtifacts`、`warnings`、`trace` 和 `merged_metadata`。
-- 不允许通过 `raw_payload.metadata[...]` 读写结构化状态；它只是 legacy/read-only compatibility view。
+- 不允许通过 `raw_payload.metadata[...]` 读写结构化状态；它只是 read-only compatibility view。
 - Provider 层只做 publisher adapter；通用 HTML、表格、公式、引用、资产验证、availability 判定优先挂到已有 canonical owner。
 - HTML / XML / PDF / browser fallback 的顺序由 provider 自己明确声明，并用 `source_trail` 和 warnings 暴露可观测行为。
 - 资产失败不能覆盖已成功的正文 Markdown；资产问题应进入 warnings、`article.quality.asset_failures` 和 download trace。
@@ -186,7 +186,7 @@ step 函数放在 provider-owned 模块中，签名使用 `def newpub_fetch_html
 - 组装 `ProviderFetchResult`
 - 合并 warnings、trace 和 artifacts
 
-新 provider 不应绕开这条 template method 自己拼最终结果。旧 provider 已有复杂 `fetch_raw_fulltext()` 覆盖实现时可以保留；新增 scaffold 默认使用 `waterfall_steps`。
+新 provider 不应绕开这条 template method 自己拼最终结果。已有 provider 的复杂 `fetch_raw_fulltext()` 覆盖实现可以保留；新增 scaffold 默认使用 `waterfall_steps`。
 
 ### Provider mypy 分批纳入
 
@@ -210,7 +210,7 @@ PYTHONPATH=src python3 -m mypy src/paper_fetch/providers/arxiv.py src/paper_fetc
 
 ## 4. Fulltext Waterfall
 
-provider 内部多步骤 fallback 应声明 `paper_fetch.providers._waterfall.WaterfallStep` 序列，并由 `ProviderClient.fetch_raw_fulltext()` 默认调用 `run_provider_waterfall()`，而不是散落嵌套 `try/except`。旧 provider 如已覆盖 `fetch_raw_fulltext()`，可在覆盖方法内部继续局部调用 `run_provider_waterfall()`。
+provider 内部多步骤 fallback 应声明 `paper_fetch.providers._waterfall.WaterfallStep` 序列，并由 `ProviderClient.fetch_raw_fulltext()` 默认调用 `run_provider_waterfall()`，而不是散落嵌套 `try/except`。已有 provider 如已覆盖 `fetch_raw_fulltext()`，可在覆盖方法内部继续局部调用 `run_provider_waterfall()`。
 
 每个 step 要定义：
 
@@ -253,13 +253,13 @@ provider 内部多步骤 fallback 应声明 `paper_fetch.providers._waterfall.Wa
 - 通用 figure/table label core 与 Extended Data prefix 判断：`paper_fetch.common_patterns`
 - Reference anchor 判定：`paper_fetch.extraction.html.semantics` 中的 `looks_like_reference_anchor()` / `has_explicit_reference_marker()` 以及底层 `paper_fetch.extraction.citation_anchors.looks_like_reference_href()`；不要在 provider 或 runtime 中复制 `data-test`、`role`、`class`、`href` fragment 规则。
 - HTML table：`paper_fetch.extraction.html.tables`
-- Markdown block rendering：`paper_fetch.extraction.markdown_render`，统一 table / figure / formula / caption / list 的 IR 和最终行渲染；provider 只保留 HTML/XML/DOM -> IR 或 legacy entry 的转换层。
+- Markdown block rendering：`paper_fetch.extraction.markdown_render`，统一 table / figure / formula / caption / list 的 IR 和最终行渲染；provider 只保留 HTML/XML/DOM -> IR 或 compatibility entry 的转换层。
 - Citation cleanup：`paper_fetch.markdown.citations`，只负责 numeric payload / Markdown cleanup；reference href 判定委托 `citation_anchors`
 - Markdown image alt / image line rendering：`paper_fetch.markdown.images`，统一生成 `Figure N` / `Table N` / `Listing N` / `Formula` / `Image` 短 alt，caption 不进入 `![alt]`
 - Formula rules：`paper_fetch.extraction.html.formula_rules`、`paper_fetch.providers._article_markdown_math`
 - Image MIME / dimensions：`paper_fetch.extraction.image_payloads`
 - Asset discovery / download：`paper_fetch.extraction.html.assets`
-- HTTP header lookup：`paper_fetch.http.headers.header_value`，provider / asset / PDF fallback 不再维护本地大小写不敏感 header helper。
+- HTTP header lookup：`paper_fetch.http.headers.header_value`，provider / asset / PDF fallback 统一使用这个大小写不敏感 header helper。
 - Final rendering：`paper_fetch.models`
 
 Provider-specific 代码只负责：
@@ -271,7 +271,7 @@ Provider-specific 代码只负责：
 - Provider HTML availability signal 也通过 bundle 内 `ProviderHtmlRules.availability` 声明；必须提供 `signal_set` 或显式 `no_signals=True`。
 - 新 access-gate 文案先登记到共享 `ACCESS_GATE_LABELS` 或 `ACCESS_GATE_PATTERNS`；只有会阻断全文访问的文案进入 `ACCESS_GATE_PATTERNS`，机构访问确认等非阻断提示只保留在 `MARKDOWN_ACCESS_NOISE_LABELS` 等降噪词表中。provider markdown/postprocess break tokens 只放非访问门的站点 chrome。
 - 定义 asset scope 和 fallback 候选。
-- 把提取结果写入 `ProviderContent.diagnostics`，而不是塞进 legacy metadata。
+- 把提取结果写入 `ProviderContent.diagnostics`，而不是塞进 raw metadata compatibility view。
 
 如果确实需要新增共享能力，应优先放到 canonical owner 模块，并同步 `docs/architecture/overview.md` 的阶段映射和 `docs/extraction-rules.md` 的规则说明。
 
@@ -439,7 +439,7 @@ python3 scripts/validate_extraction_rules.py
 - [ ] `golden_criteria/<doi>/` 至少有一篇真实文献 fixture
 - [ ] 每个 non-null manifest fixture purpose 已完成 Markdown Review Loop 并写入 provider-local 断言
 - [ ] 主成功路径同时包含 Markdown 正断言和站点 chrome / access noise / boilerplate 负断言
-- [ ] `manifest.json` 条目已填充（`expected_outcome` 不再是 `pending`）
+- [ ] `manifest.json` 条目已填充（`expected_outcome` 不是 `pending`）
 - [ ] `tests.golden_corpus_adapters.GoldenCorpusAdapter` 已注册，代表 fixture 覆盖主路径
 - [ ] MCP provider status、benchmark sample、live review support 已随 `ProviderBundle + manifest` 同步
 - [ ] `tests/unit/test_newpub_provider.py` 覆盖 fulltext / abstract-only / blocked
@@ -551,12 +551,12 @@ Fixtures（按附录 A 11 维清单）
 - [ ] 每个 non-null fixture purpose 已执行 Markdown Review Loop，记录 issue → assertion → fix
 - [ ] abstract-only / access-gate / 空壳：各 1 篇 block fixture
 - [ ] PDF fallback：1-2 篇
-- [ ] manifest.json 条目已填充（expected_outcome 不再是 pending）
+- [ ] manifest.json 条目已填充（expected_outcome 不是 pending）
 - [ ] `expected.json` 锁了用户可见 summary，`extracted.md` 是人工 Markdown baseline，`markdown-quality-prompt.md` 存在，`markdown-quality.json` 是 agent-authored pass 报告
 
 实现
 - [ ] ProviderClient 子类只覆盖必要 hook，未绕过 fetch_result() template
-- [ ] Fulltext fallback 声明为 `waterfall_steps`；旧 provider 覆盖实现中才局部调用 `run_provider_waterfall()`
+- [ ] Fulltext fallback 声明为 `waterfall_steps`；只有已有 provider 的覆盖实现才局部调用 `run_provider_waterfall()`
 - [ ] asset_profile 三模式（none / body / all）行为明确
 - [ ] probe_status() 实现，覆盖 ready / not_configured / partial
 
@@ -591,12 +591,12 @@ Fixtures（按附录 A 11 维清单）
 
 | 文件 | 为什么不动 | 怎么补充 provider 行为 |
 |---|---|---|
-| `src/paper_fetch/provider_catalog.py` | 静态字典已迁出 | 在 provider entry module 顶部 `register_provider_bundle(ProviderBundle(catalog=ProviderSpec(...)))`；scaffold 初期 `_X_html.py` 只可作为兼容 facade |
-| `src/paper_fetch/extraction/html/provider_rules.py` | hook wrapper + 字面量大字典已删 | 同上，bundle 内 `html_rules=ProviderHtmlRules(...)` 直接持 provider-owned helper 引用 |
-| `src/paper_fetch/quality/html_signals.py` | provider 专属 signal 函数已删 | 在 bundle 的 `availability.datalayer_signal_set` / `text_marker_signal_set` 填数据 |
-| `src/paper_fetch/quality/html_availability.py` | provider 名分支已删 | 在 bundle 的 `availability.overrides` 填数据 |
+| `src/paper_fetch/provider_catalog.py` | 不维护 provider 行为 | 在 provider entry module 顶部 `register_provider_bundle(ProviderBundle(catalog=ProviderSpec(...)))`；scaffold 初期 `_X_html.py` 只可作为兼容 facade |
+| `src/paper_fetch/extraction/html/provider_rules.py` | 不维护 provider-owned helper 字典 | 同上，bundle 内 `html_rules=ProviderHtmlRules(...)` 直接持 provider-owned helper 引用 |
+| `src/paper_fetch/quality/html_signals.py` | 不维护 provider 专属 signal 函数 | 在 bundle 的 `availability.datalayer_signal_set` / `text_marker_signal_set` 填数据 |
+| `src/paper_fetch/quality/html_availability.py` | 不维护 provider 名分支 | 在 bundle 的 `availability.overrides` 填数据 |
 
-如果你的 PR 触动了这 4 个文件中的任何一个，**说明你在重新引入 S1-S6 已消除的反模式**，CI `test_no_central_provider_functions.py` 会失败。
+如果你的 PR 触动了这 4 个文件中的任何一个，**说明 provider 行为没有放在 bundle 注册边界内**，CI `test_no_central_provider_functions.py` 会失败。
 
 新 provider 的所有编辑应集中在：
 - `src/paper_fetch/providers/_X_html.py`（hooks + signal sets + authors / references）

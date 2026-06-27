@@ -179,7 +179,7 @@ class CliTests(unittest.TestCase):
                     sys.argv = original_argv
 
                 self.assertEqual(raised.exception.code, 2)
-                self.assertIn("no longer supported", stderr.getvalue())
+                self.assertIn("unsupported for provider auth", stderr.getvalue())
                 authenticate.assert_not_called()
 
     def test_auth_ams_subcommand_reports_provider_failure(self) -> None:

@@ -254,7 +254,7 @@ git commit -m "docs(mdpi): add provider documentation"
 2. **只写 snapshot，不写 Markdown review 断言**：每个 correction 先落 provider-local 断言，再写 / 更新 `expected.json`、`extracted.md`、`markdown-quality-prompt.md` 和 `markdown-quality.json`。
 3. **在 `_X_html.py` 内重写 canonical owner 已有的能力**（table 渲染、header 查找、access gate 文案）：项目反模式，PR 会被打回。
 4. **prototype 和重构混在一个 commit**：重构发现要改 fixtures 时丢失 prototype 进度。
-5. **改了 `provider_catalog.py` / `provider_rules.py` / `quality/html_signals.py`**：这些现在是禁区，CI lint 会失败。所有 provider 数据走 `ProviderBundle` 自注册。
+5. **改了 `provider_catalog.py` / `provider_rules.py` / `quality/html_signals.py`**：这些属于禁区，CI lint 会失败。所有 provider 数据走 `ProviderBundle` 自注册。
 
 ---
 

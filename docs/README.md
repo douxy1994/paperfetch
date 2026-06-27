@@ -30,7 +30,8 @@
 
 1. [`cli.md`](cli.md)
 2. [`providers.md`](providers.md)
-3. [`deployment.md`](deployment.md)
+3. [`browser-runtime.md`](browser-runtime.md)
+4. [`deployment.md`](deployment.md)
 
 ### 3. Agent / MCP 集成者
 
@@ -66,6 +67,8 @@
   - 讲 `paper-fetch` CLI 的主输出、artifact、资产下载、常见参数组合和错误输出。
 - [`providers.md`](providers.md)
   - 讲 provider 能力矩阵、路由规则、默认输出、环境变量、缓存和限速。
+- [`browser-runtime.md`](browser-runtime.md)
+  - 讲 browser workflow 使用的 CDP / `cloakbrowser` 运行时边界，并指向 provider、部署和架构文档。
 - [`provider-development.md`](provider-development.md)
   - 讲新增出版社 provider 的标准开发流程、typed contract、waterfall、资产语义、测试和文档验收标准。
 - [`onboarding/README.md`](../onboarding/README.md)
@@ -140,10 +143,10 @@
 ### `download_tier`
 
 - `article.assets[*]` 上的资产下载层级诊断。
-- 常见值包括 `full_size`、`preview`。旧的通用 HTTP-first 路径仍可能保留 `playwright_canvas_fallback` 诊断，但 `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 HTML 资产主链路不再输出这个 tier。
+- 常见值包括 `full_size`、`preview`。非 browser-workflow 的 HTTP-first 路径可能保留 `playwright_canvas_fallback` 诊断；`wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 HTML 资产主链路只输出 `full_size` 或 `preview`。
 - `preview` 不是天然错误；当宽高满足阈值且 `source_trail` 有 preview accepted 轨迹时，是可接受降级。
 - preview 降级仍必须导出自包含 Markdown；如果正文图片链接能映射到已下载本地资产，最终 `.md` 不应残留远端图片 URL。
-- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 challenge 恢复链路会先复用预热正文页中目标 `<img>` 的 canvas 导出；目标图存在但尚未加载时，会先在同一正文页执行带凭据的 `fetch()` 拉取原图字节，再退回图片 URL 直连候选；只接受能识别为图片的 CDP browser image payload，包括浏览器导出的 PNG 和原始 SVG；不会再把图片文档 screenshot 裁剪成正文图片资产，也不会把 challenge HTML 保存成图片。
+- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 challenge 恢复链路会先复用预热正文页中目标 `<img>` 的 canvas 导出；目标图存在但尚未加载时，会先在同一正文页执行带凭据的 `fetch()` 拉取原图字节，再退回图片 URL 直连候选；只接受能识别为图片的 CDP browser image payload，包括浏览器导出的 PNG 和原始 SVG；图片文档 screenshot 和 challenge HTML 不能作为正文图片资产。
 - live review 中，只有公式图片发生 preview fallback 时不自动归为 `asset_download_failure`；figure/table preview fallback 仍需要 accepted 轨迹或其它证据才能降噪。资产下载 warning、`asset_failures` 轨迹或 `quality.asset_failures` 会归为 `asset_download_failure`。
 
 ### `semantic_losses`
@@ -167,9 +170,9 @@
 
 - 抓取时的落盘目录。
 - 可覆盖默认下载目录，也会影响 MCP scoped cache resources。
-- `RuntimeContext` / `ArtifactStore` 通过 `artifact_mode` 控制 provider payload、原始 HTML、Markdown 保存、资产诊断、HTTP textual cache 与 provider structured sidecar 的落盘范围；CLI/MCP fetch 默认 `markdown-assets`，Python API/runtime 未显式设置时保持旧式 `all`。
+- `RuntimeContext` / `ArtifactStore` 通过 `artifact_mode` 控制 provider payload、原始 HTML、Markdown 保存、资产诊断、HTTP textual cache 与 provider structured sidecar 的落盘范围；CLI/MCP fetch 默认 `markdown-assets`，Python API/runtime 未显式设置时默认是 `all`。
 - CLI/MCP fetch 入口通过 `FetchPipeline` 创建运行时并调用 service，MCP 的 fetch-envelope sidecar 和 cache index 仍由 `FetchCache` 管理语义，但原子 JSON 写入复用 `ArtifactStore`。
-- Python service API 不再接收 `download_dir` / `env` / `transport` / `clients` keyword；外层调用方需要先构造 `RuntimeContext(...)`，再传 `context=`。
+- Python service API 接收显式 `context=`；外层调用方需要先构造 `RuntimeContext(...)`，再传给 service / pipeline。
 - 未显式设置时，CLI / MCP 优先使用用户数据目录下的 `paper-fetch/downloads`；CLI 创建失败才退回 `live-downloads`。
 - `download_dir` 派生的 HTTP textual disk cache 只在 artifact mode 为 `all` 时启用，默认按 `4096` 条、`512 MiB`、`30` 天清理；详见 provider 文档中的 HTTP 缓存环境变量。
 

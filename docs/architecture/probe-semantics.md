@@ -4,13 +4,13 @@
 
 - `has_fulltext()` MCP tool 到底在回答什么问题
 - 它和 `fetch_paper().has_fulltext` 有什么差别
-- 当前 v1 使用哪些证据、会返回哪些状态
+- 使用哪些证据、会返回哪些状态
 
 这份文档不解决：
 
 - 完整抓取瀑布的架构背景
 - provider 详细配置
-- 所有未来 probe 策略的实现细节
+- provider 深度探测策略的实现细节
 
 完整业务流程见 [`overview.md`](overview.md)。
 
@@ -50,9 +50,9 @@ has_fulltext(query)
 
 因此，probe 结果不要求与最终抓取结果逐案完全一致。
 
-## 当前 v1 的证据来源
+## 证据来源
 
-当前 `has_fulltext()` 只使用廉价信号，不会触发完整正文抓取瀑布。
+`has_fulltext()` 只使用廉价信号，不会触发完整正文抓取瀑布。
 
 具体包括：
 
@@ -61,13 +61,13 @@ has_fulltext(query)
 - 轻量 Elsevier metadata probe
 - 落地页 HTML meta，例如 `citation_pdf_url`
 
-当前不会做：
+它不会做：
 
 - 完整 `_fetch_article` 瀑布
 - 正文下载
 - provider 级完整正文 fallback
 
-## 当前 v1 的状态
+## 状态
 
 公开契约层声明 4 种状态：
 
@@ -76,14 +76,14 @@ has_fulltext(query)
 - `unknown`
 - `no`
 
-但当前 v1 只主动返回：
+当前实现只主动返回：
 
 - `likely_yes`
 - `unknown`
 
-也就是说，当前 probe 更偏“保守给正信号”，而不是积极输出否定；`confirmed_yes` 和 `no` 是契约层合法值，但 v1 实现不会主动生成。
+也就是说，probe 更偏“保守给正信号”，而不是积极输出否定；`confirmed_yes` 和 `no` 是契约层合法值，但当前实现不会主动生成。
 
-## 当前 v1 何时返回 `likely_yes`
+## 何时返回 `likely_yes`
 
 出现以下廉价正信号时，会倾向返回 `likely_yes`：
 
@@ -94,12 +94,12 @@ has_fulltext(query)
 
 这些信号说明“很可能存在可访问或可机器读取的全文”，但不保证当前实现一定能成功抓取。
 
-## 当前 v1 何时返回 `unknown`
+## 何时返回 `unknown`
 
 以下情况通常会返回 `unknown`：
 
 - 没有足够正信号
-- Elsevier probe 当前不可用
+- Elsevier probe 不可用
 - 需要凭证但本地未配置
 - provider 不支持对应 probe
 - 落地页 HTML meta 探测失败
@@ -113,15 +113,15 @@ has_fulltext(query)
 这些 `warnings` 主要用来表达：
 
 - Crossref metadata probe 暂时不可用
-- 某个 provider 当前不参加 metadata probe
+- 某个 provider 不参加 metadata probe
 - 落地页 HTML meta 探测失败
-- 当前环境缺少配置或权限，导致 probe 无法确认
+- 环境缺少配置或权限，导致 probe 无法确认
 
 调用方应把这些 warning 理解为“证据不足”或“当前探测能力受限”，而不是把它们直接解释成负结论。
 
 ## 与 `batch_check(mode="metadata")` 的关系
 
-当前 `batch_check(mode="metadata")` 复用的就是同一条廉价 probe 逻辑。
+`batch_check(mode="metadata")` 复用的就是同一条廉价 probe 逻辑。
 
 这意味着：
 
@@ -146,23 +146,23 @@ has_fulltext(query)
 4. 强行追求完全一致会让 probe 退化成完整抓取
    - 那就失去了 probe 的意义。
 
-## 当前非目标
+## 非目标
 
-当前这一轮明确不做：
+`has_fulltext()` 不负责：
 
 - CLI 级 `has_fulltext` 命令
 - 让 probe 结果强制等于 `fetch_paper().has_fulltext`
 - provider 级 HEAD / OPTIONS 深度探测
-- 大规模积极产出 `confirmed_yes` 或 `no`
+- 积极产出 `confirmed_yes` 或 `no`
 
-## 后续可扩展方向
+## 扩展边界
 
-未来如果要增强 probe，优先方向可以是：
+增强 probe 时优先保持这些边界：
 
 - 对少数 provider 增加更强但仍廉价的 metadata-level 证据
-- 在不触发完整抓取的前提下，细化 `confirmed_yes`
-- 明确哪些 provider 允许输出真正的 `no`
-- 继续把 probe 语义和最终 fetch 语义分离，而不是混成一个接口
+- 在不触发完整抓取的前提下细化 `confirmed_yes`
+- 只有 provider 能稳定证明无全文时才输出 `no`
+- probe 语义和最终 fetch 语义保持分离
 
 ## 相关文档
 
