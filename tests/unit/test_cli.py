@@ -21,6 +21,36 @@ from ._paper_fetch_support import build_envelope, sample_article
 
 
 class CliTests(unittest.TestCase):
+    def test_main_version_reports_package_version(self) -> None:
+        stdout = io.StringIO()
+        stderr = io.StringIO()
+        original_argv = sys.argv
+        sys.argv = ["paper_fetch.py", "--version"]
+        try:
+            with (
+                mock.patch.object(paper_fetch_cli, "package_version", return_value="9.8.7"),
+                contextlib.redirect_stdout(stdout),
+                contextlib.redirect_stderr(stderr),
+                self.assertRaises(SystemExit) as raised,
+            ):
+                paper_fetch_cli.main()
+        finally:
+            sys.argv = original_argv
+
+        self.assertEqual(raised.exception.code, 0)
+        self.assertEqual(stdout.getvalue().strip(), "paper-fetch 9.8.7")
+        self.assertEqual(stderr.getvalue(), "")
+
+    def test_help_documents_rendering_and_asset_options(self) -> None:
+        help_text = paper_fetch_cli.build_parser().format_help()
+
+        self.assertIn("--include-refs {none,top10,all}", help_text)
+        self.assertIn("Reference rendering mode", help_text)
+        self.assertIn("--asset-profile {none,body,all}", help_text)
+        self.assertIn("Local content asset scope", help_text)
+        self.assertIn("--max-tokens MAX_TOKENS", help_text)
+        self.assertIn("Markdown rendering budget", help_text)
+
     def test_auth_ams_subcommand_invokes_auth_helper(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             state_path = Path(tmpdir) / "publisher-browser-profiles" / "ams" / "storage-state.json"
@@ -149,7 +179,7 @@ class CliTests(unittest.TestCase):
                     sys.argv = original_argv
 
                 self.assertEqual(raised.exception.code, 2)
-                self.assertIn("no longer supported", stderr.getvalue())
+                self.assertIn("unsupported for provider auth", stderr.getvalue())
                 authenticate.assert_not_called()
 
     def test_auth_ams_subcommand_reports_provider_failure(self) -> None:

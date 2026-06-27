@@ -36,7 +36,15 @@ from ..utils import empty_asset_results, normalize_text
 from ..quality.html_availability import HtmlQualityAssessor, availability_failure_message
 from . import _royalsocietypublishing_html as royal_html
 from ._payloads import build_provider_payload
-from ._pdf_common import PdfFetchFailure, default_pdf_headers, filename_from_headers, pdf_fetch_result_from_bytes
+from ._pdf_common import (
+    PdfFetchFailure,
+    default_pdf_headers,
+    filename_from_headers,
+    pdf_asset_output_dir,
+    pdf_asset_profile_from_context,
+    pdf_fetch_result_assets,
+    pdf_fetch_result_from_bytes,
+)
 from ._registry import ProviderBundle, register_provider_bundle
 from ._waterfall import DEFAULT_WATERFALL_CONTINUE_CODES, ProviderWaterfallStep, ProviderWaterfallState, run_provider_waterfall
 from .base import (
@@ -183,7 +191,7 @@ class RoyalsocietypublishingClient(ProviderClient):
                 build_provider_status_check(
                     PDF_FALLBACK,
                     OK,
-                    "Royal Society Publishing direct PDF fallback is available as text-only full text.",
+                    "Royal Society Publishing direct PDF fallback is available; body/all asset requests can save exported PDF images when artifacts are enabled.",
                     details={"mode": "direct_http_pdf"},
                 ),
             ],
@@ -308,9 +316,11 @@ class RoyalsocietypublishingClient(ProviderClient):
         source_url: str,
         html_failure_message: str,
         html_trace_markers: Sequence[str],
+        context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         candidates = royal_html.pdf_candidate_urls(metadata, source_url=source_url, doi=doi)
         last_failure: PdfFetchFailure | None = None
+        effective_asset_profile = pdf_asset_profile_from_context(context)
         for candidate in candidates:
             try:
                 response = self._request_pdf_candidate(candidate, referer=source_url)
@@ -343,6 +353,8 @@ class RoyalsocietypublishingClient(ProviderClient):
             try:
                 pdf_result = pdf_fetch_result_from_bytes(
                     artifact_dir=None,
+                    asset_profile=effective_asset_profile,
+                    asset_output_dir=pdf_asset_output_dir(context, asset_profile=effective_asset_profile),
                     source_url=candidate,
                     final_url=final_url,
                     pdf_bytes=pdf_bytes,
@@ -371,6 +383,7 @@ class RoyalsocietypublishingClient(ProviderClient):
                 },
                 reason="Downloaded full text from the Royal Society Publishing direct PDF fallback route.",
                 suggested_filename=pdf_result.suggested_filename,
+                extracted_assets=pdf_fetch_result_assets(pdf_result),
                 html_failure_message=html_failure_message,
                 content_needs_local_copy=True,
                 warnings=[
@@ -440,6 +453,7 @@ class RoyalsocietypublishingClient(ProviderClient):
                     source_url=source_url,
                     html_failure_message=html_failure_message,
                     html_trace_markers=state.source_markers(),
+                    context=runtime_context,
                 )
             except ProviderFailure:
                 raise
@@ -541,7 +555,11 @@ class RoyalsocietypublishingClient(ProviderClient):
         extraction = diagnostics.get("extraction") if isinstance(diagnostics.get("extraction"), Mapping) else {}
         availability = diagnostics.get("availability_diagnostics")
         extracted_assets = content.extracted_assets if content is not None else []
-        assets = [] if route == PDF_FALLBACK else _merge_assets(extracted_assets, downloaded_assets)
+        assets = (
+            list(extracted_assets)
+            if route == PDF_FALLBACK
+            else _merge_assets(extracted_assets, downloaded_assets)
+        )
         return article_from_markdown(
             source=source,
             metadata=merged_metadata,
@@ -637,16 +655,15 @@ class RoyalsocietypublishingClient(ProviderClient):
         content = raw_payload.content
         if normalize_text(content.route_kind if content is not None else "").lower() != PDF_FALLBACK:
             return artifacts
+        pdf_assets = list(content.extracted_assets if content is not None else [])
         return ProviderArtifacts(
-            assets=list(artifacts.assets),
+            assets=[*list(artifacts.assets), *pdf_assets],
             asset_failures=list(artifacts.asset_failures),
             allow_related_assets=False,
-            text_only=True,
-            skip_warning=(
-                "Royal Society Publishing PDF fallback currently returns text-only full text; "
-                "figure and supplementary asset downloads are not implemented for PDF fallback."
-            ),
-            skip_trace=[download_marker("royalsocietypublishing_assets_skipped_text_only")],
+            text_only=not pdf_assets,
+            skip_trace=[download_marker("royalsocietypublishing_assets_skipped_text_only")]
+            if not pdf_assets
+            else [],
         )
 
 

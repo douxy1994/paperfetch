@@ -64,6 +64,16 @@ HTML_NOISE_ATTR_TOKENS = (
     "banner",
     "promo",
 )
+HTML_SEMANTIC_ATTRS = frozenset(
+    {
+        "alt",
+        "aria-describedby",
+        "aria-label",
+        "aria-labelledby",
+        "data-title",
+        "title",
+    }
+)
 MARKDOWN_EXACT_NOISE_TEXTS = frozenset(
     {
         *HTML_EXACT_NOISE_TEXTS,
@@ -284,12 +294,9 @@ def _element_name(element: Any) -> str:
 
 def _attr_tokens(element: Any) -> list[str]:
     tokens: list[str] = []
-    element_name = _element_name(element)
     for key, value in (getattr(element, "attrs", None) or {}).items():
         key_name = str(key).lower()
-        if key_name in {"href", "src", "srcset"} or (
-            key_name == "title" and element_name == "a"
-        ):
+        if key_name in {"href", "src", "srcset"} or key_name in HTML_SEMANTIC_ATTRS:
             continue
         if isinstance(value, str):
             tokens.append(value.lower())

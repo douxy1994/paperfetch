@@ -221,7 +221,13 @@ def _rule_top_level_sections(markdown: str) -> dict[str, str]:
 
 
 def _is_redirect_rule(title: str, block: str) -> bool:
-    return title.startswith("已") or block.lstrip().startswith("> 已")
+    stripped = block.lstrip()
+    return (
+        title.startswith("已")
+        or title.startswith("兼容锚点")
+        or stripped.startswith("> 已")
+        or stripped.startswith("> 参见")
+    )
 
 
 def _manifest_samples() -> dict[str, dict[str, object]]:

@@ -38,6 +38,7 @@ from . import _ieee_html as ieee_html
 from . import _ieee_metadata as ieee_metadata
 from . import _ieee_supplementary as ieee_supplementary
 from . import _ieee_url as ieee_url
+from ._pdf_common import pdf_asset_output_dir, pdf_asset_profile_from_context, pdf_fetch_result_assets
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http, fetch_pdf_with_browser
 from ._payloads import build_provider_payload, provider_failure_diagnostics as _provider_failure_diagnostics
 from ._registry import ProviderBundle, register_provider_bundle
@@ -86,9 +87,7 @@ register_provider_bundle(
 
 IEEE_PDF_FALLBACK_ARTIFACT_DIR_NAME = "ieee_pdf_fallback"
 MAX_IEEE_LANDING_REDIRECTS = 8
-_FETCH_PDF_WITH_BROWSER = fetch_pdf_with_browser
-fetch_pdf_with_playwright = fetch_pdf_with_browser
-
+_FETCH_PDF_WITH_BROWSER = fetch_pdf_with_playwright = fetch_pdf_with_browser
 
 def _pdf_failure_diagnostics(failure: PdfFetchFailure | None) -> dict[str, Any] | None:
     if failure is None:
@@ -122,7 +121,7 @@ class IeeeClient(ProviderClient):
                 build_provider_status_check(
                     PDF_FALLBACK,
                     OK,
-                    "IEEE Xplore PDF fallback is available for text-only full text when direct HTTP or a seeded browser returns a real PDF payload.",
+                    "IEEE Xplore PDF fallback is available when direct HTTP or a seeded browser returns a real PDF payload; body/all asset requests can save exported PDF images when artifacts are enabled.",
                     details={"mode": "direct_http_pdf_or_seeded_browser_pdf"},
                 ),
             ],
@@ -382,6 +381,8 @@ class IeeeClient(ProviderClient):
             and context.artifact_store.allows_auxiliary_artifacts
             else None
         )
+        effective_asset_profile = pdf_asset_profile_from_context(context)
+        asset_output_dir = pdf_asset_output_dir(context, asset_profile=effective_asset_profile)
         direct_failure: PdfFetchFailure | None = None
         try:
             pdf_result = PdfFallbackStrategy(
@@ -389,6 +390,8 @@ class IeeeClient(ProviderClient):
                 headers=headers,
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 artifact_dir=artifact_dir,
+                asset_profile=effective_asset_profile,
+                asset_output_dir=asset_output_dir,
                 seed_urls=[document_url],
                 fetcher=fetch_pdf_over_http,
             ).fetch(candidates)
@@ -401,6 +404,8 @@ class IeeeClient(ProviderClient):
                 return (fetch_pdf_with_playwright if fetch_pdf_with_playwright is not _FETCH_PDF_WITH_BROWSER else fetch_pdf_with_browser)(
                     candidates,
                     artifact_dir=active_artifact_dir,
+                    asset_profile=effective_asset_profile,
+                    asset_output_dir=asset_output_dir,
                     browser_user_agent=self.browser_user_agent,
                     headless=True,
                     referer=document_url,
@@ -451,6 +456,7 @@ class IeeeClient(ProviderClient):
             markdown_text=pdf_result.markdown_text,
             merged_metadata=landing_attempt.merged_metadata,
             diagnostics={PDF_FALLBACK: pdf_diagnostics},
+            extracted_assets=pdf_fetch_result_assets(pdf_result),
             reason=(
                 "Downloaded full text from the IEEE Xplore seeded-browser PDF fallback route."
                 if fetcher == "seeded_browser"
@@ -683,14 +689,12 @@ class IeeeClient(ProviderClient):
         content = raw_payload.content
         if normalize_text(content.route_kind if content is not None else "").lower() != PDF_FALLBACK:
             return artifacts
+        pdf_assets = list(content.extracted_assets if content is not None else [])
+        skip_trace = [] if pdf_assets else trace_from_markers([download_marker("ieee_assets_skipped_text_only")])
         return ProviderArtifacts(
-            assets=list(artifacts.assets),
+            assets=[*list(artifacts.assets), *pdf_assets],
             asset_failures=list(artifacts.asset_failures),
             allow_related_assets=False,
-            text_only=True,
-            skip_warning=(
-                "IEEE PDF fallback currently returns text-only full text; "
-                "figure and supplementary asset downloads are not implemented for PDF fallback."
-            ),
-            skip_trace=trace_from_markers([download_marker("ieee_assets_skipped_text_only")]),
+            text_only=not pdf_assets,
+            skip_trace=skip_trace,
         )

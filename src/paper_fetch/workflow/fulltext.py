@@ -19,7 +19,7 @@ from ..provider_catalog import (
 )
 from ..providers.base import ProviderArtifacts, ProviderFailure, ProviderFetchResult
 from ..providers.protocols import AssetProvider, FulltextProvider, RawFulltextProvider
-from ..reason_codes import ABSTRACT_ONLY, ERROR, METADATA_ONLY, NOT_SUPPORTED
+from ..reason_codes import ABSTRACT_ONLY, ERROR, METADATA_ONLY, NOT_SUPPORTED, PDF_FALLBACK
 from ..quality.reason_codes import FULLTEXT
 from ..runtime import RUNTIME_UNSET, RuntimeContext, resolve_runtime_context
 from ..tracing import fallback_marker, fulltext_marker, resolve_marker, trace_from_markers
@@ -86,55 +86,63 @@ def _provider_fetch_result(
     context: RuntimeContext,
 ) -> ProviderFetchResult:
     download_dir = artifact_store.asset_download_dir
-    if isinstance(provider_client, FulltextProvider):
-        return provider_client.fetch_result(
-            doi,
-            metadata,
-            download_dir,
-            asset_profile=asset_profile,
-            artifact_store=artifact_store,
-            context=context,
-        )
-
-    if not isinstance(provider_client, RawFulltextProvider):
-        raise ProviderFailure(NOT_SUPPORTED, "Provider does not implement raw full-text retrieval.")
-
-    raw_payload = provider_client.fetch_raw_fulltext(doi, metadata, context=context)
-    downloaded_assets: list[Mapping[str, Any]] = []
-    asset_failures: list[Mapping[str, Any]] = []
-    if download_dir is not None and asset_profile != "none" and isinstance(provider_client, AssetProvider):
-        asset_started_at = time.monotonic()
-        try:
-            asset_results = provider_client.download_related_assets(
+    previous_asset_profile = context.asset_profile
+    context.asset_profile = asset_profile
+    try:
+        if isinstance(provider_client, FulltextProvider):
+            return provider_client.fetch_result(
                 doi,
                 metadata,
-                raw_payload,
                 download_dir,
                 asset_profile=asset_profile,
+                artifact_store=artifact_store,
                 context=context,
             )
-        finally:
-            context.accumulate_stage_timing("asset_seconds", started_at=asset_started_at)
-        downloaded_assets = list(asset_results.get("assets") or [])
-        asset_failures = list(asset_results.get("asset_failures") or [])
-    article = provider_client.to_article_model(
-        metadata,
-        raw_payload,
-        downloaded_assets=downloaded_assets,
-        asset_failures=asset_failures,
-        context=context,
-    )
-    return ProviderFetchResult(
-        provider=safe_text(getattr(provider_client, "name", "")) or safe_text(raw_payload.provider) or "provider",
-        article=article,
-        content=getattr(raw_payload, "content", None),
-        warnings=list(getattr(raw_payload, "warnings", []) or []),
-        trace=list(getattr(raw_payload, "trace", []) or []),
-        artifacts=ProviderArtifacts(
-            assets=[dict(item) for item in downloaded_assets],
-            asset_failures=[dict(item) for item in asset_failures],
-        ),
-    )
+
+        if not isinstance(provider_client, RawFulltextProvider):
+            raise ProviderFailure(NOT_SUPPORTED, "Provider does not implement raw full-text retrieval.")
+
+        raw_payload = provider_client.fetch_raw_fulltext(doi, metadata, context=context)
+        downloaded_assets: list[Mapping[str, Any]] = []
+        asset_failures: list[Mapping[str, Any]] = []
+        if download_dir is not None and asset_profile != "none" and isinstance(provider_client, AssetProvider):
+            asset_started_at = time.monotonic()
+            try:
+                asset_results = provider_client.download_related_assets(
+                    doi,
+                    metadata,
+                    raw_payload,
+                    download_dir,
+                    asset_profile=asset_profile,
+                    context=context,
+                )
+            finally:
+                context.accumulate_stage_timing("asset_seconds", started_at=asset_started_at)
+            downloaded_assets = list(asset_results.get("assets") or [])
+            asset_failures = list(asset_results.get("asset_failures") or [])
+        article = provider_client.to_article_model(
+            metadata,
+            raw_payload,
+            downloaded_assets=downloaded_assets,
+            asset_failures=asset_failures,
+            context=context,
+        )
+        content = getattr(raw_payload, "content", None)
+        route = safe_text(getattr(content, "route_kind", "")).lower()
+        extracted_assets = list(getattr(content, "extracted_assets", []) or []) if route == PDF_FALLBACK else []
+        return ProviderFetchResult(
+            provider=safe_text(getattr(provider_client, "name", "")) or safe_text(raw_payload.provider) or "provider",
+            article=article,
+            content=content,
+            warnings=list(getattr(raw_payload, "warnings", []) or []),
+            trace=list(getattr(raw_payload, "trace", []) or []),
+            artifacts=ProviderArtifacts(
+                assets=[dict(item) for item in [*extracted_assets, *downloaded_assets]],
+                asset_failures=[dict(item) for item in asset_failures],
+            ),
+        )
+    finally:
+        context.asset_profile = previous_asset_profile
 
 
 def _try_official_provider(

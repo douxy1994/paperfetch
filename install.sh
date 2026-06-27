@@ -2,7 +2,7 @@
 # One-command installer for the full paper-fetch runtime.
 #
 # Usage:
-#   ./install.sh                 # create ./.venv, install the package, then install browser-heavy runtime pieces
+#   ./install.sh                 # create ./.venv, install the package, then install formula backends
 #   ./install.sh --system        # install into the current python3 environment instead of ./.venv
 #   ./install.sh --lite          # install only the Python package and config scaffold
 #   ./install.sh --skip-env-file # do not create ~/.config/paper-fetch/.env from .env.example
@@ -114,12 +114,12 @@ if [ "$COPY_ENV_FILE" = "1" ] && [ -n "$DEFAULT_ENV_FILE" ] && [ -f "$REPO_DIR/.
 fi
 
 if [ "$INSTALL_HEAVY" = "1" ]; then
-    log "Installing browser-heavy runtime pieces"
+    log "Installing formula conversion backends"
     PAPER_FETCH_INSTALL_PYTHON_BIN="$PYTHON_BIN" \
     PYTHON_BIN="$PYTHON_BIN" \
         bash "$REPO_DIR/install-formula-tools.sh" "${FORMULA_ARGS[@]}"
 else
-    warn "Skipped browser warmup and external formula backends because --lite was set."
+    warn "Skipped external formula backends because --lite was set."
 fi
 
 echo

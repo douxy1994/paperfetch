@@ -3183,6 +3183,33 @@
         "capture_source_url": "https://doi.org/10.1088/1748-9326/aa9f73"
       }
     },
+    "10.3389_fmars.2023.1101972": {
+      "doi": "10.3389/fmars.2023.1101972",
+      "publisher": "frontiers",
+      "source_url": "https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2023.1101972/xml",
+      "landing_url": "https://www.frontiersin.org/journals/marine-science/articles/10.3389/fmars.2023.1101972/full",
+      "title": "Ocean acidification and warming modify stimulatory benthos effects on coastal ecosystem functioning",
+      "fetched_at": "2026-06-26T00:00:00Z",
+      "purpose": "structure",
+      "fixture_purposes": [
+        "structure",
+        "table",
+        "figure",
+        "supplementary",
+        "references"
+      ],
+      "expected_outcome": "fulltext",
+      "fixture_family": "golden",
+      "content_type": "text/xml",
+      "route_kind": "xml",
+      "origin_kind": "real_replay",
+      "usage_kind": "content",
+      "assets": {
+        "extracted.md": "tests/fixtures/golden_criteria/10.3389_fmars.2023.1101972/extracted.md",
+        "markdown-quality-prompt.md": "tests/fixtures/golden_criteria/10.3389_fmars.2023.1101972/markdown-quality-prompt.md",
+        "markdown-quality.json": "tests/fixtures/golden_criteria/10.3389_fmars.2023.1101972/markdown-quality.json"
+      }
+    },
     "10.1063_5.0129134": {
       "doi": "10.1063/5.0129134",
       "publisher": "aip",

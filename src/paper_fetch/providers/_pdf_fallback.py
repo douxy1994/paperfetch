@@ -37,6 +37,7 @@ from ..runtime_browser import browser_context_options
 from ..utils import normalize_text
 from ._pdf_candidates import extract_pdf_candidate_urls_from_html
 from ._pdf_common import (
+    PdfAssetProfile,
     PdfFetchFailure,
     PdfFetchResult,
     filename_from_headers,
@@ -62,6 +63,8 @@ class PdfFallbackStrategy:
     headers: Mapping[str, str] | None = None
     timeout: int = DEFAULT_FULLTEXT_TIMEOUT_SECONDS
     artifact_dir: Path | None = None
+    asset_profile: PdfAssetProfile = "none"
+    asset_output_dir: Path | None = None
     seed_urls: list[str] | None = None
     browser_cookies: list[dict[str, Any]] | None = None
     fetcher: Callable[..., PdfFetchResult] | None = None
@@ -74,6 +77,8 @@ class PdfFallbackStrategy:
             headers=self.headers,
             timeout=self.timeout,
             artifact_dir=self.artifact_dir,
+            asset_profile=self.asset_profile,
+            asset_output_dir=self.asset_output_dir,
             seed_urls=self.seed_urls,
             browser_cookies=self.browser_cookies,
         )
@@ -250,6 +255,8 @@ def _response_to_pdf_result(
     response: Any,
     *,
     artifact_dir: Path,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
     source_url: str,
     final_url: str,
     page: Any | None = None,
@@ -271,6 +278,8 @@ def _response_to_pdf_result(
     try:
         return pdf_fetch_result_from_bytes(
             artifact_dir=artifact_dir,
+            asset_profile=asset_profile,
+            asset_output_dir=asset_output_dir,
             source_url=source_url,
             final_url=final_url,
             pdf_bytes=response_body,
@@ -282,6 +291,8 @@ def _response_to_pdf_result(
         refetched = _refetch_pdf_with_browser_request(
             page,
             artifact_dir=artifact_dir,
+            asset_profile=asset_profile,
+            asset_output_dir=asset_output_dir,
             source_url=source_url,
             final_url=final_url,
         )
@@ -294,6 +305,8 @@ def _refetch_pdf_with_browser_request(
     page: Any,
     *,
     artifact_dir: Path,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
     source_url: str,
     final_url: str,
 ) -> PdfFetchResult | None:
@@ -324,6 +337,8 @@ def _refetch_pdf_with_browser_request(
         return None
     return pdf_fetch_result_from_bytes(
         artifact_dir=artifact_dir,
+        asset_profile=asset_profile,
+        asset_output_dir=asset_output_dir,
         source_url=source_url,
         final_url=normalized_final_url,
         pdf_bytes=body,
@@ -335,6 +350,8 @@ def _download_to_pdf_result(
     download: Any,
     *,
     artifact_dir: Path,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
     source_url: str,
     final_url: str,
 ) -> PdfFetchResult:
@@ -342,6 +359,8 @@ def _download_to_pdf_result(
     download.save_as(str(download_path))
     return pdf_fetch_result_from_bytes(
         artifact_dir=artifact_dir,
+        asset_profile=asset_profile,
+        asset_output_dir=asset_output_dir,
         source_url=source_url,
         final_url=final_url,
         pdf_bytes=download_path.read_bytes(),
@@ -361,6 +380,8 @@ def fetch_pdf_with_browser(
     candidate_urls: list[str],
     *,
     artifact_dir: Path,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
     browser_cookies: list[dict[str, Any]] | None = None,
     browser_user_agent: str | None = None,
     headless: bool = True,
@@ -381,6 +402,8 @@ def fetch_pdf_with_browser(
                 fetch_pdf_with_browser,
                 candidate_urls,
                 artifact_dir=artifact_dir,
+                asset_profile=asset_profile,
+                asset_output_dir=asset_output_dir,
                 browser_cookies=browser_cookies,
                 browser_user_agent=browser_user_agent,
                 headless=headless,
@@ -393,7 +416,7 @@ def fetch_pdf_with_browser(
                 seed_urls=seed_urls,
                 context=context,
                 _allow_thread_handoff=False,
-                _use_runtime_browser=_use_runtime_browser,
+                _use_runtime_browser=False,
             ).result()
 
     if not candidate_urls:
@@ -432,6 +455,8 @@ def fetch_pdf_with_browser(
                 headers=http_headers,
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 artifact_dir=artifact_dir,
+                asset_profile=asset_profile,
+                asset_output_dir=asset_output_dir,
                 seed_urls=normalized_seed_urls,
                 browser_cookies=list(browser_cookies or []),
             )
@@ -521,6 +546,8 @@ def fetch_pdf_with_browser(
                         pdf_result = _response_to_pdf_result(
                             response,
                             artifact_dir=artifact_dir,
+                            asset_profile=asset_profile,
+                            asset_output_dir=asset_output_dir,
                             source_url=url,
                             final_url=page.url,
                             page=page,
@@ -570,6 +597,8 @@ def fetch_pdf_with_browser(
                             headers=http_headers,
                             timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                             artifact_dir=artifact_dir,
+                            asset_profile=asset_profile,
+                            asset_output_dir=asset_output_dir,
                             browser_cookies=context_cookies,
                         )
                     except PdfFallbackFailure as exc:
@@ -612,6 +641,8 @@ def fetch_pdf_with_browser(
                 return _download_to_pdf_result(
                     download,
                     artifact_dir=artifact_dir,
+                    asset_profile=asset_profile,
+                    asset_output_dir=asset_output_dir,
                     source_url=url,
                     final_url=page.url,
                 )
@@ -643,6 +674,8 @@ def fetch_pdf_over_http(
     headers: Mapping[str, str] | None = None,
     timeout: int = DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
     artifact_dir: Path | None = None,
+    asset_profile: PdfAssetProfile = "none",
+    asset_output_dir: Path | None = None,
     seed_urls: list[str] | None = None,
     browser_cookies: list[dict[str, Any]] | None = None,
 ) -> PdfFetchResult:
@@ -718,6 +751,8 @@ def fetch_pdf_over_http(
         try:
             return pdf_fetch_result_from_bytes(
                 artifact_dir=artifact_dir,
+                asset_profile=asset_profile,
+                asset_output_dir=asset_output_dir,
                 source_url=url,
                 final_url=final_url,
                 pdf_bytes=bytes(pdf_bytes),

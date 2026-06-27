@@ -34,7 +34,7 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_golden_corpus_adapters.py tests/unit/test_provider_benchmark_samples.py tests/devtools/test_golden_criteria_live.py -q`
 - `python3 scripts/validate_extraction_rules.py`
 - `manifest_sync_back.py` is the only writer for `extraction_hints` and `success_criteria` sync-back fields.
-- New provider integration must be synchronized through the provider fact sources: register a golden corpus adapter when golden replay fixtures exist, expose MCP provider status through the bundle-derived catalog, keep benchmark samples covered for official providers, and default provider-local acceptance to one provider subset live assets review unless the provider is an existing legacy non-risk exemption.
+- New provider integration must be synchronized through the provider fact sources: register a golden corpus adapter when golden replay fixtures exist, expose MCP provider status through the bundle-derived catalog, keep benchmark samples covered for official providers, and default provider-local acceptance to one provider subset live assets review unless the provider is an existing low-risk exemption.
 - Shared integration runs after provider implementation and before snapshot generation; coordinator-owned changes must be traced to manifest facts, bundle sync-back, fixture replay, or provider-local test evidence.
 - Local operator acceptance may use `python3 scripts/onboard_from_manifests.py run-checks --provider <provider> --all-local`; this command does not trigger GitHub CI.
 - Full local orchestration may use `python3 scripts/onboard_from_manifests.py run --manifest onboarding/manifests/<provider>.yml --until merge-ready`; worker dispatch must go only through the resolved local dispatcher: default `codex exec` or `PROVIDER_ONBOARDING_AGENT_CLI` operator override.
@@ -59,7 +59,7 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 
 ## Live Review Gates
 
-- Future providers run one provider subset live assets review by default during provider-local acceptance, for example `PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_golden_criteria_live_review.py --providers mdpi`; existing legacy non-risk providers may be exempt.
+- Future providers run one provider subset live assets review by default during provider-local acceptance, for example `PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_golden_criteria_live_review.py --providers mdpi`; existing low-risk providers may be exempt.
 - Live review validates `FetchEnvelope.source` against manifest `route_sources`; silent degradation from an expected HTML/XML source to PDF fallback is an acceptance issue unless that sample is explicitly a fallback sample.
 - Live review reuses manifest `markdown_contract` positive and negative assertions to auto-classify content-missing and noise-leak issues before manual semantic signoff.
 
@@ -76,7 +76,7 @@ This file defines machine-verifiable merge-ready gates for AI/coordinator provid
 - `PYTHONPATH=src python3 -m pytest tests/unit/test_human_docs_drift.py -q`
 - `git grep -n "Human reference only" -- docs/provider-development.md docs/adding-a-provider.md`
 - `git grep -n "onboarding" -- docs/provider-development.md docs/adding-a-provider.md`
-- Legacy human-guide banned-token grep over `onboarding/` returns no matches.
+- Human-guide banned-token grep over `onboarding/` returns no matches.
 
 ## Structured Error Gates
 

@@ -386,6 +386,16 @@ class IeeeProviderRouteTests(unittest.TestCase):
             pdf_bytes=b"%PDF-1.7 ieee",
             markdown_text="# IEEE PDF Article\n\n## Results\n\n" + ("PDF body text " * 160),
             suggested_filename=f"{article_number}.pdf",
+            assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 1",
+                    "url": "body_assets/ieee-f1.png",
+                    "path": "/tmp/ieee-f1.png",
+                    "section": "body",
+                    "render_state": "inline",
+                }
+            ],
         )
 
         with (
@@ -400,6 +410,9 @@ class IeeeProviderRouteTests(unittest.TestCase):
         self.assertIn("fulltext:ieee_html_fail", article.quality.source_trail)
         self.assertIn("fulltext:ieee_browser_html_fail", article.quality.source_trail)
         self.assertIn("fulltext:ieee_pdf_fallback_ok", article.quality.source_trail)
+        self.assertEqual(raw_payload.content.extracted_assets[0]["url"], "body_assets/ieee-f1.png")
+        self.assertEqual(article.assets[0].url, "body_assets/ieee-f1.png")
+        self.assertEqual(article.assets[0].section, "body")
         self.assertIn("Browser HTML fallback: Browser HTML did not expose #article.", raw_payload.content.html_failure_message)
         mocked_browser.assert_called_once()
         mocked_pdf.assert_called_once()

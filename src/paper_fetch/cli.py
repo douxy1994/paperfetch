@@ -5,9 +5,11 @@ from __future__ import annotations
 import argparse
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+import importlib.metadata
 import json
 import os
 import sys
+import tomllib
 from pathlib import Path
 from typing import Any
 from collections.abc import Mapping
@@ -39,6 +41,21 @@ class SingleFetchResult:
 
 class OutputDirectoryError(Exception):
     """Raised when the CLI output directory cannot be prepared."""
+
+
+def package_version() -> str:
+    pyproject_path = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    try:
+        payload = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
+        version = payload.get("project", {}).get("version")
+        if version:
+            return str(version)
+    except OSError:
+        pass
+    try:
+        return importlib.metadata.version("paper-fetch-skill")
+    except importlib.metadata.PackageNotFoundError:
+        return "unknown"
 
 
 def save_markdown_to_disk(envelope: FetchEnvelope, *, output_dir: Path, render: RenderOptions) -> Path | None:
@@ -545,7 +562,7 @@ def build_parser() -> argparse.ArgumentParser:
         "--no-download",
         action="store_true",
         help=(
-            "Deprecated alias for --artifact-mode none; disables provider artifacts and assets. "
+            "Alias for --artifact-mode none; disables provider artifacts and assets. "
             "Explicit --output, --output-dir primary output, or --save-markdown can still write files."
         ),
     )
@@ -560,9 +577,39 @@ def build_parser() -> argparse.ArgumentParser:
             "fallbacks may be lower fidelity than Elsevier XML or publisher-managed HTML."
         ),
     )
-    parser.add_argument("--include-refs", choices=("none", "top10", "all"), default=None)
-    parser.add_argument("--asset-profile", choices=("none", "body", "all"), default="body")
-    parser.add_argument("--max-tokens", type=parse_max_tokens, default="full_text")
+    parser.add_argument(
+        "--include-refs",
+        choices=("none", "top10", "all"),
+        default=None,
+        help=(
+            "Reference rendering mode for Markdown output. Defaults to all for full_text "
+            "and top10 for numeric --max-tokens."
+        ),
+    )
+    parser.add_argument(
+        "--asset-profile",
+        choices=("none", "body", "all"),
+        default="body",
+        help=(
+            "Local content asset scope: none skips asset downloads, body saves body "
+            "figures/tables/formula images, all also saves supplementary assets."
+        ),
+    )
+    parser.add_argument(
+        "--max-tokens",
+        type=parse_max_tokens,
+        default="full_text",
+        help=(
+            "Markdown rendering budget: a positive integer token budget or full_text "
+            "for the complete article (default: full_text)."
+        ),
+    )
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"paper-fetch {package_version()}",
+        help="Show the installed paper-fetch version and exit.",
+    )
     return parser
 
 
@@ -636,16 +683,16 @@ def _write_auth_result(provider_key: str, provider_label: str, result) -> None:
 def run_auth_command(raw_args: list[str]) -> int:
     parser = build_auth_parser()
     args = parser.parse_args(raw_args)
-    uses_legacy_ams_args = bool(
+    uses_direct_storage_args = bool(
         args.state_json
         or args.env_file
         or args.no_env_write
         or args.wait_seconds is not None
     )
-    if uses_legacy_ams_args:
+    if uses_direct_storage_args:
         parser.error(
-            "--state-json, --env-file, --no-env-write, and --wait-seconds are no longer supported; "
-            "auth now saves provider-scoped storage-state. Use CLOAKBROWSER_PROFILE_DIR "
+            "--state-json, --env-file, --no-env-write, and --wait-seconds are unsupported for provider auth; "
+            "auth saves provider-scoped storage-state. Use CLOAKBROWSER_PROFILE_DIR "
             "or CLOAKBROWSER_USER_DATA_DIR to override that location."
         )
     result = authenticate_provider_profile(

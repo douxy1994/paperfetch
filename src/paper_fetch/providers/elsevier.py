@@ -55,6 +55,9 @@ from ._elsevier_xml_rules import (
 )
 from ._pdf_common import (
     PdfFetchFailure,
+    pdf_asset_output_dir,
+    pdf_asset_profile_from_context,
+    pdf_fetch_result_assets,
     pdf_fetch_result_from_response,
 )
 from ._payloads import build_provider_payload
@@ -759,8 +762,15 @@ class ElsevierClient(ProviderClient):
             trace_route="xml_pii",
         )
 
-    def _fetch_official_pdf_payload(self, doi: str) -> RawFulltextPayload:
+    def _fetch_official_pdf_payload(
+        self,
+        doi: str,
+        *,
+        asset_profile: AssetProfile = "none",
+        context: RuntimeContext | None = None,
+    ) -> RawFulltextPayload:
         url = self._official_article_url(doi)
+        effective_asset_profile = asset_profile or pdf_asset_profile_from_context(context)
         try:
             response = self.transport.request(
                 "GET",
@@ -786,6 +796,8 @@ class ElsevierClient(ProviderClient):
             pdf_result = pdf_fetch_result_from_response(
                 response,
                 artifact_dir=None,
+                asset_profile=effective_asset_profile,
+                asset_output_dir=pdf_asset_output_dir(context, asset_profile=effective_asset_profile),
                 source_url=url,
                 final_url=final_url,
                 not_pdf_message="Elsevier official PDF fallback did not return a PDF file.",
@@ -803,6 +815,7 @@ class ElsevierClient(ProviderClient):
             markdown_text=pdf_result.markdown_text,
             reason="Downloaded full text from the official Elsevier API PDF fallback.",
             suggested_filename=pdf_result.suggested_filename,
+            extracted_assets=pdf_fetch_result_assets(pdf_result),
             trace_markers=[
                 fulltext_marker("elsevier", "ok", route="pdf_api"),
                 fulltext_marker("elsevier", "ok", route=PDF_FALLBACK),
@@ -995,7 +1008,11 @@ class ElsevierClient(ProviderClient):
             ),
             ProviderWaterfallStep(
                 label="pdf",
-                run=lambda _state: self._fetch_official_pdf_payload(normalized_doi),
+                run=lambda _state: self._fetch_official_pdf_payload(
+                    normalized_doi,
+                    asset_profile=pdf_asset_profile_from_context(context),
+                    context=context,
+                ),
                 failure_marker=fulltext_marker("elsevier", "fail", route="pdf_api"),
                 success_markers=(
                     fulltext_marker("elsevier", "ok", route="pdf_api"),
@@ -1040,6 +1057,7 @@ class ElsevierClient(ProviderClient):
                 metadata=article_metadata,
                 doi=doi or None,
                 markdown_text=markdown_text,
+                assets=list(content.extracted_assets if content is not None else []),
                 warnings=warnings,
                 trace=trace,
             )
@@ -1135,14 +1153,13 @@ class ElsevierClient(ProviderClient):
         route = normalize_text(content.route_kind if content is not None else "").lower()
         if route != PDF_FALLBACK:
             return artifacts
+        pdf_assets = list(content.extracted_assets if content is not None else [])
         return ProviderArtifacts(
-            assets=list(artifacts.assets),
+            assets=[*list(artifacts.assets), *pdf_assets],
             asset_failures=list(artifacts.asset_failures),
             allow_related_assets=False,
-            text_only=True,
-            skip_warning=(
-                "Elsevier PDF fallback currently returns text-only full text; "
-                "figure and supplementary asset downloads are not implemented yet."
-            ),
-            skip_trace=trace_from_markers([download_marker("elsevier_assets_skipped_text_only")]),
+            text_only=not pdf_assets,
+            skip_trace=trace_from_markers([download_marker("elsevier_assets_skipped_text_only")])
+            if not pdf_assets
+            else [],
         )

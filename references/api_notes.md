@@ -2,7 +2,7 @@
 
 This file is a compact API and endpoint constraint reference. It is not the canonical source for provider routing or waterfall order.
 
-Canonical runtime behavior lives in [`docs/providers.md`](../docs/providers.md), `paper_fetch.provider_catalog.PROVIDER_CATALOG`, and `src/paper_fetch/providers/`. Copernicus runtime behavior is documented with the supported providers; the planned MDPI design lives only in [`docs/providers.md`](../docs/providers.md#待接入设计mdpi).
+Canonical runtime behavior lives in [`docs/providers.md`](../docs/providers.md), `paper_fetch.provider_catalog.PROVIDER_CATALOG`, and `src/paper_fetch/providers/`. Copernicus and MDPI runtime behavior is documented with the supported providers.
 
 ## Elsevier
 

@@ -76,6 +76,15 @@ class MarkdownRenderIrTests(unittest.TestCase):
         self.assertEqual(render_caption(caption), "**Figure 2.** A caption.")
         self.assertEqual(render_list(items), ["1. First", "2. Second", ""])
 
+    def test_formula_renderer_normalizes_latex(self) -> None:
+        formula = MarkdownFormula(
+            label="",
+            latex=r"P(SPI \unicode{x2A7D} - 1.64)",
+            display_mode=False,
+        )
+
+        self.assertEqual(render_formula(formula), [r"$P(SPI \leqslant - 1.64)$", ""])
+
 
 if __name__ == "__main__":
     unittest.main()

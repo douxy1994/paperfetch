@@ -6,6 +6,53 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.6.2 - 2026-06-27
+
+### 变更
+
+- 刷新人读与 agent 文档，使 provider routing、browser runtime、artifact、cache、probe、onboarding 和 extraction-rule 契约都描述当前行为，不再保留过时迁移表述，并将 browser runtime 参考文档重命名为 `docs/browser-runtime.md`。
+- 更新 CLI 与 MCP 中 provider authentication、browser storage/profile override 的帮助文案，改为说明当前按 provider 归属的 storage-state 行为。
+
+### 修复
+
+- 更新 extraction-rule 校验逻辑，使刷新后的 extraction rules 从旧“兼容说明”表述切换到当前“兼容锚点”表述后，兼容锚点重定向仍会被接受。
+
+### 移除
+
+- 移除过时的 `problems.md` 实现任务草稿和已废弃的 `docs/legacy-browser-runtime.md` 参考文档。
+
+## 2.6.1 - 2026-06-27
+
+### 修复
+
+- 修复 MathJax `\unicode{...}` 命令的 LaTeX normalize，例如把 `\unicode{x2A7D}` 改写为 `\leqslant`，避免 `10.1088/1748-9326/ad560b` 等 IOP Markdown 输出在 KaTeX 中报 undefined control sequence。
+- 修复 `MarkdownFormula` 渲染路径：现在会复用公共 LaTeX normalize，而不是只做通用文本 normalize。
+- 修复 browser workflow 图片下载：优先使用显式 `download_url` 候选，并拒绝 `Blank.svg`、`Blank.png`、`Blank.gif` 等 lazy placeholder，避免 Atypon/AMS 页面把占位图保存成正文 figure 资产。
+- 修复 seeded browser PDF fallback 在 async 线程切换后的浏览器上下文处理：现在使用线程本地 browser context manager，同时保留已配置的 profile 和 user-data 目录，避免跨线程复用 runtime browser manager。
+
+## 2.6.0 - 2026-06-26
+
+### 新增
+
+- 新增 Frontiers (`frontiers`) XML-first provider：支持 `10.3389/` 与 `frontiersin.org` 路由、canonical article 发现、共享 JATS 渲染、figure URL 重写、direct HTTP PDF fallback、`frontiers_xml` / `frontiers_pdf` source、manifest、文档和单测覆盖。
+- 新增 `paper-fetch --version`，并补充 CLI help 中 reference、asset 和 token 渲染选项说明。
+
+### 变更
+
+- PDF fallback 现在会在启用 artifact 保存且 `asset_profile=body|all` 时导出 PDF 正文图片到 `body_assets/`，并在 direct HTTP 与 seeded-browser PDF 路由中把这些图片同步暴露到 article assets/artifacts。
+- PDF fallback 来源文件现在使用根据 source 派生的稳定文件名，不再统一写成 `downloaded.pdf`，减少同一 artifact 目录内多个 PDF fallback 文件互相覆盖的风险。
+
+### 修复
+
+- 修复 IOP figure 资产抽取：标准 `_lr` / `_online` CDN 图片链接现在会先升级为 `_hr` 高分辨率候选，再进入预览图回退；因此 `10.1088/1748-9326/ad560b` 等 IOP HTML 抓取在高分辨率图可用时会保存 full-size 正文图片。
+
+## 2.5.2 - 2026-06-24
+
+### 修复
+
+- 修复共享 HTML cleanup 误用 `data-title`、`alt`、`title`、`aria-*` 等语义属性触发页面 chrome 噪声过滤的问题。正文图表标题中包含 “related” 等词时不再被误删，例如 Springer/Nature HTML 抽取中 Nature 文章 Fig. 2 缺失的问题。
+- 新增回归测试，确保带语义 `data-title` 文本的 Springer/Nature 正文 figure 资产会被保留，同时 class/id 等结构属性标记的 related/recommended article chrome 仍会被移除。
+
 ## 2.5.1 - 2026-06-23
 
 ### 修复

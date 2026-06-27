@@ -40,7 +40,7 @@ paper-fetch auth wiley --url "https://onlinelibrary.wiley.com/doi/full/10.1111/e
 - `--url <url>`：覆盖内置样例文章，打开具体失败文章页。
 - `--timeout-ms <ms>`：设置浏览器导航超时。
 - `--browser-user-agent <ua>`：仅本次认证使用的 browser UA。
-- 旧 `--state-json` / `--env-file` / `--no-env-write` / `--wait-seconds` 不再支持；如需改保存位置，使用 `CLOAKBROWSER_PROFILE_DIR` 或 `CLOAKBROWSER_USER_DATA_DIR`。
+- storage-state 保存位置通过 `CLOAKBROWSER_PROFILE_DIR` 或 `CLOAKBROWSER_USER_DATA_DIR` 覆盖。
 
 storage-state JSON 是主要复用状态，只是本地辅助状态，不绕过权限，也不是跨机器通用凭据；站点 session 可能按时间、网络、设备或浏览器指纹失效。未配置持久凭证不会阻止正常抓取；抓取仍会按当前 browser workflow 和 provider PDF / abstract-only / metadata fallback 运行。手动 auth 后再次抓取同一 provider 会复用同一个 publisher storage-state 文件。
 
@@ -89,7 +89,7 @@ paper-fetch --query-file ./queries.txt \
 - 未提供 `--output-dir` 且未显式传 `--output` 时，主输出打印到 stdout。
 - 提供 `--output-dir <dir>` 且未显式传 `--output` 时，主输出写入该目录，不打印正文到 stdout。
 - 显式 `--output -` 会强制打印到 stdout，即使同时提供 `--output-dir`。
-- 显式 `--output <path>` 会把主输出写到该路径，`--output-dir` 不再接管主输出。
+- 显式 `--output <path>` 会把主输出写到该路径，`--output-dir` 只作为 artifact / 资产目录。
 
 当 `--output-dir` 承接主输出时，默认文件名来自 DOI 或标题并经过安全化处理：
 
@@ -159,7 +159,7 @@ CLI 默认：
 
 `--artifact-mode none` 不保存 provider artifact 或资产；显式 `--output <path>`、`--save-markdown`，以及未显式 `--output` 时由 `--output-dir` 承接的主输出仍可写文件。
 
-`--no-download` 是兼容旧参数，等价于 `--artifact-mode none`。
+`--no-download` 等价于 `--artifact-mode none`。
 
 ## 资产下载
 
@@ -168,6 +168,8 @@ CLI 默认：
 - `none`：不下载本地资产；不主动清除 Markdown 中已有或 provider 可解析出的远程图片链接。
 - `body`：默认值，保存正文图片、图表、公式图片等。
 - `all`：在正文资产之外，额外保存可识别的补充材料等相关资产。
+
+PDF fallback 在 `body` / `all` 且 artifact mode 允许资产落盘时，会保存 `pymupdf4llm` 从 PDF 导出的正文图片到 `body_assets/`；`none` 或 `--artifact-mode none` 保持不保存本地图片资产。
 
 当 artifact mode 或 `--no-download` 禁止资产落盘时，即使 `--asset-profile` 是 `body` 或 `all`，资产也不会保存。
 
@@ -204,7 +206,9 @@ paper-fetch --query "10.1016/test" \
 ## 渲染选项
 
 - `--include-refs none|top10|all` 控制 references 渲染范围。
+- `--asset-profile none|body|all` 控制本地内容资产范围；PDF fallback 在 `body` / `all` 下也会尝试保存 PDF 导出的正文图片。
 - `--max-tokens full_text|<positive-int>` 控制 Markdown 渲染预算，默认是 `full_text`。
+- `--version` 输出当前安装版本并退出。
 
 ## 默认目录
 

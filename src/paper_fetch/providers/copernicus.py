@@ -44,7 +44,7 @@ from ..utils import (
 from ._article_markdown_common import first_child, first_descendant, iter_descendants, xml_local_name
 from ._article_markdown_copernicus import CopernicusExtraction, parse_copernicus_xml
 from ._payloads import build_provider_payload
-from ._pdf_common import default_pdf_headers
+from ._pdf_common import default_pdf_headers, pdf_asset_output_dir, pdf_asset_profile_from_context, pdf_fetch_result_assets
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http
 from ._registry import ProviderBundle, register_provider_bundle
 from ._waterfall import (
@@ -251,7 +251,7 @@ class CopernicusClient(ProviderClient):
                 build_provider_status_check(
                     PDF_FALLBACK,
                     OK,
-                    "Copernicus PDF fallback is available as text-only full text when XML is not usable.",
+                    "Copernicus PDF fallback is available when XML is not usable; body/all asset requests can save exported PDF images when artifacts are enabled.",
                     details={"mode": "direct_http_pdf"},
                 ),
             ],
@@ -535,14 +535,18 @@ class CopernicusClient(ProviderClient):
         *,
         xml_failure_message: str,
         warnings: list[str],
+        context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         if not attempt.pdf_candidates:
             raise ProviderFailure(NO_RESULT, "Copernicus landing page did not expose a PDF candidate.")
+        effective_asset_profile = pdf_asset_profile_from_context(context)
         try:
             pdf_result = PdfFallbackStrategy(
                 transport=self.transport,
                 headers=self._pdf_headers(referer=attempt.response_url),
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+                asset_profile=effective_asset_profile,
+                asset_output_dir=pdf_asset_output_dir(context, asset_profile=effective_asset_profile),
                 fetcher=fetch_pdf_over_http,
             ).fetch(attempt.pdf_candidates)
         except PdfFetchFailure as exc:
@@ -559,6 +563,7 @@ class CopernicusClient(ProviderClient):
             diagnostics={PDF_FALLBACK: {"candidates": list(attempt.pdf_candidates)}},
             reason="Downloaded full text from Copernicus PDF fallback after XML was not usable.",
             suggested_filename=pdf_result.suggested_filename,
+            extracted_assets=pdf_fetch_result_assets(pdf_result),
             html_failure_message=xml_failure_message,
             warnings=[
                 *warnings,
@@ -575,7 +580,7 @@ class CopernicusClient(ProviderClient):
         *,
         context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
-        del context
+        context = self._runtime_context(context)
         landing_context: dict[str, Any] = {"attempt": None}
 
         def landing_attempt() -> CopernicusLandingAttempt:
@@ -604,6 +609,7 @@ class CopernicusClient(ProviderClient):
                 attempt,
                 xml_failure_message=xml_failure_message,
                 warnings=[],
+                context=context,
             )
 
         return run_provider_waterfall(
@@ -828,16 +834,15 @@ class CopernicusClient(ProviderClient):
         content = raw_payload.content
         if normalize_text(content.route_kind if content is not None else "").lower() != PDF_FALLBACK:
             return artifacts
+        pdf_assets = list(content.extracted_assets if content is not None else [])
         return ProviderArtifacts(
-            assets=list(artifacts.assets),
+            assets=[*list(artifacts.assets), *pdf_assets],
             asset_failures=list(artifacts.asset_failures),
             allow_related_assets=False,
-            text_only=True,
-            skip_warning=(
-                "Copernicus PDF fallback currently returns text-only full text; "
-                "figure and supplementary asset downloads are not implemented for PDF fallback."
-            ),
-            skip_trace=trace_from_markers([download_marker("copernicus_assets_skipped_text_only")]),
+            text_only=not pdf_assets,
+            skip_trace=trace_from_markers([download_marker("copernicus_assets_skipped_text_only")])
+            if not pdf_assets
+            else [],
         )
 
 

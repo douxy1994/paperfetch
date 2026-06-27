@@ -6,6 +6,53 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.6.2 - 2026-06-27
+
+### Changed
+
+- Refreshed the human- and agent-facing documentation to describe the current provider routing, browser runtime, artifact, cache, probe, onboarding, and extraction-rule contracts without stale migration wording, and renamed the browser runtime reference to `docs/browser-runtime.md`.
+- Updated CLI and MCP help text for provider authentication and browser storage/profile overrides to describe the current provider-scoped storage-state behavior.
+
+### Fixed
+
+- Updated extraction-rule validation so compatibility-anchor redirects remain accepted after the refreshed extraction rules converted the old "compatible note" wording to current anchor wording.
+
+### Removed
+
+- Removed the stale `problems.md` implementation task draft and the obsolete `docs/legacy-browser-runtime.md` reference.
+
+## 2.6.1 - 2026-06-27
+
+### Fixed
+
+- Fixed LaTeX normalization for MathJax `\unicode{...}` commands, including `\unicode{x2A7D}` -> `\leqslant`, so IOP Markdown output such as `10.1088/1748-9326/ad560b` no longer fails KaTeX parsing with an undefined control sequence.
+- Fixed `MarkdownFormula` rendering to apply the shared LaTeX normalization path instead of only generic text normalization.
+- Fixed browser-workflow image downloads to prefer explicit `download_url` candidates and reject lazy placeholder images such as `Blank.svg`, `Blank.png`, and `Blank.gif`, preventing Atypon/AMS pages from saving placeholder assets as body figures.
+- Fixed seeded browser PDF fallback after async thread handoff to use a thread-local browser context manager while preserving configured profile and user-data directories, avoiding cross-thread runtime browser manager use.
+
+## 2.6.0 - 2026-06-26
+
+### Added
+
+- Added Frontiers (`frontiers`) XML-first provider for `10.3389/` and `frontiersin.org`, with canonical article discovery, shared JATS rendering, figure URL rewriting, direct HTTP PDF fallback, `frontiers_xml` / `frontiers_pdf` sources, manifest, docs, and unit coverage.
+- Added `paper-fetch --version` plus CLI help text for reference, asset, and token rendering options.
+
+### Changed
+
+- PDF fallback now honors `asset_profile=body|all` when artifact saving is enabled, exporting PDF-rendered body images to `body_assets/` and surfacing them in article assets/artifacts across direct HTTP and seeded-browser PDF routes.
+- PDF fallback source files now use stable, source-derived filenames instead of a single `downloaded.pdf`, reducing collisions when multiple fallback PDFs are materialized in the same artifact directory.
+
+### Fixed
+
+- Fixed IOP figure asset extraction so standard `_lr` / `_online` CDN image links are upgraded to `_hr` high-resolution candidates before preview fallback, allowing IOP HTML fetches such as `10.1088/1748-9326/ad560b` to save full-size body figures when available.
+
+## 2.5.2 - 2026-06-24
+
+### Fixed
+
+- Fixed shared HTML cleanup so semantic attributes such as `data-title`, `alt`, `title`, and `aria-*` no longer trigger chrome noise filtering. This preserves valid body figures whose captions contain words such as "related", including Nature articles where Fig. 2 was dropped from Springer/Nature HTML extraction.
+- Added regression coverage to keep Springer/Nature body figure assets with semantic `data-title` text while continuing to remove real related/recommended article chrome identified by structural attributes.
+
 ## 2.5.1 - 2026-06-23
 
 ### Fixed

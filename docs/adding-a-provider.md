@@ -26,7 +26,7 @@
 不要直接 coding。先在一个 issue 或 doc 段里写清楚下面 5 个问题：
 
 1. **怎么 routing 到这个 provider？** 按域名（如 `mdpi.com`）还是按 Crossref publisher 字段还是 DOI 前缀（`10.3390/`）？
-2. **主路径顺序是什么？** 比如 `landing HTML → XML API → PDF text-only → abstract-only`。
+2. **主路径顺序是什么？** 比如 `landing HTML → XML API → PDF fallback → abstract-only`。
 3. **怎么判断 fulltext 成功？** 只看 HTTP 200 是不够的（项目反模式之一）——要看 article container、章节、正文长度、access gate 文案等。
 4. **`asset_profile` 三模式分别下载什么？** `none` / `body` / `all` 各对应什么 scope？
 5. **需要哪些环境变量 / API key / browser runtime？** `probe_status()` 怎么检查本地配置？
@@ -254,7 +254,7 @@ git commit -m "docs(mdpi): add provider documentation"
 2. **只写 snapshot，不写 Markdown review 断言**：每个 correction 先落 provider-local 断言，再写 / 更新 `expected.json`、`extracted.md`、`markdown-quality-prompt.md` 和 `markdown-quality.json`。
 3. **在 `_X_html.py` 内重写 canonical owner 已有的能力**（table 渲染、header 查找、access gate 文案）：项目反模式，PR 会被打回。
 4. **prototype 和重构混在一个 commit**：重构发现要改 fixtures 时丢失 prototype 进度。
-5. **改了 `provider_catalog.py` / `provider_rules.py` / `quality/html_signals.py`**：这些现在是禁区，CI lint 会失败。所有 provider 数据走 `ProviderBundle` 自注册。
+5. **改了 `provider_catalog.py` / `provider_rules.py` / `quality/html_signals.py`**：这些属于禁区，CI lint 会失败。所有 provider 数据走 `ProviderBundle` 自注册。
 
 ---
 

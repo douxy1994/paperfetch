@@ -134,6 +134,15 @@ LATEX_EMPTY_DELIMITER_REPLACEMENTS = (
 LATEX_UNICODE_MATH_ALIASES = {
     "ℴ": "O",
 }
+LATEX_UNICODE_COMMAND_PATTERN = re.compile(
+    r"\\unicode\s*\{\s*(?:0[xX]|[xX]|[uU]\+)?(?P<code>[0-9A-Fa-f]{1,6})\s*\}"
+)
+LATEX_UNICODE_COMMAND_ALIASES = {
+    "2264": r"\le",
+    "2265": r"\ge",
+    "2A7D": r"\leqslant",
+    "2A7E": r"\geqslant",
+}
 
 
 @dataclass(slots=True)
@@ -446,10 +455,24 @@ def normalize_latex_macros(value: str | None) -> str:
         suffix = " " if following and following.isalnum() else ""
         return rf"\mkern{match.group(1)}mu{suffix}"
 
+    def replace_unicode_command(match: re.Match[str]) -> str:
+        codepoint = int(match.group("code"), 16)
+        codepoint_key = f"{codepoint:X}"
+        replacement = LATEX_UNICODE_COMMAND_ALIASES.get(codepoint_key)
+        if replacement is None:
+            try:
+                replacement = chr(codepoint)
+            except ValueError:
+                return ""
+        following = match.string[match.end() : match.end() + 1]
+        suffix = " " if replacement.startswith("\\") and following and following.isalpha() else ""
+        return replacement + suffix
+
     text = ZERO_WIDTH_SPACE_PATTERN.sub("", text)
     for source, replacement in LATEX_UNICODE_MATH_ALIASES.items():
         text = text.replace(source, replacement)
     text = LATEX_ZERO_HSPACE_PATTERN.sub("", text)
+    text = LATEX_UNICODE_COMMAND_PATTERN.sub(replace_unicode_command, text)
     text = UPGREEK_LATEX_ALIAS_PATTERN.sub(replace_alias, text)
     return LATEX_MSPACE_MU_PATTERN.sub(replace_mspace, text)
 

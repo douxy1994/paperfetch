@@ -58,7 +58,7 @@ from ._arxiv_metadata import (
 )
 from ._payloads import build_provider_payload
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http
-from ._pdf_common import default_pdf_headers
+from ._pdf_common import default_pdf_headers, pdf_asset_output_dir, pdf_asset_profile_from_context, pdf_fetch_result_assets
 from ._registry import ProviderBundle, register_provider_bundle
 from ._waterfall import (
     DEFAULT_WATERFALL_CONTINUE_CODES,
@@ -156,7 +156,7 @@ class ArxivClient(ProviderClient):
                     PDF_FALLBACK,
                     OK,
                     (
-                        "arXiv PDF fallback is available as text-only full text when official HTML "
+                        "arXiv PDF fallback is available when official HTML "
                         "is not usable."
                     ),
                     details={"mode": "direct_http_pdf"},
@@ -323,6 +323,7 @@ class ArxivClient(ProviderClient):
         api_metadata: Mapping[str, Any],
         *,
         previous_failure_message: str,
+        context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         arxiv_id = normalize_arxiv_id(str(api_metadata.get("arxiv_id") or ""))
         candidates = _dedupe_strings(
@@ -342,11 +343,14 @@ class ArxivClient(ProviderClient):
                 or ""
             )
         )
+        effective_asset_profile = pdf_asset_profile_from_context(context)
         try:
             pdf_result = PdfFallbackStrategy(
                 transport=self.transport,
                 headers=self._pdf_headers(referer=referer),
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+                asset_profile=effective_asset_profile,
+                asset_output_dir=pdf_asset_output_dir(context, asset_profile=effective_asset_profile),
                 fetcher=fetch_pdf_over_http,
             ).fetch(candidates)
         except PdfFetchFailure as exc:
@@ -370,6 +374,7 @@ class ArxivClient(ProviderClient):
             },
             reason="Downloaded full text from arXiv PDF fallback after arXiv official HTML was not usable.",
             suggested_filename=pdf_result.suggested_filename,
+            extracted_assets=pdf_fetch_result_assets(pdf_result),
             html_failure_message=previous_failure_message,
             warnings=[
                 "Full text was extracted from arXiv PDF fallback after arXiv official HTML was not usable."
@@ -385,7 +390,7 @@ class ArxivClient(ProviderClient):
         *,
         context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
-        del context
+        context = self._runtime_context(context)
         derived_metadata = self._ensure_derived_metadata(doi, metadata)
         arxiv_id = normalize_arxiv_id(str(derived_metadata.get("arxiv_id") or ""))
 
@@ -402,7 +407,9 @@ class ArxivClient(ProviderClient):
                 "; ".join(failure_messages) or "arXiv official HTML route failed."
             )
             return self._fetch_pdf_payload(
-                derived_metadata, previous_failure_message=previous_failure_message
+                derived_metadata,
+                previous_failure_message=previous_failure_message,
+                context=context,
             )
 
         payload = run_provider_waterfall(
@@ -627,7 +634,14 @@ class ArxivClient(ProviderClient):
             doi=doi or None,
             markdown_text=markdown_text,
             section_hints=section_hints,
-            assets=[dict(item) for item in (downloaded_assets or [])],
+            assets=[
+                dict(item)
+                for item in (
+                    list(content.extracted_assets if content is not None else [])
+                    if route == PDF_FALLBACK
+                    else list(downloaded_assets or [])
+                )
+            ],
             warnings=warnings,
             trace=trace,
             availability_diagnostics=availability_diagnostics,
@@ -656,18 +670,17 @@ class ArxivClient(ProviderClient):
             != PDF_FALLBACK
         ):
             return artifacts
+        pdf_assets = list(content.extracted_assets if content is not None else [])
         return ProviderArtifacts(
-            assets=list(artifacts.assets),
+            assets=[*list(artifacts.assets), *pdf_assets],
             asset_failures=list(artifacts.asset_failures),
             allow_related_assets=False,
-            text_only=True,
-            skip_warning=(
-                "arXiv PDF fallback currently returns text-only full text; "
-                "figure and supplementary asset downloads are not implemented for PDF fallback."
-            ),
+            text_only=not pdf_assets,
             skip_trace=trace_from_markers(
                 [download_marker("arxiv_assets_skipped_text_only")]
-            ),
+            )
+            if not pdf_assets
+            else [],
         )
 
 

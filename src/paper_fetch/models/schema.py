@@ -27,6 +27,8 @@ SourceKind = Literal[
     "oxfordacademic_pdf",
     "plos_xml",
     "plos_pdf",
+    "frontiers_xml",
+    "frontiers_pdf",
     "ieee_html",
     "ieee_pdf",
     "arxiv_html",

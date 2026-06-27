@@ -8,7 +8,7 @@
 /goal follow onboarding/instruction.md 添加 <provider> provider
 ```
 
-执行者必须把 `onboarding/` 当作唯一权威输入目录。不要从临时聊天记录、README 或旧人工教程推断 provider 行为；涉及路由、fixture purpose、route contract、Markdown contract、资产 profile、验收 gate 和文档同步时，以 provider manifest、schema、brief、hard constraints 和 acceptance 文档为准。
+执行者必须把 `onboarding/` 当作唯一权威输入目录。不要从临时聊天记录、README 或其他人工教程推断 provider 行为；涉及路由、fixture purpose、route contract、Markdown contract、资产 profile、验收 gate 和文档同步时，以 provider manifest、schema、brief、hard constraints 和 acceptance 文档为准。
 
 可自动化范围和不可自动化边界见 [`automation-roadmap.md`](./automation-roadmap.md)。可以优先使用 full runner：
 
@@ -28,7 +28,7 @@ PYTHONPATH=src python3 scripts/provider_agent.py doctor --provider <provider>
 
 `scripts/provider_agent.py` 不维护独立 DAG 或 state；它只调用 `onboard_from_manifests.py`、access review backfill 和现有 state/manifest/review artifact。默认目标是 `local-ready`，对应 runner cutoff `provider-local-acceptance`；只有明确传 `--target merge-ready` 时才推进完整合入标准。
 
-runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox workspace-write -c approval_policy="never" -`）派发 coding-agent-subagent；`PROVIDER_ONBOARDING_AGENT_CLI` 仅作为 operator override。runner 不能代替 operator 批准 access review，也不能把最终 Markdown 语义审查自动签为 true。snapshot gate 会每次重新读取当前 `extracted.md` 做 fresh Markdown quality review，不能只信旧 `markdown-quality.json`。
+runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox workspace-write -c approval_policy="never" -`）派发 coding-agent-subagent；`PROVIDER_ONBOARDING_AGENT_CLI` 仅作为 operator override。runner 不能代替 operator 批准 access review，也不能把最终 Markdown 语义审查自动签为 true。snapshot gate 会每次重新读取当前 `extracted.md` 做 fresh Markdown quality review，不能只信已有 `markdown-quality.json`。
 
 从 `--provider` 种子启动时，runner 会在 discovery worker 前自动生成 `.paper-fetch-runs/<provider>-onboarding/discovery/evidence-pack.json`，并把 evidence pack 摘要、contract 模板和 autofix policy 写入 `discover-manifest` brief/prompt。Worker 仍负责写 manifest 初稿；coordinator 只在 validate 前后自动补机器可判的 schema/proof/contract 缺口。
 
@@ -107,7 +107,7 @@ runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox wor
    - `markdown-quality.json` 必须为 `review_method: agent_prompt`、`status: pass` 且没有 blocking issue；pending 或 fail 都会阻断 `markdown_semantic_reviewed: true`。
    - 若 manifest 声明 `asset_contract.figures.inline: body`，fresh review 必须把缺少正文 `![Figure ...](...)`、仅有文末 `## Figures` caption 作为 blocking issue；若声明 `download: required`，缺少本地 asset path rewrite 也必须 blocking。
    - 若文章应有 References，fresh review 必须把 `## References` 下参考文献列表缺少可识别序号或编号标签（如 `[1]`、`1.`、`1)` 或 publisher 原始编号）作为 blocking issue。
-   - `check-snapshot` 还会通过默认 Codex CLI 或 `PROVIDER_ONBOARDING_AGENT_CLI` override 重新读取当前 `extracted.md` 并写入 `.paper-fetch-runs/<provider>-markdown-quality-audit/<doi_slug>/attempt-N/fresh-markdown-quality.json`；fresh review 发现 blocking issue 时，即使旧 `markdown-quality.json` 是 pass 也必须失败。
+   - `check-snapshot` 还会通过默认 Codex CLI 或 `PROVIDER_ONBOARDING_AGENT_CLI` override 重新读取当前 `extracted.md` 并写入 `.paper-fetch-runs/<provider>-markdown-quality-audit/<doi_slug>/attempt-N/fresh-markdown-quality.json`；fresh review 发现 blocking issue 时，即使已有 `markdown-quality.json` 是 pass 也必须失败。
    - full runner 在 `snapshot-expected` 阶段遇到 fresh Markdown quality blocking issue 时，会自动进入 `repair-markdown-quality`，修复后再重新运行 fresh review 和 snapshot gate。
    - `issues` 和 `fixes` 使用带稳定 `id` 的对象；每个 fix 必须引用已有 `issue_ids`，并列出至少一个 provider-local `test_names`。
    - 每个 issue 先落 provider-local 断言，再修 provider-owned 实现。
@@ -134,7 +134,7 @@ runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox wor
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_manifest_bundle_sync.py -q`
     - `PYTHONPATH=src python3 -m pytest tests/unit/test_human_docs_drift.py -q`
     - `python3 scripts/validate_extraction_rules.py`
-    - 对未来新增 provider 默认运行一次 provider subset live assets review，例如 `PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_golden_criteria_live_review.py --providers mdpi`；已有 legacy 非风险 provider 可豁免。
+    - 对未来新增 provider 默认运行一次 provider subset live assets review，例如 `PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_golden_criteria_live_review.py --providers mdpi`；已有低风险 provider 可豁免。
     - 维护期或合并前人工巡检 route-source drift 时，可本地手动运行 `PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_provider_drift_report.py --provider <provider> --output .paper-fetch-runs/drift/<provider>.json`；该命令不是 GitHub CI gate。
     - `PYTHONPATH=src python3 -m pytest tests/unit -q`
 13. 文档同步与 merge-ready：
@@ -152,6 +152,7 @@ runner 默认通过本机 Codex CLI（`codex exec --cd <repo-root> --sandbox wor
 - `asset_profile=none/body/all` 语义稳定；supplementary 只能来自明确 scope。
 - Figure asset contract 必须落到正文内联和下载两层：`![Figure ...](...)` 出现在正文首次引用或 caption block 附近，下载后最终 Markdown 使用本地相对 asset path，不靠文末 `## Figures` caption bullet 通过。
 - `ProviderMetadata` 是 provider / metadata adapter 产出的可选字段 `TypedDict`，用于 metadata merge、routing probe 和文章构建前的元数据传递；它不是新的 runtime payload 容器。Provider 对外 override 签名必须保持 `Mapping[str, Any]` 兼容，只在内部构造、合并或局部收窄时使用 `ProviderMetadata`。
+- Browser runtime 生命周期必须通过 `RuntimeContext` 持有的 `BrowserContextManager` 或现有 browser workflow helper 管理。
 - Markdown 无站点 chrome、access noise、重复 boilerplate、重复 figures/tables。
 - References 不被误清洗，正文 citation anchor 不被误当成 references 条目。
 - Formula、table、caption 由 canonical renderer 或 provider adapter 输出，不新建平行 renderer。

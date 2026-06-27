@@ -439,6 +439,64 @@ class SpringerHtmlRegressionTests(unittest.TestCase):
         self.assertEqual(source_data_html, "")
         self.assertFalse(any(asset.get("kind") == "supplementary" for asset in all_assets))
 
+    def test_nature_figure_data_title_with_related_keeps_body_asset(self) -> None:
+        source_url = "https://www.nature.com/articles/s41559-026-03081-7"
+        html_text = """
+<html>
+  <body>
+    <article>
+      <h1>Biodiversity loss will decrease the future creditworthiness of nations</h1>
+      <div class="c-article-body">
+        <div class="main-content">
+          <section data-title="Results">
+            <div class="c-article-section__content">
+              <div class="c-article-section__figure" id="figure-1" data-title="Credit rating changes under current trends and partial-collapse scenarios.">
+                <figure>
+                  <figcaption><b>Fig. 1: Credit rating changes under current trends and partial-collapse scenarios.</b></figcaption>
+                  <img src="//media.springernature.com/lw685/springer-static/image/art%3A10.1038%2Fs41559-026-03081-7/MediaObjects/41559_2026_3081_Fig1_HTML.png" alt="Fig. 1: Credit rating changes under current trends and partial-collapse scenarios." />
+                  <a href="/articles/s41559-026-03081-7/figures/1">Full size image</a>
+                </figure>
+              </div>
+              <div class="c-article-section__figure" id="figure-2" data-title="Nature-related increases in PD.">
+                <figure>
+                  <figcaption><b>Fig. 2: Nature-related increases in PD.</b></figcaption>
+                  <img src="//media.springernature.com/lw685/springer-static/image/art%3A10.1038%2Fs41559-026-03081-7/MediaObjects/41559_2026_3081_Fig2_HTML.png" alt="Fig. 2: Nature-related increases in PD." />
+                  <a href="/articles/s41559-026-03081-7/figures/2">Full size image</a>
+                </figure>
+              </div>
+              <div class="c-article-section__figure" id="figure-3" data-title="Additional annual debt servicing costs due to PEC.">
+                <figure>
+                  <figcaption><b>Fig. 3: Additional annual debt servicing costs due to PEC.</b></figcaption>
+                  <img src="//media.springernature.com/lw685/springer-static/image/art%3A10.1038%2Fs41559-026-03081-7/MediaObjects/41559_2026_3081_Fig3_HTML.png" alt="Fig. 3: Additional annual debt servicing costs due to PEC." />
+                  <a href="/articles/s41559-026-03081-7/figures/3">Full size image</a>
+                </figure>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
+    </article>
+  </body>
+</html>
+"""
+
+        assets = springer_html.extract_html_assets(
+            html_text,
+            source_url,
+            asset_profile="body",
+        )
+
+        figure_assets = [
+            asset for asset in assets if normalize_text(asset.get("kind")).lower() == "figure"
+        ]
+        self.assertEqual(
+            [asset.get("heading") for asset in figure_assets],
+            ["Figure 1", "Figure 2", "Figure 3"],
+        )
+        self.assertTrue(
+            any("41559_2026_3081_Fig2_HTML.png" in normalize_text(asset.get("url")) for asset in figure_assets)
+        )
+
     def test_real_nature_fixture_separates_source_data_from_supplementary_assets(self) -> None:
         """rule: rule-springer-supplementary-scope"""
         source_url = "https://www.nature.com/articles/s41561-022-00912-7"

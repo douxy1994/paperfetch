@@ -32,11 +32,11 @@ SKILL_ENVIRONMENT_VARIABLES: tuple[tuple[str, str], ...] = (
     ),
     (
         "PAPER_FETCH_WILEY_STORAGE_STATE_JSON",
-        "Legacy Wiley browser storage-state JSON; current managed default uses provider-scoped storage-state, while external CDP mode uses the existing browser context state.",
+        "Optional Wiley browser storage-state JSON override; managed default uses provider-scoped storage-state, while external CDP mode uses the existing browser context state.",
     ),
     (
         "PAPER_FETCH_WILEY_PROFILE_DIR",
-        "Legacy Wiley profile override; current managed default uses provider-scoped storage-state; use CLOAKBROWSER_PROFILE_DIR only to override the managed Chrome startup/storage-state directory or CLOAKBROWSER_CDP_ENDPOINT for an external browser.",
+        "Optional Wiley profile override; managed default uses provider-scoped storage-state; use CLOAKBROWSER_PROFILE_DIR only to override the managed Chrome startup/storage-state directory or CLOAKBROWSER_CDP_ENDPOINT for an external browser.",
     ),
     (
         "CLOAKBROWSER_PROFILE_DIR",
@@ -148,19 +148,20 @@ def server_instructions() -> str:
         "the CDP browser HTML route, then CDP browser-seeded publisher PDF/ePDF "
         "fallback, and may still continue into the official Wiley TDM API PDF lane "
         "when `WILEY_TDM_CLIENT_TOKEN` is configured while publishing `wiley_browser`. `science`, "
-        "`pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, and `mdpi` require the local browser runtime but no legacy local "
+        "`pnas`, `ams`, `annualreviews`, `acs`, `iop`, `aip`, and `mdpi` require the local browser runtime but no provider-specific local "
         "rate-limit env vars; AMS publishes `ams_html` or `ams_pdf` and ignores `citation_xml_url`; Annual Reviews publishes `annualreviews_html` or `annualreviews_pdf`; ACS publishes `acs`; IOP publishes `iop_html` or `iop_pdf` and rejects Radware/hCaptcha challenge pages; AIP publishes `aip_html` or `aip_pdf`; MDPI publishes `mdpi_html` or `mdpi_pdf` and does not use an XML route. `ieee` uses "
         "landing metadata, the Xplore dynamic HTML endpoint, and direct HTTP PDF fallback, "
         "publishing `ieee_html` or `ieee_pdf` when those routes return usable full text. `arxiv` uses "
-        "arXiv ID-derived HTML first, optional API/HTML metadata merge, and text-only PDF fallback while publishing "
+        "arXiv ID-derived HTML first, optional API/HTML metadata merge, and PDF fallback while publishing "
         "`arxiv_html` or `arxiv_pdf`. `copernicus` uses "
-        "direct landing HTML to discover public NLM/JATS XML, then falls back to text-only PDF before metadata fallback, "
+        "direct landing HTML to discover public NLM/JATS XML, then falls back to PDF before metadata fallback, "
         "requires no browser runtime or provider credentials, and publishes `copernicus_xml` or `copernicus_pdf`. "
         "`royalsocietypublishing` uses direct DOI HTML with direct HTTP PDF fallback, publishing `royalsocietypublishing_html` or `royalsocietypublishing_pdf`. "
         "`plos` uses public JATS XML with direct HTTP PDF fallback, publishing `plos_xml` or `plos_pdf`. "
+        "`frontiers` discovers canonical Frontiers article routes from landing HTML, then uses public JATS XML with direct HTTP PDF fallback, publishing `frontiers_xml` or `frontiers_pdf`. "
         "`oxfordacademic` uses direct HTTP article HTML with direct HTTP PDF fallback, publishing `oxfordacademic_html` or `oxfordacademic_pdf`. "
-        "Elsevier PDF fallback currently returns text-only markdown even when "
-        "`asset_profile` is `body` or `all`. On successful HTML/XML routes, "
+        "PDF fallback uses shared pymupdf4llm Markdown conversion and, when `asset_profile` is `body` or `all` "
+        "and artifact saving is enabled, saves exported PDF images to `body_assets/`. On successful HTML/XML routes, "
         "`asset_profile='none'` disables local asset downloads but does not remove "
         "remote image links already present in rendered Markdown. "
         "`asset_profile='body'` means provider-cleaned body figure/table/formula assets only, "
@@ -168,8 +169,8 @@ def server_instructions() -> str:
         "Inline ImageContent still only comes from body figures. Wiley/Science/PNAS/AMS/Annual Reviews/ACS/IOP/AIP/MDPI support "
         "`asset_profile=body|all` on successful CDP browser HTML routes and "
         "prefer full-size/original figures before falling back to previews, while "
-        "their PDF/ePDF fallback routes remain text-only. Springer, IEEE, arXiv, and Copernicus PDF fallback "
-        "routes are also text-only in this version. "
+        "their PDF/ePDF fallback routes share the same PDF image export behavior. Springer, IEEE, arXiv, and Copernicus PDF fallback "
+        "routes use the same shared PDF conversion path. "
         "On supporting clients, fetch_paper and batch tools also emit progress updates "
         "and structured log notifications."
     )
@@ -215,21 +216,21 @@ def fetch_tool_description() -> str:
         "provider-managed browser runtime HTML plus seeded-browser publisher PDF/ePDF repo-local "
         "workflows; AMS publishes `ams_html` or `ams_pdf` and does not request `citation_xml_url` / `/doc/...xml`; Annual Reviews publishes `annualreviews_html` or `annualreviews_pdf`; ACS publishes `acs`; IOP publishes `iop_html` or `iop_pdf`, rejects Radware/hCaptcha challenge pages, and does not implement unauthenticated TDM XML/PDF; AIP publishes `aip_html` or `aip_pdf`; MDPI publishes `mdpi_html` or `mdpi_pdf` and does not use an XML route. `ieee` uses landing metadata, "
         "the Xplore dynamic HTML endpoint, and direct HTTP PDF fallback while publishing "
-        "`ieee_html` or `ieee_pdf`. `arxiv` uses ID-derived official HTML first, optional API/HTML metadata merge, and text-only PDF "
+        "`ieee_html` or `ieee_pdf`. `arxiv` uses ID-derived official HTML first, optional API/HTML metadata merge, and PDF "
         "fallback while publishing `arxiv_html` or `arxiv_pdf`. `copernicus` uses direct HTTP landing discovery, public NLM/JATS XML, "
-        "and text-only PDF fallback before metadata fallback while publishing `copernicus_xml` or `copernicus_pdf`; it does not need browser runtime or credentials. "
+        "and PDF fallback before metadata fallback while publishing `copernicus_xml` or `copernicus_pdf`; it does not need browser runtime or credentials. "
         "`royalsocietypublishing` uses direct DOI HTML with direct HTTP PDF fallback while publishing `royalsocietypublishing_html` or `royalsocietypublishing_pdf`. "
         "`plos` uses public JATS XML with direct HTTP PDF fallback while publishing `plos_xml` or `plos_pdf`. "
-        "`oxfordacademic` uses direct HTTP article HTML with direct HTTP PDF fallback while publishing `oxfordacademic_html` or `oxfordacademic_pdf`. Elsevier PDF "
-        "fallback keeps body/all requests text-only. On successful HTML/XML routes, "
+        "`frontiers` discovers canonical Frontiers article routes from landing HTML, then uses public JATS XML with direct HTTP PDF fallback while publishing `frontiers_xml` or `frontiers_pdf`. "
+        "`oxfordacademic` uses direct HTTP article HTML with direct HTTP PDF fallback while publishing `oxfordacademic_html` or `oxfordacademic_pdf`. PDF "
+        "fallback saves exported PDF images for body/all requests when artifact saving is enabled. On successful HTML/XML routes, "
         "`asset_profile='none'` disables local asset downloads but keeps rendered "
         "remote Markdown image links when the provider can resolve them. "
         "`asset_profile='body'` means provider-cleaned body figure/table/formula assets only, "
         "while `asset_profile='all'` additionally downloads supplementary files; "
         "supplementary files are saved as assets but are not emitted as ImageContent. "
-        "Wiley/Science/PNAS/AMS/Annual Reviews/ACS/IOP/AIP/MDPI support body/all assets on successful CDP browser HTML routes while keeping "
-        "PDF/ePDF fallback text-only, and Springer/IEEE/arXiv/Copernicus PDF fallback is also text-only "
-        "in this version. Set "
+        "Wiley/Science/PNAS/AMS/Annual Reviews/ACS/IOP/AIP/MDPI support body/all assets on successful CDP browser HTML routes and share "
+        "the PDF/ePDF fallback image export behavior with Springer/IEEE/arXiv/Copernicus. Set "
         "download_dir to isolate task-local downloads; the MCP server can also surface "
         "scoped cache resources for that directory during the current session."
     )

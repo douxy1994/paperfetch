@@ -19,5 +19,10 @@
     "name": "mspace_mu",
     "input": "\\mspace{6mu}x + \\mspace{ -1.5 mu }y + \\mspace{2pt}z",
     "expected": "\\mkern6mu x + \\mkern-1.5mu y + \\mspace{2pt}z"
+  },
+  {
+    "name": "unicode_less_than_slanted_equal",
+    "input": "P(SPI \\unicode{x2A7D} - 1.64|SPIc \\unicode{x2A7D} - 1.64)",
+    "expected": "P(SPI \\leqslant - 1.64|SPIc \\leqslant - 1.64)"
   }
 ]

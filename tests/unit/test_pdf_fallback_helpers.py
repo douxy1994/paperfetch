@@ -265,10 +265,12 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(len(new_context_thread_ids), 1)
         self.assertNotEqual(new_context_thread_ids[0], main_thread_id)
 
-    def test_pdf_fallback_thread_handoff_reuses_runtime_browser_config(self) -> None:
+    def test_pdf_fallback_thread_handoff_uses_thread_local_browser_manager(self) -> None:
         pdf_url = "https://example.org/article.pdf"
+        test_case = self
         main_thread_id = threading.get_ident()
         new_context_thread_ids: list[int] = []
+        manager_init_kwargs: list[dict[str, object]] = []
 
         class FakeDownload:
             suggested_filename = "article.pdf"
@@ -301,11 +303,18 @@ class PdfFallbackHelperTests(unittest.TestCase):
             def close(self) -> None:
                 return None
 
-        def fake_new_browser_context_for_config(*args, **kwargs):
-            with self.assertRaises(RuntimeError):
-                asyncio.get_running_loop()
-            new_context_thread_ids.append(threading.get_ident())
-            return FakeBrowserContext()
+        class FakeBrowserContextManager:
+            def __init__(self, **kwargs) -> None:
+                manager_init_kwargs.append(dict(kwargs))
+
+            def new_context(self, *args, **kwargs):
+                with test_case.assertRaises(RuntimeError):
+                    asyncio.get_running_loop()
+                new_context_thread_ids.append(threading.get_ident())
+                return FakeBrowserContext()
+
+            def close(self) -> None:
+                return None
 
         async def run_fetch(
             artifact_dir: Path,
@@ -331,11 +340,11 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 mock.patch.object(
                     runtime_context,
                     "new_browser_context_for_config",
-                    side_effect=fake_new_browser_context_for_config,
+                    side_effect=AssertionError("runtime browser manager must not cross threads"),
                 ) as mocked_runtime_new_context,
                 mock.patch(
-                    "paper_fetch.runtime_browser.BrowserContextManager.new_context",
-                    side_effect=AssertionError("runtime browser config should be reused"),
+                    "paper_fetch.runtime_browser.BrowserContextManager",
+                    FakeBrowserContextManager,
                 ),
                 mock.patch.object(
                     _pdf_fallback,
@@ -354,12 +363,17 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 )
 
         self.assertEqual(result.final_url, "https://example.org/downloaded/article.pdf")
-        mocked_runtime_new_context.assert_called_once()
+        mocked_runtime_new_context.assert_not_called()
         self.assertEqual(len(new_context_thread_ids), 1)
         self.assertNotEqual(new_context_thread_ids[0], main_thread_id)
-        call_kwargs = mocked_runtime_new_context.call_args.kwargs
-        self.assertEqual(call_kwargs["profile_dir"], profile_dir)
-        self.assertEqual(call_kwargs["user_data_dir"], user_data_dir)
+        self.assertEqual(manager_init_kwargs, [
+            {
+                "binary_path": None,
+                "cdp_endpoint": None,
+                "profile_dir": profile_dir,
+                "user_data_dir": user_data_dir,
+            }
+        ])
 
     def test_seeded_browser_pdf_fallback_tries_browser_like_http_first(self) -> None:
         pdf_url = "https://pubs.acs.org/doi/pdf/10.1021/example"
@@ -709,6 +723,89 @@ class PdfFallbackHelperTests(unittest.TestCase):
 
         self.assertEqual(result, "## Results\n\nExtracted PDF body.")
         self.assertEqual(calls[0]["errors"], "replace")
+
+    def test_render_pdf_markdown_result_does_not_write_images_for_asset_profile_none(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def fake_to_markdown(path: str, **kwargs) -> str:
+            self.assertEqual(path, "paper.pdf")
+            calls.append(dict(kwargs))
+            return "# Example\n\n" + ("body text " * 140)
+
+        fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}),
+        ):
+            result = _pdf_common.render_pdf_markdown_result(
+                Path("paper.pdf"),
+                asset_profile="none",
+                asset_output_dir=Path(tmpdir),
+                source_url="https://example.org/paper.pdf",
+            )
+
+        self.assertEqual(calls, [{}])
+        self.assertEqual(result.assets, [])
+
+    def test_render_pdf_markdown_result_writes_body_images_for_body_asset_profile(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir)
+            image_dir = output_dir / "body_assets"
+            image_path = image_dir / "paper-0001-00.png"
+
+            def fake_to_markdown(path: str, **kwargs) -> str:
+                self.assertEqual(path, "paper.pdf")
+                calls.append(dict(kwargs))
+                image_dir.mkdir(parents=True, exist_ok=True)
+                image_path.write_bytes(b"\x89PNG\r\n\x1a\n")
+                return f"# Example\n\n![]({image_path})\n\n" + ("body text " * 140)
+
+            fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+
+            with mock.patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}):
+                result = _pdf_common.render_pdf_markdown_result(
+                    Path("paper.pdf"),
+                    asset_profile="body",
+                    asset_output_dir=output_dir,
+                    source_url="https://example.org/paper.pdf",
+                )
+
+        self.assertEqual(calls[0]["write_images"], True)
+        self.assertEqual(calls[0]["image_path"], str(image_dir))
+        self.assertIn("![Figure 1](body_assets/paper-0001-00.png)", result.markdown_text)
+        self.assertEqual(len(result.assets), 1)
+        self.assertEqual(result.assets[0]["kind"], "figure")
+        self.assertEqual(result.assets[0]["section"], "body")
+        self.assertEqual(result.assets[0]["render_state"], "inline")
+        self.assertEqual(result.assets[0]["url"], "body_assets/paper-0001-00.png")
+        self.assertEqual(result.assets[0]["path"], str(image_path))
+
+    def test_pdf_fetch_result_from_bytes_does_not_keep_temp_images_without_asset_output_dir(self) -> None:
+        calls: list[dict[str, object]] = []
+
+        def fake_to_markdown(path: str, **kwargs) -> str:
+            self.assertTrue(path.endswith(".pdf"))
+            calls.append(dict(kwargs))
+            return "# Example\n\n" + ("body text " * 140)
+
+        fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+
+        with mock.patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}):
+            result = _pdf_common.pdf_fetch_result_from_bytes(
+                artifact_dir=None,
+                asset_profile="body",
+                asset_output_dir=None,
+                source_url="https://example.org/paper.pdf",
+                final_url="https://example.org/paper.pdf",
+                pdf_bytes=b"%PDF-1.7 body",
+                suggested_filename="paper.pdf",
+            )
+
+        self.assertEqual(calls, [{}])
+        self.assertEqual(result.assets, [])
 
     def test_transparent_pdf_markdown_protects_pymupdf_text_subprocess_decoding(self) -> None:
         calls: list[dict[str, object]] = []

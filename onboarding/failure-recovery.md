@@ -66,7 +66,7 @@ retryable: true
 
 ## Signal: SCAFFOLD_FORBIDDEN_FLAG_COMBINATION
 
-diagnosis: scaffold CLI 同时收到 manifest mode 与 legacy flags，或缺少 legacy 必填 flag。
+diagnosis: scaffold CLI 同时收到 manifest mode 与直接输入 flags，或缺少直接输入模式必填 flag。
 action: 使用单一输入模式重跑 scaffold；manifest mode 只保留 `--from-manifest` 和输出控制 flags。
 retryable: true
 

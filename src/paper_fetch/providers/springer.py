@@ -43,6 +43,7 @@ from ._asset_retry import (
     merge_asset_retry_results,
 )
 from ._pdf_candidates import build_springer_pdf_candidates
+from ._pdf_common import pdf_asset_output_dir, pdf_asset_profile_from_context, pdf_fetch_result_assets
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http
 from ._payloads import build_provider_payload
 from ._waterfall import (
@@ -804,6 +805,8 @@ class SpringerClient(ProviderClient):
         *,
         html_failure_message: str,
         warnings: list[str],
+        asset_profile: AssetProfile = "none",
+        context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         pdf_candidates = build_springer_pdf_candidates(
             attempt.normalized_doi,
@@ -811,6 +814,7 @@ class SpringerClient(ProviderClient):
             html_text=attempt.html_text,
             source_url=attempt.response_url,
         )
+        effective_asset_profile = asset_profile or pdf_asset_profile_from_context(context)
         pdf_result = PdfFallbackStrategy(
             transport=self.transport,
             headers={
@@ -819,6 +823,8 @@ class SpringerClient(ProviderClient):
             },
             timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
             seed_urls=[attempt.response_url] if attempt.response_url else None,
+            asset_profile=effective_asset_profile,
+            asset_output_dir=pdf_asset_output_dir(context, asset_profile=effective_asset_profile),
             fetcher=fetch_pdf_over_http,
         ).fetch(pdf_candidates)
         return build_provider_payload(
@@ -831,6 +837,7 @@ class SpringerClient(ProviderClient):
             merged_metadata=attempt.merged_metadata,
             reason="Downloaded full text from the Springer direct PDF fallback route.",
             suggested_filename=pdf_result.suggested_filename,
+            extracted_assets=pdf_fetch_result_assets(pdf_result),
             html_failure_message=html_failure_message,
             content_needs_local_copy=True,
             warnings=[
@@ -980,6 +987,8 @@ class SpringerClient(ProviderClient):
                     attempt,
                     html_failure_message=html_failure.message,
                     warnings=[],
+                    asset_profile=pdf_asset_profile_from_context(runtime_context),
+                    context=runtime_context,
                 )
             except PdfFetchFailure as exc:
                 raise ProviderFailure(
@@ -1206,6 +1215,8 @@ class SpringerClient(ProviderClient):
                     pdf_attempt,
                     html_failure_message=html_failure.message,
                     warnings=[],
+                    asset_profile=asset_profile,
+                    context=context,
                 )
             except PdfFetchFailure as exc:
                 raise ProviderFailure(
@@ -1424,14 +1435,13 @@ class SpringerClient(ProviderClient):
         content = raw_payload.content
         if normalize_text(content.route_kind if content is not None else "").lower() != PDF_FALLBACK:
             return artifacts
+        pdf_assets = list(content.extracted_assets if content is not None else [])
         return ProviderArtifacts(
-            assets=list(artifacts.assets),
+            assets=[*list(artifacts.assets), *pdf_assets],
             asset_failures=list(artifacts.asset_failures),
             allow_related_assets=False,
-            text_only=True,
-            skip_warning=(
-                "Springer PDF fallback currently returns text-only full text; "
-                "figure and supplementary asset downloads are not implemented yet."
-            ),
-            skip_trace=trace_from_markers([download_marker("springer_assets_skipped_text_only")]),
+            text_only=not pdf_assets,
+            skip_trace=trace_from_markers([download_marker("springer_assets_skipped_text_only")])
+            if not pdf_assets
+            else [],
         )

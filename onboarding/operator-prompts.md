@@ -156,7 +156,7 @@ docs/adding-a-provider.md、README、audit 文件或聊天记录推断 provider 
 7. 优先复用已有 provider 测试断言模式；不要保留 scaffold skipped placeholder 或 review-loop placeholder。
 8. 修复只能写 brief 允许的 provider-owned 文件；不要把清洗规则写到中心模块。
 9. 重复生成 / 阅读 / 写断言 / 修 provider，直到所有 non-null fixture Markdown 干净。
-10. 先按 fixture 目录下的 `markdown-quality-prompt.md` 审查 `extracted.md`，把 `markdown-quality.json` 写成 agent-authored pass/fail 持久报告；`check-snapshot` 还会重新读取当前 `extracted.md` 做 fresh quality review，旧 JSON pass 不能覆盖 fresh blocking issue。不要把最终人工语义审查直接签为 true；operator 最后批量审核所有当前 `extracted.md` 后，由主会话运行 `python3 scripts/onboard_from_manifests.py finalize-review-artifact --provider <NAME> --confirmed-final-quality` 机械写入 `onboarding/reviews/<NAME>.yml`。
+10. 先按 fixture 目录下的 `markdown-quality-prompt.md` 审查 `extracted.md`，把 `markdown-quality.json` 写成 agent-authored pass/fail 持久报告；`check-snapshot` 还会重新读取当前 `extracted.md` 做 fresh quality review，已有 JSON pass 不能覆盖 fresh blocking issue。不要把最终人工语义审查直接签为 true；operator 最后批量审核所有当前 `extracted.md` 后，由主会话运行 `python3 scripts/onboard_from_manifests.py finalize-review-artifact --provider <NAME> --confirmed-final-quality` 机械写入 `onboarding/reviews/<NAME>.yml`。
 
 # 实现约束 (hard-constraints.md §Provider Logic)
 - Provider routing / asset profile / probe / fixture purpose / docs source name

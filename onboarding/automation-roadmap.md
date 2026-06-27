@@ -23,7 +23,7 @@
 - `scripts/onboard_from_manifests.py summarize --provider <provider>` 可从 state、manifest、access review、review artifact 和真实 run records 合成 JSON/Markdown operator digest。
 - `scripts/onboard_from_manifests.py summarize --format agent-json|agent-markdown --target local-ready|merge-ready` 可把 state、failure code、fixture 覆盖和 Markdown review artifact 翻译成 agent 对话中的简化状态、停下原因、下一句话和相关文件。
 - `scripts/provider_agent.py add|continue|status|doctor` 是 agent-facing 包装层：默认目标 `local-ready`，只在显式 `--target merge-ready` 时推进完整合入标准；它不维护独立 DAG/state，不替代 `onboarding/`，只调用现有项目脚本。
-- `scripts/onboard_from_manifests.py check-snapshot --provider <provider> --doi <doi>` 每次通过默认本机 Codex CLI 或 `PROVIDER_ONBOARDING_AGENT_CLI` override 重新读取当前 `extracted.md`，写入 fresh Markdown quality report；fresh blocking issue 会阻断，即使旧 `markdown-quality.json` 是 pass。
+- `scripts/onboard_from_manifests.py check-snapshot --provider <provider> --doi <doi>` 每次通过默认本机 Codex CLI 或 `PROVIDER_ONBOARDING_AGENT_CLI` override 重新读取当前 `extracted.md`，写入 fresh Markdown quality report；fresh blocking issue 会阻断，即使已有 `markdown-quality.json` 是 pass。
 - `scripts/onboard_from_manifests.py repair-markdown-quality --provider <provider> --doi <doi>` 可把 fresh review 或持久 `markdown-quality.json` 暴露的 blocking issue 转成最多 3 轮修复闭环：派发实现 agent、运行 provider-local 验证和 snapshot、再派发 quality review agent 写回 pass/fail。
 - `scripts/onboard_from_manifests.py finalize-review-artifact --provider <provider> --confirmed-final-quality` 可在 operator 完成最终批量 Markdown 质量审核后，机械校验并写入 `onboarding/reviews/<provider>.yml` 的每个 fixture signoff。
 - `tests/unit/test_provider_asset_contract.py` 可自动验证 manifest `asset_contract.figures`、正文图片位置，以及 `download: required` provider-local marker 是否包含真实下载断言。
@@ -118,13 +118,13 @@ python3 scripts/onboard_from_manifests.py repair-markdown-quality \
 
 ## Live 策略
 
-- 未来新增 provider 默认需要一次 provider subset live assets review；已有 legacy 非风险 provider 可豁免。例如：
+- 未来新增 provider 默认需要一次 provider subset live assets review；已有低风险 provider 可豁免。例如：
 
 ```bash
 PAPER_FETCH_RUN_LIVE=1 python3 scripts/run_golden_criteria_live_review.py --providers mdpi
 ```
 
-- runner 的 `provider-local-acceptance` 会在 `_provider_requires_live_review()` 为 true 时包含 live review command；新增 provider 默认 true，legacy 非风险 provider 例外。
+- runner 的 `provider-local-acceptance` 会在 `_provider_requires_live_review()` 为 true 时包含 live review command；新增 provider 默认 true，已有低风险 provider 例外。
 - live review 必须比较 `FetchEnvelope.source` 与 manifest `route_sources`，并复用 `markdown_contract` 做自动内容 / 噪声分类。
 - 维护期 route-source drift 使用手动本地命令，不接 GitHub CI：
 
