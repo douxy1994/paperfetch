@@ -156,6 +156,14 @@ class FormulaConversionTests(unittest.TestCase):
 
         self.assertEqual(normalized, r"F_{crit} = \sum\limits_{t_{p}}^{SOS_{y0}} R_{f} + \mathcal{O}")
 
+    def test_normalize_latex_rewrites_unicode_commands_for_katex(self) -> None:
+        normalized = formula_conversion.normalize_latex(
+            r"P(SPI \unicode{x2A7D} - 1.64) + \unicode{U+03B1}x"
+        )
+
+        self.assertEqual(normalized, "P(SPI \\leqslant - 1.64) + \u03b1x")
+        self.assertNotIn(r"\unicode", normalized)
+
     def test_backend_registry_preserves_public_backend_groups(self) -> None:
         self.assertEqual(
             formula_conversion.SUPPORTED_BACKENDS,

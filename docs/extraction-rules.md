@@ -526,14 +526,16 @@ metadata
 <a id="rule-browser-primary-image-download-path"></a>
 ### 浏览器工作流图片下载必须使用 CDP browser connection 主链路
 
-- 这条规则约束的是：使用 browser workflow 的 provider 在下载正文 figure / table / formula 图片时，必须以 `RuntimeContext` / `BrowserContextManager` 管理的 CDP browser connection 作为主链路；同一 runtime 内复用 keyed browser manager，每个阶段或 worker 线程创建隔离的 seeded context/page，preview fallback 也通过同一线程的 context 获取。
-- 如果违反，用户会看到：目标站点明明在浏览器会话里可见图片，系统却因为普通 HTTP challenge 或重复 context 冷启动而稳定缺图。
+- 这条规则约束的是：使用 browser workflow 的 provider 在下载正文 figure / table / formula 图片时，必须以 `RuntimeContext` / `BrowserContextManager` 管理的 CDP browser connection 作为主链路；同一 runtime 内复用 keyed browser manager，每个阶段或 worker 线程创建隔离的 seeded context/page，preview fallback 也通过同一线程的 context 获取。Atypon/AMS 这类 lazy image 页面里的 `Blank.svg` / `Blank.png` 只允许作为待加载占位信号，不能作为成功正文 asset 保存；当 `download_url` / `full_size_url` 指向真实 `full-*.jpg` 时，下载候选和最终 `source_url` 必须指向真实图片响应。
+- 如果违反，用户会看到：目标站点明明在浏览器会话里可见图片，系统却因为普通 HTTP challenge 或重复 context 冷启动而稳定缺图，或者所有本地图片都变成相同的 `Blank.png` 占位图。
 - 它对应的阶段是：`asset-download`、`asset-validation`。
 - Owner：`paper_fetch.providers.browser_workflow.fetchers`。
 - 代表性 HTML / XML：
   - [`../tests/fixtures/golden_criteria/10.1073_pnas.2309123120/original.html`](../tests/fixtures/golden_criteria/10.1073_pnas.2309123120/original.html)
 - 对应测试：
   - Owner（provider）：
+    - [`../tests/unit/test_browser_asset_download.py`](../tests/unit/test_browser_asset_download.py) 中的 `test_browser_workflow_image_candidates_prefer_download_url`
+    - [`../tests/unit/test_browser_asset_download.py`](../tests/unit/test_browser_asset_download.py) 中的 `test_browser_image_payload_rejects_blank_placeholder_url`
     - [`../tests/unit/test_atypon_browser_workflow_provider_asset_downloads.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_downloads.py) 中的 `test_pnas_provider_download_related_assets_uses_shared_browser_primary_path_before_preview`
     - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_pnas_provider_downloads_preview_through_shared_browser_when_no_full_size_candidate`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_wiley_provider_download_related_assets_uses_shared_browser_primary_path`

@@ -175,11 +175,14 @@ def _browser_workflow_image_download_candidates(
     figure_page_fetcher: Callable[[str], tuple[str, str] | None] | None = None,
 ) -> list[str]:
     del user_agent
+    download_url = normalize_text(str(asset.get("download_url") or ""))
     direct_full_size_url = normalize_text(str(asset.get("full_size_url") or ""))
     primary_url = normalize_text(str(asset.get("url") or ""))
     preview_url = normalize_text(str(asset.get("preview_url") or "")) or primary_url
     candidates: list[str] = []
 
+    if download_url:
+        candidates.append(download_url)
     if direct_full_size_url:
         candidates.append(direct_full_size_url)
 

@@ -6,6 +6,15 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.6.1 - 2026-06-27
+
+### Fixed
+
+- Fixed LaTeX normalization for MathJax `\unicode{...}` commands, including `\unicode{x2A7D}` -> `\leqslant`, so IOP Markdown output such as `10.1088/1748-9326/ad560b` no longer fails KaTeX parsing with an undefined control sequence.
+- Fixed `MarkdownFormula` rendering to apply the shared LaTeX normalization path instead of only generic text normalization.
+- Fixed browser-workflow image downloads to prefer explicit `download_url` candidates and reject lazy placeholder images such as `Blank.svg`, `Blank.png`, and `Blank.gif`, preventing Atypon/AMS pages from saving placeholder assets as body figures.
+- Fixed seeded browser PDF fallback after async thread handoff to use a thread-local browser context manager while preserving configured profile and user-data directories, avoiding cross-thread runtime browser manager use.
+
 ## 2.6.0 - 2026-06-26
 
 ### Added

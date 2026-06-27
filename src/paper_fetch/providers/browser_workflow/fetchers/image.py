@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import time
+import urllib.parse
 from typing import Any
 from collections.abc import Callable, Mapping
 
@@ -35,6 +36,7 @@ from .scripts import (
 )
 
 _IMAGE_DOCUMENT_FETCH_TIMEOUT_MS = 15000
+_PLACEHOLDER_IMAGE_BASENAMES = frozenset({"blank.svg", "blank.png", "blank.gif"})
 
 
 def _decode_base64_bytes(payload: str | None) -> bytes | None:
@@ -61,6 +63,15 @@ def _looks_like_image_response_payload(
     return False
 
 
+def _looks_like_placeholder_image_url(source_url: str | None) -> bool:
+    normalized = normalize_text(str(source_url or ""))
+    if not normalized:
+        return False
+    path = urllib.parse.unquote(urllib.parse.urlparse(normalized).path).lower()
+    basename = path.rsplit("/", 1)[-1]
+    return basename in _PLACEHOLDER_IMAGE_BASENAMES
+
+
 def _browser_image_document_payload(
     result: BrowserFetchedHtml,
 ) -> dict[str, Any] | None:
@@ -80,6 +91,8 @@ def _payload_from_browser_image_payload(
     body = _decode_base64_bytes(str(payload.get("bodyB64") or ""))
     content_type = normalize_text(str(payload.get("contentType") or "")) or "image/png"
     final_url = normalize_text(str(payload.get("url") or "")) or fallback_url
+    if _looks_like_placeholder_image_url(final_url):
+        return None
     if body is None or not _looks_like_image_response_payload(
         content_type, body, final_url
     ):
@@ -330,6 +343,15 @@ class _SharedBrowserImageDocumentFetcher(_BaseBrowserDocumentFetcher):
                 reason="empty_response_body",
             )
             return None
+        if _looks_like_placeholder_image_url(final_url):
+            self._record_failure(
+                attempted_url,
+                status=status,
+                content_type=content_type,
+                final_url=final_url,
+                reason="placeholder_image_response",
+            )
+            return None
         if not _looks_like_image_response_payload(content_type, body, final_url):
             self._record_response_failure(
                 attempted_url,
@@ -513,6 +535,15 @@ class _SharedBrowserImageDocumentFetcher(_BaseBrowserDocumentFetcher):
         body = _decode_base64_bytes(str(fetched.get("bodyB64") or ""))
         final_url = normalize_text(str(fetched.get("url") or "")) or image_src
         content_type = normalize_text(str(fetched.get("contentType") or ""))
+        if _looks_like_placeholder_image_url(final_url):
+            self._record_failure(
+                image_src,
+                status=int(fetched.get("status") or 0) or None,
+                content_type=content_type,
+                final_url=final_url,
+                reason="placeholder_image_response",
+            )
+            return None
         if body is None or not _looks_like_image_response_payload(
             content_type, body, final_url
         ):
@@ -583,6 +614,16 @@ class _SharedBrowserImageDocumentFetcher(_BaseBrowserDocumentFetcher):
         content_type = (
             normalize_text(str(rendered.get("contentType") or "")) or "image/png"
         )
+        if _looks_like_placeholder_image_url(final_url):
+            self._record_failure(
+                image_src,
+                final_url=final_url,
+                title_snippet=normalize_text(str(rendered.get("title") or ""))[:160],
+                content_type=content_type,
+                reason="placeholder_image_response",
+                canvas_error=normalize_text(str(rendered.get("error") or "")),
+            )
+            return None
         if (
             not rendered.get("ok")
             or body is None

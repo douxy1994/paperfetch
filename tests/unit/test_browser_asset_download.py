@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import base64
 from dataclasses import FrozenInstanceError
 from pathlib import Path
 import threading
@@ -8,6 +9,7 @@ from unittest import TestCase, mock
 
 from paper_fetch.extraction.html.assets import FIGURE_KIND, SUPPLEMENTARY_KIND
 from paper_fetch.providers.browser_workflow import assets as browser_workflow_assets
+from paper_fetch.providers.browser_workflow.fetchers import image as browser_image_fetcher
 from paper_fetch.providers.browser_workflow.asset_download import (
     BrowserAssetDownloadPlan,
     BrowserAssetDownloadResult,
@@ -16,10 +18,48 @@ from paper_fetch.providers.browser_workflow.asset_download import (
     retry_failed_browser_assets,
     run_browser_asset_download_attempt,
 )
+from tests.unit._atypon_browser_workflow_provider_support import png_header
 from tests.unit._browser_workflow_deps import browser_workflow_deps
 
 
 class BrowserWorkflowAssetDownloadTests(TestCase):
+    def test_browser_workflow_image_candidates_prefer_download_url(self) -> None:
+        download_url = "https://example.test/images/full-figure-from-download-url.jpg"
+        full_size_url = "https://example.test/images/full-figure.jpg"
+        preview_url = "https://example.test/skin/site/img/Blank.svg"
+
+        candidates = browser_workflow_assets._browser_workflow_image_download_candidates(
+            None,
+            asset={
+                "kind": "figure",
+                "download_url": download_url,
+                "full_size_url": full_size_url,
+                "url": preview_url,
+                "preview_url": preview_url,
+            },
+            user_agent="test-agent",
+        )
+
+        self.assertEqual(candidates, [download_url, full_size_url, preview_url])
+
+    def test_browser_image_payload_rejects_blank_placeholder_url(self) -> None:
+        body = png_header(640, 480)
+        payload = {
+            "status": 200,
+            "contentType": "image/png",
+            "bodyB64": base64.b64encode(body).decode("ascii"),
+            "url": "https://journals.ametsoc.org/skin/site/img/Blank.svg",
+            "width": 2387,
+            "height": 1153,
+        }
+
+        result = browser_image_fetcher._payload_from_browser_image_payload(
+            payload,
+            fallback_url="https://journals.ametsoc.org/view/journals/hydr/20/1/images/full-jhm-d-18-0159_1-f1.jpg",
+        )
+
+        self.assertIsNone(result)
+
     def test_plan_browser_asset_download_splits_assets_and_freezes_fields(self) -> None:
         figure_asset = {
             "kind": "figure",

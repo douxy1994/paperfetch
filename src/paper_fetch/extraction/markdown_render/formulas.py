@@ -25,7 +25,7 @@ import contextlib
 def render_formula(formula: MarkdownFormula) -> list[str]:
     lines: list[str] = []
     label = normalize_text(formula.label)
-    latex = normalize_text(formula.latex)
+    latex = normalize_latex(formula.latex)
     if label:
         lines.extend([label, ""])
     if latex:

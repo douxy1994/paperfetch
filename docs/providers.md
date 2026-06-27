@@ -801,7 +801,7 @@ CLI 主输出、artifact 与命令组合的用户语义见 [`cli.md`](cli.md)；
 ### Markdown 与语义 normalize
 
 - 公式输出会在公共公式 normalize 层处理 publisher-specific LaTeX 宏。
-- `\updelta` 等 upright Greek 宏会改写成普通 KaTeX 可渲染宏；`\mspace{Nmu}` 会改写成 `\mkernNmu`，其它单位不改。
+- `\updelta` 等 upright Greek 宏会改写成普通 KaTeX 可渲染宏；`\mspace{Nmu}` 会改写成 `\mkernNmu`，其它单位不改；MathJax `\unicode{...}` 码点会改写成 KaTeX 可解析符号，例如 `\unicode{x2A7D}` 输出为 `\leqslant`。
 - 外部 MathML 后端返回的常见伪影也会在同一层处理，例如 texmath / mathml-to-latex 产生的空 delimiter `\left(\right.` / `\left.\right)`、被拆成空格的下标标识符 `F_{c r i t}` 和 `S O S_{y 0}`。
 - HTML 中源站直接提供的 MathJax / `tex-math` 片段会复用同一套 LaTeX normalize，同时保留原始 `$...$` / `$$...$$` / `\(...\)` / `\[...\]` 包裹，避免 display 公式在清洗后退化成行内公式。
 - HTML 公式如果能从 MathML 转成 LaTeX，会按行内或 display 语境渲染；如果只有站点提供的公式图片 fallback，会保留为 `![Formula](...)` 并进入资产下载/改写流程。

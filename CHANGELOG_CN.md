@@ -6,6 +6,15 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 2.6.1 - 2026-06-27
+
+### 修复
+
+- 修复 MathJax `\unicode{...}` 命令的 LaTeX normalize，例如把 `\unicode{x2A7D}` 改写为 `\leqslant`，避免 `10.1088/1748-9326/ad560b` 等 IOP Markdown 输出在 KaTeX 中报 undefined control sequence。
+- 修复 `MarkdownFormula` 渲染路径：现在会复用公共 LaTeX normalize，而不是只做通用文本 normalize。
+- 修复 browser workflow 图片下载：优先使用显式 `download_url` 候选，并拒绝 `Blank.svg`、`Blank.png`、`Blank.gif` 等 lazy placeholder，避免 Atypon/AMS 页面把占位图保存成正文 figure 资产。
+- 修复 seeded browser PDF fallback 在 async 线程切换后的浏览器上下文处理：现在使用线程本地 browser context manager，同时保留已配置的 profile 和 user-data 目录，避免跨线程复用 runtime browser manager。
+
 ## 2.6.0 - 2026-06-26
 
 ### 新增
