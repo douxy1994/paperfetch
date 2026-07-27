@@ -38,7 +38,11 @@ from tests.golden_criteria import (
     golden_criteria_dir_for_doi,
     golden_criteria_sample_for_doi,
 )
-from tests.unit._paper_fetch_support import RecordingTransport, StubProvider, http_response
+from tests.unit._paper_fetch_support import (
+    RecordingTransport,
+    StubProvider,
+    http_response,
+)
 
 
 PDF_FALLBACK_IDS = ("2006.11239v2", "1406.2661v1")
@@ -77,9 +81,7 @@ def _fixture_dir(arxiv_id: str) -> Path:
 
 def _api_payload(arxiv_id: str) -> dict:
     return json.loads(
-        golden_criteria_asset(_doi(arxiv_id), "api.json").read_text(
-            encoding="utf-8"
-        )
+        golden_criteria_asset(_doi(arxiv_id), "api.json").read_text(encoding="utf-8")
     )
 
 
@@ -249,9 +251,7 @@ def _html_transport(
             html_body if html_body is not None else _fixture_html(arxiv_id),
             html_content_type,
         ),
-        ("GET", _arxiv_atom.ARXIV_API_URL): _api_atom_response(
-            arxiv_id, body=api_body
-        ),
+        ("GET", _arxiv_atom.ARXIV_API_URL): _api_atom_response(arxiv_id, body=api_body),
     }
     responses.update(extra_responses or {})
     return RecordingTransport(responses)
@@ -390,7 +390,31 @@ class ArxivProviderTests(unittest.TestCase):
         self.assertEqual(
             transport.calls[0]["headers"]["Accept"], _arxiv_atom.ARXIV_API_ACCEPT
         )
+        self.assertEqual(
+            transport.calls[0]["timeout"], _arxiv_atom.ARXIV_API_TIMEOUT_SECONDS
+        )
+        self.assertTrue(transport.calls[0]["retry_on_transient"])
+        self.assertEqual(
+            transport.calls[0]["transient_retries"], _arxiv_atom.ARXIV_API_NUM_RETRIES
+        )
         self.assertIn("User-Agent", transport.calls[0]["headers"])
+
+    def test_probe_status_reports_atom_client_timeout_and_retries(self) -> None:
+        client = ArxivClient(RecordingTransport({}), {})
+
+        status = client.probe_status()
+        metadata_check = next(
+            check for check in status.checks if check.name == "metadata_api"
+        )
+
+        self.assertEqual(
+            metadata_check.details["client_timeout_seconds"],
+            _arxiv_atom.ARXIV_API_TIMEOUT_SECONDS,
+        )
+        self.assertEqual(
+            metadata_check.details["client_num_retries"],
+            _arxiv_atom.ARXIV_API_NUM_RETRIES,
+        )
 
     def test_fetch_metadata_reports_no_result_for_empty_atom_feed(self) -> None:
         arxiv_id = "2605.06663v1"
@@ -479,9 +503,7 @@ class ArxivProviderTests(unittest.TestCase):
                     )
 
     def test_arxiv_ar5iv_chrome_selectors_share_base_script_style_rules(self) -> None:
-        self.assertEqual(
-            _arxiv_html._ARXIV_BASE_CHROME_SELECTORS, ("script", "style")
-        )
+        self.assertEqual(_arxiv_html._ARXIV_BASE_CHROME_SELECTORS, ("script", "style"))
         for key in ("frontmatter_noise", "reference_noise", "article_chrome"):
             with self.subTest(key=key):
                 selectors = _arxiv_html._ARXIV_AR5IV_SELECTORS[key]
@@ -1810,7 +1832,7 @@ class ArxivProviderTests(unittest.TestCase):
         source_url = f"https://arxiv.org/e-print/{arxiv_id}"
         source_archive = _source_tar(
             {
-                "main.tex": br"""
+                "main.tex": rb"""
                 \documentclass{article}
                 \usepackage{graphicx}
                 \begin{document}

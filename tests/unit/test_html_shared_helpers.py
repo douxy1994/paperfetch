@@ -5,6 +5,7 @@ import threading
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 from bs4 import BeautifulSoup
 
@@ -44,6 +45,7 @@ from paper_fetch.extraction.html.inline import normalize_html_inline_text
 from paper_fetch.extraction.markdown_render.figures import is_html_figure_container
 from paper_fetch.extraction.html.tables import render_table_markdown
 from paper_fetch.http import HttpTransport
+from paper_fetch.image_tools import ImageConversionFailure, SourceImageConversion
 from paper_fetch.providers._html_section_markdown import (
     render_clean_text_from_html,
     render_container_markdown,
@@ -84,6 +86,17 @@ class _DelayedAssetTransport(HttpTransport):
         finally:
             with self.lock:
                 self.active -= 1
+
+
+class _StaticAssetTransport(HttpTransport):
+    def __init__(self, responses: dict[tuple[str, str], dict[str, object]]) -> None:
+        self.responses = responses
+        self.calls: list[dict[str, object]] = []
+
+    def request(self, method, url, **kwargs):
+        self.calls.append({"method": method, "url": url, "kwargs": dict(kwargs)})
+        response = self.responses[(method, url)]
+        return dict(response)
 
 
 class SharedHtmlHelperTests(unittest.TestCase):
@@ -229,13 +242,17 @@ class SharedHtmlHelperTests(unittest.TestCase):
 </html>
 """
 
-        assets = html_assets.extract_figure_assets(html, "https://academic.oup.com/article")
+        assets = html_assets.extract_figure_assets(
+            html, "https://academic.oup.com/article"
+        )
 
         self.assertEqual(len(assets), 1)
         self.assertEqual(assets[0]["kind"], "figure")
         self.assertEqual(assets[0]["heading"], "Fig. 4.")
         self.assertIn("Basic TM on abstracts and full-texts", assets[0]["caption"])
-        self.assertEqual(assets[0]["url"], "https://academic.oup.com/content/m_btaa823f4.jpeg")
+        self.assertEqual(
+            assets[0]["url"], "https://academic.oup.com/content/m_btaa823f4.jpeg"
+        )
 
     def test_silverchair_figure_section_images_are_not_formula_assets(self) -> None:
         html = """
@@ -315,7 +332,9 @@ class SharedHtmlHelperTests(unittest.TestCase):
         self.assertEqual(len(formula_assets), 1)
         self.assertEqual(formula_assets[0]["kind"], "formula")
         self.assertIn("zpq01009-6960-m02.jpeg", formula_assets[0]["url"])
-        self.assertEqual([asset["kind"] for asset in scoped_assets], ["figure", "formula"])
+        self.assertEqual(
+            [asset["kind"] for asset in scoped_assets], ["figure", "formula"]
+        )
 
     def test_scoped_assets_prefer_formula_when_figure_reuses_formula_url(self) -> None:
         html = """
@@ -377,7 +396,9 @@ class SharedHtmlHelperTests(unittest.TestCase):
 
         self.assertFalse(is_html_figure_container(soup.select_one("article")))
         self.assertFalse(is_html_figure_container(soup.select_one("#article-contents")))
-        self.assertFalse(is_html_figure_container(soup.select_one("#sec2-foods-10-01757")))
+        self.assertFalse(
+            is_html_figure_container(soup.select_one("#sec2-foods-10-01757"))
+        )
         self.assertFalse(is_html_figure_container(soup.select_one("#itemFullTextId")))
         self.assertFalse(is_html_figure_container(soup.select_one("#section-future")))
         self.assertFalse(is_html_figure_container(soup.select_one("a.media-link")))
@@ -420,20 +441,47 @@ class SharedHtmlHelperTests(unittest.TestCase):
         )
 
         self.assertTrue(is_html_figure_container(soup.select_one(".figure-full")))
-        self.assertFalse(is_html_figure_container(soup.select_one(".figure-links-panel")))
+        self.assertFalse(
+            is_html_figure_container(soup.select_one(".figure-links-panel"))
+        )
 
-    def test_formula_image_url_signal_precedes_figure_context_exclusion(self) -> None:
+    def test_figure_context_precedes_formula_image_url_signal(self) -> None:
         soup = BeautifulSoup(
             """
-<figure>
-  <img src="//media.springernature.com/lw14/springer-static/image/art%3A10.1038%2Fnature13376/MediaObjects/41586_2014_BFnature13376_IEq3_HTML.jpg"
-       alt="Equation 3" />
+<figure id="fig-equation-overview">
+  <img src="/images/system-equation-overview.png" alt="Calculated by Equation 3." />
+  <figcaption>Figure 1. System overview with equation labels.</figcaption>
 </figure>
 """,
             "html.parser",
         )
+        html = str(soup)
 
-        self.assertTrue(looks_like_formula_image(soup.select_one("img")))
+        self.assertFalse(looks_like_formula_image(soup.select_one("img")))
+        self.assertEqual(
+            [
+                asset["kind"]
+                for asset in html_assets.extract_figure_assets(
+                    html, "https://example.test/article"
+                )
+            ],
+            ["figure"],
+        )
+        self.assertEqual(
+            html_assets.extract_formula_assets(html, "https://example.test/article"),
+            [],
+        )
+        self.assertEqual(
+            [
+                asset["kind"]
+                for asset in html_assets.extract_scoped_html_assets(
+                    html,
+                    "https://example.test/article",
+                    asset_profile="body",
+                )
+            ],
+            ["figure"],
+        )
 
     def test_extract_figure_assets_reads_multi_image_multi_caption_figure_blocks(
         self,
@@ -729,7 +777,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
             }
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
+            result = html_assets.download_assets(
+                html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.1111/gcb.16414",
                 assets=[
@@ -777,7 +826,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
             return responses[url]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
+            result = html_assets.download_assets(
+                html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.1000/example",
                 assets=[
@@ -827,7 +877,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
-            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
+            result = html_assets.download_assets(
+                html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.1000/source-only",
                 assets=[
@@ -1043,6 +1094,193 @@ class SharedHtmlHelperTests(unittest.TestCase):
 
         self.assertEqual(candidates[0], "https://example.test/full.png")
 
+    def test_download_assets_figure_kind_converts_eps_source_to_png_and_keeps_original(
+        self,
+    ) -> None:
+        source_url = "https://example.test/images/example-f1.eps"
+        full_url = "https://example.test/images/full-example-f1.jpg"
+        source_body = b"%!PS-Adobe-3.0 EPSF-3.0\n%%BoundingBox: 0 0 10 10\n"
+        converted_body = b"\x89PNG\r\n\x1a\nconverted"
+        transport = _StaticAssetTransport(
+            {
+                ("GET", source_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/postscript"},
+                    "body": source_body,
+                    "url": "/images/example-f1.eps",
+                }
+            }
+        )
+        image_document_fetcher = mock.Mock()
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "paper_fetch.extraction.html.assets.download.convert_source_image_response_to_png",
+                return_value=SourceImageConversion(
+                    body=converted_body,
+                    content_type="image/png",
+                    source_format="eps",
+                    tool="ghostscript",
+                ),
+            ) as converter,
+        ):
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
+                transport,
+                article_id="10.5555/eps-source",
+                assets=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "caption": "EPS source",
+                        "download_url": source_url,
+                        "full_size_url": full_url,
+                        "url": full_url,
+                        "section": "body",
+                    }
+                ],
+                output_dir=Path(tmpdir),
+                user_agent="paper-fetch-test",
+                asset_profile="all",
+                image_document_fetcher=image_document_fetcher,
+            )
+
+            self.assertEqual([call["url"] for call in transport.calls], [source_url])
+            image_document_fetcher.assert_not_called()
+            converter.assert_called_once()
+            self.assertEqual(result["asset_failures"], [])
+            self.assertEqual(len(result["assets"]), 1)
+            asset = result["assets"][0]
+            self.assertEqual(Path(asset["path"]).suffix, ".png")
+            self.assertEqual(Path(asset["path"]).read_bytes(), converted_body)
+            self.assertEqual(Path(asset["original_source_path"]).suffix, ".eps")
+            self.assertEqual(
+                Path(asset["original_source_path"]).read_bytes(),
+                source_body,
+            )
+            self.assertEqual(asset["download_url"], source_url)
+            self.assertEqual(asset["source_url"], source_url)
+            self.assertEqual(asset["download_tier"], "source_converted")
+            self.assertEqual(asset["conversion_source_format"], "eps")
+            self.assertEqual(asset["conversion_output_format"], "png")
+            self.assertEqual(asset["conversion_tool"], "ghostscript")
+            self.assertEqual(asset["original_download_url"], source_url)
+            self.assertEqual(asset["full_size_url"], full_url)
+
+    def test_download_assets_figure_kind_falls_back_when_source_conversion_fails(
+        self,
+    ) -> None:
+        source_url = "https://example.test/images/example-f1.eps"
+        full_url = "https://example.test/images/full-example-f1.png"
+        fallback_body = b"\x89PNG\r\n\x1a\nfallback"
+        transport = _StaticAssetTransport(
+            {
+                ("GET", source_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/postscript"},
+                    "body": b"%!PS-Adobe-3.0 EPSF-3.0\n",
+                    "url": source_url,
+                },
+                ("GET", full_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "image/png"},
+                    "body": fallback_body,
+                    "url": full_url,
+                },
+            }
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "paper_fetch.extraction.html.assets.download.convert_source_image_response_to_png",
+                side_effect=ImageConversionFailure("missing ghostscript"),
+            ) as converter,
+        ):
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
+                transport,
+                article_id="10.5555/eps-source-fallback",
+                assets=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "caption": "EPS source",
+                        "download_url": source_url,
+                        "full_size_url": full_url,
+                        "url": full_url,
+                        "section": "body",
+                    }
+                ],
+                output_dir=Path(tmpdir),
+                user_agent="paper-fetch-test",
+                asset_profile="all",
+            )
+
+            self.assertEqual(
+                [call["url"] for call in transport.calls],
+                [source_url, full_url],
+            )
+            converter.assert_called_once()
+            self.assertEqual(result["asset_failures"], [])
+            self.assertEqual(len(result["assets"]), 1)
+            asset = result["assets"][0]
+            self.assertEqual(asset["download_url"], full_url)
+            self.assertEqual(asset["download_tier"], "full_size")
+            self.assertEqual(asset["provenance"], ["conversion_degraded"])
+            self.assertNotIn("original_source_path", asset)
+            self.assertEqual(Path(asset["path"]).read_bytes(), fallback_body)
+
+    def test_conversion_backend_missing_has_distinct_asset_reason_code(self) -> None:
+        source_url = "https://example.test/images/example-f1.eps"
+        transport = _StaticAssetTransport(
+            {
+                ("GET", source_url): {
+                    "status_code": 200,
+                    "headers": {"content-type": "application/postscript"},
+                    "body": b"%!PS-Adobe-3.0 EPSF-3.0\n",
+                    "url": source_url,
+                }
+            }
+        )
+
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "paper_fetch.extraction.html.assets.download.convert_source_image_response_to_png",
+                side_effect=ImageConversionFailure(
+                    "missing ghostscript",
+                    reason_code="image_conversion_backend_missing",
+                ),
+            ),
+        ):
+            result = html_assets.download_assets(
+                html_assets.FIGURE_KIND,
+                transport,
+                article_id="10.5555/eps-source-missing-backend",
+                assets=[
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "caption": "EPS source",
+                        "download_url": source_url,
+                        "url": source_url,
+                        "section": "body",
+                    }
+                ],
+                output_dir=Path(tmpdir),
+                user_agent="paper-fetch-test",
+                asset_profile="all",
+            )
+
+        self.assertEqual(result["assets"], [])
+        self.assertEqual(len(result["asset_failures"]), 1)
+        self.assertEqual(
+            result["asset_failures"][0]["reason"],
+            "image_conversion_backend_missing: missing ghostscript",
+        )
+
     def test_download_assets_figure_kind_resolves_http_candidates_in_parallel_but_writes_in_order(
         self,
     ) -> None:
@@ -1077,7 +1315,9 @@ class SharedHtmlHelperTests(unittest.TestCase):
         )
         self.assertEqual(result["asset_failures"], [])
 
-    def test_download_assets_figure_kind_respects_explicit_concurrency_limit(self) -> None:
+    def test_download_assets_figure_kind_respects_explicit_concurrency_limit(
+        self,
+    ) -> None:
         urls = [f"https://example.test/serial-fig{i}.png" for i in range(3)]
         transport = _DelayedAssetTransport({url: 0.01 for url in urls})
         assets = [
@@ -1144,7 +1384,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
+            result = html_assets.download_assets(
+                html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.5555/parallel",
                 assets=assets,
@@ -1197,7 +1438,8 @@ class SharedHtmlHelperTests(unittest.TestCase):
         ]
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            result = html_assets.download_assets(html_assets.SUPPLEMENTARY_KIND,
+            result = html_assets.download_assets(
+                html_assets.SUPPLEMENTARY_KIND,
                 HttpTransport(),
                 article_id="10.5555/serial",
                 assets=assets,
@@ -1344,6 +1586,45 @@ class SharedHtmlHelperTests(unittest.TestCase):
 
         self.assertEqual(calls, [cleaned_html])
         self.assertIn("Fallback body text remains.", markdown)
+
+    def test_extract_article_markdown_falls_back_without_trafilatura(self) -> None:
+        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
+        original_import_module = html_runtime.importlib.import_module
+        original_trafilatura = html_runtime.trafilatura
+
+        def import_without_trafilatura(name: str, *args, **kwargs):
+            if name == "trafilatura":
+                raise ImportError("missing trafilatura")
+            return original_import_module(name, *args, **kwargs)
+
+        html = """
+<html>
+  <body>
+    <article>
+      <h1>Fallback Article</h1>
+      <p>Fallback body text remains readable.</p>
+    </article>
+  </body>
+</html>
+"""
+
+        html_runtime._import_trafilatura.cache_clear()
+        try:
+            html_runtime.trafilatura = html_runtime._TRAFILATURA_UNSET
+            with mock.patch.object(
+                html_runtime.importlib,
+                "import_module",
+                side_effect=import_without_trafilatura,
+            ):
+                markdown = html_runtime.extract_article_markdown(
+                    html, "https://example.test/article"
+                )
+        finally:
+            html_runtime.trafilatura = original_trafilatura
+            html_runtime._import_trafilatura.cache_clear()
+
+        self.assertIn("# Fallback Article", markdown)
+        self.assertIn("Fallback body text remains readable.", markdown)
 
     def test_orcid_href_pattern_is_module_constant_used_by_pruning(self) -> None:
         """rule: rule-html-byte-decoding-and-cleanup-bounds"""
@@ -1500,9 +1781,7 @@ Learn more
         self.assertNotIn("Learn more", cleaned.splitlines())
 
     def test_body_metrics_learn_more_preserves_body_sentence(self) -> None:
-        body_sentence = (
-            "Readers who want to learn more about this dataset can consult the appendix."
-        )
+        body_sentence = "Readers who want to learn more about this dataset can consult the appendix."
         metrics = html_runtime.body_metrics(
             f"# Example\n\n## Results\n\n{body_sentence}\n\nLearn more",
             {"title": "Example", "abstract": ""},
@@ -1623,9 +1902,7 @@ Learn more
         )
         self.assertEqual(
             rules.availability.overrides,
-            availability_rules_for_provider(
-                "springer_nature"
-            ).overrides,
+            availability_rules_for_provider("springer_nature").overrides,
         )
         self.assertEqual(
             rules.formula.display_selectors,
@@ -1637,9 +1914,7 @@ Learn more
         )
         self.assertEqual(
             rules.availability.overrides,
-            availability_rules_for_provider(
-                "springer_nature"
-            ).overrides,
+            availability_rules_for_provider("springer_nature").overrides,
         )
 
     def test_front_matter_publication_keywords_keep_atypon_browser_workflow_provider_scoped(
@@ -1922,6 +2197,31 @@ Learn more
         self.assertTrue(pipe_lines)
         self.assertEqual({line.count("|") for line in pipe_lines}, {6})
 
+    def test_table_markdown_escapes_edge_cells_and_pads_ragged_rows(self) -> None:
+        soup = BeautifulSoup(
+            """
+<table>
+  <thead><tr><th>Name</th><th>Value|Unit</th></tr></thead>
+  <tbody>
+    <tr><td>A|B</td><td>first<br/>second</td></tr>
+    <tr><td>ragged</td><td></td></tr>
+  </tbody>
+</table>
+""",
+            "html.parser",
+        )
+
+        markdown = render_table_markdown(soup.table, label="", caption="")
+        pipe_lines = [line for line in markdown.splitlines() if line.startswith("|")]
+
+        self.assertIn(r"Value\|Unit", markdown)
+        self.assertIn(r"A\|B", markdown)
+        self.assertIn("first<br>second", markdown)
+        self.assertTrue(pipe_lines)
+        self.assertEqual(
+            {line.replace(r"\|", "").count("|") for line in pipe_lines}, {3}
+        )
+
     def test_table_header_flattening_preserves_distinguishing_group_spanners(
         self,
     ) -> None:
@@ -2014,6 +2314,18 @@ Learn more
             render_inline_text=render_clean_text_from_html,
         )
         self.assertIn("s + 1", table_markdown)
+
+    def test_inline_tex_formula_container_renders_with_math_delimiters(self) -> None:
+        soup = BeautifulSoup(
+            """
+<p>Let <span class="inline-equation"><script type="math/tex">x+y</script></span> stay inline.</p>
+""",
+            "html.parser",
+        )
+
+        body_text = render_clean_text_from_html(soup.p)
+
+        self.assertEqual(body_text, "Let $x+y$ stay inline.")
 
     def test_formula_rules_detect_real_formula_image_urls(self) -> None:
         """rule: rule-preserve-formula-image-fallbacks"""

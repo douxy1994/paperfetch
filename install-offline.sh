@@ -27,7 +27,38 @@ MCP_ENV_KEYS=(
   PAPER_FETCH_ENV_FILE
   PAPER_FETCH_DOWNLOAD_DIR
   PAPER_FETCH_FORMULA_TOOLS_DIR
-  CLOAKBROWSER_HEADLESS
+  PAPER_FETCH_IMAGE_TOOLS_DIR
+  MATHML_TO_LATEX_NODE_BIN
+  PAPER_FETCH_BROWSER_HEADLESS
+)
+OFFLINE_ENV_KEYS=(
+  PAPER_FETCH_DOWNLOAD_DIR
+  PAPER_FETCH_FORMULA_TOOLS_DIR
+  PAPER_FETCH_IMAGE_TOOLS_DIR
+  MATHML_TO_LATEX_NODE_BIN
+  PAPER_FETCH_BROWSER_HEADLESS
+  PYTHONUTF8
+  PYTHONIOENCODING
+)
+SHELL_ENV_KEYS=(
+  PAPER_FETCH_ENV_FILE
+  PAPER_FETCH_DOWNLOAD_DIR
+  PAPER_FETCH_FORMULA_TOOLS_DIR
+  PAPER_FETCH_IMAGE_TOOLS_DIR
+  MATHML_TO_LATEX_NODE_BIN
+  PAPER_FETCH_BROWSER_HEADLESS
+  PYTHONUTF8
+  PYTHONIOENCODING
+)
+ACTIVATE_ENV_KEYS=(
+  PAPER_FETCH_ENV_FILE
+  PAPER_FETCH_DOWNLOAD_DIR
+  PAPER_FETCH_FORMULA_TOOLS_DIR
+  PAPER_FETCH_IMAGE_TOOLS_DIR
+  MATHML_TO_LATEX_NODE_BIN
+  PAPER_FETCH_BROWSER_HEADLESS
+  PYTHONUTF8
+  PYTHONIOENCODING
 )
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
@@ -68,8 +99,14 @@ print(manifest["managed_blocks"]["codex"]["begin"])
 print(manifest["managed_blocks"]["codex"]["end"])
 print(manifest["skill"]["name"])
 print(manifest["mcp"]["name"])
+print("[mcp.env_keys]")
 for key in manifest["mcp"]["env_keys"]:
     print(key)
+env_sets = manifest.get("env_sets", {})
+for section in ("offline_env_keys", "shell_env_keys", "activate_env_keys"):
+    print(f"[env_sets.{section}]")
+    for key in env_sets.get(section, []):
+        print(key)
 ' "$INSTALLER_MANIFEST_FILE")
 
   [ "${values[0]:-}" = "installer_manifest_values" ] || die "Invalid installer manifest payload from $INSTALLER_MANIFEST_FILE"
@@ -79,7 +116,37 @@ for key in manifest["mcp"]["env_keys"]:
   CODEX_MANAGED_END="${values[4]:-}"
   SKILL_NAME="${values[5]:-}"
   MCP_NAME="${values[6]:-}"
-  MCP_ENV_KEYS=("${values[@]:7}")
+  local section=""
+  local loaded_mcp_env_keys=()
+  local loaded_offline_env_keys=()
+  local loaded_shell_env_keys=()
+  local loaded_activate_env_keys=()
+  for value in "${values[@]:7}"; do
+    case "$value" in
+      "[mcp.env_keys]"|"[env_sets.offline_env_keys]"|"[env_sets.shell_env_keys]"|"[env_sets.activate_env_keys]")
+        section="$value"
+        continue
+        ;;
+    esac
+    case "$section" in
+      "[mcp.env_keys]") loaded_mcp_env_keys+=("$value") ;;
+      "[env_sets.offline_env_keys]") loaded_offline_env_keys+=("$value") ;;
+      "[env_sets.shell_env_keys]") loaded_shell_env_keys+=("$value") ;;
+      "[env_sets.activate_env_keys]") loaded_activate_env_keys+=("$value") ;;
+    esac
+  done
+  if [ "${#loaded_mcp_env_keys[@]}" -gt 0 ]; then
+    MCP_ENV_KEYS=("${loaded_mcp_env_keys[@]}")
+  fi
+  if [ "${#loaded_offline_env_keys[@]}" -gt 0 ]; then
+    OFFLINE_ENV_KEYS=("${loaded_offline_env_keys[@]}")
+  fi
+  if [ "${#loaded_shell_env_keys[@]}" -gt 0 ]; then
+    SHELL_ENV_KEYS=("${loaded_shell_env_keys[@]}")
+  fi
+  if [ "${#loaded_activate_env_keys[@]}" -gt 0 ]; then
+    ACTIVATE_ENV_KEYS=("${loaded_activate_env_keys[@]}")
+  fi
   normalize_mcp_env_keys
 
   [ -n "$MANAGED_BEGIN" ] || die "installer manifest is missing managed_blocks.offline.begin"
@@ -89,6 +156,9 @@ for key in manifest["mcp"]["env_keys"]:
   [ -n "$SKILL_NAME" ] || die "installer manifest is missing skill.name"
   [ -n "$MCP_NAME" ] || die "installer manifest is missing mcp.name"
   [ "${#MCP_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing mcp.env_keys"
+  [ "${#OFFLINE_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing env_sets.offline_env_keys"
+  [ "${#SHELL_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing env_sets.shell_env_keys"
+  [ "${#ACTIVATE_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing env_sets.activate_env_keys"
 }
 
 usage() {
@@ -111,9 +181,7 @@ Options:
   -h, --help              Show this help.
 
 Environment:
-  CLOAKBROWSER_HEADLESS     Set to false for a headful managed CloakBrowser runtime.
-  CLOAKBROWSER_CDP_ENDPOINT Optional endpoint for an already-running Chrome/CloakBrowser.
-                            When unset, paper-fetch downloads/starts a managed Chrome via cloakbrowser.
+  PAPER_FETCH_BROWSER_HEADLESS Set to false for a headful managed browser runtime.
 EOF
 }
 
@@ -122,17 +190,17 @@ normalize_mcp_env_keys() {
   local filtered=()
   for key in "${MCP_ENV_KEYS[@]}"; do
     case "$key" in
-      PLAYWRIGHT_BROWSERS_PATH|CLOAKBROWSER_BINARY_PATH|CLOAKBROWSER_PROFILE_DIR|CLOAKBROWSER_USER_DATA_DIR)
+      PLAYWRIGHT_BROWSERS_PATH)
         continue
         ;;
-      CLOAKBROWSER_HEADLESS)
+      PAPER_FETCH_BROWSER_HEADLESS)
         seen_headless=1
         ;;
     esac
     filtered+=("$key")
   done
   if [ "$seen_headless" != "1" ]; then
-    filtered+=(CLOAKBROWSER_HEADLESS)
+    filtered+=(PAPER_FETCH_BROWSER_HEADLESS)
   fi
   MCP_ENV_KEYS=("${filtered[@]}")
 }
@@ -344,6 +412,21 @@ verify_checksums() {
   fi
 }
 
+verify_skill_bundle_integrity() {
+  local runtime_root="$1"
+  local skill_dir="$2"
+  local phase="$3"
+  local verifier="$runtime_root/runtime/site-packages/paper_fetch/skill_integrity.py"
+
+  require_file "$runtime_root/offline-manifest.json"
+  require_file "$verifier"
+  log "Verifying $phase skill bundle manifest"
+  "$runtime_root/runtime/paper-fetch-python" -X utf8 \
+    -m paper_fetch.skill_integrity verify \
+    --manifest "$runtime_root/offline-manifest.json" \
+    --skill-dir "$skill_dir" >/dev/null
+}
+
 check_preset_requirements() {
   host_platform >/dev/null || die "This offline bundle supports Linux and macOS only; detected $(uname -s)."
 }
@@ -355,10 +438,12 @@ check_bundle_assets() {
   require_file "$BUNDLE_ROOT/bin/paper-fetch"
   require_file "$BUNDLE_ROOT/bin/paper-fetch-mcp"
   require_file "$BUNDLE_ROOT/bin/paper-fetch-install-formula-tools"
+  require_file "$BUNDLE_ROOT/bin/paper-fetch-install-image-tools"
   [ -x "$BUNDLE_ROOT/runtime/paper-fetch-python" ] || die "Bundled private Python launcher is not executable: $BUNDLE_ROOT/runtime/paper-fetch-python"
   [ -x "$BUNDLE_ROOT/bin/paper-fetch" ] || die "Bundled CLI wrapper is not executable: $BUNDLE_ROOT/bin/paper-fetch"
   [ -x "$BUNDLE_ROOT/bin/paper-fetch-mcp" ] || die "Bundled MCP wrapper is not executable: $BUNDLE_ROOT/bin/paper-fetch-mcp"
   [ -x "$BUNDLE_ROOT/bin/paper-fetch-install-formula-tools" ] || die "Bundled formula installer wrapper is not executable: $BUNDLE_ROOT/bin/paper-fetch-install-formula-tools"
+  [ -x "$BUNDLE_ROOT/bin/paper-fetch-install-image-tools" ] || die "Bundled image installer wrapper is not executable: $BUNDLE_ROOT/bin/paper-fetch-install-image-tools"
   require_file "$BUNDLE_ROOT/formula-tools/bin/texmath"
   [ -x "$BUNDLE_ROOT/formula-tools/bin/texmath" ] || die "Bundled texmath is not executable: $BUNDLE_ROOT/formula-tools/bin/texmath"
 
@@ -378,7 +463,7 @@ mathml_node_bin() {
   fi
 }
 
-cloakbrowser_headless_value() {
+browser_headless_value() {
   if [ "$PRESET" = "headful" ]; then
     printf 'false\n'
   else
@@ -386,7 +471,7 @@ cloakbrowser_headless_value() {
   fi
 }
 
-mcp_env_value() {
+installer_env_value() {
   local key="$1"
   case "$key" in
     PYTHONUTF8) printf '1\n' ;;
@@ -394,10 +479,15 @@ mcp_env_value() {
     PAPER_FETCH_ENV_FILE) printf '%s\n' "$OFFLINE_ENV_FILE" ;;
     PAPER_FETCH_DOWNLOAD_DIR) printf '%s\n' "$INSTALL_ROOT/downloads" ;;
     PAPER_FETCH_FORMULA_TOOLS_DIR) printf '%s\n' "$INSTALL_ROOT/formula-tools" ;;
+    PAPER_FETCH_IMAGE_TOOLS_DIR) printf '%s\n' "$INSTALL_ROOT/image-tools" ;;
     MATHML_TO_LATEX_NODE_BIN) mathml_node_bin ;;
-    CLOAKBROWSER_HEADLESS) cloakbrowser_headless_value ;;
-    *) die "Unknown MCP env key: $key" ;;
+    PAPER_FETCH_BROWSER_HEADLESS) browser_headless_value ;;
+    *) die "Unknown installer env key: $key" ;;
   esac
+}
+
+mcp_env_value() {
+  installer_env_value "$1"
 }
 
 copy_installed_skill() {
@@ -453,22 +543,22 @@ select_shell_startup_file() {
 }
 
 write_posix_shell_block() {
+  local key
   printf '%s\n' "$MANAGED_BEGIN"
-  printf 'export PATH=%s:%s:$PATH\n' "$(quote_env_value "$INSTALL_ROOT/bin")" "$(quote_env_value "$INSTALL_ROOT/formula-tools/bin")"
-  printf 'export PAPER_FETCH_ENV_FILE=%s\n' "$(quote_env_value "$OFFLINE_ENV_FILE")"
-  printf 'export PAPER_FETCH_DOWNLOAD_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/downloads")"
-  printf 'export PAPER_FETCH_FORMULA_TOOLS_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/formula-tools")"
-  printf 'export CLOAKBROWSER_HEADLESS=%s\n' "$(quote_env_value "$(cloakbrowser_headless_value)")"
+  printf 'export PATH=%s:%s:%s:$PATH\n' "$(quote_env_value "$INSTALL_ROOT/bin")" "$(quote_env_value "$INSTALL_ROOT/formula-tools/bin")" "$(quote_env_value "$INSTALL_ROOT/image-tools/bin")"
+  for key in "${SHELL_ENV_KEYS[@]}"; do
+    printf 'export %s=%s\n' "$key" "$(quote_env_value "$(installer_env_value "$key")")"
+  done
   printf '%s\n' "$MANAGED_END"
 }
 
 write_fish_shell_block() {
+  local key
   printf '%s\n' "$MANAGED_BEGIN"
-  printf 'set -gx PATH %s %s $PATH\n' "$(quote_env_value "$INSTALL_ROOT/bin")" "$(quote_env_value "$INSTALL_ROOT/formula-tools/bin")"
-  printf 'set -gx PAPER_FETCH_ENV_FILE %s\n' "$(quote_env_value "$OFFLINE_ENV_FILE")"
-  printf 'set -gx PAPER_FETCH_DOWNLOAD_DIR %s\n' "$(quote_env_value "$INSTALL_ROOT/downloads")"
-  printf 'set -gx PAPER_FETCH_FORMULA_TOOLS_DIR %s\n' "$(quote_env_value "$INSTALL_ROOT/formula-tools")"
-  printf 'set -gx CLOAKBROWSER_HEADLESS %s\n' "$(quote_env_value "$(cloakbrowser_headless_value)")"
+  printf 'set -gx PATH %s %s %s $PATH\n' "$(quote_env_value "$INSTALL_ROOT/bin")" "$(quote_env_value "$INSTALL_ROOT/formula-tools/bin")" "$(quote_env_value "$INSTALL_ROOT/image-tools/bin")"
+  for key in "${SHELL_ENV_KEYS[@]}"; do
+    printf 'set -gx %s %s\n' "$key" "$(quote_env_value "$(installer_env_value "$key")")"
+  done
   printf '%s\n' "$MANAGED_END"
 }
 
@@ -815,7 +905,7 @@ purge_install_root() {
 
 write_managed_env_file() {
   local target="$1"
-  local tmp
+  local tmp key
   tmp="$(mktemp)"
 
   mkdir -p "$(dirname "$target")"
@@ -833,14 +923,9 @@ write_managed_env_file() {
 
   {
     printf '\n%s\n' "$MANAGED_BEGIN"
-    printf 'PAPER_FETCH_DOWNLOAD_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/downloads")"
-    printf 'PAPER_FETCH_FORMULA_TOOLS_DIR=%s\n' "$(quote_env_value "$INSTALL_ROOT/formula-tools")"
-    printf 'CLOAKBROWSER_HEADLESS=%s\n' "$(quote_env_value "$(cloakbrowser_headless_value)")"
-    printf 'PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"\n'
-    printf '# Optional: connect to an already-running Chrome/CloakBrowser CDP endpoint.\n'
-    printf '# CLOAKBROWSER_CDP_ENDPOINT="ws://127.0.0.1:9222/devtools/browser/..."\n'
-    printf '# Optional: use a preinstalled Chrome/CloakBrowser binary instead of cloakbrowser download.\n'
-    printf '# CLOAKBROWSER_BINARY_PATH="/absolute/path/to/chrome"\n'
+    for key in "${OFFLINE_ENV_KEYS[@]}"; do
+      printf '%s=%s\n' "$key" "$(quote_env_value "$(installer_env_value "$key")")"
+    done
     printf '%s\n' "$MANAGED_END"
   } >> "$tmp"
 
@@ -849,12 +934,18 @@ write_managed_env_file() {
 
 write_activate_script() {
   local target="$INSTALL_ROOT/activate-offline.sh"
-  local offline_env_literal headless_value target_tmp
-  headless_value="$(cloakbrowser_headless_value)"
+  local default_env_line headless_value reuse_env_value key
+  headless_value="$(browser_headless_value)"
 
   if [ "$REUSE_ENV_FILE" = "1" ]; then
-    offline_env_literal="$(quote_env_value "$OFFLINE_ENV_FILE")"
-    cat > "$target" <<EOF
+    default_env_line="PAPER_FETCH_DEFAULT_ENV_FILE=$(quote_env_value "$OFFLINE_ENV_FILE")"
+    reuse_env_value="1"
+  else
+    default_env_line='PAPER_FETCH_DEFAULT_ENV_FILE="$INSTALL_ROOT/offline.env"'
+    reuse_env_value="0"
+  fi
+
+  cat > "$target" <<EOF
 #!/usr/bin/env bash
 
 if [ -n "\${BASH_SOURCE:-}" ]; then
@@ -866,67 +957,129 @@ else
 fi
 INSTALL_ROOT="\$(cd "\$(dirname "\$PAPER_FETCH_ACTIVATE_SCRIPT")" && pwd)"
 unset PAPER_FETCH_ACTIVATE_SCRIPT
-export PAPER_FETCH_ENV_FILE=$offline_env_literal
+$default_env_line
+PAPER_FETCH_REUSE_ENV_FILE="$reuse_env_value"
 
-if [ -f "\$PAPER_FETCH_ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "\$PAPER_FETCH_ENV_FILE"
-  set +a
-fi
+paper_fetch_load_env_file() {
+  local env_file="\$1"
+  local key value
+  [ -f "\$env_file" ] || return 0
+  [ -x "\$INSTALL_ROOT/runtime/paper-fetch-python" ] || return 0
 
-export PATH="\$INSTALL_ROOT/bin:\$INSTALL_ROOT/formula-tools/bin:\$PATH"
+  while IFS= read -r -d '' key && IFS= read -r -d '' value; do
+    case "\$key" in
+      ""|[!A-Za-z_]*|*[!A-Za-z0-9_]*)
+        continue
+        ;;
+    esac
+    export "\$key=\$value"
+  done < <(
+    PYTHONPATH="\$INSTALL_ROOT/runtime/site-packages\${PYTHONPATH:+:\$PYTHONPATH}" \\
+    "\$INSTALL_ROOT/runtime/paper-fetch-python" - "\$env_file" <<'PY'
+from __future__ import annotations
+
+import re
+import sys
+
+from dotenv import dotenv_values
+
+KEY_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\\Z")
+
+for key, value in dotenv_values(sys.argv[1], interpolate=False).items():
+    if value is None or not key or not KEY_RE.fullmatch(str(key)):
+        continue
+    sys.stdout.buffer.write(str(key).encode("utf-8") + b"\\0")
+    sys.stdout.buffer.write(str(value).encode("utf-8") + b"\\0")
+PY
+  )
+}
+
+paper_fetch_export_default() {
+  local key="\$1"
+  local value="\$2"
+
+  case "\$key" in
+    PAPER_FETCH_ENV_FILE)
+      export PAPER_FETCH_ENV_FILE="\$value"
+      return 0
+      ;;
+    PAPER_FETCH_DOWNLOAD_DIR|PAPER_FETCH_FORMULA_TOOLS_DIR|PAPER_FETCH_IMAGE_TOOLS_DIR|MATHML_TO_LATEX_NODE_BIN)
+      if [ "\$PAPER_FETCH_REUSE_ENV_FILE" = "1" ]; then
+        export "\$key=\$value"
+        return 0
+      fi
+      ;;
+  esac
+
+  case "\$key" in
+    PAPER_FETCH_DOWNLOAD_DIR)
+      [ -n "\${PAPER_FETCH_DOWNLOAD_DIR:-}" ] || export PAPER_FETCH_DOWNLOAD_DIR="\$value"
+      ;;
+    PAPER_FETCH_FORMULA_TOOLS_DIR)
+      [ -n "\${PAPER_FETCH_FORMULA_TOOLS_DIR:-}" ] || export PAPER_FETCH_FORMULA_TOOLS_DIR="\$value"
+      ;;
+    PAPER_FETCH_IMAGE_TOOLS_DIR)
+      [ -n "\${PAPER_FETCH_IMAGE_TOOLS_DIR:-}" ] || export PAPER_FETCH_IMAGE_TOOLS_DIR="\$value"
+      ;;
+    MATHML_TO_LATEX_NODE_BIN)
+      [ -n "\${MATHML_TO_LATEX_NODE_BIN:-}" ] || export MATHML_TO_LATEX_NODE_BIN="\$value"
+      ;;
+    PAPER_FETCH_BROWSER_HEADLESS)
+      [ -n "\${PAPER_FETCH_BROWSER_HEADLESS:-}" ] || export PAPER_FETCH_BROWSER_HEADLESS="\$value"
+      ;;
+    PYTHONUTF8)
+      [ -n "\${PYTHONUTF8:-}" ] || export PYTHONUTF8="\$value"
+      ;;
+    PYTHONIOENCODING)
+      [ -n "\${PYTHONIOENCODING:-}" ] || export PYTHONIOENCODING="\$value"
+      ;;
+  esac
+}
+
+paper_fetch_default_value() {
+  local key="\$1"
+  case "\$key" in
+    PAPER_FETCH_ENV_FILE) printf '%s\\n' "\$PAPER_FETCH_DEFAULT_ENV_FILE" ;;
+    PAPER_FETCH_DOWNLOAD_DIR) printf '%s\\n' "\$INSTALL_ROOT/downloads" ;;
+    PAPER_FETCH_FORMULA_TOOLS_DIR) printf '%s\\n' "\$INSTALL_ROOT/formula-tools" ;;
+    PAPER_FETCH_IMAGE_TOOLS_DIR) printf '%s\\n' "\$INSTALL_ROOT/image-tools" ;;
+    MATHML_TO_LATEX_NODE_BIN)
+      if [ -x "\$INSTALL_ROOT/runtime/site-packages/playwright/driver/node" ]; then
+        printf '%s\\n' "\$INSTALL_ROOT/runtime/site-packages/playwright/driver/node"
+      else
+        command -v node 2>/dev/null || printf 'node\\n'
+      fi
+      ;;
+    PAPER_FETCH_BROWSER_HEADLESS) printf '%s\\n' "$headless_value" ;;
+    PYTHONUTF8) printf '1\\n' ;;
+    PYTHONIOENCODING) printf 'utf-8\\n' ;;
+  esac
+}
+
+export PATH="\$INSTALL_ROOT/bin:\$INSTALL_ROOT/formula-tools/bin:\$INSTALL_ROOT/image-tools/bin:\$PATH"
 export PYTHONPATH="\$INSTALL_ROOT/runtime/site-packages\${PYTHONPATH:+:\$PYTHONPATH}"
-export PAPER_FETCH_ENV_FILE=$offline_env_literal
-export PAPER_FETCH_DOWNLOAD_DIR="\$INSTALL_ROOT/downloads"
-export PAPER_FETCH_FORMULA_TOOLS_DIR="\$INSTALL_ROOT/formula-tools"
-export CLOAKBROWSER_HEADLESS="\${CLOAKBROWSER_HEADLESS:-$headless_value}"
-export PYTHONUTF8="\${PYTHONUTF8:-1}"
-export PYTHONIOENCODING="\${PYTHONIOENCODING:-utf-8}"
+export PAPER_FETCH_ENV_FILE="\$PAPER_FETCH_DEFAULT_ENV_FILE"
+paper_fetch_load_env_file "\$PAPER_FETCH_ENV_FILE"
+export PAPER_FETCH_ENV_FILE="\$PAPER_FETCH_DEFAULT_ENV_FILE"
 EOF
-  else
-    cat > "$target" <<'EOF'
-#!/usr/bin/env bash
-
-if [ -n "${BASH_SOURCE:-}" ]; then
-  PAPER_FETCH_ACTIVATE_SCRIPT="${BASH_SOURCE[0]}"
-elif [ -n "${ZSH_VERSION:-}" ]; then
-  PAPER_FETCH_ACTIVATE_SCRIPT="${(%):-%x}"
-else
-  PAPER_FETCH_ACTIVATE_SCRIPT="$0"
-fi
-INSTALL_ROOT="$(cd "$(dirname "$PAPER_FETCH_ACTIVATE_SCRIPT")" && pwd)"
-unset PAPER_FETCH_ACTIVATE_SCRIPT
-export PAPER_FETCH_ENV_FILE="${PAPER_FETCH_ENV_FILE:-$INSTALL_ROOT/offline.env}"
-
-if [ -f "$PAPER_FETCH_ENV_FILE" ]; then
-  set -a
-  # shellcheck disable=SC1090
-  source "$PAPER_FETCH_ENV_FILE"
-  set +a
-fi
-
-export PATH="$INSTALL_ROOT/bin:$INSTALL_ROOT/formula-tools/bin:$PATH"
-export PYTHONPATH="$INSTALL_ROOT/runtime/site-packages${PYTHONPATH:+:$PYTHONPATH}"
-export PAPER_FETCH_DOWNLOAD_DIR="${PAPER_FETCH_DOWNLOAD_DIR:-$INSTALL_ROOT/downloads}"
-export PAPER_FETCH_FORMULA_TOOLS_DIR="${PAPER_FETCH_FORMULA_TOOLS_DIR:-$INSTALL_ROOT/formula-tools}"
-export CLOAKBROWSER_HEADLESS="${CLOAKBROWSER_HEADLESS:-__CLOAKBROWSER_HEADLESS__}"
-export PYTHONUTF8="${PYTHONUTF8:-1}"
-export PYTHONIOENCODING="${PYTHONIOENCODING:-utf-8}"
+  printf 'for PAPER_FETCH_ACTIVATE_ENV_KEY in' >> "$target"
+  for key in "${ACTIVATE_ENV_KEYS[@]}"; do
+    printf ' \\\n  %s' "$key" >> "$target"
+  done
+  cat >> "$target" <<'EOF'
+; do
+  paper_fetch_export_default "$PAPER_FETCH_ACTIVATE_ENV_KEY" "$(paper_fetch_default_value "$PAPER_FETCH_ACTIVATE_ENV_KEY")"
+done
+unset PAPER_FETCH_ACTIVATE_ENV_KEY PAPER_FETCH_DEFAULT_ENV_FILE PAPER_FETCH_REUSE_ENV_FILE
+unset -f paper_fetch_load_env_file paper_fetch_export_default paper_fetch_default_value 2>/dev/null || true
 EOF
-  fi
-  if [ "$REUSE_ENV_FILE" != "1" ]; then
-    target_tmp="$(mktemp)"
-    awk -v headless="$headless_value" '{ gsub(/__CLOAKBROWSER_HEADLESS__/, headless); print }' "$target" > "$target_tmp"
-    mv "$target_tmp" "$target"
-  fi
   chmod +x "$target"
 }
 
 check_browser_runtime_package() {
   local runtime_python
   runtime_python="$(mcp_python_bin)"
-  "$runtime_python" -c 'import cloakbrowser; import playwright; from paper_fetch.runtime_browser import BrowserContextManager; assert hasattr(cloakbrowser, "ensure_binary"); assert BrowserContextManager is not None'
+  "$runtime_python" -c 'import camoufox; import playwright; import pymupdf; from paper_fetch.runtime_browser import BrowserContextManager; assert hasattr(camoufox, "Camoufox"); assert BrowserContextManager is not None'
 }
 
 run_smoke_checks() {
@@ -937,6 +1090,12 @@ run_smoke_checks() {
   log "Running local smoke checks"
   "$INSTALL_ROOT/bin/paper-fetch" --help >/dev/null
   "$INSTALL_ROOT/formula-tools/bin/texmath" --help >/dev/null
+  if [ -x "$INSTALL_ROOT/image-tools/bin/gs" ]; then
+    "$INSTALL_ROOT/image-tools/bin/gs" --version >/dev/null
+  fi
+  if [ -x "$INSTALL_ROOT/image-tools/bin/vips" ]; then
+    "$INSTALL_ROOT/image-tools/bin/vips" --version >/dev/null
+  fi
   check_browser_runtime_package
   for key in "${MCP_ENV_KEYS[@]}"; do
     env_args+=("$key=$(mcp_env_value "$key")")
@@ -958,6 +1117,7 @@ clean_install_root_payload() {
     "$INSTALL_ROOT/bin" \
     "$INSTALL_ROOT/runtime" \
     "$INSTALL_ROOT/formula-tools" \
+    "$INSTALL_ROOT/image-tools" \
     "$INSTALL_ROOT/skills" \
     "$INSTALL_ROOT/installer" \
     "$INSTALL_ROOT/install-offline.sh" \
@@ -1013,10 +1173,18 @@ main() {
   check_platform
   check_python
   verify_checksums
+  verify_skill_bundle_integrity \
+    "$BUNDLE_ROOT" \
+    "$BUNDLE_ROOT/skills/$SKILL_NAME" \
+    "bundled pre-install"
   check_preset_requirements
   check_bundle_assets
   install_runtime_payload
   write_runtime_python_file
+  verify_skill_bundle_integrity \
+    "$INSTALL_ROOT" \
+    "$INSTALL_ROOT/skills/$SKILL_NAME" \
+    "installed runtime"
 
   if [ "$REUSE_ENV_FILE" = "1" ]; then
     log "Reusing offline.env without modifying it: $OFFLINE_ENV_FILE"
@@ -1033,6 +1201,18 @@ main() {
   fi
 
   install_skills
+  verify_skill_bundle_integrity \
+    "$INSTALL_ROOT" \
+    "$HOME/.codex/skills/$SKILL_NAME" \
+    "Codex post-install"
+  verify_skill_bundle_integrity \
+    "$INSTALL_ROOT" \
+    "$HOME/.claude/skills/$SKILL_NAME" \
+    "Claude post-install"
+  verify_skill_bundle_integrity \
+    "$INSTALL_ROOT" \
+    "$(antigravity_home)/skills/$SKILL_NAME" \
+    "Antigravity post-install"
   write_shell_startup_file
   register_codex_mcp
   register_claude_mcp
@@ -1045,8 +1225,10 @@ main() {
   echo "Shell startup file updated: $SHELL_STARTUP_TARGET"
   echo "Install directory: $INSTALL_ROOT"
   echo "Open a new shell, or activate the current one with: source $INSTALL_ROOT/activate-offline.sh"
-  echo "CloakBrowser headless: $(cloakbrowser_headless_value)"
-  echo "Browser-backed providers auto-start cloakbrowser Chrome unless CLOAKBROWSER_CDP_ENDPOINT points at an existing browser."
+  echo "Default browser backend: Camoufox (headless: $(browser_headless_value))"
+  echo "The first real fetch may download the Camoufox runtime; doctor and provider status never download it."
+  echo "For a fully offline host, preinstall the complete Camoufox runtime before fetching."
+  echo "Browser backend: Camoufox."
   echo "Restart Codex, Claude Code, and the Antigravity CLI so they rescan skills and MCP registration."
   echo "Elsevier setup: request a key at https://dev.elsevier.com/, then add ELSEVIER_API_KEY=\"...\" to $OFFLINE_ENV_FILE before fetching Elsevier papers."
 }

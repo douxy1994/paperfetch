@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from ..quality.html_signals import (
     AAAS_DATALAYER_PATTERN,
@@ -107,8 +107,8 @@ def _science_abstract_role(section: Mapping[str, Any]) -> str:
 
 
 def _rebuild_science_section_hints(
-    frontmatter_sections: list[Mapping[str, Any]],
-    existing_hints: list[Mapping[str, Any]],
+    frontmatter_sections: Sequence[Mapping[str, Any]],
+    existing_hints: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     rebuilt: list[dict[str, Any]] = []
     for order, section in enumerate(frontmatter_sections):
@@ -128,12 +128,16 @@ def _rebuild_science_section_hints(
         if not isinstance(hint, Mapping):
             continue
         raw_order = hint.get("order")
+        if isinstance(raw_order, int):
+            normalized_order = raw_order + base_order
+        elif str(raw_order or "").isdigit():
+            normalized_order = int(str(raw_order)) + base_order
+        else:
+            normalized_order = base_order + index
         rebuilt.append(
             {
                 **hint,
-                "order": int(raw_order) + base_order
-                if isinstance(raw_order, int) or str(raw_order or "").isdigit()
-                else base_order + index,
+                "order": normalized_order,
             }
         )
     return rebuilt
@@ -252,15 +256,20 @@ def extract_asset_html_scopes(
     supplementary_container: Any,
     *,
     publisher: str,
+    source_url: str | None = None,
+    raw_body_container: Any | None = None,
     content_fragment_html,
     atypon_browser_workflow_supplementary_sections,
 ) -> tuple[str, str]:
+    del source_url, raw_body_container
     for node in list(atypon_browser_workflow_supplementary_sections(body_container)):
         node.decompose()
 
     supplementary_html = "\n".join(
         str(node)
-        for node in atypon_browser_workflow_supplementary_sections(supplementary_container)
+        for node in atypon_browser_workflow_supplementary_sections(
+            supplementary_container
+        )
         if normalize_text(node.get_text(" ", strip=True))
     )
     return content_fragment_html(

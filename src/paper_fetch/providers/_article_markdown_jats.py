@@ -12,6 +12,7 @@ import xml.etree.ElementTree as ET
 from ..models import SemanticLosses
 from ..publisher_identity import extract_doi, normalize_doi
 from ..utils import dedupe_authors, normalize_text
+from ..xml_security import XmlParseFailure, parse_xml
 from ._article_markdown_common import (
     child_text,
     collect_conversion_notes,
@@ -57,11 +58,15 @@ def _text_from_first_descendant(element: ET.Element | None, local_name: str) -> 
 def _extract_contrib_name(contrib: ET.Element) -> str:
     name = first_child(contrib, "name")
     if name is not None:
-        given = normalize_text(child_text(name, "given-names") or child_text(name, "given-name"))
+        given = normalize_text(
+            child_text(name, "given-names") or child_text(name, "given-name")
+        )
         surname = normalize_text(child_text(name, "surname"))
         if given or surname:
             return normalize_text(" ".join(item for item in (given, surname) if item))
-    return normalize_text(child_text(contrib, "collab") or child_text(contrib, "collaboration"))
+    return normalize_text(
+        child_text(contrib, "collab") or child_text(contrib, "collaboration")
+    )
 
 
 def extract_jats_authors(root: ET.Element) -> list[str]:
@@ -99,7 +104,9 @@ def _publication_date(article_meta: ET.Element | None) -> str:
         return ""
     preferred = pub_dates[0]
     for candidate in pub_dates:
-        pub_type = normalize_text(str(candidate.get("pub-type") or candidate.get("date-type") or "")).lower()
+        pub_type = normalize_text(
+            str(candidate.get("pub-type") or candidate.get("date-type") or "")
+        ).lower()
         if pub_type in {"epub", "ppub", "collection"}:
             preferred = candidate
             break
@@ -141,12 +148,28 @@ def extract_jats_metadata(
         {
             "title": title or normalize_text(str(base.get("title") or "")) or None,
             "doi": doi or normalize_doi(str(base.get("doi") or "")) or None,
-            "journal_title": journal_title or normalize_text(str(base.get("journal_title") or "")) or None,
-            "published": _publication_date(article_meta) or normalize_text(str(base.get("published") or "")) or None,
+            "journal_title": journal_title
+            or normalize_text(str(base.get("journal_title") or ""))
+            or None,
+            "published": _publication_date(article_meta)
+            or normalize_text(str(base.get("published") or ""))
+            or None,
             "authors": extract_jats_authors(root) or list(base.get("authors") or []),
-            "abstract": abstract_text or normalize_text(str(base.get("abstract") or "")) or None,
-            "landing_page_url": normalize_text(str(base.get("landing_page_url") or source_url or "")) or None,
-            "license_urls": list(dict.fromkeys([*list(base.get("license_urls") or []), *_license_urls(article_meta)])),
+            "abstract": abstract_text
+            or normalize_text(str(base.get("abstract") or ""))
+            or None,
+            "landing_page_url": normalize_text(
+                str(base.get("landing_page_url") or source_url or "")
+            )
+            or None,
+            "license_urls": list(
+                dict.fromkeys(
+                    [
+                        *list(base.get("license_urls") or []),
+                        *_license_urls(article_meta),
+                    ]
+                )
+            ),
             "references": list(base.get("references") or []),
         }
     )
@@ -214,7 +237,9 @@ def _append_embedded_block(
         return True
     if local_name == "list":
         list_type = normalize_text(str(node.get("list-type") or "")).lower()
-        lines.extend(_render_list(node, ordered=list_type in {"order", "ordered", "decimal"}))
+        lines.extend(
+            _render_list(node, ordered=list_type in {"order", "ordered", "decimal"})
+        )
         return True
     return False
 
@@ -327,7 +352,11 @@ def _render_blocks(
             continue
         if local_name == "list":
             list_type = normalize_text(str(child.get("list-type") or "")).lower()
-            lines.extend(_render_list(child, ordered=list_type in {"order", "ordered", "decimal"}))
+            lines.extend(
+                _render_list(
+                    child, ordered=list_type in {"order", "ordered", "decimal"}
+                )
+            )
             continue
         if local_name in {"notes", "ack", "app"}:
             heading = normalize_text(child_text(child, "title")) or _note_heading(child)
@@ -448,11 +477,11 @@ def _reference_doi(ref: ET.Element) -> str:
                 return doi
     for node in iter_descendants(ref, "ext-link"):
         for value in (_href(node), "".join(node.itertext())):
-            doi = extract_doi(value)
-            if doi:
-                return normalize_doi(doi)
-    doi = extract_doi(" ".join(ref.itertext()))
-    return normalize_doi(doi) if doi else ""
+            extracted_doi = extract_doi(value)
+            if extracted_doi:
+                return normalize_doi(extracted_doi) or ""
+    fallback_doi = extract_doi(" ".join(ref.itertext()))
+    return normalize_doi(fallback_doi) if fallback_doi else ""
 
 
 def extract_jats_references(root: ET.Element) -> list[dict[str, Any]]:
@@ -462,10 +491,16 @@ def extract_jats_references(root: ET.Element) -> list[dict[str, Any]]:
         citation = first_child(ref, "mixed-citation")
         if citation is None:
             citation = first_child(ref, "element-citation")
-        body = normalize_text(render_inline_text(citation) if citation is not None else " ".join(ref.itertext()))
+        body = normalize_text(
+            render_inline_text(citation)
+            if citation is not None
+            else " ".join(ref.itertext())
+        )
         if label:
             label_text = label.strip("[](). ")
-            body = normalize_text(re.sub(rf"^\[?\s*{re.escape(label_text)}\s*\]?\.?\s*", "", body))
+            body = normalize_text(
+                re.sub(rf"^\[?\s*{re.escape(label_text)}\s*\]?\.?\s*", "", body)
+            )
         if not body:
             continue
         raw_label = label or str(index)
@@ -489,13 +524,23 @@ def parse_jats_xml(
     xml_root: ET.Element | None = None,
 ) -> JatsExtraction | None:
     try:
-        root = xml_root if xml_root is not None else ET.fromstring(xml_body)
-    except ET.ParseError:
+        root = (
+            xml_root
+            if xml_root is not None
+            else parse_xml(
+                xml_body,
+                source="JATS XML payload",
+                allow_external_doctype=True,
+            )
+        )
+    except XmlParseFailure:
         return None
     if not isinstance(root.tag, str) or xml_local_name(root.tag) != "article":
         return None
 
-    metadata = extract_jats_metadata(root, base_metadata=base_metadata, source_url=source_url)
+    metadata = extract_jats_metadata(
+        root, base_metadata=base_metadata, source_url=source_url
+    )
     article_meta = _article_meta(root)
     abstract_node = first_child(article_meta, "abstract")
     abstract_text = normalize_text("\n\n".join(_render_paragraph_texts(abstract_node)))
@@ -526,7 +571,8 @@ def parse_jats_xml(
     supplement_entries = _supplementary_entries(root, source_url)
     for entry in supplement_entries:
         if not any(
-            normalize_text(str(item.get("key") or "")) == normalize_text(str(entry.get("key") or ""))
+            normalize_text(str(item.get("key") or ""))
+            == normalize_text(str(entry.get("key") or ""))
             for item in assets
         ):
             assets.append(entry)
@@ -537,20 +583,32 @@ def parse_jats_xml(
 
     conversion_notes = collect_conversion_notes(
         table_entries=table_entries,
-        formula_notes=[str(result.note) for result in formula_renders if normalize_text(str(result.note or ""))],
+        formula_notes=[
+            str(result.note)
+            for result in formula_renders
+            if normalize_text(str(result.note or ""))
+        ],
     )
     semantic_losses = SemanticLosses(
         table_fallback_count=sum(
-            1 for entry in table_entries if normalize_text(str(entry.get("table_render_kind") or "")) == "fallback"
+            1
+            for entry in table_entries
+            if normalize_text(str(entry.get("table_render_kind") or "")) == "fallback"
         ),
         table_layout_degraded_count=sum(
-            1 for entry in table_entries if normalize_text(str(entry.get("lossy_message") or ""))
+            1
+            for entry in table_entries
+            if normalize_text(str(entry.get("lossy_message") or ""))
         ),
         formula_fallback_count=sum(
-            1 for result in formula_renders if getattr(result, "fallback_kind", None) == "fallback"
+            1
+            for result in formula_renders
+            if getattr(result, "fallback_kind", None) == "fallback"
         ),
         formula_missing_count=sum(
-            1 for result in formula_renders if getattr(result, "fallback_kind", None) == "missing"
+            1
+            for result in formula_renders
+            if getattr(result, "fallback_kind", None) == "missing"
         ),
     )
     return JatsExtraction(
@@ -570,12 +628,21 @@ def build_jats_markdown_document(
     xml_path: Path | None = None,
     provider_label: str = "jats",
 ) -> str:
-    lines = [f"# {normalize_text(str(extraction.metadata.get('title') or 'Untitled Article'))}", ""]
+    lines = [
+        f"# {normalize_text(str(extraction.metadata.get('title') or 'Untitled Article'))}",
+        "",
+    ]
     doi = normalize_text(str(extraction.metadata.get("doi") or ""))
     if doi:
         lines.append(f"- DOI: `{doi}`")
     lines.append(f"- Provider: `{provider_label}`")
-    journal = normalize_text(str(extraction.metadata.get("journal_title") or extraction.metadata.get("journal") or ""))
+    journal = normalize_text(
+        str(
+            extraction.metadata.get("journal_title")
+            or extraction.metadata.get("journal")
+            or ""
+        )
+    )
     if journal:
         lines.append(f"- Journal: {journal}")
     published = normalize_text(str(extraction.metadata.get("published") or ""))
@@ -585,7 +652,9 @@ def build_jats_markdown_document(
         lines.append(f"- XML: {xml_path.name}")
     lines.append("")
     if extraction.abstract_sections:
-        lines.extend(["## Abstract", "", str(extraction.abstract_sections[0]["text"]), ""])
+        lines.extend(
+            ["## Abstract", "", str(extraction.abstract_sections[0]["text"]), ""]
+        )
     if extraction.markdown_text:
         lines.extend(extraction.markdown_text.splitlines())
         lines.append("")

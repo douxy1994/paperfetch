@@ -27,6 +27,7 @@ class BrowserWorkflowBootstrapResult:
     browser_context_seed: Mapping[str, Any] | None = None
     html_failure_reason: str | None = None
     html_failure_message: str | None = None
+    html_failure_diagnostics: Mapping[str, Any] | None = None
     html_payload: RawFulltextPayload | None = None
     runtime_failure: ProviderFailure | None = None
     warnings: list[str] = field(default_factory=list)
@@ -45,7 +46,6 @@ class ProviderBrowserProfile:
     markdown_publisher: str
     fallback_author_extractor: Callable[[str], list[str]] | None
     shared_browser_image_fetcher: bool
-    direct_playwright_html_preflight: bool = False
 
 
 def make_atypon_browser_profile(
@@ -53,7 +53,6 @@ def make_atypon_browser_profile(
     *,
     fallback_author_extractor: Callable[[str], list[str]],
     article_source_name: str | None = None,
-    direct_playwright_html_preflight: bool = False,
 ) -> ProviderBrowserProfile:
     return ProviderBrowserProfile(
         name=name,
@@ -67,5 +66,4 @@ def make_atypon_browser_profile(
         markdown_publisher=name,
         fallback_author_extractor=fallback_author_extractor,
         shared_browser_image_fetcher=True,
-        direct_playwright_html_preflight=direct_playwright_html_preflight,
     )

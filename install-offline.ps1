@@ -5,6 +5,8 @@ param(
     [switch]$SkipSmoke
 )
 
+# Repo-local legacy Windows offline installer. Release users should run the
+# Inno Setup .exe, which invokes scripts/windows-installer-helper.ps1.
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
@@ -24,8 +26,18 @@ $McpEnvKeys = @(
     "PAPER_FETCH_ENV_FILE",
     "PAPER_FETCH_DOWNLOAD_DIR",
     "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "PAPER_FETCH_IMAGE_TOOLS_DIR",
     "MATHML_TO_LATEX_NODE_BIN",
-    "CLOAKBROWSER_HEADLESS"
+    "PAPER_FETCH_BROWSER_HEADLESS"
+)
+$OfflineEnvKeys = @(
+    "PAPER_FETCH_DOWNLOAD_DIR",
+    "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "PAPER_FETCH_IMAGE_TOOLS_DIR",
+    "MATHML_TO_LATEX_NODE_BIN",
+    "PAPER_FETCH_BROWSER_HEADLESS",
+    "PYTHONUTF8",
+    "PYTHONIOENCODING"
 )
 
 function Write-Log {
@@ -48,13 +60,17 @@ function Import-InstallerManifest {
     $script:SkillName = [string]$manifest.skill.name
     $script:McpName = [string]$manifest.mcp.name
     $script:McpEnvKeys = @($manifest.mcp.env_keys | ForEach-Object { [string]$_ })
+    if ($null -ne $manifest.env_sets -and $null -ne $manifest.env_sets.offline_env_keys) {
+        $script:OfflineEnvKeys = @($manifest.env_sets.offline_env_keys | ForEach-Object { [string]$_ })
+    }
     Normalize-McpEnvKeys
 
     if ([string]::IsNullOrWhiteSpace($script:ManagedBegin) -or
         [string]::IsNullOrWhiteSpace($script:ManagedEnd) -or
         [string]::IsNullOrWhiteSpace($script:SkillName) -or
         [string]::IsNullOrWhiteSpace($script:McpName) -or
-        $script:McpEnvKeys.Count -eq 0) {
+        $script:McpEnvKeys.Count -eq 0 -or
+        $script:OfflineEnvKeys.Count -eq 0) {
         Fail "installer manifest is missing required installer constants."
     }
 }
@@ -64,20 +80,17 @@ function Normalize-McpEnvKeys {
     $seenHeadless = $false
     foreach ($key in $script:McpEnvKeys) {
         if ($key -in @(
-            "PLAYWRIGHT_BROWSERS_PATH",
-            "CLOAKBROWSER_BINARY_PATH",
-            "CLOAKBROWSER_PROFILE_DIR",
-            "CLOAKBROWSER_USER_DATA_DIR"
+            "PLAYWRIGHT_BROWSERS_PATH"
         )) {
             continue
         }
-        if ($key -eq "CLOAKBROWSER_HEADLESS") {
+        if ($key -eq "PAPER_FETCH_BROWSER_HEADLESS") {
             $seenHeadless = $true
         }
         $filtered.Add($key)
     }
     if (-not $seenHeadless) {
-        $filtered.Add("CLOAKBROWSER_HEADLESS")
+        $filtered.Add("PAPER_FETCH_BROWSER_HEADLESS")
     }
     $script:McpEnvKeys = $filtered.ToArray()
 }
@@ -104,6 +117,12 @@ function ConvertTo-EnvPath {
 function Quote-DotenvValue {
     param([string]$Value)
     $escaped = (ConvertTo-EnvPath $Value).Replace("'", "\'")
+    return "'$escaped'"
+}
+
+function Quote-DotenvString {
+    param([string]$Value)
+    $escaped = $Value.Replace("'", "\'")
     return "'$escaped'"
 }
 
@@ -225,10 +244,6 @@ function Find-ProjectWheel {
 function Check-BundleAssets {
     Require-Dir (Join-Path $BundleRoot "wheelhouse")
     Require-File (Join-Path $BundleRoot "formula-tools/bin/texmath.exe")
-    $cloakbrowserWheels = @(Get-ChildItem -Path (Join-Path $BundleRoot "wheelhouse") -Filter "cloakbrowser-*.whl" -ErrorAction SilentlyContinue)
-    if ($cloakbrowserWheels.Count -eq 0) {
-        Fail "Bundled wheelhouse is missing cloakbrowser-*.whl."
-    }
 }
 
 function Install-ProjectVenv {
@@ -251,30 +266,45 @@ function Install-ProjectVenv {
     $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
 
     Write-Log "Installing paper-fetch-skill from bundled wheelhouse"
-    & $venvPython -m pip install --no-index --find-links (Join-Path $BundleRoot "wheelhouse") --only-binary=:all: $ProjectWheel
+    & $venvPython -m pip install --no-index --find-links (Join-Path $BundleRoot "wheelhouse") --only-binary=:all: "$($ProjectWheel)[full]"
     if ($LASTEXITCODE -ne 0) {
         Fail "Failed to install paper-fetch-skill from bundled wheelhouse."
     }
 }
 
+function Get-OfflineEnvValue {
+    param([string]$Name)
+
+    switch ($Name) {
+        "PAPER_FETCH_DOWNLOAD_DIR" { return (Join-Path $BundleRoot "downloads") }
+        "PAPER_FETCH_FORMULA_TOOLS_DIR" { return (Join-Path $BundleRoot "formula-tools") }
+        "PAPER_FETCH_IMAGE_TOOLS_DIR" { return (Join-Path $BundleRoot "image-tools") }
+        "MATHML_TO_LATEX_NODE_BIN" { return (Join-Path $BundleRoot ".venv/Lib/site-packages/playwright/driver/node.exe") }
+        "PAPER_FETCH_BROWSER_HEADLESS" { return "true" }
+        "PYTHONUTF8" { return "1" }
+        "PYTHONIOENCODING" { return "utf-8" }
+        default { Fail "Unknown offline env key in installer manifest: $Name" }
+    }
+}
+
+function Format-DotenvAssignment {
+    param([string]$Name, [string]$Value)
+
+    if ($Name -in @("PYTHONUTF8", "PYTHONIOENCODING", "PAPER_FETCH_BROWSER_HEADLESS")) {
+        return "$Name=$(Quote-DotenvString $Value)"
+    }
+    return "$Name=$(Quote-DotenvValue $Value)"
+}
+
 function New-ManagedEnvLines {
-    $downloadDir = Join-Path $BundleRoot "downloads"
-    $formulaToolsDir = Join-Path $BundleRoot "formula-tools"
-    $mathmlNode = Join-Path $BundleRoot ".venv/Lib/site-packages/playwright/driver/node.exe"
-    return @(
-        "",
-        $ManagedBegin,
-        "PAPER_FETCH_DOWNLOAD_DIR=$(Quote-DotenvValue $downloadDir)",
-        "PAPER_FETCH_FORMULA_TOOLS_DIR=$(Quote-DotenvValue $formulaToolsDir)",
-        "MATHML_TO_LATEX_NODE_BIN=$(Quote-DotenvValue $mathmlNode)",
-        "CLOAKBROWSER_HEADLESS='true'",
-        "PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'",
-        "# Optional: connect to an already-running Chrome/CloakBrowser CDP endpoint.",
-        "# CLOAKBROWSER_CDP_ENDPOINT='ws://127.0.0.1:9222/devtools/browser/...'",
-        "# Optional: use a preinstalled Chrome/CloakBrowser binary instead of cloakbrowser download.",
-        "# CLOAKBROWSER_BINARY_PATH='C:/path/to/chrome.exe'",
-        $ManagedEnd
-    )
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add("")
+    $lines.Add($ManagedBegin)
+    foreach ($name in $OfflineEnvKeys) {
+        $lines.Add((Format-DotenvAssignment -Name $name -Value ([string](Get-OfflineEnvValue $name))))
+    }
+    $lines.Add($ManagedEnd)
+    return $lines.ToArray()
 }
 
 function Write-ManagedEnvFile {
@@ -352,15 +382,28 @@ if (Test-Path -LiteralPath $venvActivate) {
 
 $venvScripts = Join-Path $InstallRoot ".venv/Scripts"
 $formulaBin = Join-Path $InstallRoot "formula-tools/bin"
-$env:PATH = "$venvScripts;$formulaBin;$env:PATH"
+$imageBin = Join-Path $InstallRoot "image-tools/bin"
+$env:PATH = "$venvScripts;$formulaBin;$imageBin;$env:PATH"
+if ([string]::IsNullOrWhiteSpace($env:PAPER_FETCH_DOWNLOAD_DIR)) {
+    $env:PAPER_FETCH_DOWNLOAD_DIR = Join-Path $InstallRoot "downloads"
+}
 if ([string]::IsNullOrWhiteSpace($env:PAPER_FETCH_FORMULA_TOOLS_DIR)) {
     $env:PAPER_FETCH_FORMULA_TOOLS_DIR = Join-Path $InstallRoot "formula-tools"
+}
+if ([string]::IsNullOrWhiteSpace($env:PAPER_FETCH_IMAGE_TOOLS_DIR)) {
+    $env:PAPER_FETCH_IMAGE_TOOLS_DIR = Join-Path $InstallRoot "image-tools"
 }
 if ([string]::IsNullOrWhiteSpace($env:MATHML_TO_LATEX_NODE_BIN)) {
     $env:MATHML_TO_LATEX_NODE_BIN = Join-Path $InstallRoot ".venv/Lib/site-packages/playwright/driver/node.exe"
 }
-if ([string]::IsNullOrWhiteSpace($env:CLOAKBROWSER_HEADLESS)) {
-    $env:CLOAKBROWSER_HEADLESS = "true"
+if ([string]::IsNullOrWhiteSpace($env:PAPER_FETCH_BROWSER_HEADLESS)) {
+    $env:PAPER_FETCH_BROWSER_HEADLESS = "true"
+}
+if ([string]::IsNullOrWhiteSpace($env:PYTHONUTF8)) {
+    $env:PYTHONUTF8 = "1"
+}
+if ([string]::IsNullOrWhiteSpace($env:PYTHONIOENCODING)) {
+    $env:PYTHONIOENCODING = "utf-8"
 }
 '@
     [System.IO.File]::WriteAllText($target, $content, [System.Text.UTF8Encoding]::new($false))
@@ -369,11 +412,12 @@ if ([string]::IsNullOrWhiteSpace($env:CLOAKBROWSER_HEADLESS)) {
 function Test-BrowserRuntimePackage {
     $venvPython = Join-Path $BundleRoot ".venv/Scripts/python.exe"
     $code = @'
-import cloakbrowser
+import camoufox
 import playwright
+import pymupdf
 from paper_fetch.runtime_browser import BrowserContextManager
 
-assert hasattr(cloakbrowser, "ensure_binary")
+assert hasattr(camoufox, "Camoufox")
 assert BrowserContextManager is not None
 '@
     & $venvPython -c $code
@@ -403,8 +447,9 @@ function Run-SmokeChecks {
     Test-BrowserRuntimePackage
 
     $env:PAPER_FETCH_ENV_FILE = Join-Path $BundleRoot "offline.env"
+    $env:PAPER_FETCH_IMAGE_TOOLS_DIR = Join-Path $BundleRoot "image-tools"
     $env:MATHML_TO_LATEX_NODE_BIN = Join-Path $BundleRoot ".venv/Lib/site-packages/playwright/driver/node.exe"
-    $env:CLOAKBROWSER_HEADLESS = "true"
+    $env:PAPER_FETCH_BROWSER_HEADLESS = "true"
     & (Join-Path $BundleRoot ".venv/Scripts/python.exe") -c "from paper_fetch.mcp.fetch_tool import provider_status_payload; payload = provider_status_payload(); assert 'providers' in payload"
     if ($LASTEXITCODE -ne 0) {
         Fail "provider_status_payload smoke check failed."
@@ -448,6 +493,7 @@ Write-Host "Offline installation complete."
 $activateScript = Join-Path $BundleRoot "Activate-Offline.ps1"
 $offlineEnv = Join-Path $BundleRoot "offline.env"
 Write-Host "Activate it with: . $activateScript"
-Write-Host "CloakBrowser headless: true"
-Write-Host "Browser-backed providers auto-start cloakbrowser Chrome unless CLOAKBROWSER_CDP_ENDPOINT points at an existing browser."
+Write-Host "Default browser backend: Camoufox (headless: true)"
+Write-Host "The first real fetch may download Camoufox; fully offline hosts must preinstall its complete runtime."
+Write-Host "Browser backend: Camoufox."
 Write-Host "Elsevier setup: request a key at https://dev.elsevier.com/, then add ELSEVIER_API_KEY=`"...`" to $offlineEnv before fetching Elsevier papers."

@@ -1,10 +1,16 @@
 from __future__ import annotations
 
-from paper_fetch.metadata.types import MetadataMergeRule, merge_metadata_layers
+from paper_fetch.metadata.types import (
+    MetadataMergeRule,
+    merge_metadata_layers,
+    merge_primary_secondary_metadata,
+)
 from paper_fetch.providers import _arxiv_metadata, _ieee_metadata, _springer_html
 
 
-def test_merge_metadata_layers_respects_field_precedence_and_default_fill_empty() -> None:
+def test_merge_metadata_layers_respects_field_precedence_and_default_fill_empty() -> (
+    None
+):
     rule = MetadataMergeRule(
         fill_empty=("title",),
         overwrite=("abstract",),
@@ -72,6 +78,66 @@ def test_merge_metadata_layers_merges_lists_by_field_rule() -> None:
     assert merged["fulltext_links"] == [{"url": "https://example.test/html.pdf"}]
 
 
+def test_primary_secondary_metadata_merge_blocks_secondary_with_blank_primary() -> None:
+    merged = merge_primary_secondary_metadata(
+        {"abstract": "", "title": "Primary Title"},
+        {"abstract": "Crossref abstract", "title": "Secondary Title"},
+    )
+
+    assert merged["abstract"] is None
+    assert merged["title"] == "Primary Title"
+
+
+def test_primary_secondary_metadata_merge_uses_field_specific_list_keys() -> None:
+    merged = merge_primary_secondary_metadata(
+        {
+            "authors": ["Zhang, San"],
+            "keywords": ["AI"],
+            "fulltext_links": [
+                {
+                    "url": "https://example.test/full.pdf",
+                    "content_type": "application/pdf",
+                }
+            ],
+            "references": [
+                {"raw": "Primary reference", "doi": "10.1000/ref"},
+                {"raw": "Reference without DOI"},
+            ],
+        },
+        {
+            "authors": ["San Zhang", "Alice Example"],
+            "keywords": ["ai", "Robotics"],
+            "fulltext_links": [
+                {
+                    "url": "https://example.test/full.pdf",
+                    "content_type": "text/html",
+                },
+                {"url": "https://example.test/other.pdf"},
+            ],
+            "references": [
+                {"raw": "Secondary reference", "doi": "10.1000/ref"},
+                {"raw": "reference without doi"},
+                {"raw": "Unique reference"},
+            ],
+        },
+    )
+
+    assert merged["authors"] == ["Zhang, San", "Alice Example"]
+    assert merged["keywords"] == ["AI", "Robotics"]
+    assert merged["fulltext_links"] == [
+        {
+            "url": "https://example.test/full.pdf",
+            "content_type": "application/pdf",
+        },
+        {"url": "https://example.test/other.pdf"},
+    ]
+    assert merged["references"] == [
+        {"raw": "Primary reference", "doi": "10.1000/ref"},
+        {"raw": "Reference without DOI"},
+        {"raw": "Unique reference"},
+    ]
+
+
 def test_ieee_merge_uses_landing_scalars_and_keeps_base_fallbacks() -> None:
     merged = _ieee_metadata._merge_ieee_metadata(
         {
@@ -113,7 +179,9 @@ def test_ieee_merge_uses_landing_scalars_and_keeps_base_fallbacks() -> None:
         "edge inference",
     ]
     assert merged["article_number"] == "10388355"
-    assert merged["landing_page_url"] == "https://ieeexplore.ieee.org/document/10388355/"
+    assert (
+        merged["landing_page_url"] == "https://ieeexplore.ieee.org/document/10388355/"
+    )
     assert merged["publisher"] == "IEEE"
 
 

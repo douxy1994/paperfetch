@@ -6,6 +6,219 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 4.0.1 - 2026-07-27
+
+### Fixed
+
+- Restored native texmath 0.13.2 as the preferred formula backend in Linux, macOS, and Windows offline packages, copied reused POSIX binaries instead of preserving build-host symlinks, and retained the locked `mathml-to-latex` package as the secondary fallback.
+- Normalized relative Windows installer output directories before invoking Inno Setup, and allowed stable-release retries to overlay trusted packaging tooling without moving an immutable source tag.
+- Restored the daily `dependency-latest` rolling prerelease after the 4.0 CI split, resolved the `full` extra for all nine frozen platform/ABI snapshots, reused the shared offline workflow for verified wheelhouse builds, and reinstated exact asset replacement and post-publication integrity checks.
+- Made Chinese the sole language for future release notes: stable releases extract their version section from `CHANGELOG_CN.md`, while rolling prereleases use the Chinese status template instead of generating English notes.
+
+## 4.0.0 - 2026-07-26
+
+### Breaking
+
+- Removed the deprecated CloakBrowser backend and all `CLOAKBROWSER_*` compatibility settings. Camoufox is now the only supported browser backend.
+- Made the default installation a lightweight core. Browser extraction and PDF conversion now require the `browser`, `pdf`, or `full` extra.
+
+### Changed
+
+- Added branch-aware global and risk-focused coverage reporting, full-package typing, isolated unit-test runtime state, bounded cookie-aware downloads, and hardened XML parsing.
+- Consolidated project version metadata around `pyproject.toml`, adopted SPDX license metadata, and expanded release and supply-chain metadata.
+
+### Fixed
+
+- Stabilized shared PDF Markdown structure under `pymupdf4llm` 1.28.0 by repairing deterministic heading drift without provider- or DOI-specific rules.
+- Deduplicated Royal Society Silverchair figures across `view-large` and CDN URL variants while preserving the preferred full-size URL, preview URL, label, and caption.
+- Refreshed and agent-reviewed all 26 affected golden snapshots after removing duplicate HTML title sections and applying the PDF and Royal Society fixes.
+
+## 3.2.1 - 2026-07-25
+
+### Changed
+
+- Updated all GitHub Actions Python setup steps from `actions/setup-python@v6` to `actions/setup-python@v7`.
+- Expanded the deprecated CloakBrowser compatibility range from `>=0.4,<0.5` to `>=0.4,<0.6`, covering the 0.5.x Python wrapper while keeping Camoufox as the sole default browser backend.
+- Upgraded KaTeX from `0.17.0` to `0.18.1` and synchronized the root and bundled formula-tool manifests and lockfiles.
+
+## 3.2.0 - 2026-07-22
+
+### Added
+
+- Added browser-neutral runtime context/session contracts for native Firefox/Juggler Camoufox and deprecated CloakBrowser, with provider-scoped state and a formal backend guide.
+- Added direct-first selected-browser recovery across IEEE landing, REST HTML, PDF, figure/table/formula assets, multimedia discovery, and supplementary files; recovery is limited to eligible authentication, HTML-challenge, and network failures.
+- Added a daily `dependency-latest` rolling prerelease that resolves the full direct/transitive Python runtime dependency matrix from the latest stable `v*` release, rebuilds all nine offline installers only when the source or resolved wheel set changes, and supports an explicit `force_refresh` recovery run.
+- Added dependency snapshot tooling and contracts for per-target wheel inventories, deterministic cross-platform manifests, dependency-set comparison, and pre-build wheel filename/SHA256 verification.
+
+### Changed
+
+- Made Camoufox the sole default browser backend. CloakBrowser remains available throughout 3.x only when explicitly selected, emits a one-time `FutureWarning`, and may be removed in 4.0.0; legacy `CLOAKBROWSER_*` variables no longer select it implicitly.
+- Kept backend selection strict with no automatic cross-backend fallback, required every runtime config to carry its backend, and separated Camoufox/CloakBrowser profile state.
+- Constrained Playwright to `<1.61` for the supported `camoufox>=0.5.4,<0.6` combination, reused one thread-affine Camoufox process per runtime context, and optimized full HTML navigation around `commit` plus provider DOM readiness without global image/font/style blocking.
+- Reused the existing Linux, macOS, and Windows offline build jobs for rolling updates with frozen wheelhouses; publishing retargets the fixed prerelease, replaces and verifies its exact installer/manifest/checksum asset set, and treats incomplete or invalid prior assets as a rebuild trigger without changing the stable latest release.
+
+### Fixed
+
+- Fixed IEEE large/preview media duplication so each normalized inline asset renders once, and distinguished partial asset downloads from batches where every asset failed.
+- Fixed rolling offline builds failing before packaging when clean `setup-python` environments lacked the resolver-only `packaging` dependency; `merge`, `compare`, and pre-build `verify` now remain standard-library bootstrap paths.
+- Fixed rolling prerelease publication against an older stable source commit by using a repository-scoped `ROLLING_RELEASE_TOKEN` for tag and Release mutations while keeping the built-in job token read-only.
+- Fixed trailing commas in Windows offline-installer environment arrays that caused PowerShell parser errors before packaging began, with a static regression contract covering all three release scripts.
+- Fixed stable release publication being skipped by GitHub's implicit `success()` status check when the dependency chain contained intentionally skipped refresh jobs; the release condition now always evaluates and explicitly requires every direct quality gate and offline build to succeed.
+
+## 3.1.3 - 2026-07-15
+
+### Added
+
+- Added stable browser lifecycle failure codes for managed Chrome profile, startup, CDP, context, and page stages, with bounded redacted stderr diagnostics propagated through browser preflight, provider traces, fallback payloads, CLI manifests, and agent guidance.
+
+### Changed
+
+- Changed CLI and MCP batch execution to retain one shared browser manager across item gaps and use cooperative cancellation with a grace period, one-time browser shutdown escalation, and first/second Ctrl-C handling in the CLI.
+- Expanded the macOS offline browser smoke and unit contracts to cover conservative stale-profile recovery, four-worker/50-context reuse, cancellation convergence, diagnostic redaction, and fallback provenance.
+
+### Fixed
+
+- Fixed managed Chrome profile reuse after abnormal exits by validating singleton ownership, host, PID/profile, and socket state; only proven-stale links are archived with recovery metadata, and a failed launch is retried at most once after a newly stale set is recovered.
+- Fixed browser/PDF and metadata fallbacks so precise HTML/browser failure traces survive a successful fallback and keep acceptance degraded; browser runtime failures now direct users to repair local runtime state instead of incorrectly suggesting publisher authentication.
+
+## 3.1.2 - 2026-07-14
+
+### Changed
+
+- Changed HTML full-text acceptance to require a trusted article/body container scope plus substantive body evidence, preserved the original scope through synthetic `<article>` normalization, and raised `EXTRACTION_REVISION` to 3 so stale false-positive sidecars are refetched.
+- Added a focused offline CI gate and a real Annual Reviews empty-shell replay for shared availability, provider fallback, and block-corpus regressions.
+
+### Fixed
+
+- Fixed landing pages with empty full-text markers and large Most Read, Most Cited, Recommended, or Related modules being promoted to full text solely by page text volume.
+- Fixed Annual Reviews empty landing shells so they fail HTML quality assessment and continue through the existing PDF fallback; retained Wiley abstract datalayer blocking for `10.1002/joc.3370130706`.
+
+## 3.1.1 - 2026-07-14
+
+### Added
+
+- Added bounded IOP supplementary expansion for `asset_profile=all`, resolving same-DOI `/data` indexes to `SM`-numbered attachments with browser cookie/Referer reuse.
+- Added a focused CI contract gate for IOP supplementary extraction, explicit asset Referer forwarding, signed-URL redaction, and browser challenge regression coverage.
+
+### Fixed
+
+- Fixed IOP supplementary discovery so `/data` index HTML, figure download controls, QR images, mismatched parent DOIs, blocked indexes, and empty scopes cannot be accepted as supplementary files; unresolved declared indexes now surface structured asset failures.
+- Fixed browser-backed supplementary file requests to forward their explicit Referer and redact AWS `X-Amz-*`, `Signature`, and `AWSAccessKeyId` query values from cache keys and retained asset diagnostics.
+
+## 3.1.0 - 2026-07-13
+
+### Added
+
+- Added canonical asset acceptance and manifest-v2 records across CLI, MCP, cache, and durable batch runs, including deterministic output hashes, audit/reconcile/resume support, bounded concurrent execution, cancellation, and rate-limit stop semantics.
+- Added network-free provider/runtime diagnostics, browser preflight and provider catalog MCP resources/tools, compact cache inspection, and the structured `batch_fetch` MCP tool with explicit persistence and resume modes.
+- Added machine-readable installation provenance to `paper-fetch doctor --json`, covering source and distribution versions, the default User-Agent, PATH entrypoint, offline target/revision/build metadata, installed runtime metadata, and all three host skill copies.
+
+### Changed
+
+- Changed the static skill into a thin, self-contained workflow entrypoint with dedicated workflow, presets, acceptance, CLI, environment, tool-contract, and failure-handling references whose links are parser-validated in source, staging, and installer copies.
+- Changed offline manifest schema to version 3 so Linux, macOS, and Windows bundles carry the complete skill file list and a SHA256 for every file; installers now reject missing, extra, symlinked, or hash-drifted skill content before and after host installation.
+- Prepared the backward-compatible feature set as the SemVer minor release `3.1.0`, synchronizing package metadata, the stable tool User-Agent, Windows installer fallback version, deployment guidance, and both changelogs.
+- Added a lightweight cross-CLI/MCP/cache/manifest CI contract gate; package smoke now builds outside the checkout and verifies version consistency, every console script, MCP EOF, and static installation provenance while keeping live/offline heavy jobs opt-in.
+
+### Fixed
+
+- Fixed version ambiguity that could leave source, installed distribution metadata, and the PATH CLI at different releases without exposing their concrete paths; source development without an offline manifest is now reported as not applicable instead of an installation failure.
+
+## 3.0.1 - 2026-07-04
+
+### Changed
+
+- Changed the built-in Wiley and Science samples used by `paper-fetch browser-preflight` and `paper-fetch auth` to lighter full-text pages already covered by fixtures, reducing slow parsing time in the default browser preflight.
+- Added a built-in Royal Society Publishing sample for `paper-fetch browser-preflight` and `paper-fetch auth royalsocietypublishing`, so the default browser preflight now covers that browser-backed provider.
+- Removed the full GitHub Actions unit/devtools/coverage job from the default CI gate; local `scripts/dev-preflight.sh` still runs the complete unit, devtools, and optional coverage checks.
+- Refreshed user and agent documentation: restored the README showcase and example screenshots while keeping the quick-start path compact, corrected AMS direct-HTTP/browser-runtime wording, aligned CLI `--output-dir` filename descriptions with paper-stem output naming, and replaced completed-provider onboarding examples with placeholder provider examples.
+
+## 3.0.0 - 2026-07-03
+
+### Changed
+
+- Changed browser-backed providers to use the public `browser_runtime` backend facade, centralizing CloakBrowser storage/profile path resolution, storage-state locking, and atomic storage-state writes across auth, preflight, HTML fetch, and seeded PDF fallback.
+- Changed external CDP handling to report borrowed-context diagnostics and support `PAPER_FETCH_CDP_EXTERNAL_NEW_CONTEXT=1` for creating a fresh context in an existing browser.
+- Changed browser-backed asset downloads to reuse a scoped thread-local page/context during safe caller-thread attempts, with automatic fallback to per-call close on Playwright thread-ownership errors.
+- Changed browser image fetches to use a single per-image wall-clock budget across seed warming, page fetch, request-context fetch, direct navigation, and image wait; PDF fallback browser seeding now uses a lightweight warm path and skips duplicate seed navigation when cookies were already collected.
+- Changed local conversion paths to cache Ghostscript/libvips candidate and `--version` probes, keep existing formula result/worker reuse under subprocess-call tests, and reuse no-image PDF Markdown rendering by PDF hash with byte/page guards and render diagnostics.
+- Added cooperative cancellation checks to browser HTML, seeded PDF fallback, browser asset retry, and browser preflight loops.
+- Changed `paper-fetch browser-preflight` to reuse each browser-backed provider's normal HTML candidates and HTML bootstrap retry semantics for built-in samples while still skipping PDF fallback.
+- Removed the PNAS fast browser HTML preflight special case; PNAS now uses the standard browser workflow HTML bootstrap before seeded PDF fallback.
+- Changed AMS to a no-browser direct HTTP HTML provider with direct HTTP PDF fallback, publishing `ams_html` or `ams_pdf` while still skipping browser auth/preflight/status and seeded-browser PDF fallback.
+- Changed CI offline package jobs to run only on `v*` tag pushes or manual dispatch, leaving ordinary push/PR runs to the regular quality gates.
+- Changed quality gates to expand mypy coverage to runtime/config/quality/PDF fallback/browser-runtime/formula core paths, configure mypy with `no_site_packages`, enforce a unit coverage baseline of 40 in CI and local coverage preflight, and remove the global `tests/**` `B023` ruff ignore.
+- Changed offline installers to derive MCP, `offline.env`, shell, and activation runtime environment keys from `installer/manifest.json`, propagate bundled Node/Python encoding consistently, register Antigravity MCP in verifier coverage, and parse `activate-offline.sh` env files without executing shell code.
+- Changed `RuntimeContext.parse_cache` accessors to use a lock and same-key in-flight coordination so concurrent parser memoization runs each supplier once.
+- Changed MCP tool outputs to include top-level `schema_version=1`, preserve provider/HTTP error details in machine-readable fields, and stop batch submission on rate-limit categories, HTTP 429, or retry-after hints while retaining `abort_reason.retry_after_seconds`.
+- Changed MCP cache-index reads to validate `INDEX_VERSION`, reject stale/invalid manifests unless explicitly rescanned, expose `list_cached(cache_mode="index"|"refresh"|"rescan")`, keep structured resolve `title`/`authors`/`year` as independent resolver signals, and move provider/Crossref primary-secondary metadata merge semantics into one rule-backed helper.
+- Changed provider waterfalls to continue fallback routes consistently for access, rate-limit, no-result, and generic provider failures while deduplicating aggregated warnings/source trail and preserving retry-after details in final failures.
+- Changed provider registry cold-start behavior so root `paper_fetch` imports no longer load provider entry modules, `trafilatura`, or `idutils`; provider discovery now uses an explicit built-in entry list plus cached AST checks for dynamic entries, and browser workflow route labels live in `route_order` instead of string-valued `waterfall_steps`.
+- Changed shared Markdown table rendering to use one canonical pipe-table formatter across IR and HTML paths, preserving explicit headers, escaping pipes/newlines, padding ragged rows, and rendering fallback messages.
+- Changed HTML-derived formula and citation rendering to keep inline TeX math delimited, prefer explicit figure context before formula-image URL heuristics, and share one numeric citation payload helper across section and Atypon renderers.
+- Updated README, CLI/MCP instructions, provider/runtime/deployment/extraction docs, AMS onboarding manifest/access-review/cleaning-chain evidence, and the provider runtime optimization plan to match the new browser-runtime and AMS direct-HTTP ownership boundaries.
+- Expanded unit and integration coverage for AMS direct HTTP HTML/PDF fallback, browser-preflight provider candidates/no-PDF behavior, external-CDP new-context diagnostics, browser runtime facade wiring, and browser workflow dependency grouping.
+
+## 2.8.0 - 2026-07-02
+
+### Added
+
+- Added provider-template-aware DOI extraction for DOI-bearing publisher URLs, including query-parameter DOIs, known route/extension suffix stripping, and AMS old-style SICI `view` / `downloadpdf` slug support, so many URL queries resolve directly without fetching a landing page first.
+- Added `scripts/dev-preflight.sh --coverage` plus CI unit coverage reports (`term-missing` and `coverage.xml`) as a baseline signal without enforcing a coverage threshold.
+
+### Changed
+
+- Changed publisher-facing landing/PDF requests and browser workflows to use browser-shaped user agents through `build_publisher_user_agent`; `PAPER_FETCH_USER_AGENT` remains the tool/API user agent and no longer becomes the default browser context user agent.
+- Changed Royal Society Publishing from direct HTTP DOI/PDF fetching to the shared CDP browser HTML plus seeded-browser PDF workflow while keeping `royalsocietypublishing_html` / `royalsocietypublishing_pdf` sources and the no-XML route contract.
+- Changed title-query resolution to prefer a formal journal publication over a near-tie preprint when Crossref metadata identifies a clear formal publication candidate.
+- Expanded mypy coverage to 136 project source files, including HTML extraction, browser workflow, Atypon browser workflow, shared JATS/common Markdown helpers, the CloakBrowser helper, service, artifacts, image conversion, and resolver modules.
+- Changed local and CI quality gates to enforce `ruff format --check`, keep ruff linting, prefer repo-local `.venv/bin/python` or explicit `PYTHON_BIN`, report missing dev dependencies early, and run local preflight type checks with `mypy --no-site-packages`.
+- Applied `ruff format` across the Python codebase and updated module-layout and asset-contract guard tests for the formatted source shape.
+
+### Fixed
+
+- Fixed the expanded mypy contract suite by normalizing BeautifulSoup attribute values before helper calls, preserving optional HTML dependency fallbacks under type checking, and aligning MCP request/resource/result types with the current SDK signatures.
+- Fixed browser-backed batch concurrency so managed CDP browser managers are shared process-wide by provider/browser config, preventing concurrent CLI/MCP fetches for the same provider profile from racing on `.paper-fetch-profile.lock`; isolated contexts now use thread-owned CDP connections to avoid cross-thread Playwright sync object reuse.
+- Fixed SICI DOI normalization and URL DOI suffix handling so DOI suffixes such as `<...>` / `;` are preserved, while provider route tokens such as Frontiers `/full`, IOP `/pdf`, Wiley `/fullpdf`, and Springer `.pdf` are stripped only when provider catalog templates make that safe.
+- Fixed official PDF fallback degradation for scanned/PDF-only provider results: real downloaded PDFs are retained with explicit warnings and provider source trail instead of being replaced by Crossref/general metadata-only results when Markdown extraction is unusable.
+- Fixed publisher landing/probe requests that previously sent the stable `paper-fetch-skill/<version>` tool user agent to browser-facing publisher routes.
+- Fixed docs and contract drift around `PdfFallbackStrategy`, browser runtime ownership, provider URL/route behavior, and asset-download contract marker scanning after repository-wide ruff formatting.
+
+## 2.7.1 - 2026-07-01
+
+### Added
+
+- Added `paper-fetch browser-preflight` to serially open browser-backed provider sample pages, save provider-scoped storage-state JSON on success, and report providers that need manual `paper-fetch auth`.
+
+### Changed
+
+- PDF/ePDF fallback image exports now use the same DOI-scoped `<doi>_assets/` directory as HTML/XML asset downloads when a DOI is available, while retaining the legacy `body_assets/` fallback for DOI-less internal calls.
+
+### Fixed
+
+- AMS formula image extraction now reads lazy `data-image-src` GIF URLs before `Blank.svg` placeholders, so image-only equations are rendered and downloaded from the real publisher formula assets.
+- AMS direct HTTP HTML preflight now follows DOI 3xx redirects to the publisher full-text page before parsing while still rejecting challenge pages, so public AMS articles can stay on the no-browser `ams_html` path instead of falling through to browser/PDF fallback.
+- PDF fallback source files now prefer merged provider payload metadata for artifact filenames, so arXiv paths that learn title, authors, and year after fetch no longer fall back to `unknown_unknown_<doi>.pdf`.
+
+## 2.7.0 - 2026-07-01
+
+### Added
+
+- Added AMS direct HTTP HTML preflight with browser-equivalent headers before the CDP browser fallback, reducing browser startup for publicly reachable AMS article pages while preserving the existing browser/PDF recovery route.
+- Added AMS `Download Figure` EPS/TIFF source-figure handling: body figure assets now prefer publisher source files, convert them to PNG through Ghostscript/libvips when available, preserve the original source files and conversion metadata, and fall back to webpage JPG/PNG candidates when conversion is unavailable or fails.
+- Added optional image conversion tooling (`paper-fetch-install-image-tools`, `install-image-tools.sh`, `PAPER_FETCH_IMAGE_TOOLS_DIR`, `PAPER_FETCH_GHOSTSCRIPT_BIN`, `PAPER_FETCH_VIPS_BIN`, `PAPER_FETCH_EPS_DPI`, and `PAPER_FETCH_IMAGE_TOOL_TIMEOUT_SECONDS`) plus offline installer environment propagation.
+
+### Changed
+
+- Changed Linux, macOS, and Windows offline package builders to configure image-tools paths without bundling build-host `gs`/`vips` symlinks from `PATH`; Ghostscript/libvips remain optional runtime tools.
+- Changed arXiv Atom API enrichment to use a 60 second timeout and two transient retries for timeout/5xx failures, and surfaced those settings in provider status diagnostics.
+
+### Fixed
+
+- Fixed direct HTTP browser-workflow asset downloads so a failed AMS asset does not attempt browser seed refresh when no browser runtime was started, and so supplementary downloads inherit the same seeded Referer behavior as body figure downloads.
+- Ignored repo-local `.image-tools/` output so local Ghostscript/libvips staging artifacts are not accidentally committed.
+- Updated README, provider, deployment, architecture, extraction-rule, offline installer, CI, and unit-test coverage for AMS source figures, image conversion fallback, and offline image-tools behavior.
+
 ## 2.6.2 - 2026-06-27
 
 ### Changed

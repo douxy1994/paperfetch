@@ -8,8 +8,10 @@ from .types import (
     HtmlLookupHints,
     HtmlMetadata,
     MetadataMergeRule,
+    PRIMARY_SECONDARY_METADATA_MERGE_RULE,
     ProviderMetadata,
     ReferenceMetadata,
+    merge_primary_secondary_metadata,
     merge_metadata_layers,
 )
 
@@ -21,7 +23,9 @@ def __getattr__(name: str):
         return CrossrefLookupClient
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
+
 __all__ = [
+    "PRIMARY_SECONDARY_METADATA_MERGE_RULE",
     "CrossrefLookupClient",
     "CrossrefMetadata",
     "FulltextLink",
@@ -31,4 +35,5 @@ __all__ = [
     "ProviderMetadata",
     "ReferenceMetadata",
     "merge_metadata_layers",
+    "merge_primary_secondary_metadata",
 ]

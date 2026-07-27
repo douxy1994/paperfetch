@@ -135,12 +135,12 @@ metadata
 | [LaTeX normalization](#rule-formula-latex-normalization) | normalize 分支无 DOI 级 replay；已有 `_scenarios/formula_latex_normalization`。 | 真实 MathML 转换产出新 KaTeX 不兼容宏。 | 包含 publisher-specific MathML 宏或 mtext 转义的 XML / HTML。 |
 | [HTML bytes 解码和清洗 fallback 边界](#rule-html-byte-decoding-and-cleanup-bounds) | 当前无稳定 DOI 样本；已有 unit tests 锁定 charset 顺序、provider raw HTML 解码、no-root cheap cleanup、raw trafilatura 上限和 ORCID 常量。 | 真实 publisher HTML 出现非 UTF-8 charset、无内容根大页面或 raw fallback 性能回归。 | 带 HTTP charset/meta charset 的原始 HTML replay，或 no-root 大 HTML replay。 |
 | `royalsocietypublishing` docs sync | manifest docs.extraction_rules_summary is null; no unstable DOI rule row required yet. | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/royalsocietypublishing.yml` |
-| `annualreviews` | HTML fixture replay 已覆盖 `#html_fulltext` / `#itemFullTextId` 全文容器、`.articleSection` 正文段落、Annual Reviews figure/table 节点和 references；清洗链 proposal 已通过 `check-cleaning-proposal`。 | Annual Reviews 需要 provider-owned HTML extraction：选择动态全文容器，移除导航、访问 UI、PDF/PPT 操作、section menu、reference resolver 链接和动态 shell/comment 噪声，并在渲染前规范化章节标题、figure caption 与 table caption；通用 Atypon 抽取不足以维护这些结构。 | 继续补充稳定 table/formula/supplementary DOI 样本；PowerPoint 链接明确排除在 supplementary scope 之外。 |
+| `annualreviews` | HTML fixture replay 已覆盖 `#html_fulltext` / `#itemFullTextId` 全文容器、`.articleSection` 正文段落、Annual Reviews figure/table 节点和 references；`10.1146/annurev.pp.19.060168.001235` 另覆盖空 `#html_fulltext` 加 Most Read/Most Cited 卡片的真实落地页。 | Annual Reviews 需要 provider-owned HTML extraction：选择动态全文容器，保留原始 container scope，移除导航、访问 UI、PDF/PPT 操作、section menu、reference resolver、Most Read/Most Cited/推荐模块和动态 shell/comment 噪声，并在渲染前规范化章节标题、figure caption 与 table caption；通用 Atypon 抽取不足以维护这些结构。 | 继续补充稳定 table/formula/supplementary DOI 样本；PowerPoint 链接明确排除在 supplementary scope 之外。 |
 | `plos` docs sync | manifest docs.extraction_rules_summary is null; no unstable DOI rule row required yet. | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/plos.yml` |
 | `frontiers` docs sync | Frontiers 复用 shared JATS rendering，并把 XML graphic 文件名重写为 `/files/Articles/{id}/xml-images/*.webp` 资产 URL。 | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/frontiers.yml` |
 | `oxfordacademic` docs sync | Oxford Academic cleanup should preserve article abstract, body headings, figures, body tables, Silverchair formula paragraph text, supplementary data links, and visible `.ref-list` references while removing Oxford Academic navigation, metrics, author search links, slide/download chrome, citation widgets, and raw `citation_*` meta key strings. | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/oxfordacademic.yml` |
 | `acs` docs sync | ACS 接入复用 Atypon browser workflow：当前 replay 已覆盖正文 section、body table、figures、formula、Supporting Information、references、provider-owned author metadata，以及 public PDF fallback；同时清理 ACS Publications citation/download/metrics chrome。 | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/acs.yml` |
-| `iop` docs sync | IOP 接入复用 browser workflow：当前 real replay 覆盖 article body、table、formula image、figure caption、references、supplementary、Radware/hCaptcha challenge rejection、IOPScience download/metrics/citation chrome 清理，以及 PDF fallback source 合约。 | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/iop.yml` |
+| `iop` docs sync | IOP browser HTML must target articleBody/body sections and remove IOPScience download, metrics, citation, navigation, and challenge-page chrome. Supplementary discovery is two-stage and bounded to a same-DOI /data index followed by supplementarydata SM-numbered attachments; figure controls, QR images, mismatched DOI pages, and empty/challenge indexes cannot be accepted as supplementary files. | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/iop.yml` |
 | `aip` docs sync | AIP 接入复用 Atypon browser workflow，provider-owned 清理移除 AIP article navigation、citation/download、metrics chrome，并保留正文 figures、Markdown tables、LaTeX equations、SUPPLEMENTARY MATERIAL 与 references。 | Provider fixture replay or Markdown review exposes a docs-rule gap. | `onboarding/manifests/aip.yml` |
 
 ## Generic
@@ -242,7 +242,8 @@ metadata
   - [`../tests/fixtures/golden_criteria/10.1038_s41561-022-00912-7/original.html`](../tests/fixtures/golden_criteria/10.1038_s41561-022-00912-7/original.html)
   - [`../tests/fixtures/golden_criteria/10.1038_s41558-022-01584-2/original.html`](../tests/fixtures/golden_criteria/10.1038_s41558-022-01584-2/original.html)
   - [`../tests/fixtures/golden_criteria/10.1038_s43247-024-01270-5/original.html`](../tests/fixtures/golden_criteria/10.1038_s43247-024-01270-5/original.html)
-  - 这些样本分别覆盖 IEEE landing `sections.multimedia` + multimedia payload、Wiley `Supporting Information` 区块、Science supplementary section 与正文 Data Availability 普通链接的边界，以及 Springer / Nature `Source data`、Extended Data 和 peer-review 文件排除。
+  - [`../tests/fixtures/golden_criteria/10.1088_1748-9326_ab7d02/original.html`](../tests/fixtures/golden_criteria/10.1088_1748-9326_ab7d02/original.html)
+  - 这些样本分别覆盖 IEEE landing `sections.multimedia` + multimedia payload、Wiley `Supporting Information` 区块、Science supplementary section 与正文 Data Availability 普通链接的边界、Springer / Nature `Source data`、Extended Data 和 peer-review 文件排除，以及 IOP 正文页 `/data` 索引与 figure 下载控件/二维码之间的边界。IOP `SM0001` 索引页形态由 provider 单测中的精简真实 DOM 固定。
 - 对应测试：
   - [`../tests/unit/test_ieee_provider_asset_extraction.py`](../tests/unit/test_ieee_provider_asset_extraction.py) 中的 `test_real_ieee_multimedia_fixture_yields_supplementary_asset_from_explicit_scope`
   - [`../tests/unit/test_ieee_provider_asset_extraction.py`](../tests/unit/test_ieee_provider_asset_extraction.py) 中的 `test_ieee_html_payload_merges_multimedia_supplementary_assets_from_landing_scope`
@@ -250,6 +251,9 @@ metadata
   - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_extract_scoped_html_assets_empty_supplementary_scope_does_not_scan_body`
   - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_wiley_body_figures_are_not_promoted_to_supplementary_without_supporting_information`
   - [`../tests/unit/test_springer_html_regressions.py`](../tests/unit/test_springer_html_regressions.py) 中的 `test_extract_asset_html_scopes_leave_empty_supplementary_scope_without_supplementary_sections`
+  - [`../tests/unit/test_iop_provider.py`](../tests/unit/test_iop_provider.py) 中的 `test_iop_real_article_replay_does_not_promote_figure_controls_or_qr_to_supplementary`
+  - [`../tests/unit/test_iop_provider.py`](../tests/unit/test_iop_provider.py) 中的 `test_iop_data_page_extracts_only_sm_numbered_real_attachments`
+  - [`../tests/unit/test_iop_provider.py`](../tests/unit/test_iop_provider.py) 中的 `test_iop_unresolved_declared_data_index_records_asset_failure`
 - Provider 差异表：
 
 | Provider | 明确附件 scope | 关键排除 |
@@ -260,10 +264,12 @@ metadata
 | ACS | Atypon back matter 的 `Supporting Information` section 和 publisher `/doi/suppl/.../suppl_file/...` 附件。 | 正文 figure/table asset、citation/download chrome 和机构 OpenURL 链接不归 supplementary。 |
 | IEEE | 明确 Supplementary / Supporting Material / Multimedia section，IEEE 附件语义容器，或 landing metadata `sections.multimedia=true` 加 `/rest/document/{article_number}/multimedia` payload。 | 正文 `data` / `dataset` / `code` / `media` / repository 链接和文件后缀不能单独触发 supplementary。 |
 | Copernicus | NLM/JATS XML 中的 `supplementary-material`、`inline-supplementary-material` 和明确 `xlink:href` 附件节点。 | 正文 Data/Code Availability 普通仓库链接不凭文本或后缀升级为 supplementary。 |
+| IOP | 正文页的 `#supplDataLink` 或同 DOI `/article/{doi}/data[N]` 入口只是索引；复用文章浏览器 cookie/Referer 打开索引页后，只接受 `#supplementarydata` 内 `id=SM数字` 的真实附件。 | `/data` HTML 本身、正文 figure 的 Standard/High-resolution 控件、页脚 WeChat QR 和未编号链接都不归 supplementary；索引 challenge、DOI 不匹配或空附件必须记录 asset failure。 |
 
 - 边界说明：
   - 这条规则不定义每个 publisher 的完整 DOM selector、REST endpoint 或 URL allowlist；这些细节由 provider-specific helper 维护，本文只保留用户可见 contract。
   - 它也不限制附件文件类型。只要来源 scope 明确，supplementary 可以是 PDF、Office 文档、压缩包、数据表、图片或视频。
+  - IOP 附件下载仍即时使用 publisher 返回的 AWS 签名 URL，但最终资产/失败诊断会复用 HTTP URL 脱敏规则隐藏 `X-Amz-*`、`Signature` 和 `AWSAccessKeyId` 值。
 
 <a id="rule-filter-publisher-ui-noise"></a>
 ### 出版社站点 UI 噪声不能泄漏进最终 markdown
@@ -322,6 +328,7 @@ metadata
 - 它对应的阶段是：`availability-quality`、`article-assembly`。
 - Owner：`paper_fetch.quality.html_availability` 与 `paper_fetch.extraction.html.provider_rules`；HTML container 评分、选择、清理的架构边界见 [architecture/overview.md 的 Extraction 层](architecture/overview.md#6-extraction-层)。
 - 代表性 HTML / XML：
+  - [`../tests/fixtures/block/10.1146_annurev.pp.19.060168.001235/raw.html`](../tests/fixtures/block/10.1146_annurev.pp.19.060168.001235/raw.html)
   - [`../tests/fixtures/block/10.1126_science.aeg3511/raw.html`](../tests/fixtures/block/10.1126_science.aeg3511/raw.html)
   - [`../tests/fixtures/golden_criteria/10.1126_science.aeg3511/original.html`](../tests/fixtures/golden_criteria/10.1126_science.aeg3511/original.html)
   - [`../tests/fixtures/block/10.1111_gcb.16414/raw.html`](../tests/fixtures/block/10.1111_gcb.16414/raw.html)
@@ -329,8 +336,14 @@ metadata
   - [`../tests/fixtures/block/10.1073_pnas.2509692123/raw.html`](../tests/fixtures/block/10.1073_pnas.2509692123/raw.html)
   - [`../tests/fixtures/golden_criteria/10.1073_pnas.2309123120/original.html`](../tests/fixtures/golden_criteria/10.1073_pnas.2309123120/original.html)
   - [`../tests/fixtures/block/10.1007_s00382-018-4286-0/raw.html`](../tests/fixtures/block/10.1007_s00382-018-4286-0/raw.html)
-  - 这些样本分别覆盖 Science、Wiley、PNAS 和 Springer 的 paywall / entitled 对照场景。
+  - 这些样本分别覆盖 Annual Reviews 空全文 shell、Science、Wiley、PNAS 和 Springer 的 paywall / entitled 对照场景。
 - 对应测试：
+  - [`../tests/unit/test_annualreviews_provider.py`](../tests/unit/test_annualreviews_provider.py) 中的 `test_real_empty_shell_does_not_promote_page_chrome_to_fulltext`
+  - [`../tests/unit/test_annualreviews_provider.py`](../tests/unit/test_annualreviews_provider.py) 中的 `test_empty_shell_html_failure_continues_to_annualreviews_pdf_fallback`
+  - [`../tests/unit/test_html_availability.py`](../tests/unit/test_html_availability.py) 中的 `test_assess_html_rejects_large_page_shell_with_empty_fulltext_marker`
+  - [`../tests/unit/test_html_availability.py`](../tests/unit/test_html_availability.py) 中的 `test_assess_html_synthetic_article_preserves_page_scope`
+  - [`../tests/unit/test_html_availability.py`](../tests/unit/test_html_availability.py) 中的 `test_assess_html_real_article_stays_fulltext_with_repeated_ui_cards`
+  - [`../tests/unit/test_html_availability.py`](../tests/unit/test_html_availability.py) 中的 `test_assess_html_rejects_target_wiley_abstract_datalayer`
   - [`../tests/unit/test_atypon_browser_workflow_markdown.py`](../tests/unit/test_atypon_browser_workflow_markdown.py) 中的 `test_pnas_abstract_fixture_is_rejected`
   - [`../tests/unit/test_html_availability.py`](../tests/unit/test_html_availability.py) 中的 `test_assess_html_rejects_science_paywall_sample_with_abstract`
   - [`../tests/unit/test_html_availability.py`](../tests/unit/test_html_availability.py) 中的 `test_assess_html_accepts_science_entitled_fulltext_fixture`
@@ -347,6 +360,9 @@ metadata
   - 这条规则不约束 provider 路由、PDF fallback 编排或 live 网络重试。
   - 它只约束“用户实际可见的 HTML 内容类型判定不能错位”。
   - availability 相关阈值分三组维护：near-duplicate / inflated abstract 保护渲染层不重复输出摘要；HTML body scoring 保护 access gate 与真实正文判定；provider body thresholds 只覆盖 XML/纯文本 provider 的最小正文量。这些阈值只随回归样本一起调整，不能在单个 provider 内临时覆盖。
+  - HTML 接受条件是“可信 container scope + 实质正文证据 + 无 blocking signal”。真实 `article`、有内容的显式 body container，或包含上述实质子容器的 page-level root 才属于可信 scope；空 `fulltext` ID/class 只是 marker，不能与页面其它位置的推荐卡片拼成正文证据。
+  - `main` / `body` 的页面总字数、段落数、heading 数和重复 UI 数量不能独立证明全文。provider 把选中节点包装成合成 `<article>` 时必须传递原始 selector/scope，并在 diagnostics 的 body metrics 中保留 `container_scope`、`container_scope_trusted`、`container_selector` 与 `container_synthetic`。
+  - Most Read、Most Cited、Recommended 和 Related 等 auxiliary section 后的卡片不计入正文；重复这些 UI 不能把拒绝翻成接受，把相同 UI 附加到真实正文也不能把接受翻成拒绝。
   - Publisher 私有的 availability override（例如 Science perspective、Elsevier canonical abstract URL、Springer preview wall vs body run、Springer/Nature article-in-press notice）必须通过 provider `AvailabilityPolicy` / `ProviderHtmlRules.availability` 注册；access-gate 文案统一来自 `paper_fetch.extraction.html.signals.ACCESS_GATE_LABELS` / `ACCESS_GATE_PATTERNS`，Markdown 降噪只引用 `MARKDOWN_ACCESS_NOISE_LABELS`，不得在 provider 后处理或 runtime 中复制。
   - Springer/Nature 的 `We are providing an unedited version of this manuscript` 只是 Article-in-Press 访问提示；没有真实 `post_abstract_body_run` 时必须作为 blocking fallback signal，触发 provider 内部 PDF fallback，不能用这段提示撑起 HTML fulltext 判定。
 
@@ -474,7 +490,7 @@ metadata
 <a id="rule-image-download-validates-real-images"></a>
 ### 图片下载必须验证真实图片内容
 
-- 这条规则约束的是：正文图片下载不能把 Cloudflare challenge HTML、Chrome 图片查看器壳或过小的站点图标当成论文图片保存；preview 图只有尺寸达标并在 source trail 中标记为 accepted 时才能作为可接受降级。
+- 这条规则约束的是：正文图片下载不能把 Cloudflare challenge HTML、Chrome 图片查看器壳或过小的站点图标当成论文图片保存；preview 图只有尺寸达标并在 source trail 中标记为 accepted 时才能作为可接受降级。下载后的统一审计必须用 `filetype` 读取真实 MIME、用 `imagesize` 读取尺寸，并记录文件实际字节数和 `SHA256`，不能信任扩展名、响应头或 provider 声明值代替文件事实。
 - 如果违反，用户会看到：正文缺图，或本地图片文件其实是 HTML / 站点图标，后续渲染和 live review 都无法解释失败原因。
 - 它对应的阶段是：`asset-download`、`asset-validation`、`availability-quality`。
 - Owner：`paper_fetch.extraction.html.assets` 与 `paper_fetch.providers.browser_workflow.fetchers`。
@@ -495,14 +511,23 @@ metadata
     - [`../tests/devtools/test_golden_criteria_live.py`](../tests/devtools/test_golden_criteria_live.py) 中的 `test_science_preview_accepted_is_not_an_asset_issue`
     - [`../tests/devtools/test_golden_criteria_live.py`](../tests/devtools/test_golden_criteria_live.py) 中的 `test_formula_only_preview_fallback_is_not_an_asset_issue`
     - [`../tests/devtools/test_golden_criteria_live.py`](../tests/devtools/test_golden_criteria_live.py) 中的 `test_non_formula_preview_fallback_remains_an_asset_issue`
+  - 统一真实性审计：
+    - [`../tests/unit/test_asset_quality.py`](../tests/unit/test_asset_quality.py) 中的 `test_valid_png_jpeg_svg_and_pseudo_extension_record_real_facts`
+    - [`../tests/unit/test_asset_quality.py`](../tests/unit/test_asset_quality.py) 中的 `test_placeholder_signals_are_suspected_and_never_delete_files`
+    - [`../tests/unit/test_asset_quality.py`](../tests/unit/test_asset_quality.py) 中的 `test_missing_path_and_explicit_failure_are_definite_and_classified`
 - 边界说明：
   - `download_tier="preview"` 不是天然错误；当下载阶段判定 preview 尺寸满足阈值，或 provider 明确把该 preview 标记为可接受，并在 source trail 中记录 `download:*_assets_preview_accepted` 时，它是诊断标签，不应写入普通 warning，也不应自动映射为 `asset_download_failure`。
   - formula-only preview fallback 是公式图片语义的降级呈现，不自动归为 `asset_download_failure`；figure/table preview fallback 仍按资产问题处理，除非已有 accepted 诊断。
+  - `Blank.svg` / `Blank.png` URL、零字节、异常小文件或尺寸、无效真实 MIME、MIME 与扩展名不一致，以及多个不同逻辑正文图共享完全相同 `SHA256`，都只是保守的 `placeholder_suspected` 信号。审计器不会据此删除、覆盖或改写文件，也不会声称已经完成视觉语义判断。
+  - 明确的下载 failure diagnostic、声明了本地路径但文件不存在或不可读，才属于确定的资产失败；这些失败仍不能把已经成功的正文内容改判成抓取失败。
+  - `asset_profile=none` 时，保留下来的远程链接逐项记为 `not_requested`，不能对它们执行本地存在性失败判定；请求了对应 kind、但 no-download / artifact policy 禁止归档时记为 `not_archived`。`body` profile 不请求 supplement，`all` 才请求 supplement 和 decoration。
+  - `figure`、`formula`、`table`、`supplement`、`decoration` 必须分别汇总；公式占位嫌疑不能冒充正文主图失败，主图失败也不能被公式成功掩盖。
+  - 图片可用性与正文完整性是两个独立分面：preview、疑似占位、未归档或资产失败只降低资产分面；是否 fulltext 仍由正文验收规则决定。
 
 <a id="rule-asset-download-diagnostic-fields"></a>
 ### 下载资产必须保留诊断字段
 
-- 这条规则约束的是：成功或失败的资产下载都要保留足够诊断信息；成功图片记录 `download_tier`、下载 URL、原始 full-size / preview 候选 URL、content type、字节数和尺寸，失败资产保留 status、content type、snippet、reason 和 recovery 轨迹。
+- 这条规则约束的是：成功或失败的资产下载都要保留足够诊断信息；成功图片记录请求 profile、逻辑 kind、`download_tier`、路径、下载 URL、原始 full-size / preview 候选 URL、声明 content type、真实 MIME、实际字节数、尺寸、`SHA256` 和 provenance，失败资产保留 failure code、status、content type、snippet、reason 和 recovery 轨迹。结构化摘要必须同时给出 `requested`、`total`、`full_size`、`preview`、`failed`、`placeholder_suspected`、`not_requested`、`not_archived`，以及按 kind 的同类计数。
 - 如果违反，用户会看到：live review 只能笼统报 `asset_download_failure`，看不出是 full-size 被拦截、preview 可接受、supplementary 失败，还是图片真的缺失。
 - 它对应的阶段是：`asset-validation`、`article-assembly`、`final-rendering`。
 - Owner：`paper_fetch.extraction.html.assets.download`、`paper_fetch.extraction.html.assets.state`、`paper_fetch.models.Asset` / `paper_fetch.models.Quality` 与 `paper_fetch.mcp.schemas`。
@@ -512,6 +537,8 @@ metadata
 - 对应测试：
   - Owner（models / MCP）：
     - [`../tests/unit/test_mcp_payload_cache.py`](../tests/unit/test_mcp_payload_cache.py) 中的 `test_article_payload_preserves_asset_download_diagnostics`
+    - [`../tests/unit/test_asset_quality.py`](../tests/unit/test_asset_quality.py) 中的 `test_asset_summary_model_and_legacy_cache_payloads_are_compatible`
+    - [`../tests/unit/test_workflow_acceptance.py`](../tests/unit/test_workflow_acceptance.py) 中的 `test_audited_quality_asset_summary_matches_explicit_acceptance_adapter`
   - Provider 覆盖：
     - [`../tests/unit/test_asset_retry_policy.py`](../tests/unit/test_asset_retry_policy.py) 中的 `test_provider_asset_retry_policies_round_trip_merge_and_retry`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_browser_workflow_download_related_assets_retries_after_partial_failures`
@@ -522,11 +549,13 @@ metadata
   - 本规则只要求诊断字段不丢失，不要求所有 provider 使用同一种远端下载实现。
   - Browser workflow 的 retry 只覆盖网络、超时、browser context/fetch error 和 challenge 类可恢复失败；404、非目标 content type、unsupported scheme 等确定性失败不触发重试。403、429 和 5xx 只有在 reason 同时指向 challenge 或 browser fetch/context 临时失败时才重试。
   - 诊断字段不能替代用户可见内容；caption、占位和 warnings 仍由渲染规则决定。
+  - EPS/TIFF 源转换失败后，如果后续 JPG/PNG 候选成功，最终资产保持成功且记录 `conversion_degraded` provenance；不能保留一个虚假的最终 asset failure。只有所有候选均失败时才计入 `failed`。
+  - 旧 cache 或旧模型缺少结构化资产摘要时按“尚未审计”的空摘要读取；不能把字段缺失解释成资产完整，也不能因此拒绝反序列化。
 
 <a id="rule-browser-primary-image-download-path"></a>
-### 浏览器工作流图片下载必须使用 CDP browser connection 主链路
+### 浏览器工作流图片下载必须使用浏览器上下文或浏览器等价请求头
 
-- 这条规则约束的是：使用 browser workflow 的 provider 在下载正文 figure / table / formula 图片时，必须以 `RuntimeContext` / `BrowserContextManager` 管理的 CDP browser connection 作为主链路；同一 runtime 内复用 keyed browser manager，每个阶段或 worker 线程创建隔离的 seeded context/page，preview fallback 也通过同一线程的 context 获取。Atypon/AMS 这类 lazy image 页面里的 `Blank.svg` / `Blank.png` 只允许作为待加载占位信号，不能作为成功正文 asset 保存；当 `download_url` / `full_size_url` 指向真实 `full-*.jpg` 时，下载候选和最终 `source_url` 必须指向真实图片响应。
+- 这条规则约束的是：使用 browser workflow 的 provider 在下载正文 figure / table / formula 图片时，必须以 `RuntimeContext` / browser runtime facade 管理的 selected-browser context 作为主链路；AMS direct HTTP HTML preflight 成功路径例外，但它的正文图片 HTTP 请求必须继承浏览器 UA 和正文 Referer。同一进程内按 browser 配置复用 keyed browser manager，每个阶段创建隔离的 seeded context/page，preview fallback 也通过同一调用线程的 context 获取。Atypon/AMS 这类 lazy image 页面里的 `Blank.svg` / `Blank.png` 只允许作为待加载占位信号，不能作为成功正文 asset 保存；当 `download_url` / `full_size_url` 指向真实 `full-*.jpg` 时，下载候选和最终 `source_url` 必须指向真实图片响应。
 - 如果违反，用户会看到：目标站点明明在浏览器会话里可见图片，系统却因为普通 HTTP challenge 或重复 context 冷启动而稳定缺图，或者所有本地图片都变成相同的 `Blank.png` 占位图。
 - 它对应的阶段是：`asset-download`、`asset-validation`。
 - Owner：`paper_fetch.providers.browser_workflow.fetchers`。
@@ -540,8 +569,9 @@ metadata
     - [`../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py`](../tests/unit/test_atypon_browser_workflow_provider_asset_failures.py) 中的 `test_pnas_provider_downloads_preview_through_shared_browser_when_no_full_size_candidate`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_wiley_provider_download_related_assets_uses_shared_browser_primary_path`
     - [`../tests/unit/test_atypon_browser_workflow_provider_retries.py`](../tests/unit/test_atypon_browser_workflow_provider_retries.py) 中的 `test_wiley_provider_download_related_assets_reuses_shared_browser_fetcher_across_assets`
+    - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_direct_http_asset_download_uses_browser_seed_without_runtime`
 - 边界说明：
-  - 这条规则目前适用于 `wiley`、`science`、`pnas`、`ams`、`annualreviews`、`acs`、`iop`、`aip`、`mdpi` 的 browser workflow HTML 成功路径。
+  - 这条规则目前适用于 `wiley`、`science`、`pnas`、`annualreviews`、`royalsocietypublishing`、`acs`、`iop`、`aip`、`mdpi` 的 browser workflow HTML 成功路径；AMS direct HTTP HTML 成功路径不启动浏览器，但仍必须传递 browser-equivalent seed。
   - 它不改变 `elsevier` XML、`springer` direct HTML 或 PDF fallback 的下载语义。
 
 <a id="rule-table-flatten-or-list"></a>
@@ -1444,7 +1474,9 @@ PNAS 的 supplementary 资产范围见 [Supplementary discovery 必须来自明�
 <a id="rule-ams-html-body-assets-formulas"></a>
 ### AMS HTML 必须保留完整正文并把图表图片回填原位
 
-- 这条规则约束的是：AMS browser workflow HTML 要从 `#articleBody` / `.container-fulltext-display` 等完整正文容器抽取正文，保留后部 section、Acknowledgments 和 Data availability；正文中的 figure 与 image-only `.tableWrap` 要在原始位置渲染图片块与 caption；MathJax 渲染层旁边的扁平 fallback 文本不能和结构化公式重复出现；display equation 编号只来自源站明确 label 或 AMS `E...` 公式 id，`UE...` 无编号公式不合成 `Equation n.`；AMS 专用 inline renderer 要在正文和 caption 中保留 MathML、上下标和斜体变量，并保守修复上下标后 prose 括注的空格。
+- 这条规则约束的是：AMS HTML 要从 `#articleBody` / `.container-fulltext-display` 等完整正文容器抽取正文，保留后部 section、Acknowledgments 和 Data availability；正文中的 figure 与 image-only `.tableWrap` 要在原始位置渲染图片块与 caption；MathJax 渲染层旁边的扁平 fallback 文本不能和结构化公式重复出现；display equation 编号只来自源站明确 label 或 AMS `E...` 公式 id，`UE...` 无编号公式不合成 `Equation n.`；AMS 专用 inline renderer 要在正文和 caption 中保留 MathML、上下标和斜体变量，并保守修复上下标后 prose 括注的空格。
+- AMS 用 direct HTTP HTML 请求 `journals.ametsoc.org/view/...xml`，请求头必须包含浏览器 UA 和页面 Referer；direct HTML 失败或正文质量门槛不通过时只允许 direct HTTP PDF fallback，不回退 browser workflow。
+- AMS figure 资产候选必须优先使用源 HTML 的 `Download Figure` EPS/TIFF 链接，并保留网页 full-size JPG/PNG 作为回退；PowerPoint 下载项不是图片资产。EPS/TIFF 下载请求必须继承浏览器 UA/Referer，下载成功后应通过图片转换后端转成 PNG 用于 Markdown，本地同时保留原始源文件和转换元数据。
 - 如果违反，用户会看到：BAMS 正文在 section 2 后提前截断，图表只剩文末附录或只剩 `Table 1.` 文本无图片，`Fig . 1.` 这类标签噪声泄漏，同一公式同时出现 LaTeX 和粘连的可见 fallback 文本，`UE1` 被误渲染成重复的 `Equation 1.`，或者 caption 里出现 `ϕ 2`、正文里出现 `νn` / `</sub>(i.e.` 这类行内语义退化。
 - 它对应的阶段是：`provider-html-or-xml-extraction`、`asset-discovery`、`asset-link-rewrite`、`formula-rendering`、`final-rendering`。
 - Owner：`paper_fetch.providers._ams_html` compatibility facade、canonical `paper_fetch.providers._ams_dom` / `paper_fetch.providers._ams_assets` / `paper_fetch.providers._ams_markdown`、`paper_fetch.providers.atypon_browser_workflow`、`paper_fetch.extraction.html.figure_links` 与 `paper_fetch.models.render`。
@@ -1464,8 +1496,16 @@ PNAS 的 supplementary 资产范围见 [Supplementary discovery 必须来自明�
   - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_inline_spacing_repairs_prose_parentheses_conservatively`
   - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_data_availability_stays_before_appendix`
   - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_downloaded_inline_figure_and_table_assets_do_not_repeat_at_tail`
+  - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_direct_http_preflight_succeeds_without_browser_runtime`
+  - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_direct_http_preflight_does_not_fall_back_to_browser_on_403`
+  - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_asset_extractor_prefers_download_figure_source_file`
+  - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_browser_asset_scope_preserves_download_figure_source_after_cleanup`
+  - [`../tests/unit/test_ams_provider.py`](../tests/unit/test_ams_provider.py) 中的 `test_ams_fixture_extracts_mixed_tiff_and_eps_download_figure_sources`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_download_assets_figure_kind_converts_eps_source_to_png_and_keeps_original`
+  - [`../tests/unit/test_html_shared_helpers.py`](../tests/unit/test_html_shared_helpers.py) 中的 `test_download_assets_figure_kind_falls_back_when_source_conversion_fails`
 - 边界说明：
   - Atypon 共享 asset extractor 负责正文 figure、公式图片和 supplementary material；AMS `.tableWrap` 常只有表格截图而没有真实 HTML `<table>`，只在 AMS 专用补充步骤中降级为 `kind="table"` 图片资产，并按 URL 去重，避免同一个 tableWrap 图片同时作为 generic figure 和 AMS table 发出；后续 figure 链接注入也不能把 `Table` 图片块当作 figure 顺序 fallback 消费。
+  - AMS `Download Figure` 源图是在 DOM 归一化删除下载菜单前读取并合并回正文 figure 资产的；后续下载阶段识别 EPS/TIFF payload 或 URL 扩展名，再走 Ghostscript/libvips 转换。转换失败不得让正文图直接失败，必须继续 full-size JPG/PNG fallback。
   - MathML script type 只在 `extraction/html/formula_rules.py` 维护，AMS HTML 归一化与 HTML availability 诊断复用同一组 `math/mml` / `application/mathml+xml` / `text/mml` 判定。
   - AMS display formula 不为了单调性重编号，也不为无编号公式创建 `Equation n.`；子公式如 `7a`、`9b` 保留源站原始 label。
   - AMS Data availability 如果被源站 DOM 排在 appendix 之后，Markdown 后处理只把该 section 移回 Acknowledgments 之后、首个 Appendix 之前；不移动 References、Footnotes 或 appendix 内图表。
@@ -1544,7 +1584,7 @@ PNAS 的 supplementary 资产范围见 [Supplementary discovery 必须来自明�
 <a id="rule-mdpi-body-semantics-chrome-removal"></a>
 ### MDPI article body 必须保留正文语义并移除 chrome
 
-- 这条规则约束的是：MDPI CDP browser HTML 只能从 article container 中抽取题名、摘要、正文 section、references、figures、tables、formula 和明确 supplementary section；article menu、下载按钮、分享/引用/metrics、SciProfiles 等站点 chrome 不能进入最终 Markdown，也不能通过全页后缀扫描把正文外链接误判为 supplementary；`#html-keywords` 只进入 `metadata.keywords`，不能进入 Abstract 或独立 Markdown section。
+- 这条规则约束的是：MDPI selected-browser HTML 只能从 article container 中抽取题名、摘要、正文 section、references、figures、tables、formula 和明确 supplementary section；article menu、下载按钮、分享/引用/metrics、SciProfiles 等站点 chrome 不能进入最终 Markdown，也不能通过全页后缀扫描把正文外链接误判为 supplementary；`#html-keywords` 只进入 `metadata.keywords`，不能进入 Abstract 或独立 Markdown section。
 - 如果违反，用户会看到：`Browse Figures`、`Download PDF`、`Article Metrics`、`Share and Cite` 等站点 chrome 混入正文，摘要标题后的单独冒号或 `Keywords:` 残留到正文，`data-nested="2"` 的小节被错误渲染成四级 heading，或者 `asset_profile=body` 下载到正文 scope 外的 supplementary 文件。
 - 它对应的阶段是：`provider-html-or-xml-extraction`、`html-cleanup`、`asset-discovery`、`markdown-normalization`。
 - Owner：`paper_fetch.providers._mdpi_html` compatibility facade；canonical owner 是 `paper_fetch.providers._mdpi_dom` / `paper_fetch.providers._mdpi_assets` / `paper_fetch.providers._mdpi_markdown`。
@@ -1576,7 +1616,7 @@ PNAS 的 supplementary 资产范围见 [Supplementary discovery 必须来自明�
 <a id="rule-iop-body-challenge-cleanup"></a>
 ### IOP article HTML 必须拒绝 challenge 并清理站点 chrome
 
-- 这条规则约束的是：IOPScience CDP browser HTML 只能从 article body / `articleBody` 语义容器中抽取题名、摘要、正文 section、body table、formula image、figure caption 和 references；`Download PDF`、metrics、citation/export、导航、相关内容和 Radware/hCaptcha challenge 页面不能进入最终 Markdown。
+- 这条规则约束的是：IOPScience selected-browser HTML 只能从 article body / `articleBody` 语义容器中抽取题名、摘要、正文 section、body table、formula image、figure caption 和 references；`Download PDF`、metrics、citation/export、导航、相关内容和 Radware/hCaptcha challenge 页面不能进入最终 Markdown。
 - 如果违反，用户会看到：Radware Bot Manager / hCaptcha 页面被当成正文，或者 `Download PDF`、`Article metrics`、`Export citation` 等 IOPScience 操作文案混入 article Markdown。
 - 它对应的阶段是：`provider-html-or-xml-extraction`、`html-cleanup`、`availability-quality`、`markdown-normalization`。
 - Owner：`paper_fetch.providers._iop_html` 与 `paper_fetch.providers.iop`。
@@ -1624,7 +1664,8 @@ PNAS 的 supplementary 资产范围见 [Supplementary discovery 必须来自明�
   - [`../tests/unit/test_royalsocietypublishing_provider.py`](../tests/unit/test_royalsocietypublishing_provider.py) 中的 `test_markdown_contract_figure_fixture`
 - 边界说明：
   - 这条规则只针对 Royal Society Publishing/Silverchair 的 HTML figure wrapper；共享 figure container 判定只接受真实 `<figure>`、精确 `class="figure"` 这类显式通用 figure 容器，或显式 Silverchair `fig fig-section` / `js-fig-section` / 受这些祖先约束的 `graphic-wrap`，不能因为普通正文 wrapper、section、anchor id/href 中出现 `-f` 或 `figure` 就提升为 figure。
-  - PDF fallback Markdown 统一由 shared `pymupdf4llm` 转换产生；`body/all` 且允许 artifact 落盘时，PDF 图片由 shared 转换导出到 `body_assets/`。provider 只负责获取并校验真实 PDF、设置 source/route，不添加 provider-owned Markdown cleanup、front matter reconstruction、水印移除或 reference extraction。
+  - 同一逻辑 figure 同时暴露 `/view-large/figure/.../*.tif` 和 Silverchair CDN `image_*.jpg` 时，必须按 DOM id 与去除 `m_`/扩展名后的规范化 figure basename 合并；合并结果保留 full-size URL、preview URL、明确图号和最长有效 caption。
+  - PDF fallback Markdown 统一由 shared `pymupdf4llm` 转换产生；`body/all` 且允许 artifact 落盘时，PDF 图片由 shared 转换导出到 `<doi>_assets/`。provider 只负责获取并校验真实 PDF、设置 source/route，不添加 provider-owned Markdown cleanup、front matter reconstruction、水印移除或 reference extraction。
   - HTML 正文已包含可读 figure caption 时，远程图 URL 可以只作为资产原始链接保留；最终 Markdown 至少要保留 caption 文本，不能输出空 caption placeholder。
 
 ## IEEE
@@ -1846,7 +1887,7 @@ PNAS 的 supplementary 资产范围见 [Supplementary discovery 必须来自明�
 | golden / Springer | `10.1038_d41586-022-01795-9`, `10.1038_d41586-023-01829-w`, `10.1038_s41467-022-30729-2`, `10.1038_s41561-022-00974-7`, `10.1038_s41612-021-00218-2` | Springer / Nature golden corpus 的结构多样性回归池。 |
 | golden / IEEE early PDF | `10.1109_MPER.1985.5526567`, `10.1109_PGEC.1967.264619` | IEEE 早期文章 PDF fallback 期望形态样本；waterfall 归 providers.md，不直接定义单条 extraction rule。 |
 | golden / arXiv | `10.48550_arxiv.1406.2661v1`, `10.48550_arxiv.2006.11239v2`, `10.48550_arxiv.2605.06653v1`, `10.48550_arxiv.2605.06659v1`, `10.48550_arxiv.2605.06663v1`, `10.48550_arxiv.2605.06666v1` | arXiv golden corpus 的 official HTML 与 PDF fallback route 回归池；waterfall 路线说明归 providers.md。2605.06556v1、2605.06598v1、2605.06665v1 与 2605.06667v1 已直接挂到上方规则。 |
-| golden / AMS browser workflow | `10.1175_bams-d-24-0270.1`, `10.1175_jcli-d-23-0738.1`, `10.1175_jcli-d-25-0547.1`, `10.1175_jhm-d-23-0228.1` | AMS golden corpus 的剩余 HTML 主路径和 PDF fallback route 回归池；waterfall 与 no-XML 语义归 providers.md。AIES/BAMS/JAMC/WAF/JPO/JTECH/MWR 资产、脚注和正文语义已挂到 [AMS HTML body/assets/formulas](#rule-ams-html-body-assets-formulas)、[Inline semantics](#rule-preserve-inline-semantics-in-body-and-tables) 或 [AMS footnotes](#rule-ams-footnotes-stay-linked-to-body-markers)。 |
+| golden / AMS direct HTML/PDF | `10.1175_bams-d-24-0270.1`, `10.1175_jcli-d-23-0738.1`, `10.1175_jcli-d-25-0547.1`, `10.1175_jhm-d-23-0228.1` | AMS golden corpus 的 direct HTML 主路径和 direct HTTP PDF fallback 回归池；waterfall 与 no-XML 语义归 providers.md。AIES/BAMS/JAMC/WAF/JPO/JTECH/MWR 资产、脚注和正文语义已挂到 [AMS HTML body/assets/formulas](#rule-ams-html-body-assets-formulas)、[Inline semantics](#rule-preserve-inline-semantics-in-body-and-tables) 或 [AMS footnotes](#rule-ams-footnotes-stay-linked-to-body-markers)。 |
 | golden / MDPI PDF fallback | `10.3390_en16186655` | MDPI browser PDF fallback route 回归池；waterfall 路线说明归 providers.md，不直接定义单条 extraction rule。 |
 | golden / Oxford Academic | `10.1093_bioinformatics_btaa153`, `10.1093_bioinformatics_btaa161`, `10.1093_bioinformatics_btaa823` | Oxford Academic onboarding 的 HTML 结构/table/formula/figure/supplementary/references 与 PDF fallback fixture；waterfall 路线说明归 providers.md，provider-owned 清洗依据记录在 cleaning proposal 和 provider-local tests。 |
 | golden / ACS browser workflow | `10.1021_acsomega.4c03987`, `10.1021_acsomega.3c06992`, `10.1021_acsomega.2c02828` | ACS 真实 replay baseline，锁定 provider-owned UI cleanup、body table、MathML/LaTeX formula rendering、Supporting Information、references extraction、public PDF fallback replay、manifest markdown review 和 fulltext source trail；规则依据记录在 cleaning proposal 与 provider-local tests。 |
@@ -1860,8 +1901,8 @@ PNAS 的 supplementary 资产范围见 [Supplementary discovery 必须来自明�
 | golden / Copernicus PDF fallback | `10.5194_acp-1-1-2001`, `10.5194_bg-1-1-2004`, `10.5194_cp-1-1-2005`, `10.5194_dwes-1-1-2008` | Copernicus 早期 abstract-only XML 落到 PDF fallback 的 route 和 expected payload 回归池；waterfall 归 providers.md。 |
 | golden / PLOS XML | `10.1371_journal.pcbi.1003118`, `10.1371_journal.pone.0015338`, `10.1371_journal.pone.0026949`, `10.1371_journal.pone.0126635`, `10.1371_journal.pone.0218513`, `10.1371_journal.pone.0263725`, `10.1371_journal.pone.0304873` | PLOS public JATS XML onboarding 的结构、figure、references、formula、supplementary 和 table 合约样本；waterfall 和 provider route 语义归 providers.md，provider-owned 清洗依据记录在 cleaning proposal 和 provider-local tests。 |
 | golden / PLOS PDF fallback | `10.1371_journal.pbio.0040298` | PLOS printable PDF fallback 的 route 和 expected payload 回归池；waterfall 归 providers.md，不定义 provider-specific Markdown cleanup 规则。 |
-| golden / Royal Society Publishing | `10.1098_rsif.2019.0334`, `10.1098_rsos.201188`, `10.1098_rsos.201200`, `10.1098_rspb.2020.0097` | Royal Society Publishing direct HTTP HTML onboarding breadth corpus；waterfall 与 no-XML 语义归 providers.md。 |
-| golden / Royal Society Publishing PDF fallback | `10.1098_rsta.2020.0108` | Royal Society Publishing direct PDF fallback 的 shared PDF conversion route 回归池；waterfall 归 providers.md，不定义 provider-specific Markdown cleanup 规则。 |
+| golden / Royal Society Publishing | `10.1098_rsif.2019.0334`, `10.1098_rsos.201188`, `10.1098_rsos.201200`, `10.1098_rspb.2020.0097` | Royal Society Publishing browser HTML onboarding breadth corpus；waterfall 与 no-XML 语义归 providers.md。 |
+| golden / Royal Society Publishing PDF fallback | `10.1098_rsta.2020.0108` | Royal Society Publishing seeded-browser PDF fallback 的 shared PDF conversion route 回归池；waterfall 归 providers.md，不定义 provider-specific Markdown cleanup 规则。 |
 | golden / other publishers | `10.1080_19455224.2025.2547671`, `10.1345_aph.1M379` | 非核心 provider 的 multilingual / content regression 样本。 |
 <!-- extraction-rules-unlinked-fixtures:end -->
 

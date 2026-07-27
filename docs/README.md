@@ -22,11 +22,12 @@
 
 1. [`../README.md`](../README.md)
 2. [`cli.md`](cli.md)
-3. [`deployment.md`](deployment.md)
+3. [`browser-backends.md`](browser-backends.md)
+4. [`deployment.md`](deployment.md)
 
 ### 2. 配置 / 运维者
 
-如果你要准备 API key、下载目录、CloakBrowser 或排障，按这个顺序看：
+如果你要准备 API key、下载目录、Camoufox 或排障，按这个顺序看：
 
 1. [`cli.md`](cli.md)
 2. [`providers.md`](providers.md)
@@ -68,7 +69,9 @@
 - [`providers.md`](providers.md)
   - 讲 provider 能力矩阵、路由规则、默认输出、环境变量、缓存和限速。
 - [`browser-runtime.md`](browser-runtime.md)
-  - 讲 browser workflow 使用的 CDP / `cloakbrowser` 运行时边界，并指向 provider、部署和架构文档。
+  - 讲 browser workflow 的 Camoufox/Firefox 生命周期边界，并指向 provider、部署和架构文档。
+- [`browser-backends.md`](browser-backends.md)
+  - 讲 Camoufox 安装、抓取、headed 认证、离线准备和 publisher live matrix。
 - [`provider-development.md`](provider-development.md)
   - 讲新增出版社 provider 的标准开发流程、typed contract、waterfall、资产语义、测试和文档验收标准。
 - [`onboarding/README.md`](../onboarding/README.md)
@@ -78,7 +81,7 @@
   - 修改后运行 `python3 scripts/validate_extraction_rules.py` 校验 anchor、Owner、fixture、测试名、manifest 引用和未挂规则 fixture 清单。
 - [`deployment.md`](deployment.md)
   - 讲安装、配置入口、MCP 注册、更新和最小验证。
-  - 讲 Wiley / Science / PNAS / AMS / Annual Reviews / ACS / IOP / AIP / MDPI 的 repo-local 浏览器工作流、本地 `scripts/dev-preflight.sh` 门禁和 CI 测试耗时信号。
+  - 讲 Wiley / Science / PNAS / Annual Reviews / Royal Society Publishing / ACS / IOP / AIP / MDPI 的 repo-local 浏览器工作流、AMS direct HTTP HTML/PDF 路径、本地 `scripts/dev-preflight.sh` 门禁和 CI 测试耗时信号。
 - [`architecture/overview.md`](architecture/overview.md)
   - 讲当前系统分层、端到端业务流程、数据契约和扩展点。
 - [`architecture/probe-semantics.md`](architecture/probe-semantics.md)
@@ -143,10 +146,10 @@
 ### `download_tier`
 
 - `article.assets[*]` 上的资产下载层级诊断。
-- 常见值包括 `full_size`、`preview`。非 browser-workflow 的 HTTP-first 路径可能保留 `playwright_canvas_fallback` 诊断；`wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 HTML 资产主链路只输出 `full_size` 或 `preview`。
+- 常见值包括 `full_size`、`preview`。非 browser-workflow 的 HTTP-first 路径可能保留 `playwright_canvas_fallback` 诊断；`wiley` / `science` / `pnas` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 browser-backed HTML 资产主链路只输出 `full_size` 或 `preview`。AMS direct HTTP HTML 正文资产也使用 browser-equivalent headers，并只输出 `full_size` 或 `preview`。
 - `preview` 不是天然错误；当宽高满足阈值且 `source_trail` 有 preview accepted 轨迹时，是可接受降级。
 - preview 降级仍必须导出自包含 Markdown；如果正文图片链接能映射到已下载本地资产，最终 `.md` 不应残留远端图片 URL。
-- `wiley` / `science` / `pnas` / `ams` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 challenge 恢复链路会先复用预热正文页中目标 `<img>` 的 canvas 导出；目标图存在但尚未加载时，会先在同一正文页执行带凭据的 `fetch()` 拉取原图字节，再退回图片 URL 直连候选；只接受能识别为图片的 CDP browser image payload，包括浏览器导出的 PNG 和原始 SVG；图片文档 screenshot 和 challenge HTML 不能作为正文图片资产。
+- `wiley` / `science` / `pnas` / `annualreviews` / `acs` / `iop` / `aip` / `mdpi` 的 challenge 恢复链路会先复用预热正文页中目标 `<img>` 的 canvas 导出；目标图存在但尚未加载时，会先在同一正文页执行带凭据的 `fetch()` 拉取原图字节，再退回图片 URL 直连候选；只接受能识别为图片的 selected-browser image payload，包括浏览器导出的 PNG 和原始 SVG；图片文档 screenshot 和 challenge HTML 不能作为正文图片资产。AMS direct HTTP HTML 成功时不启动浏览器，但正文图片请求必须继承浏览器 UA/Referer。
 - live review 中，只有公式图片发生 preview fallback 时不自动归为 `asset_download_failure`；figure/table preview fallback 仍需要 accepted 轨迹或其它证据才能降噪。资产下载 warning、`asset_failures` 轨迹或 `quality.asset_failures` 会归为 `asset_download_failure`。
 
 ### `semantic_losses`
@@ -172,6 +175,7 @@
 - 可覆盖默认下载目录，也会影响 MCP scoped cache resources。
 - `RuntimeContext` / `ArtifactStore` 通过 `artifact_mode` 控制 provider payload、原始 HTML、Markdown 保存、资产诊断、HTTP textual cache 与 provider structured sidecar 的落盘范围；CLI/MCP fetch 默认 `markdown-assets`，Python API/runtime 未显式设置时默认是 `all`。
 - CLI/MCP fetch 入口通过 `FetchPipeline` 创建运行时并调用 service，MCP 的 fetch-envelope sidecar 和 cache index 仍由 `FetchCache` 管理语义，但原子 JSON 写入复用 `ArtifactStore`。
+- MCP 本地 Markdown cache 只接受保存时的 DOI+实际路径显式注册，或包含 DOI/source/fulltext 字段的结构化 YAML front matter；index/refresh/rescan、scope 和 preferred 选择规则见 [`providers.md`](providers.md#mcp-download-and-markdown-save)。
 - Python service API 接收显式 `context=`；外层调用方需要先构造 `RuntimeContext(...)`，再传给 service / pipeline。
 - 未显式设置时，CLI / MCP 优先使用用户数据目录下的 `paper-fetch/downloads`；CLI 创建失败才退回 `live-downloads`。
 - `download_dir` 派生的 HTTP textual disk cache 只在 artifact mode 为 `all` 时启用，默认按 `4096` 条、`512 MiB`、`30` 天清理；详见 provider 文档中的 HTTP 缓存环境变量。

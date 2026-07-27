@@ -8,7 +8,7 @@ from html import escape
 import re
 from typing import Any
 from collections.abc import Mapping
-from urllib.parse import quote, urljoin
+from urllib.parse import quote, urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
@@ -16,8 +16,14 @@ from ..extraction.html._metadata import merge_html_metadata, parse_html_metadata
 from ..extraction.html.assets import extract_scoped_html_assets
 from ..extraction.html.figure_links import inject_inline_figure_links
 from ..extraction.html.parsing import choose_parser
-from ..extraction.html.renderer import render_html_markdown, render_provider_html_fragment
-from ..extraction.markdown_render.formulas import normalize_tex_formula_text, render_html_mathml_node
+from ..extraction.html.renderer import (
+    render_html_markdown,
+    render_provider_html_fragment,
+)
+from ..extraction.markdown_render.formulas import (
+    normalize_tex_formula_text,
+    render_html_mathml_node,
+)
 from ..models import AssetProfile
 from ..publisher_identity import extract_doi, normalize_doi
 from ..utils import normalize_text
@@ -98,7 +104,9 @@ _BACK_MATTER_BODY_HEADINGS = {
     "acknowledgements",
 }
 _REFERENCE_FIELD_PATTERN = re.compile(r"\s*([^=;]+)\s*=\s*([^;]*)")
-_MARKDOWN_TABLE_SEPARATOR_RE = re.compile(r"^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?$")
+_MARKDOWN_TABLE_SEPARATOR_RE = re.compile(
+    r"^\|?\s*:?-{3,}:?\s*(?:\|\s*:?-{3,}:?\s*)+\|?$"
+)
 _REFERENCE_TABLE_HEADER_RE = re.compile(
     r"^\|\s*reference\s*\|\s*number of patients\s*\|",
     flags=re.IGNORECASE,
@@ -107,6 +115,10 @@ _BROKEN_REFERENCE_TABLE_ROW_RE = re.compile(r"^\|\s*\[\s*\|")
 _MARKDOWN_HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _INLINE_MATH_SPAN_RE = re.compile(r"\$[^$\n]+\$")
 _DISPLAY_EQUATION_RE = re.compile(r"(Equation(?:\s+\d+(?:\.\d+)*)?:\s+\$[^$\n]+\$)")
+_ROYAL_FIGURE_BASENAME_RE = re.compile(
+    r"^(?:m_)?([a-z0-9._-]+f\d+[a-z]?)(?:\.[a-z0-9]+)?$",
+    flags=re.IGNORECASE,
+)
 _REFERENCE_LEADING_LABEL_RE = re.compile(
     r"^\s*(?:\[\d+[A-Za-z]?\]|\d+[A-Za-z]?[.)])\s+"
 )
@@ -129,7 +141,9 @@ def direct_article_url(doi: str) -> str:
 
 def direct_pdf_url(doi: str) -> str:
     normalized_doi = normalize_doi(doi)
-    return f"https://royalsocietypublishing.org/doi/pdf/{quote(normalized_doi, safe='/')}"
+    return (
+        f"https://royalsocietypublishing.org/doi/pdf/{quote(normalized_doi, safe='/')}"
+    )
 
 
 def _first_article_body(soup: BeautifulSoup) -> Tag | None:
@@ -188,7 +202,11 @@ def _normalize_silverchair_dom(container: Tag) -> None:
         if not isinstance(formula, Tag):
             continue
         math_node = formula.find("math")
-        rendered = normalize_text(render_html_mathml_node(math_node)) if isinstance(math_node, Tag) else ""
+        rendered = (
+            normalize_text(render_html_mathml_node(math_node))
+            if isinstance(math_node, Tag)
+            else ""
+        )
         text = rendered or normalize_text(formula.get_text(" ", strip=True))
         if text:
             formula.replace_with(text)
@@ -222,8 +240,16 @@ def _normalize_table_captions(container: Tag) -> None:
         if table_wrap.select_one(".paper-fetch-table-title") is not None:
             continue
         title_node = table_wrap.select_one(".table-wrap-title")
-        label = _node_text(title_node.select_one(".label")) if isinstance(title_node, Tag) else ""
-        caption = _node_text(title_node.select_one(".caption")) if isinstance(title_node, Tag) else ""
+        label = (
+            _node_text(title_node.select_one(".label"))
+            if isinstance(title_node, Tag)
+            else ""
+        )
+        caption = (
+            _node_text(title_node.select_one(".caption"))
+            if isinstance(title_node, Tag)
+            else ""
+        )
         text = normalize_text(": ".join(item for item in (label, caption) if item))
         if not text:
             continue
@@ -256,7 +282,9 @@ def _replace_display_formula(node: Tag, label_node: Tag | None) -> bool:
 
 
 def _inline_formula_markdown(markdown_text: str) -> str:
-    lines = [line.strip() for line in str(markdown_text or "").splitlines() if line.strip()]
+    lines = [
+        line.strip() for line in str(markdown_text or "").splitlines() if line.strip()
+    ]
     if len(lines) >= 3 and lines[0] == "$$" and lines[-1] == "$$":
         lines = lines[1:-1]
     text = normalize_text(" ".join(lines))
@@ -275,7 +303,11 @@ def _space_inline_math_spans(line: str) -> str:
         start, end = match.span()
         prefix = ""
         suffix = ""
-        if start > 0 and not line[start - 1].isspace() and line[start - 1] not in "([{/":
+        if (
+            start > 0
+            and not line[start - 1].isspace()
+            and line[start - 1] not in "([{/"
+        ):
             prefix = " "
         if end < len(line) and not line[end].isspace() and line[end] not in ".,;:)]}/":
             suffix = " "
@@ -307,6 +339,11 @@ def _repair_royal_math_text(line: str) -> str:
     line = line.replace(
         r"where Atand $\mathcal{E}_{t}$",
         r"where $A_t$ and $\mathcal{E}_{t}$",
+    )
+    line = re.sub(
+        r"where Atand (\$[^$\n]+\$)",
+        r"where $A_t$ and \1",
+        line,
     )
     return line.replace("εinot", "εi not")
 
@@ -343,7 +380,11 @@ def _raw_meta_values(metadata: Mapping[str, Any], key: str) -> list[str]:
         values = [values]
     if not isinstance(values, list):
         return []
-    return [normalize_text(str(item or "")) for item in values if normalize_text(str(item or ""))]
+    return [
+        normalize_text(str(item or ""))
+        for item in values
+        if normalize_text(str(item or ""))
+    ]
 
 
 def _parse_citation_reference(value: str) -> dict[str, Any] | None:
@@ -396,7 +437,9 @@ def _number_reference(reference: Mapping[str, Any], index: int) -> dict[str, Any
     return numbered
 
 
-def citation_references_from_metadata(metadata: Mapping[str, Any]) -> list[dict[str, Any]]:
+def citation_references_from_metadata(
+    metadata: Mapping[str, Any],
+) -> list[dict[str, Any]]:
     references: list[dict[str, Any]] = []
     seen: set[str] = set()
     for value in _raw_meta_values(metadata, "citation_reference"):
@@ -483,12 +526,16 @@ def _merge_metadata_with_parsed_html(
         merged["doi"] = normalize_doi(doi)
     html_title = normalize_text(str(html_metadata.get("title") or ""))
     current_title = normalize_text(str(merged.get("title") or ""))
-    doi_value = normalize_doi(str(doi or merged.get("doi") or html_metadata.get("doi") or ""))
+    doi_value = normalize_doi(
+        str(doi or merged.get("doi") or html_metadata.get("doi") or "")
+    )
     if html_title and doi_value and normalize_doi(current_title) == doi_value:
         merged["title"] = html_title
     references = references or citation_references_from_metadata(merged)
     if references and not merged.get("references"):
-        merged["references"] = references
+        merged_payload: dict[str, Any] = dict(merged)
+        merged_payload["references"] = references
+        return merged_payload
     return dict(merged)
 
 
@@ -553,7 +600,9 @@ def _first_figure_link(node: Tag, source_url: str) -> str:
     return ""
 
 
-def _royal_society_figure_assets(html_text: str, source_url: str) -> list[dict[str, str]]:
+def _royal_society_figure_assets(
+    html_text: str, source_url: str
+) -> list[dict[str, str]]:
     soup = BeautifulSoup(html_text, choose_parser())
     assets: list[dict[str, str]] = []
     for node in soup.find_all("div"):
@@ -595,26 +644,55 @@ def _royal_society_figure_assets(html_text: str, source_url: str) -> list[dict[s
     return assets
 
 
-def _asset_external_key(asset: Mapping[str, Any]) -> str:
-    for field in ("url", "full_size_url", "original_url", "preview_url", "download_url"):
+def _asset_external_keys(asset: Mapping[str, Any]) -> list[str]:
+    keys: list[str] = []
+    dom_id = normalize_text(str(asset.get("dom_id") or "")).lower()
+    if dom_id:
+        keys.append(f"dom:{dom_id}")
+    for field in (
+        "url",
+        "full_size_url",
+        "original_url",
+        "preview_url",
+        "download_url",
+    ):
+        value = normalize_text(str(asset.get(field) or ""))
+        if not value:
+            continue
+        basename = urlparse(value).path.rsplit("/", 1)[-1]
+        figure_match = _ROYAL_FIGURE_BASENAME_RE.match(basename)
+        if figure_match is not None:
+            key = f"figure:{figure_match.group(1).lower()}"
+            if key not in keys:
+                keys.append(key)
+    for field in (
+        "url",
+        "full_size_url",
+        "original_url",
+        "preview_url",
+        "download_url",
+    ):
         value = normalize_text(str(asset.get(field) or ""))
         if value:
-            return value.lower()
-    return ""
+            key = f"url:{value.lower()}"
+            if key not in keys:
+                keys.append(key)
+    return keys
 
 
 def _merge_asset(existing: dict[str, Any], incoming: Mapping[str, Any]) -> None:
-    for field in ("caption", "heading"):
-        current = normalize_text(str(existing.get(field) or ""))
-        candidate = normalize_text(str(incoming.get(field) or ""))
-        if not candidate:
-            continue
-        if (
-            not current
-            or current.lower() in _GENERIC_FIGURE_HEADINGS
-            or len(candidate) > len(current)
-        ):
-            existing[field] = candidate
+    current_heading = normalize_text(str(existing.get("heading") or ""))
+    candidate_heading = normalize_text(str(incoming.get("heading") or ""))
+    if candidate_heading and (
+        not current_heading or current_heading.lower() in _GENERIC_FIGURE_HEADINGS
+    ):
+        existing["heading"] = candidate_heading
+    current_caption = normalize_text(str(existing.get("caption") or ""))
+    candidate_caption = normalize_text(str(incoming.get("caption") or ""))
+    if candidate_caption and (
+        not current_caption or len(candidate_caption) > len(current_caption)
+    ):
+        existing["caption"] = candidate_caption
     for field in (
         "url",
         "full_size_url",
@@ -637,8 +715,13 @@ def _normalize_extracted_assets(assets: list[dict[str, str]]) -> list[dict[str, 
         asset: dict[str, Any] = dict(item)
         for text_field in ("caption", "heading"):
             if asset.get(text_field):
-                asset[text_field] = _repair_royal_math_text(
-                    normalize_text(str(asset.get(text_field) or ""))
+                asset[text_field] = re.sub(
+                    r"\s*Refer to the image caption for details\.?\s*$",
+                    "",
+                    _repair_royal_math_text(
+                        normalize_text(str(asset.get(text_field) or ""))
+                    ),
+                    flags=re.IGNORECASE,
                 )
         url = normalize_text(
             str(
@@ -652,15 +735,23 @@ def _normalize_extracted_assets(assets: list[dict[str, str]]) -> list[dict[str, 
         if "/view-large/figure/" in url:
             asset["kind"] = "figure"
             asset["section"] = "body"
-            if normalize_text(str(asset.get("heading") or "")).lower() in _GENERIC_FIGURE_HEADINGS:
+            if (
+                normalize_text(str(asset.get("heading") or "")).lower()
+                in _GENERIC_FIGURE_HEADINGS
+            ):
                 asset["heading"] = "Figure"
-        key_url = _asset_external_key(asset)
-        key = (normalize_text(str(asset.get("kind") or "")).lower(), key_url)
-        if key_url:
-            existing = by_key.get(key)
-            if existing is not None:
-                _merge_asset(existing, asset)
-                continue
+        kind = normalize_text(str(asset.get("kind") or "")).lower()
+        keys = [(kind, key) for key in _asset_external_keys(asset)]
+        existing = next(
+            (by_key[key] for key in keys if key in by_key),
+            None,
+        )
+        if existing is not None:
+            _merge_asset(existing, asset)
+            for key in keys:
+                by_key[key] = existing
+            continue
+        for key in keys:
             by_key[key] = asset
         normalized_assets.append(asset)
     return normalized_assets
@@ -831,7 +922,10 @@ def _restore_empty_back_matter_sections(
             continue
 
         next_index = index + 1
-        while next_index < len(lines) and _MARKDOWN_HEADING_RE.match(lines[next_index].strip()) is None:
+        while (
+            next_index < len(lines)
+            and _MARKDOWN_HEADING_RE.match(lines[next_index].strip()) is None
+        ):
             next_index += 1
         existing_body = "\n".join(lines[index + 1 : next_index])
         if normalize_text(existing_body):
@@ -868,7 +962,9 @@ def royalsocietypublishing_normalize_markdown(text: str) -> str:
                 continue
             line = re.sub(r"^(\s*-\s+)[—–-](?=\S)", r"\1", line)
             stripped = line.strip()
-            previous = next((item.strip() for item in reversed(lines) if item.strip()), "")
+            previous = next(
+                (item.strip() for item in reversed(lines) if item.strip()), ""
+            )
             if (
                 previous
                 and _MARKDOWN_TABLE_SEPARATOR_RE.fullmatch(previous)
@@ -887,7 +983,11 @@ def royalsocietypublishing_normalize_markdown(text: str) -> str:
                     and not _MARKDOWN_TABLE_SEPARATOR_RE.fullmatch(previous)
                 ):
                     continue
-            if stripped.startswith("|") and stripped.endswith("|") and stripped.count("|") < 3:
+            if (
+                stripped.startswith("|")
+                and stripped.endswith("|")
+                and stripped.count("|") < 3
+            ):
                 continue
             lines.append(line)
     return "\n".join(_drop_broken_reference_table_duplicate(lines)).strip()

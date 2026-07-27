@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import codecs
 import functools
+import importlib
 import logging
 import re
 from dataclasses import dataclass
@@ -60,18 +61,35 @@ from .provider_rules import (
     front_matter_publication_keywords_for_profile,
     normalize_noise_profile,
 )
+from bs4 import BeautifulSoup
 
-try:
-    import trafilatura
-except ImportError:  # pragma: no cover - exercised implicitly when dependency is absent
-    trafilatura = None
+_TRAFILATURA_UNSET = object()
+trafilatura: Any = _TRAFILATURA_UNSET
 
+
+@functools.lru_cache(maxsize=1)
+def _import_trafilatura() -> Any:
+    try:
+        return importlib.import_module("trafilatura")
+    except ImportError:  # pragma: no cover - exercised by degraded installs
+        return None
+
+
+def _module_trafilatura_backend() -> Any:
+    if trafilatura is _TRAFILATURA_UNSET:
+        return _import_trafilatura()
+    return trafilatura
+
+
+_charset_normalizer_from_bytes: Any
 try:
-    from charset_normalizer import from_bytes as _charset_normalizer_from_bytes
+    from charset_normalizer import (
+        from_bytes as _imported_charset_normalizer_from_bytes,
+    )
 except ImportError:  # pragma: no cover - dependency is optional for degraded installs
     _charset_normalizer_from_bytes = None
-
-from bs4 import BeautifulSoup
+else:
+    _charset_normalizer_from_bytes = _imported_charset_normalizer_from_bytes
 
 LOGGER = logging.getLogger(__name__)
 HTML_ROOT_SELECTORS = ("article", "main", '[role="main"]')
@@ -107,7 +125,15 @@ PUBLICATION_WATERMARK_CONNECTORS = {"and", "of", "the", "&"}
 PUBLICATION_WATERMARK_MAX_LENGTH = 64
 PUBLICATION_WATERMARK_MAX_TOKENS = 5
 FRONT_MATTER_BYLINE_CONNECTORS = {
-    "and", "&", "et", "al", "the", "de", "del", "van", "von",
+    "and",
+    "&",
+    "et",
+    "al",
+    "the",
+    "de",
+    "del",
+    "van",
+    "von",
 }
 FRONT_MATTER_BYLINE_MAX_LENGTH = 96
 FRONT_MATTER_BYLINE_MAX_WORDS = 10
@@ -172,7 +198,13 @@ class _FallbackMarkdownParser(HTMLParser):
             return
         class_attr = attributes.get("class", "").lower()
         id_attr = attributes.get("id", "").lower()
-        skip_attr_tokens = ("cookie", "nav", "footer", "share", "signin")
+        skip_attr_tokens: tuple[str, ...] = (
+            "cookie",
+            "nav",
+            "footer",
+            "share",
+            "signin",
+        )
         if lowered_tag not in self.HEADING_TAGS:
             skip_attr_tokens = (*skip_attr_tokens, "header")
         if any(token in f"{class_attr} {id_attr}" for token in skip_attr_tokens):
@@ -313,9 +345,13 @@ def select_html_content_root(root: Any):
             if candidate_id in scored_candidates:
                 continue
             scored_candidates.add(candidate_id)
-            if best_candidate is not None and best_candidate in getattr(candidate, "parents", []):
+            if best_candidate is not None and best_candidate in getattr(
+                candidate, "parents", []
+            ):
                 continue
-            if best_candidate is not None and candidate in getattr(best_candidate, "parents", []):
+            if best_candidate is not None and candidate in getattr(
+                best_candidate, "parents", []
+            ):
                 words = _html_root_candidate_word_count(candidate)
             else:
                 words = _html_root_candidate_word_count(candidate)
@@ -486,7 +522,7 @@ def extract_article_markdown_from_cleaned_html(
     del source_url
     active_noise_profile = _normalize_noise_profile(noise_profile)
     active_trafilatura = (
-        trafilatura
+        _module_trafilatura_backend()
         if trafilatura_backend is _USE_MODULE_TRAFILATURA
         else trafilatura_backend
     )

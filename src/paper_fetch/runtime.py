@@ -3,21 +3,18 @@
 from __future__ import annotations
 
 import copy
+import atexit
 import hashlib
 import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from collections.abc import Hashable, Mapping
 
 from .artifacts import DEFAULT_ARTIFACT_MODE, ArtifactMode, ArtifactStore
 from .config import (
-    CLOAKBROWSER_BINARY_PATH_ENV_VAR,
-    CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR,
-    CLOAKBROWSER_PROFILE_DIR_ENV_VAR,
-    CLOAKBROWSER_USER_DATA_DIR_ENV_VAR,
     HTTP_DISK_CACHE_DIR_ENV_VAR,
     HTTP_DISK_CACHE_ENV_VAR,
     HTTP_DISK_CACHE_MAX_AGE_DAYS_ENV_VAR,
@@ -49,6 +46,131 @@ import contextlib
 RUNTIME_UNSET = object()
 _PARSE_CACHE_MISSING = object()
 _SESSION_CACHE_MISSING = object()
+_SHARED_BROWSER_MANAGER_LOCK = threading.RLock()
+_SHARED_BROWSER_BATCH_SCOPE_COUNT = 0
+_SHARED_BROWSER_MANAGERS: dict[
+    tuple[str, str, str, str, str], _SharedBrowserManagerEntry
+] = {}
+
+
+@dataclass
+class _SharedBrowserManagerEntry:
+    manager: Any
+    ref_count: int = 0
+
+
+class _SharedBrowserManagerLease:
+    def __init__(self, key: tuple[str, str, str, str, str], manager: Any) -> None:
+        self._key = key
+        self._manager = manager
+        self._closed = False
+
+    def browser(self, *, headless: bool = True) -> Any:
+        return self._manager.browser(headless=headless)
+
+    def new_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any:
+        return self._manager.new_context(headless=headless, **context_kwargs)
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        manager_to_close = None
+        with _SHARED_BROWSER_MANAGER_LOCK:
+            entry = _SHARED_BROWSER_MANAGERS.get(self._key)
+            if entry is None or entry.manager is not self._manager:
+                return
+            entry.ref_count -= 1
+            if entry.ref_count <= 0:
+                entry.ref_count = 0
+                if _SHARED_BROWSER_BATCH_SCOPE_COUNT <= 0:
+                    _SHARED_BROWSER_MANAGERS.pop(self._key, None)
+                    manager_to_close = entry.manager
+        if manager_to_close is not None:
+            manager_to_close.close()
+
+
+def _acquire_shared_browser_manager(
+    *,
+    key: tuple[str, str, str, str, str],
+    binary_path: str | None,
+    cdp_endpoint: str | None,
+    external_new_context: bool,
+    profile_dir: Path | None,
+    user_data_dir: Path | None,
+) -> _SharedBrowserManagerLease:
+    with _SHARED_BROWSER_MANAGER_LOCK:
+        entry = _SHARED_BROWSER_MANAGERS.get(key)
+        if entry is None:
+            entry = _SharedBrowserManagerEntry(
+                manager=BrowserContextManager(
+                    binary_path=binary_path,
+                    cdp_endpoint=cdp_endpoint,
+                    external_new_context=external_new_context,
+                    profile_dir=profile_dir,
+                    user_data_dir=user_data_dir,
+                )
+            )
+            _SHARED_BROWSER_MANAGERS[key] = entry
+        entry.ref_count += 1
+        return _SharedBrowserManagerLease(key, entry.manager)
+
+
+def dump_shared_browser_managers() -> list[dict[str, Any]]:
+    with _SHARED_BROWSER_MANAGER_LOCK:
+        return [
+            {
+                "key": key,
+                "ref_count": entry.ref_count,
+                "manager_type": entry.manager.__class__.__name__,
+                "external_cdp": bool(key[1]),
+                "external_new_context": key[2] == "1",
+                "retained_by_batch_scope": (
+                    entry.ref_count == 0 and _SHARED_BROWSER_BATCH_SCOPE_COUNT > 0
+                ),
+            }
+            for key, entry in _SHARED_BROWSER_MANAGERS.items()
+        ]
+
+
+def close_shared_browser_managers() -> None:
+    with _SHARED_BROWSER_MANAGER_LOCK:
+        entries = list(_SHARED_BROWSER_MANAGERS.values())
+        _SHARED_BROWSER_MANAGERS.clear()
+    for entry in entries:
+        with contextlib.suppress(Exception):
+            entry.manager.close()
+
+
+@contextlib.contextmanager
+def retain_shared_browser_managers():
+    """Keep idle shared browser managers alive for one overlapping batch scope."""
+
+    global _SHARED_BROWSER_BATCH_SCOPE_COUNT
+    with _SHARED_BROWSER_MANAGER_LOCK:
+        _SHARED_BROWSER_BATCH_SCOPE_COUNT += 1
+    try:
+        yield
+    finally:
+        managers_to_close: list[Any] = []
+        with _SHARED_BROWSER_MANAGER_LOCK:
+            _SHARED_BROWSER_BATCH_SCOPE_COUNT = max(
+                0, _SHARED_BROWSER_BATCH_SCOPE_COUNT - 1
+            )
+            if _SHARED_BROWSER_BATCH_SCOPE_COUNT == 0:
+                idle_keys = [
+                    key
+                    for key, entry in _SHARED_BROWSER_MANAGERS.items()
+                    if entry.ref_count <= 0
+                ]
+                for key in idle_keys:
+                    managers_to_close.append(_SHARED_BROWSER_MANAGERS.pop(key).manager)
+        for manager in managers_to_close:
+            with contextlib.suppress(Exception):
+                manager.close()
+
+
+atexit.register(close_shared_browser_managers)
 
 
 def _transport_disk_cache_dir(
@@ -87,8 +209,12 @@ def build_http_transport_for_context(
         default=DEFAULT_DISK_CACHE_MAX_AGE_DAYS,
     )
     return HttpTransport(
-        pool_num_pools=parse_positive_int_env(env, HTTP_POOL_NUM_POOLS_ENV_VAR, default=DEFAULT_POOL_NUM_POOLS),
-        pool_maxsize=parse_positive_int_env(env, HTTP_POOL_MAXSIZE_ENV_VAR, default=DEFAULT_POOL_MAXSIZE),
+        pool_num_pools=parse_positive_int_env(
+            env, HTTP_POOL_NUM_POOLS_ENV_VAR, default=DEFAULT_POOL_NUM_POOLS
+        ),
+        pool_maxsize=parse_positive_int_env(
+            env, HTTP_POOL_MAXSIZE_ENV_VAR, default=DEFAULT_POOL_MAXSIZE
+        ),
         per_host_concurrency=parse_positive_int_env(
             env,
             HTTP_PER_HOST_CONCURRENCY_ENV_VAR,
@@ -131,11 +257,28 @@ class RuntimeContext:
     parse_cache: dict[tuple[Hashable, ...], Any] = field(default_factory=dict)
     session_cache: dict[tuple[Hashable, ...], Any] = field(default_factory=dict)
     stage_timings: dict[str, float] = field(default_factory=dict)
-    _session_cache_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
-    _stage_timing_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
-    _browser_context_manager_lock: threading.RLock = field(default_factory=threading.RLock, init=False, repr=False)
-    _browser_context_manager: BrowserContextManager | None = field(default=None, init=False, repr=False)
-    _browser_context_managers: dict[tuple[str, str, str, str], BrowserContextManager] = field(
+    _parse_cache_lock: threading.RLock = field(
+        default_factory=threading.RLock, init=False, repr=False
+    )
+    _parse_cache_inflight: dict[tuple[Hashable, ...], threading.Event] = field(
+        default_factory=dict, init=False, repr=False
+    )
+    _session_cache_lock: threading.RLock = field(
+        default_factory=threading.RLock, init=False, repr=False
+    )
+    _stage_timing_lock: threading.RLock = field(
+        default_factory=threading.RLock, init=False, repr=False
+    )
+    _browser_context_manager_lock: threading.RLock = field(
+        default_factory=threading.RLock, init=False, repr=False
+    )
+    _browser_context_manager: Any | None = field(default=None, init=False, repr=False)
+    _browser_context_managers: dict[tuple[str, str, str, str, str], Any] = field(
+        default_factory=dict,
+        init=False,
+        repr=False,
+    )
+    _camoufox_browser_managers: dict[tuple[int, bool, str], Any] = field(
         default_factory=dict,
         init=False,
         repr=False,
@@ -160,6 +303,7 @@ class RuntimeContext:
                 artifact_mode=self.artifact_mode,
             )
         self.stage_timings.setdefault("asset_seconds", 0.0)
+        self.stage_timings.setdefault("browser_seconds", 0.0)
         self.stage_timings.setdefault("formula_seconds", 0.0)
 
     def get_clients(self) -> Mapping[str, object]:
@@ -176,10 +320,14 @@ class RuntimeContext:
 
         return self._browser_lifecycle().browser(headless=headless)
 
-    def new_browser_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any:
+    def new_browser_context(
+        self, *, headless: bool = True, **context_kwargs: Any
+    ) -> Any:
         """Create a browser context from the shared CDP browser."""
 
-        return self._browser_lifecycle().new_context(headless=headless, **context_kwargs)
+        return self._browser_lifecycle().new_context(
+            headless=headless, **context_kwargs
+        )
 
     def new_browser_context_for_config(
         self,
@@ -187,6 +335,7 @@ class RuntimeContext:
         headless: bool = True,
         binary_path: str | None = None,
         cdp_endpoint: str | None = None,
+        external_new_context: bool = False,
         profile_dir: Path | str | None = None,
         user_data_dir: Path | str | None = None,
         **context_kwargs: Any,
@@ -196,14 +345,46 @@ class RuntimeContext:
         return self._browser_lifecycle_for_config(
             binary_path=binary_path,
             cdp_endpoint=cdp_endpoint,
+            external_new_context=external_new_context,
             profile_dir=profile_dir,
             user_data_dir=user_data_dir,
         ).new_context(headless=headless, **context_kwargs)
 
-    def new_playwright_context(self, *, headless: bool = True, **context_kwargs: Any) -> Any:
+    def new_playwright_context(
+        self, *, headless: bool = True, **context_kwargs: Any
+    ) -> Any:
         """Create a browser context from the shared CDP browser."""
 
         return self.new_browser_context(headless=headless, **context_kwargs)
+
+    def new_browser_context_for_runtime_config(
+        self,
+        config: Any,
+        **context_kwargs: Any,
+    ) -> Any:
+        """Create a fresh context using the backend carried by runtime config."""
+
+        backend = str(config.backend).strip().lower()
+        if backend != "camoufox":
+            raise RuntimeError(f"Unsupported browser backend {config.backend!r}.")
+        key = (
+            threading.get_ident(),
+            bool(config.headless),
+            str(config.binary_path or "").strip(),
+        )
+        with self._browser_context_manager_lock:
+            manager = self._camoufox_browser_managers.get(key)
+            if manager is None:
+                from .providers.browser_runtime.camoufox_manager import (
+                    CamoufoxBrowserManager,
+                )
+
+                manager = CamoufoxBrowserManager(
+                    binary_path=config.binary_path,
+                    headless=config.headless,
+                )
+                self._camoufox_browser_managers[key] = manager
+        return manager.new_context(**context_kwargs)
 
     def close_playwright(self) -> None:
         """Close any browser owned by this runtime context."""
@@ -211,7 +392,9 @@ class RuntimeContext:
         with self._browser_context_manager_lock:
             manager = self._browser_context_manager
             keyed_managers = list(self._browser_context_managers.values())
+            camoufox_managers = list(self._camoufox_browser_managers.values())
             self._browser_context_managers.clear()
+            self._camoufox_browser_managers.clear()
             self._browser_context_manager = None
         seen: set[int] = set()
         if manager is not None:
@@ -222,19 +405,53 @@ class RuntimeContext:
                 continue
             seen.add(id(keyed_manager))
             keyed_manager.close()
+        for camoufox_manager in camoufox_managers:
+            if id(camoufox_manager) in seen:
+                continue
+            seen.add(id(camoufox_manager))
+            camoufox_manager.close()
 
-    def _browser_lifecycle(self) -> BrowserContextManager:
+    def close_camoufox_for_current_thread(self) -> None:
+        """Close Camoufox managers while still on their owning worker thread."""
+
+        owner_thread_id = threading.get_ident()
+        with self._browser_context_manager_lock:
+            owned_items = [
+                (key, manager)
+                for key, manager in self._camoufox_browser_managers.items()
+                if key[0] == owner_thread_id
+            ]
+            for key, _manager in owned_items:
+                self._camoufox_browser_managers.pop(key, None)
+        seen: set[int] = set()
+        for _key, manager in owned_items:
+            if id(manager) in seen:
+                continue
+            seen.add(id(manager))
+            manager.close()
+
+    def _browser_lifecycle(self) -> Any:
         with self._browser_context_manager_lock:
             if self._browser_context_manager is None:
-                cdp_endpoint = str((self.env or {}).get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR, "")).strip() or None
-                binary_path = str((self.env or {}).get(CLOAKBROWSER_BINARY_PATH_ENV_VAR, "")).strip() or None
-                profile_dir_value = str((self.env or {}).get(CLOAKBROWSER_PROFILE_DIR_ENV_VAR, "")).strip()
-                user_data_dir_value = str((self.env or {}).get(CLOAKBROWSER_USER_DATA_DIR_ENV_VAR, "")).strip()
-                self._browser_context_manager = BrowserContextManager(
+                cdp_endpoint = None
+                binary_path = None
+                profile_dir = None
+                user_data_dir = None
+                external_new_context = False
+                key = self._browser_lifecycle_key(
                     binary_path=binary_path,
                     cdp_endpoint=cdp_endpoint,
-                    profile_dir=Path(profile_dir_value).expanduser() if profile_dir_value else None,
-                    user_data_dir=Path(user_data_dir_value).expanduser() if user_data_dir_value else None,
+                    external_new_context=external_new_context,
+                    profile_dir=profile_dir,
+                    user_data_dir=user_data_dir,
+                )
+                self._browser_context_manager = _acquire_shared_browser_manager(
+                    key=key,
+                    binary_path=binary_path,
+                    cdp_endpoint=cdp_endpoint,
+                    external_new_context=external_new_context,
+                    profile_dir=profile_dir,
+                    user_data_dir=user_data_dir,
                 )
             return self._browser_context_manager
 
@@ -243,23 +460,37 @@ class RuntimeContext:
         *,
         binary_path: str | None,
         cdp_endpoint: str | None,
-        profile_dir: Path | str | None,
-        user_data_dir: Path | str | None,
-    ) -> BrowserContextManager:
+        external_new_context: bool,
+        profile_dir: Path | str | None = None,
+        user_data_dir: Path | str | None = None,
+    ) -> Any:
         key = self._browser_lifecycle_key(
             binary_path=binary_path,
             cdp_endpoint=cdp_endpoint,
+            external_new_context=external_new_context,
             profile_dir=profile_dir,
             user_data_dir=user_data_dir,
         )
         with self._browser_context_manager_lock:
             manager = self._browser_context_managers.get(key)
             if manager is None:
-                manager = BrowserContextManager(
-                    binary_path=str(binary_path or "").strip() or None,
-                    cdp_endpoint=str(cdp_endpoint or "").strip() or None,
-                    profile_dir=Path(profile_dir).expanduser() if profile_dir is not None else None,
-                    user_data_dir=Path(user_data_dir).expanduser() if user_data_dir is not None else None,
+                active_binary_path = str(binary_path or "").strip() or None
+                active_cdp_endpoint = str(cdp_endpoint or "").strip() or None
+                active_profile_dir = (
+                    Path(profile_dir).expanduser() if profile_dir is not None else None
+                )
+                active_user_data_dir = (
+                    Path(user_data_dir).expanduser()
+                    if user_data_dir is not None
+                    else None
+                )
+                manager = _acquire_shared_browser_manager(
+                    key=key,
+                    binary_path=active_binary_path,
+                    cdp_endpoint=active_cdp_endpoint,
+                    external_new_context=external_new_context,
+                    profile_dir=active_profile_dir,
+                    user_data_dir=active_user_data_dir,
                 )
                 self._browser_context_managers[key] = manager
             return manager
@@ -269,12 +500,14 @@ class RuntimeContext:
         *,
         binary_path: str | None,
         cdp_endpoint: str | None,
+        external_new_context: bool = False,
         profile_dir: Path | str | None,
         user_data_dir: Path | str | None,
-    ) -> tuple[str, str, str, str]:
+    ) -> tuple[str, str, str, str, str]:
         return (
             str(binary_path or "").strip(),
             str(cdp_endpoint or "").strip(),
+            "1" if external_new_context else "0",
             str(Path(profile_dir).expanduser()) if profile_dir is not None else "",
             str(Path(user_data_dir).expanduser()) if user_data_dir is not None else "",
         )
@@ -282,7 +515,9 @@ class RuntimeContext:
     def close(self) -> None:
         self.close_playwright()
 
-    def __del__(self) -> None:  # pragma: no cover - defensive cleanup at GC/interpreter shutdown
+    def __del__(
+        self,
+    ) -> None:  # pragma: no cover - defensive cleanup at GC/interpreter shutdown
         with contextlib.suppress(Exception):
             self.close_playwright()
 
@@ -325,12 +560,13 @@ class RuntimeContext:
         copy_value: bool = True,
         default: Any = _PARSE_CACHE_MISSING,
     ) -> Any:
-        value = self.parse_cache.get(key, _PARSE_CACHE_MISSING)
-        if value is _PARSE_CACHE_MISSING:
-            if default is _PARSE_CACHE_MISSING:
-                return None
-            return default
-        return copy.deepcopy(value) if copy_value else value
+        with self._parse_cache_lock:
+            value = self.parse_cache.get(key, _PARSE_CACHE_MISSING)
+            if value is _PARSE_CACHE_MISSING:
+                if default is _PARSE_CACHE_MISSING:
+                    return None
+                return default
+            return copy.deepcopy(value) if copy_value else value
 
     def set_parse_cache(
         self,
@@ -339,8 +575,10 @@ class RuntimeContext:
         *,
         copy_value: bool = True,
     ) -> Any:
-        self.parse_cache[key] = copy.deepcopy(value) if copy_value else value
-        return copy.deepcopy(value) if copy_value else value
+        stored = copy.deepcopy(value) if copy_value else value
+        with self._parse_cache_lock:
+            self.parse_cache[key] = stored
+        return copy.deepcopy(stored) if copy_value else stored
 
     def get_or_set_parse_cache(
         self,
@@ -349,11 +587,31 @@ class RuntimeContext:
         *,
         copy_value: bool = True,
     ) -> Any:
-        cached = self.parse_cache.get(key, _PARSE_CACHE_MISSING)
-        if cached is not _PARSE_CACHE_MISSING:
-            return copy.deepcopy(cached) if copy_value else cached
-        value = factory()
-        return self.set_parse_cache(key, value, copy_value=copy_value)
+        """Atomically memoize parser output for a single cache key."""
+
+        while True:
+            with self._parse_cache_lock:
+                cached = self.parse_cache.get(key, _PARSE_CACHE_MISSING)
+                if cached is not _PARSE_CACHE_MISSING:
+                    return copy.deepcopy(cached) if copy_value else cached
+                inflight = self._parse_cache_inflight.get(key)
+                if inflight is None:
+                    inflight = threading.Event()
+                    self._parse_cache_inflight[key] = inflight
+                    break
+            inflight.wait()
+
+        try:
+            value = factory()
+            stored = copy.deepcopy(value) if copy_value else value
+            with self._parse_cache_lock:
+                self.parse_cache[key] = stored
+            return copy.deepcopy(stored) if copy_value else stored
+        finally:
+            with self._parse_cache_lock:
+                completed = self._parse_cache_inflight.pop(key, None)
+                if completed is not None:
+                    completed.set()
 
     def get_session_cache(
         self,
@@ -447,22 +705,65 @@ def resolve_runtime_context(
         "stage_timings": stage_timings,
     }
     if context is not None:
-        explicit = [name for name, value in runtime_parts.items() if value is not RUNTIME_UNSET]
+        explicit = [
+            name for name, value in runtime_parts.items() if value is not RUNTIME_UNSET
+        ]
         if explicit:
             joined = ", ".join(explicit)
-            raise TypeError(f"RuntimeContext cannot be combined with runtime keyword arguments: {joined}")
+            raise TypeError(
+                f"RuntimeContext cannot be combined with runtime keyword arguments: {joined}"
+            )
         return context
 
+    resolved_env = None if env is RUNTIME_UNSET else cast(Mapping[str, str] | None, env)
+    resolved_transport = (
+        None if transport is RUNTIME_UNSET else cast(HttpTransport | None, transport)
+    )
+    resolved_clients = (
+        None if clients is RUNTIME_UNSET else cast(Mapping[str, object] | None, clients)
+    )
+    resolved_download_dir = (
+        None if download_dir is RUNTIME_UNSET else cast(Path | None, download_dir)
+    )
+    resolved_cancel_check = (
+        None
+        if cancel_check is RUNTIME_UNSET
+        else cast(Callable[[], bool] | None, cancel_check)
+    )
+    resolved_artifact_store = (
+        None
+        if artifact_store is RUNTIME_UNSET
+        else cast(ArtifactStore | None, artifact_store)
+    )
+    resolved_artifact_mode = (
+        DEFAULT_ARTIFACT_MODE
+        if artifact_mode is RUNTIME_UNSET
+        else cast(ArtifactMode, artifact_mode)
+    )
+    resolved_parse_cache = (
+        {}
+        if parse_cache is RUNTIME_UNSET
+        else cast(dict[tuple[Hashable, ...], Any], parse_cache)
+    )
+    resolved_session_cache = (
+        {}
+        if session_cache is RUNTIME_UNSET
+        else cast(dict[tuple[Hashable, ...], Any], session_cache)
+    )
+    resolved_stage_timings = (
+        {} if stage_timings is RUNTIME_UNSET else cast(dict[str, float], stage_timings)
+    )
+
     return RuntimeContext(
-        env=None if env is RUNTIME_UNSET else env,
-        transport=None if transport is RUNTIME_UNSET else transport,
-        clients=None if clients is RUNTIME_UNSET else clients,
-        download_dir=None if download_dir is RUNTIME_UNSET else download_dir,
-        cancel_check=None if cancel_check is RUNTIME_UNSET else cancel_check,
-        artifact_store=None if artifact_store is RUNTIME_UNSET else artifact_store,
-        artifact_mode=DEFAULT_ARTIFACT_MODE if artifact_mode is RUNTIME_UNSET else artifact_mode,
+        env=resolved_env,
+        transport=resolved_transport,
+        clients=resolved_clients,
+        download_dir=resolved_download_dir,
+        cancel_check=resolved_cancel_check,
+        artifact_store=resolved_artifact_store,
+        artifact_mode=resolved_artifact_mode,
         fetch_cache=None if fetch_cache is RUNTIME_UNSET else fetch_cache,
-        parse_cache={} if parse_cache is RUNTIME_UNSET else parse_cache,
-        session_cache={} if session_cache is RUNTIME_UNSET else session_cache,
-        stage_timings={} if stage_timings is RUNTIME_UNSET else stage_timings,
+        parse_cache=resolved_parse_cache,
+        session_cache=resolved_session_cache,
+        stage_timings=resolved_stage_timings,
     )

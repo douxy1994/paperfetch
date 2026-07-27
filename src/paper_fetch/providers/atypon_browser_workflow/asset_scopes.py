@@ -87,9 +87,9 @@ def _atypon_browser_workflow_supplementary_sections(container: Tag) -> list[Tag]
         except Exception:
             continue
         for match in matches:
-            if not isinstance(match, Tag) or not _is_atypon_browser_workflow_supplementary_section(
-                match
-            ):
+            if not isinstance(
+                match, Tag
+            ) or not _is_atypon_browser_workflow_supplementary_section(match):
                 continue
             match_id = id(match)
             if match_id in seen:
@@ -98,9 +98,9 @@ def _atypon_browser_workflow_supplementary_sections(container: Tag) -> list[Tag]
             candidates.append(match)
 
     for section in container.find_all("section"):
-        if not isinstance(section, Tag) or not _is_atypon_browser_workflow_supplementary_section(
-            section
-        ):
+        if not isinstance(
+            section, Tag
+        ) or not _is_atypon_browser_workflow_supplementary_section(section):
             continue
         section_id = id(section)
         if section_id in seen:
@@ -121,7 +121,9 @@ def _extract_atypon_browser_workflow_asset_html_scopes(
 
     supplementary_html = "\n".join(
         str(node)
-        for node in _atypon_browser_workflow_supplementary_sections(supplementary_container)
+        for node in _atypon_browser_workflow_supplementary_sections(
+            supplementary_container
+        )
         if normalize_text(node.get_text(" ", strip=True))
     )
     return _content_fragment_html(
@@ -129,7 +131,9 @@ def _extract_atypon_browser_workflow_asset_html_scopes(
     ), supplementary_html
 
 
-def _atypon_browser_workflow_supplementary_asset_is_supported(asset: Mapping[str, Any]) -> bool:
+def _atypon_browser_workflow_supplementary_asset_is_supported(
+    asset: Mapping[str, Any],
+) -> bool:
     url = normalize_text(str(asset.get("url") or "")).lower()
     return "/doi/suppl/" in url and "/suppl_file/" in url
 
@@ -169,7 +173,6 @@ def extract_browser_workflow_asset_html_scopes(
     source_url: str,
     publisher: str,
 ) -> tuple[str, str]:
-    del source_url
     soup = BeautifulSoup(html_text, choose_parser())
     container = select_best_container(
         soup, publisher, policy=_container_selection_policy(publisher)
@@ -180,6 +183,7 @@ def extract_browser_workflow_asset_html_scopes(
             "Could not identify the main article container in publisher HTML.",
         )
 
+    raw_body_container = copy.deepcopy(container)
     clean_container(
         container, publisher, drop_profile=HTML_CONTAINER_DROP_BROWSER_WORKFLOW
     )
@@ -197,6 +201,8 @@ def extract_browser_workflow_asset_html_scopes(
             body_container,
             supplementary_container,
             publisher=publisher,
+            source_url=source_url,
+            raw_body_container=raw_body_container,
             content_fragment_html=_content_fragment_html,
             atypon_browser_workflow_supplementary_sections=_atypon_browser_workflow_supplementary_sections,
         )

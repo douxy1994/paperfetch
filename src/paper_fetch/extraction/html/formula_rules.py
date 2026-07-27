@@ -8,6 +8,7 @@ from typing import Any
 
 from .asset_fields import FULL_SIZE_IMAGE_ATTRS, PREVIEW_IMAGE_ATTRS
 from ...utils import normalize_text
+from ...xml_security import XmlParseFailure, parse_mathml_fragment
 from .provider_rules import (
     provider_display_formula_selectors,
     provider_formula_container_tokens,
@@ -17,6 +18,10 @@ from bs4 import Tag
 
 FORMULA_IMAGE_URL_PATTERN = re.compile(
     r"(?:^|[-_/])(?:math|ieq|equ)[-_]?\d|_(?:IEq|Equ)\d|math-\d|equation",
+    flags=re.IGNORECASE,
+)
+EXPLICIT_FORMULA_IMAGE_URL_PATTERN = re.compile(
+    r"(?:^|[-_/])(?:math|ieq|equ)[-_]?\d|_(?:IEq|Equ)\d|math-\d",
     flags=re.IGNORECASE,
 )
 GENERIC_FORMULA_CONTAINER_TOKENS = (
@@ -45,9 +50,7 @@ GENERIC_DISPLAY_FORMULA_SELECTORS = (
     "div[role='math']",
 )
 GENERIC_DISPLAY_FORMULA_IDENTITY_TOKENS = tuple(
-    token
-    for token in GENERIC_FORMULA_CONTAINER_TOKENS
-    if token != "inline-eqn"
+    token for token in GENERIC_FORMULA_CONTAINER_TOKENS if token != "inline-eqn"
 )
 MATHML_SCRIPT_TYPES = frozenset(
     {
@@ -75,7 +78,9 @@ SILVERCHAIR_FIGURE_CLASS_TOKENS = frozenset(
 )
 
 
-def display_formula_identity_tokens_for_profile(noise_profile: str | None) -> tuple[str, ...]:
+def display_formula_identity_tokens_for_profile(
+    noise_profile: str | None,
+) -> tuple[str, ...]:
     return (
         *GENERIC_DISPLAY_FORMULA_IDENTITY_TOKENS,
         *(provider_formula_container_tokens(noise_profile) if noise_profile else ()),
@@ -110,7 +115,9 @@ def first_url_from_srcset(value: str | None) -> str:
         url = pieces[0].strip()
         score = 0.0
         for descriptor in pieces[1:]:
-            match = re.match(r"^([0-9]+(?:\.[0-9]+)?)(w|x)$", descriptor.strip().lower())
+            match = re.match(
+                r"^([0-9]+(?:\.[0-9]+)?)(w|x)$", descriptor.strip().lower()
+            )
             if not match:
                 continue
             multiplier = 1000.0 if match.group(2) == "x" else 1.0
@@ -121,7 +128,7 @@ def first_url_from_srcset(value: str | None) -> str:
     return best_url
 
 
-def normalize_formula_script_type(value: str | None) -> str:
+def normalize_formula_script_type(value: Any) -> str:
     normalized = normalize_text(str(value or "")).lower()
     return re.sub(r"\s*;\s*", "; ", normalized)
 
@@ -147,7 +154,14 @@ def formula_node_identity_text(node: Any) -> str:
         return ""
     attrs = getattr(node, "attrs", None) or {}
     parts = [normalize_text(str(node.name or ""))]
-    for key in ("id", "class", "role", "data-test", "data-type", "data-container-section"):
+    for key in (
+        "id",
+        "class",
+        "role",
+        "data-test",
+        "data-type",
+        "data-container-section",
+    ):
         value = attrs.get(key)
         if isinstance(value, (list, tuple, set)):
             parts.extend(normalize_text(str(item)) for item in value)
@@ -158,11 +172,15 @@ def formula_node_identity_text(node: Any) -> str:
 
 def formula_ancestor_identity_text(node: Any, *, max_depth: int = 6) -> str:
     parts: list[str] = []
-    current = node
+    current: Any = node
     depth = 0
     while isinstance(current, Tag) and depth < max_depth:
         parts.append(formula_node_identity_text(current))
-        current = current.parent if isinstance(getattr(current, "parent", None), Tag) else None
+        current = (
+            current.parent
+            if isinstance(getattr(current, "parent", None), Tag)
+            else None
+        )
         depth += 1
     return " ".join(part for part in parts if part)
 
@@ -172,13 +190,26 @@ def _class_tokens(node: Any) -> set[str]:
         return set()
     raw_classes = (getattr(node, "attrs", None) or {}).get("class") or []
     if isinstance(raw_classes, str):
-        return {normalize_text(value).lower() for value in raw_classes.split() if normalize_text(value)}
-    return {normalize_text(str(value)).lower() for value in raw_classes if normalize_text(str(value))}
+        return {
+            normalize_text(value).lower()
+            for value in raw_classes.split()
+            if normalize_text(value)
+        }
+    return {
+        normalize_text(str(value)).lower()
+        for value in raw_classes
+        if normalize_text(str(value))
+    }
 
 
-def _has_formula_container_identity(node: Any, *, noise_profile: str | None = None, max_depth: int = 6) -> bool:
+def _has_formula_container_identity(
+    node: Any, *, noise_profile: str | None = None, max_depth: int = 6
+) -> bool:
     identity = formula_ancestor_identity_text(node, max_depth=max_depth)
-    return any(token in identity for token in formula_container_tokens_for_profile(noise_profile))
+    return any(
+        token in identity
+        for token in formula_container_tokens_for_profile(noise_profile)
+    )
 
 
 def _silverchair_content_id_looks_like_figure(node: Any) -> bool:
@@ -199,7 +230,9 @@ def html_node_is_figure_asset_context(
 ) -> bool:
     if not isinstance(node, Tag):
         return False
-    if _has_formula_container_identity(node, noise_profile=noise_profile, max_depth=max_depth):
+    if _has_formula_container_identity(
+        node, noise_profile=noise_profile, max_depth=max_depth
+    ):
         return False
 
     current: Any = node
@@ -217,7 +250,11 @@ def html_node_is_figure_asset_context(
             or _silverchair_content_id_looks_like_figure(current.parent)
         ):
             return True
-        current = current.parent if isinstance(getattr(current, "parent", None), Tag) else None
+        current = (
+            current.parent
+            if isinstance(getattr(current, "parent", None), Tag)
+            else None
+        )
         depth += 1
     return False
 
@@ -226,8 +263,13 @@ def is_formula_container(node: Any, *, noise_profile: str | None = None) -> bool
     if not isinstance(node, Tag):
         return False
     identity = formula_node_identity_text(node)
-    role = normalize_text(str((getattr(node, "attrs", None) or {}).get("role") or "")).lower()
-    return role == "math" or any(token in identity for token in formula_container_tokens_for_profile(noise_profile))
+    role = normalize_text(
+        str((getattr(node, "attrs", None) or {}).get("role") or "")
+    ).lower()
+    return role == "math" or any(
+        token in identity
+        for token in formula_container_tokens_for_profile(noise_profile)
+    )
 
 
 def is_display_formula_node(node: Any, *, noise_profile: str | None = None) -> bool:
@@ -237,10 +279,13 @@ def is_display_formula_node(node: Any, *, noise_profile: str | None = None) -> b
     if normalize_text(str(attrs.get("display") or "")).lower() == "block":
         return True
     identity = formula_ancestor_identity_text(node)
-    return any(
-        token in identity
-        for token in display_formula_identity_tokens_for_profile(noise_profile)
-    ) or normalize_text(str(attrs.get("role") or "")).lower() == "math"
+    return (
+        any(
+            token in identity
+            for token in display_formula_identity_tokens_for_profile(noise_profile)
+        )
+        or normalize_text(str(attrs.get("role") or "")).lower() == "math"
+    )
 
 
 def _candidate_urls(tag: Any) -> list[str]:
@@ -287,7 +332,9 @@ def formula_image_url_from_node(node: Any, *, include_adjacent: bool = False) ->
     return ""
 
 
-def looks_like_formula_image(node: Any, url: str | None = None, *, noise_profile: str | None = None) -> bool:
+def looks_like_formula_image(
+    node: Any, url: str | None = None, *, noise_profile: str | None = None
+) -> bool:
     if not isinstance(node, Tag):
         return False
     if normalize_text(node.name or "").lower() != "img":
@@ -295,32 +342,43 @@ def looks_like_formula_image(node: Any, url: str | None = None, *, noise_profile
     candidate_url = normalize_text(url or formula_image_url_from_node(node))
     if not candidate_url:
         return False
+    if html_node_is_figure_asset_context(node, noise_profile=noise_profile):
+        return bool(EXPLICIT_FORMULA_IMAGE_URL_PATTERN.search(candidate_url))
     if FORMULA_IMAGE_URL_PATTERN.search(candidate_url):
         return True
-    if html_node_is_figure_asset_context(node, noise_profile=noise_profile):
-        return False
     identity = formula_ancestor_identity_text(node)
     alt_blob = " ".join(
         normalize_text(str(node.get(attr) or "")).lower()
         for attr in ("alt", "title", "aria-label")
     )
-    return (
-        bool(FORMULA_IMAGE_URL_PATTERN.search(alt_blob))
-        or any(token in identity for token in formula_container_tokens_for_profile(noise_profile))
+    return bool(FORMULA_IMAGE_URL_PATTERN.search(alt_blob)) or any(
+        token in identity
+        for token in formula_container_tokens_for_profile(noise_profile)
     )
 
 
-def formula_heading_for_image(node: Any, index: int, *, noise_profile: str | None = None) -> str:
+def formula_heading_for_image(
+    node: Any, index: int, *, noise_profile: str | None = None
+) -> str:
     if not isinstance(node, Tag):
         return f"Formula {index}"
-    current = node
+    current: Any = node
     depth = 0
     while isinstance(current, Tag) and depth < 6:
         identity = formula_node_identity_text(current)
-        candidate_id = normalize_text(str((getattr(current, "attrs", None) or {}).get("id") or ""))
-        if candidate_id and any(token in identity for token in formula_container_tokens_for_profile(noise_profile)):
+        candidate_id = normalize_text(
+            str((getattr(current, "attrs", None) or {}).get("id") or "")
+        )
+        if candidate_id and any(
+            token in identity
+            for token in formula_container_tokens_for_profile(noise_profile)
+        ):
             return candidate_id
-        current = current.parent if isinstance(getattr(current, "parent", None), Tag) else None
+        current = (
+            current.parent
+            if isinstance(getattr(current, "parent", None), Tag)
+            else None
+        )
         depth += 1
     return f"Formula {index}"
 
@@ -328,7 +386,9 @@ def formula_heading_for_image(node: Any, index: int, *, noise_profile: str | Non
 def mathml_element_from_html_node(node: Any) -> ET.Element | None:
     if not isinstance(node, Tag):
         return None
-    math_node = node if normalize_text(node.name or "").lower() == "math" else node.find("math")
+    math_node = (
+        node if normalize_text(node.name or "").lower() == "math" else node.find("math")
+    )
     if isinstance(math_node, Tag):
         parsed = _parse_mathml(str(math_node))
         if parsed is not None:
@@ -339,7 +399,9 @@ def mathml_element_from_html_node(node: Any) -> ET.Element | None:
         script_type = normalize_formula_script_type(script.get("type"))
         if script_type not in MATHML_SCRIPT_TYPES:
             continue
-        raw_mathml = script.string if script.string is not None else script.decode_contents()
+        raw_mathml = (
+            script.string if script.string is not None else script.decode_contents()
+        )
         parsed = _parse_mathml(str(raw_mathml or ""))
         if parsed is not None:
             return parsed
@@ -352,13 +414,15 @@ def _parse_mathml(raw_mathml: str) -> ET.Element | None:
         return None
     for candidate in (raw_mathml, raw_mathml.replace("&nbsp;", " ")):
         try:
-            return ET.fromstring(candidate)
-        except ET.ParseError:
+            return parse_mathml_fragment(candidate)
+        except XmlParseFailure:
             continue
     return None
 
 
-def display_formula_nodes(container: Any, *, noise_profile: str | None = None) -> list[Any]:
+def display_formula_nodes(
+    container: Any, *, noise_profile: str | None = None
+) -> list[Any]:
     if not isinstance(container, Tag):
         return []
     nodes: list[Any] = []

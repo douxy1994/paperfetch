@@ -5,19 +5,21 @@ from __future__ import annotations
 import re
 from typing import Any
 from collections.abc import Mapping
-from urllib.parse import quote, urljoin, urlparse
+from urllib.parse import quote, unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
 from ..extraction.html._metadata import parse_html_metadata
-from ..extraction.html.assets import (
-    extract_figure_assets,
-    extract_supplementary_assets,
-)
+from ..extraction.html.assets import extract_figure_assets
 from ..extraction.html.formula_rules import is_tex_formula_script_node
 from ..extraction.html.parsing import choose_parser
 from ..extraction.html.provider_rules import COMMON_ACCESS_BLOCK_TOKENS
-from ..models.markdown import image_reference_candidates, image_references_match, iter_markdown_images
+from ..extraction.html.signals import HtmlExtractionFailure
+from ..models.markdown import (
+    image_reference_candidates,
+    image_references_match,
+    iter_markdown_images,
+)
 from ..publisher_identity import normalize_doi
 from ..quality.html_signals import TextMarkerRule, TextMarkerSignalSet
 from ..utils import normalize_text
@@ -106,6 +108,7 @@ IOP_HIGH_RESOLUTION_FIGURE_URL_PATTERN = re.compile(
     r"(?P<stem>.+)_(?:lr|online)(?P<suffix>\.(?:jpe?g|png|gif|webp))(?:[?#].*)?$",
     re.IGNORECASE,
 )
+IOP_SUPPLEMENTARY_ATTACHMENT_ID_PATTERN = re.compile(r"^SM\d+$", re.IGNORECASE)
 # SITE_UI_COPY_REGRESSION_MARKER: IOPScience article action labels; keep tied to provider cleanup tests.
 # STRUCTURAL_UI_COPY_HOOK: provider cleanup policy removes these only from IOP article chrome.
 IOP_MARKDOWN_PROMO_TOKENS = (
@@ -276,7 +279,9 @@ def pdf_candidate_urls(
         str(metadata.get("landing_page_url") or "")
     )
     for value in _raw_meta_values(metadata, "citation_pdf_url"):
-        _append_unique(candidates, urljoin(base_url or direct_article_url(doi or ""), value))
+        _append_unique(
+            candidates, urljoin(base_url or direct_article_url(doi or ""), value)
+        )
     for item in metadata.get("fulltext_links") or ():
         if not isinstance(item, Mapping):
             continue
@@ -310,7 +315,9 @@ def extract_references(html_text: str) -> list[dict[str, str | None]]:
     soup = BeautifulSoup(html_text, choose_parser())
     references = _extract_references_from_soup(soup)
     if not references:
-        references = _extract_references_from_metadata(parse_html_metadata(html_text, ""))
+        references = _extract_references_from_metadata(
+            parse_html_metadata(html_text, "")
+        )
     if references:
         return references
     return _extract_references_from_metadata(parse_html_metadata(html_text, ""))
@@ -351,7 +358,9 @@ def _extract_references_from_soup(soup: BeautifulSoup) -> list[dict[str, str | N
     return []
 
 
-def _extract_references_from_metadata(metadata: Mapping[str, Any]) -> list[dict[str, str | None]]:
+def _extract_references_from_metadata(
+    metadata: Mapping[str, Any],
+) -> list[dict[str, str | None]]:
     parsed: list[dict[str, str | None]] = []
     seen: set[str] = set()
     raw_meta = metadata.get("raw_meta")
@@ -414,7 +423,9 @@ def extract_figure_captions(html_text: str) -> list[str]:
 
 def _extract_figure_captions_from_soup(soup: BeautifulSoup) -> list[str]:
     captions: list[str] = []
-    for node in soup.select("figure figcaption, .figure .caption, .article-figure .caption"):
+    for node in soup.select(
+        "figure figcaption, .figure .caption, .article-figure .caption"
+    ):
         if not isinstance(node, Tag):
             continue
         caption = _clean_iop_figure_caption_text(node.get_text(" ", strip=True))
@@ -424,7 +435,9 @@ def _extract_figure_captions_from_soup(soup: BeautifulSoup) -> list[str]:
 
 
 def _plain_markdown_text(markdown_text: str) -> str:
-    return normalize_text(re.sub(r"[*_`!\[\]()]|https?://\S+", " ", markdown_text)).lower()
+    return normalize_text(
+        re.sub(r"[*_`!\[\]()]|https?://\S+", " ", markdown_text)
+    ).lower()
 
 
 def _clean_iop_figure_caption_text(caption: Any) -> str:
@@ -465,7 +478,9 @@ def _markdown_contains_caption(markdown_text: str, caption: str) -> bool:
     return len(caption_body) >= 40 and caption_body in plain_markdown
 
 
-def _markdown_contains_asset_image(markdown_text: str, asset: Mapping[str, Any]) -> bool:
+def _markdown_contains_asset_image(
+    markdown_text: str, asset: Mapping[str, Any]
+) -> bool:
     inline_candidates = [
         image_reference_candidates(image.url)
         for image in iter_markdown_images(markdown_text or "")
@@ -594,11 +609,13 @@ def extract_markdown(
         html_title,
     ):
         metadata_for_extraction["title"] = html_title
-    markdown_text, extraction = browser_workflow.extract_atypon_browser_workflow_markdown(
-        html_text,
-        source_url,
-        "iop",
-        metadata=metadata_for_extraction,
+    markdown_text, extraction = (
+        browser_workflow.extract_atypon_browser_workflow_markdown(
+            html_text,
+            source_url,
+            "iop",
+            metadata=metadata_for_extraction,
+        )
     )
     finalized = dict(extraction)
     if html_title:
@@ -614,7 +631,9 @@ def extract_markdown(
         markdown_text = _append_missing_figure_captions(markdown_text, figure_captions)
     references = _extract_references_from_soup(soup)
     if not references:
-        references = _extract_references_from_metadata(parse_html_metadata(html_text, ""))
+        references = _extract_references_from_metadata(
+            parse_html_metadata(html_text, "")
+        )
     if references:
         finalized["references"] = references
         markdown_text = _append_references_markdown(markdown_text, references)
@@ -676,7 +695,11 @@ def _remove_iop_formula_fallback_asset_nodes(container: Any) -> None:
     if not isinstance(container, Tag):
         return
     for node in list(container.select(".inline-eqn, .display-eqn")):
-        if isinstance(node, Tag) and node.parent is not None and _is_iop_latex_formula_container(node):
+        if (
+            isinstance(node, Tag)
+            and node.parent is not None
+            and _is_iop_latex_formula_container(node)
+        ):
             node.decompose()
     for node in list(container.select(".texImage")):
         if (
@@ -709,9 +732,7 @@ def _iop_figure_preview_is_accepted(asset: Mapping[str, Any]) -> bool:
         for field in ("url", "preview_url", "full_size_url", "original_url")
     ]
     return any(
-        token in url
-        for url in urls
-        for token in IOP_ACCEPTED_FIGURE_PREVIEW_URL_TOKENS
+        token in url for url in urls for token in IOP_ACCEPTED_FIGURE_PREVIEW_URL_TOKENS
     )
 
 
@@ -729,7 +750,9 @@ def _iop_high_resolution_figure_url(value: str | None) -> str:
     return f"{match.group('stem')}_hr{match.group('suffix')}"
 
 
-def _augment_iop_figure_resolution_candidates(asset: Mapping[str, Any]) -> dict[str, Any]:
+def _augment_iop_figure_resolution_candidates(
+    asset: Mapping[str, Any],
+) -> dict[str, Any]:
     item = dict(asset)
     if normalize_text(str(item.get("kind") or "")).lower() != "figure":
         return item
@@ -737,7 +760,9 @@ def _augment_iop_figure_resolution_candidates(asset: Mapping[str, Any]) -> dict[
         return item
 
     for field in ("preview_url", "url", "original_url", "source_url"):
-        high_resolution_url = _iop_high_resolution_figure_url(str(item.get(field) or ""))
+        high_resolution_url = _iop_high_resolution_figure_url(
+            str(item.get(field) or "")
+        )
         if high_resolution_url:
             item["full_size_url"] = high_resolution_url
             break
@@ -756,6 +781,169 @@ def _mark_iop_accepted_figure_previews(
     return marked
 
 
+def _iop_supplementary_index_url_matches(url: str, doi: str) -> bool:
+    normalized_doi = normalize_doi(doi)
+    if not normalized_doi or not is_iop_url(url):
+        return False
+    path = unquote(urlparse(url).path).rstrip("/").lower()
+    expected_prefix = f"/article/{normalized_doi}/data".lower()
+    if not path.startswith(expected_prefix):
+        return False
+    suffix = path[len(expected_prefix) :]
+    return not suffix or suffix.isdigit()
+
+
+def extract_supplementary_index_urls(
+    html_text: str,
+    source_url: str,
+    *,
+    doi: str,
+) -> list[str]:
+    """Return bounded IOP `/data` index URLs declared by an article page."""
+
+    normalized_doi = normalize_doi(doi)
+    if not normalized_doi:
+        return []
+    soup = BeautifulSoup(html_text, choose_parser())
+    candidates: list[str] = []
+    seen: set[str] = set()
+    for anchor in soup.find_all("a", href=True):
+        href = normalize_text(str(anchor.get("href") or ""))
+        absolute_url = urljoin(source_url, href)
+        if not _iop_supplementary_index_url_matches(absolute_url, normalized_doi):
+            continue
+        marker = anchor.find(id=re.compile(r"^supplDataLink$", re.IGNORECASE))
+        anchor_id = normalize_text(str(anchor.get("id") or ""))
+        text = normalize_text(anchor.get_text(" ", strip=True)).lower()
+        structurally_declared = bool(marker) or anchor_id.lower() == "suppldatalink"
+        semantically_declared = any(
+            token in text for token in IOP_SUPPLEMENTARY_TEXT_TOKENS
+        )
+        if not structurally_declared and not semantically_declared:
+            continue
+        key = absolute_url.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+        candidates.append(absolute_url)
+    return candidates
+
+
+def _iop_supplementary_filename(anchor: Tag, attachment_url: str) -> str:
+    download_name = normalize_text(str(anchor.get("download") or ""))
+    if download_name:
+        return download_name
+    path = unquote(urlparse(attachment_url).path).rstrip("/")
+    return normalize_text(path.rsplit("/", 1)[-1] if path else "")
+
+
+def _iop_supplementary_page_doi(
+    soup: BeautifulSoup,
+    html_text: str,
+    source_url: str,
+) -> str:
+    metadata_doi = normalize_doi(
+        str(parse_html_metadata(html_text, source_url).get("doi") or "")
+    )
+    if metadata_doi:
+        return metadata_doi
+    doi_node = soup.select_one("#doi")
+    if isinstance(doi_node, Tag):
+        return normalize_doi(doi_node.get_text(" ", strip=True))
+    return ""
+
+
+def extract_supplementary_data_assets(
+    html_text: str,
+    source_url: str,
+    *,
+    expected_doi: str | None = None,
+) -> list[dict[str, Any]]:
+    """Extract real `SM####` attachments from an IOP supplementary data page."""
+
+    soup = BeautifulSoup(html_text, choose_parser())
+    scope = soup.select_one("#supplementarydata")
+    if not isinstance(scope, Tag):
+        page_summary = normalize_text(soup.get_text(" ", strip=True)).lower()[:4000]
+        title = normalize_text(
+            soup.title.get_text(" ", strip=True) if soup.title else ""
+        )
+        challenge_text = f"{title} {page_summary}".lower()
+        if any(token in challenge_text for token in IOP_ACCESS_BLOCK_TEXT_TOKENS):
+            raise HtmlExtractionFailure(
+                "iop_supplementary_index_blocked",
+                "IOP supplementary data index returned a challenge or access-block page.",
+            )
+        raise HtmlExtractionFailure(
+            "iop_supplementary_index_scope_missing",
+            "IOP supplementary data index did not expose its attachment scope.",
+        )
+
+    normalized_expected_doi = normalize_doi(expected_doi)
+    if normalized_expected_doi:
+        page_doi = _iop_supplementary_page_doi(soup, html_text, source_url)
+        if not page_doi:
+            raise HtmlExtractionFailure(
+                "iop_supplementary_index_identity_missing",
+                "IOP supplementary data index did not identify its parent article DOI.",
+            )
+        if page_doi != normalized_expected_doi:
+            raise HtmlExtractionFailure(
+                "iop_supplementary_index_doi_mismatch",
+                "IOP supplementary data index belongs to a different article DOI.",
+            )
+
+    assets: list[dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for anchor in scope.find_all("a", href=True):
+        source_ref = normalize_text(str(anchor.get("id") or ""))
+        if not IOP_SUPPLEMENTARY_ATTACHMENT_ID_PATTERN.fullmatch(source_ref):
+            continue
+        href = normalize_text(str(anchor.get("href") or ""))
+        attachment_url = urljoin(source_url, href)
+        parsed = urlparse(attachment_url)
+        if parsed.scheme.lower() not in {"http", "https"} or not parsed.netloc:
+            continue
+        key = (source_ref.lower(), attachment_url)
+        if key in seen:
+            continue
+        seen.add(key)
+
+        heading = (
+            normalize_text(anchor.get_text(" ", strip=True)) or "Supplementary data"
+        )
+        parent_text = normalize_text(
+            anchor.parent.get_text(" ", strip=True)
+            if isinstance(anchor.parent, Tag)
+            else ""
+        )
+        caption = parent_text
+        if caption.lower().startswith(heading.lower()):
+            caption = normalize_text(caption[len(heading) :])
+        asset: dict[str, Any] = {
+            "kind": "supplementary",
+            "heading": heading,
+            "caption": caption,
+            "section": "supplementary",
+            "url": attachment_url,
+            "source_ref": source_ref,
+            "source_kind": "iop_supplementary_data_page",
+            "source_page_url": source_url,
+            "referer_url": source_url,
+        }
+        filename_hint = _iop_supplementary_filename(anchor, attachment_url)
+        if filename_hint:
+            asset["filename_hint"] = filename_hint
+        assets.append(asset)
+
+    if not assets:
+        raise HtmlExtractionFailure(
+            "iop_supplementary_index_empty",
+            "IOP supplementary data index declared no SM-numbered attachments.",
+        )
+    return assets
+
+
 def extract_scoped_html_assets(
     body_html_text: str,
     source_url: str,
@@ -769,18 +957,12 @@ def extract_scoped_html_assets(
     assets: list[dict[str, Any]] = [
         dict(asset) for asset in extract_figure_assets(body_html, source_url)
     ]
-    if asset_profile == "all":
-        supplementary_scope = (
-            _iop_asset_extraction_html(supplementary_html_text)
-            if supplementary_html_text is not None
-            else body_html
-        )
+    if asset_profile == "all" and supplementary_html_text is not None:
         assets.extend(
             dict(asset)
-            for asset in extract_supplementary_assets(
-                supplementary_scope,
+            for asset in extract_supplementary_data_assets(
+                supplementary_html_text,
                 source_url,
-                noise_profile=IOP_NOISE_PROFILE,
             )
         )
     return _mark_iop_accepted_figure_previews(assets)
@@ -791,13 +973,21 @@ scoped_asset_extractor = extract_scoped_html_assets
 
 def _is_iop_article_body_node(node: Tag) -> bool:
     attrs = getattr(node, "attrs", None) or {}
-    return normalize_text(str(attrs.get("property") or attrs.get("itemprop") or "")).lower() == "articlebody"
+    return (
+        normalize_text(
+            str(attrs.get("property") or attrs.get("itemprop") or "")
+        ).lower()
+        == "articlebody"
+    )
 
 
 def _contains_iop_abstract(node: Tag) -> bool:
-    return node.select_one(
-        ".article-abstract, [itemprop='description'], #artAbst, #abstracts, [role='doc-abstract']"
-    ) is not None
+    return (
+        node.select_one(
+            ".article-abstract, [itemprop='description'], #artAbst, #abstracts, [role='doc-abstract']"
+        )
+        is not None
+    )
 
 
 def _complete_iop_article_container(body: Tag) -> Tag | None:
@@ -879,6 +1069,8 @@ __all__ = [
     "extract_pdf_candidate_urls_from_html",
     "extract_references",
     "extract_scoped_html_assets",
+    "extract_supplementary_data_assets",
+    "extract_supplementary_index_urls",
     "extract_title",
     "iop_asset_body_container",
     "iop_asset_figure_extraction",

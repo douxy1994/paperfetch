@@ -46,7 +46,7 @@ resolve
 
 必须遵守这些原则：
 
-- Provider 身份、路由信号、默认资产策略、status 顺序和 registry factory 统一来自 provider entry module 顶部注册的 `ProviderBundle`；`PROVIDER_CATALOG` 和 source map 由 bundle discovery 懒加载派生。
+- Provider 身份、路由信号、默认资产策略、status 顺序和 registry factory 统一来自 provider entry module 顶部注册的 `ProviderBundle`；`PROVIDER_CATALOG` 和 source map 由 bundle discovery 懒加载派生。内置 entry module 由显式清单管理；新增动态 entry 必须包含真实 `register_provider_bundle(...)` 调用，注释、docstring 或普通字符串不会触发 discovery。
 - Provider 主链必须返回 typed payload：`ProviderContent`、`ProviderFetchResult`、`ProviderArtifacts`、`warnings`、`trace` 和 `merged_metadata`。
 - 不允许通过 `raw_payload.metadata[...]` 读写结构化状态；它只是 read-only compatibility view。
 - Provider 层只做 publisher adapter；通用 HTML、表格、公式、引用、资产验证、availability 判定优先挂到已有 canonical owner。
@@ -67,7 +67,7 @@ resolve
 - `asset_profile` 语义：`none` / `body` / `all` 下分别下载什么，PDF fallback 是否应保存 `pymupdf4llm` 导出的 PDF 图片。
 - `probe_status()` 的本地检查边界见 [`providers.md`](providers.md#provider-status-local-boundary)。
 
-如果 provider 是开放获取出版社，默认优先 direct HTTP / XML / HTML；不要为了“更稳”直接引入 browser runtime。只有明确存在动态渲染、CDN 对普通 HTTP 拦截或 challenge runtime 需求时，才考虑接入 CDP browser runtime。
+如果 provider 是开放获取出版社，默认优先 direct HTTP / XML / HTML；不要为了“更稳”直接引入 browser runtime。只有明确存在动态渲染、CDN 对普通 HTTP 拦截或 challenge runtime 需求时，才考虑接入 selected-browser runtime。
 
 ## 1.5 用 scaffold 起步
 
@@ -131,7 +131,7 @@ register_provider_bundle(
 <a id="client-contract"></a>
 ## 3. Client Contract + Markdown Review Loop
 
-优先继承 `paper_fetch.providers.base.ProviderClient`。新 provider 的全文主链默认声明为 class-level `waterfall_steps`，只在确有特殊模板流程时覆盖必要 hook：
+优先继承 `paper_fetch.providers.base.ProviderClient`。新 provider 的全文主链默认声明为 class-level `waterfall_steps`，元素必须是 `WaterfallStep`；只有像 `BrowserWorkflowClient` 这样已经覆盖 `fetch_raw_fulltext()` 的模板实现，才可以用 `route_order` 保存字符串路线标签。只在确有特殊模板流程时覆盖必要 hook：
 
 - `to_article_model(metadata, raw_payload, *, downloaded_assets=None, asset_failures=None, context=None)`
 - `html_to_markdown(html_text, source_url, *, metadata, context)`，仅 HTML 路线需要
@@ -190,7 +190,7 @@ step 函数放在 provider-owned 模块中，签名使用 `def newpub_fetch_html
 
 ### Provider mypy 分批纳入
 
-当前 mypy 覆盖面包含核心模型、workflow、provider base/protocols、MCP schema，以及第一批真实 provider：`src/paper_fetch/providers/copernicus.py` 和 `src/paper_fetch/providers/_article_markdown_copernicus.py`。后续新增 provider typing 批次必须先跑 targeted mypy 清零，再把文件加入 `pyproject.toml` 的 `[tool.mypy].files`。
+当前 mypy 默认覆盖完整 `src/paper_fetch` 生产包。后续新增 provider 必须先跑 targeted mypy 清零，再通过完整包门禁；本地 preflight 与 CI 都通过 `pyproject.toml` 的 `no_site_packages = true` 避免开发机第三方 stub 与 CI Python 版本不一致时阻断项目文件检查。
 
 下一批 backlog 是 arXiv，不应混入 Copernicus 或其它 provider 批次。开始前先运行：
 
@@ -198,7 +198,7 @@ step 函数放在 provider-owned 模块中，签名使用 `def newpub_fetch_html
 PYTHONPATH=src python3 -m mypy src/paper_fetch/providers/arxiv.py src/paper_fetch/providers/_arxiv_*.py --show-error-codes
 ```
 
-已知待处理类型边界包括 `ProviderMetadata` / `dict[str, Any]` 协议收敛、provider override 参数回到 `Mapping[str, Any]`、SourceKind 显式标注、只读列表参数改用 `Sequence[...]`、asset facade 显式导出补全，以及 `_arxiv_assets.py` 内的局部变量重定义和可空赋值问题。修复时不得通过文件级 `type: ignore`、扩大 `ignore_missing_imports` 或 `ignore_errors` 掩盖错误。
+已知待处理类型边界主要集中在尚未纳入的 provider 批次，例如 arXiv 相关 helper 的 `ProviderMetadata` / `dict[str, Any]` 协议收敛、SourceKind 显式标注、只读列表参数改用 `Sequence[...]`，以及 `_arxiv_assets.py` 内的局部变量重定义和可空赋值问题。修复时不得通过文件级 `type: ignore`、扩大 `ignore_missing_imports` 或 `ignore_errors` 掩盖错误。
 
 实现过程中必须把 Markdown Review Loop 当作主循环：
 
@@ -313,10 +313,11 @@ Publisher 私有的 supplementary 属性或埋点必须由 provider extractor �
 - Fulltext 路线使用 `DEFAULT_FULLTEXT_TIMEOUT_SECONDS`。
 - 可重试的 publisher GET 使用 `retry_on_transient=True`。
 - API 或限流敏感路线根据现有 provider 模式启用 rate-limit retry。
-- 请求头用 `build_user_agent(env)` 构造稳定 UA。
+- API / metadata 路线用 `build_user_agent(env)` 构造稳定工具 UA；publisher-facing HTML/PDF 直连用浏览器形态 UA，例如 `build_publisher_user_agent(env)` 或 browser workflow 现有 header helper，避免把 `paper-fetch-skill/...` 发给出版社 CDN。
+- 官方 PDF fallback 优先走 `PdfFallbackStrategy`；如果直接调用 `pdf_fetch_result_from_response()` / `pdf_fetch_result_from_bytes()`，应显式允许真实 PDF 的 PDF-only 保留，避免扫描 PDF 无法转 Markdown 时降级成 Crossref metadata-only source。
 - `context.parse_cache` 用于同一次 fetch 内复用 XML root、HTML extraction payload、asset extraction payload。
-- Browser runtime 只能通过 `RuntimeContext`、`BrowserContextManager` 或现有 browser workflow helper 管理；生产路径统一使用 managed/external CDP browser connection 打开 context/page。
-- Browser workflow 的 runtime-shared browser-backed 资产下载必须复用 `RuntimeContext` 的 keyed browser manager，并在调用线程串行打开隔离 context/page；不得把主线程持有的同步 Playwright page/context 交给 worker 线程使用。
+- Browser runtime 只能通过 `RuntimeContext`、browser runtime facade 或现有 browser workflow helper 管理；生产路径统一使用 Camoufox 打开 context/page。
+- Browser workflow 的 browser-backed HTML、PDF fallback 与资产下载必须通过 `RuntimeContext` / `BrowserContextManager` 管理的 keyed browser manager；managed Chrome 生命周期按进程共享，具体 context/page 必须在调用线程通过线程本地 CDP 连接创建。不得把主线程持有的同步 Playwright page/context 交给 worker 线程使用。
 - 普通 HTTP 资产下载仍可并发；只有显式 thread-private browser fetcher 才能在 worker 线程创建并关闭自己的 page/context/manager，且必须在同一个 worker 线程内关闭这些 sync browser 对象，否则容易残留浏览器子进程。
 
 不要新增需要全局状态的缓存或隐藏环境变量。新环境变量必须写入 provider docs、status check、部署说明或 `.env.example`，并在 tests 中覆盖缺失和配置成功两种状态。

@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from collections.abc import Mapping
 
 from dotenv import dotenv_values
 from platformdirs import user_config_path, user_data_path
+
+from .version import __version__
 
 APP_NAME = "paper-fetch"
 DEFAULT_USER_CONFIG_DIR = user_config_path(APP_NAME, appauthor=False)
@@ -18,9 +21,35 @@ DEFAULT_MCP_DOWNLOAD_DIR = DEFAULT_USER_DATA_DIR / "downloads"
 DEFAULT_CLI_DOWNLOAD_DIR = Path("live-downloads")
 DEFAULT_REPO_ROOT = Path(__file__).resolve().parents[2]
 
-DEFAULT_USER_AGENT = "paper-fetch-skill/2.6.2"
+DEFAULT_USER_AGENT = f"paper-fetch-skill/{__version__}"
+DEFAULT_PUBLISHER_USER_AGENT = (
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 "
+    "(KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+CONFIG_SOURCE_PROCESS_ENV = "process_env"
+CONFIG_SOURCE_EXPLICIT_ENV_FILE = "explicit_env_file"
+CONFIG_SOURCE_ENV_VAR_FILE = "env_var_file"
+CONFIG_SOURCE_USER_CONFIG = "user_config"
+CONFIG_SOURCE_DEFAULT = "default"
+CONFIG_SOURCE_UNSET = "unset"
+CONFIG_SOURCE_PRECEDENCE = (
+    CONFIG_SOURCE_PROCESS_ENV,
+    CONFIG_SOURCE_EXPLICIT_ENV_FILE,
+    CONFIG_SOURCE_ENV_VAR_FILE,
+    CONFIG_SOURCE_USER_CONFIG,
+    CONFIG_SOURCE_DEFAULT,
+)
 USER_AGENT_ENV_VAR = "PAPER_FETCH_SKILL_USER_AGENT"
 BROWSER_USER_AGENT_ENV_VAR = "PAPER_FETCH_BROWSER_USER_AGENT"
+BROWSER_BACKEND_ENV_VAR = "PAPER_FETCH_BROWSER_BACKEND"
+BROWSER_HEADLESS_ENV_VAR = "PAPER_FETCH_BROWSER_HEADLESS"
+BROWSER_BINARY_PATH_ENV_VAR = "PAPER_FETCH_BROWSER_BINARY_PATH"
+BROWSER_PROFILE_DIR_ENV_VAR = "PAPER_FETCH_BROWSER_PROFILE_DIR"
+BROWSER_USER_DATA_DIR_ENV_VAR = "PAPER_FETCH_BROWSER_USER_DATA_DIR"
+BROWSER_TIMEOUT_MS_ENV_VAR = "PAPER_FETCH_BROWSER_TIMEOUT_MS"
+DEFAULT_BROWSER_BACKEND = "camoufox"
+SUPPORTED_BROWSER_BACKENDS = frozenset({"camoufox"})
 ENV_FILE_ENV_VAR = "PAPER_FETCH_ENV_FILE"
 DOWNLOAD_DIR_ENV_VAR = "PAPER_FETCH_DOWNLOAD_DIR"
 XDG_DATA_HOME_ENV_VAR = "XDG_DATA_HOME"
@@ -35,15 +64,57 @@ HTTP_DISK_CACHE_MAX_BYTES_ENV_VAR = "PAPER_FETCH_HTTP_DISK_CACHE_MAX_BYTES"
 HTTP_DISK_CACHE_MAX_AGE_DAYS_ENV_VAR = "PAPER_FETCH_HTTP_DISK_CACHE_MAX_AGE_DAYS"
 ASSET_DOWNLOAD_CONCURRENCY_ENV_VAR = "PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY"
 DEFAULT_ASSET_DOWNLOAD_CONCURRENCY = 4
-CLOAKBROWSER_HEADLESS_ENV_VAR = "CLOAKBROWSER_HEADLESS"
-CLOAKBROWSER_BINARY_PATH_ENV_VAR = "CLOAKBROWSER_BINARY_PATH"
-CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR = "CLOAKBROWSER_CDP_ENDPOINT"
-CLOAKBROWSER_PROFILE_DIR_ENV_VAR = "CLOAKBROWSER_PROFILE_DIR"
-CLOAKBROWSER_USER_DATA_DIR_ENV_VAR = "CLOAKBROWSER_USER_DATA_DIR"
-CLOAKBROWSER_TIMEOUT_MS_ENV_VAR = "CLOAKBROWSER_TIMEOUT_MS"
+CDP_EXTERNAL_NEW_CONTEXT_ENV_VAR = "PAPER_FETCH_CDP_EXTERNAL_NEW_CONTEXT"
 AMS_STORAGE_STATE_JSON_ENV_VAR = "PAPER_FETCH_AMS_STORAGE_STATE_JSON"
 WILEY_STORAGE_STATE_JSON_ENV_VAR = "PAPER_FETCH_WILEY_STORAGE_STATE_JSON"
 WILEY_PROFILE_DIR_ENV_VAR = "PAPER_FETCH_WILEY_PROFILE_DIR"
+
+
+@dataclass(frozen=True)
+class BrowserBackendSelection:
+    """Resolved browser backend choice."""
+
+    backend: str
+    explicit: bool
+
+    @property
+    def notes(self) -> tuple[str, ...]:
+        return ()
+
+
+def resolve_browser_backend_selection(
+    env: Mapping[str, str],
+) -> BrowserBackendSelection:
+    """Resolve the backend without probing or importing a browser runtime."""
+
+    raw_value = str(env.get(BROWSER_BACKEND_ENV_VAR, "")).strip()
+    backend = raw_value.lower() or DEFAULT_BROWSER_BACKEND
+    return BrowserBackendSelection(
+        backend=backend,
+        explicit=bool(raw_value),
+    )
+
+
+def configured_browser_backend(env: Mapping[str, str]) -> str:
+    """Return the explicitly selected browser backend or the stable default."""
+
+    return resolve_browser_backend_selection(env).backend
+
+
+def browser_env_value(
+    env: Mapping[str, str],
+    generic_name: str,
+    *,
+    legacy_name: str | None = None,
+) -> str:
+    """Resolve a generic browser setting before a backend-specific legacy name."""
+
+    generic = str(env.get(generic_name, "")).strip()
+    if generic or generic_name in env:
+        return generic
+    if legacy_name is None:
+        return ""
+    return str(env.get(legacy_name, "")).strip()
 
 
 def load_env_file(path: Path) -> dict[str, str]:
@@ -68,6 +139,76 @@ def _active_env(env: Mapping[str, str] | None = None) -> Mapping[str, str]:
     return os.environ if env is None else env
 
 
+@dataclass(frozen=True)
+class RuntimeEnvResolution:
+    """Merged runtime values plus non-secret source metadata."""
+
+    values: dict[str, str]
+    sources: dict[str, str]
+    layers: tuple[dict[str, object], ...]
+
+
+def resolve_runtime_env(
+    base_env: Mapping[str, str] | None = None,
+    *,
+    env_file: Path | None = None,
+) -> RuntimeEnvResolution:
+    """Resolve runtime env and retain the winning source for each key."""
+
+    process_env = dict(_active_env(base_env))
+    explicit_env_file = normalize_env_file_path(env_file)
+    configured_env_file = normalize_env_file_path(process_env.get(ENV_FILE_ENV_VAR))
+
+    candidates: list[tuple[Path, str]] = []
+
+    def add_candidate(path: Path | None, source: str) -> None:
+        if path is None:
+            return
+        for index, (existing, _) in enumerate(candidates):
+            if existing == path:
+                candidates[index] = (path, source)
+                return
+        candidates.append((path, source))
+
+    add_candidate(DEFAULT_USER_ENV_FILE, CONFIG_SOURCE_USER_CONFIG)
+    add_candidate(configured_env_file, CONFIG_SOURCE_ENV_VAR_FILE)
+    add_candidate(explicit_env_file, CONFIG_SOURCE_EXPLICIT_ENV_FILE)
+
+    merged: dict[str, str] = {}
+    sources: dict[str, str] = {}
+    for candidate, source in candidates:
+        loaded = load_env_file(candidate)
+        merged.update(loaded)
+        sources.update(dict.fromkeys(loaded, source))
+    merged.update(process_env)
+    sources.update(dict.fromkeys(process_env, CONFIG_SOURCE_PROCESS_ENV))
+
+    layers = (
+        {
+            "source": CONFIG_SOURCE_PROCESS_ENV,
+            "present": bool(process_env),
+        },
+        {
+            "source": CONFIG_SOURCE_EXPLICIT_ENV_FILE,
+            "present": bool(
+                explicit_env_file is not None and explicit_env_file.is_file()
+            ),
+        },
+        {
+            "source": CONFIG_SOURCE_ENV_VAR_FILE,
+            "present": bool(
+                configured_env_file is not None and configured_env_file.is_file()
+            ),
+        },
+        {
+            "source": CONFIG_SOURCE_USER_CONFIG,
+            "present": DEFAULT_USER_ENV_FILE.is_file(),
+        },
+        {"source": CONFIG_SOURCE_DEFAULT, "present": True},
+    )
+    return RuntimeEnvResolution(values=merged, sources=sources, layers=layers)
+
+
 def build_runtime_env(
     base_env: Mapping[str, str] | None = None,
     *,
@@ -77,23 +218,47 @@ def build_runtime_env(
 
     Precedence, highest to lowest:
     - process environment / base_env
-    - explicit env_file arg or PAPER_FETCH_ENV_FILE
+    - explicit env_file arg
+    - file named by PAPER_FETCH_ENV_FILE
     - ~/.config/paper-fetch/.env
+    - built-in defaults applied by individual consumers
     """
-    process_env = dict(_active_env(base_env))
-    explicit_env_file = normalize_env_file_path(env_file)
-    configured_env_file = normalize_env_file_path(process_env.get(ENV_FILE_ENV_VAR))
+    return resolve_runtime_env(base_env, env_file=env_file).values
 
-    merged: dict[str, str] = {}
-    candidates: list[Path] = [DEFAULT_USER_ENV_FILE]
-    for candidate in (configured_env_file, explicit_env_file):
-        if candidate is not None and candidate not in candidates:
-            candidates.append(candidate)
 
-    for candidate in candidates:
-        merged.update(load_env_file(candidate))
-    merged.update(process_env)
-    return merged
+def runtime_configuration_report(
+    names: list[str] | tuple[str, ...] | set[str] | frozenset[str],
+    *,
+    base_env: Mapping[str, str] | None = None,
+    env_file: Path | None = None,
+    default_names: set[str] | frozenset[str] = frozenset(),
+    sensitive_names: set[str] | frozenset[str] = frozenset(),
+) -> dict[str, object]:
+    """Return source/presence facts without exposing configuration values."""
+
+    resolution = resolve_runtime_env(base_env, env_file=env_file)
+    values: list[dict[str, object]] = []
+    for name in sorted(set(names)):
+        source = resolution.sources.get(name)
+        if source is None:
+            source = (
+                CONFIG_SOURCE_DEFAULT if name in default_names else CONFIG_SOURCE_UNSET
+            )
+        present = bool(str(resolution.values.get(name, "")).strip())
+        values.append(
+            {
+                "name": name,
+                "source": source,
+                "present": present,
+                "uses_default": source == CONFIG_SOURCE_DEFAULT,
+                "sensitive": name in sensitive_names,
+            }
+        )
+    return {
+        "precedence": list(CONFIG_SOURCE_PRECEDENCE),
+        "layers": [dict(layer) for layer in resolution.layers],
+        "values": values,
+    }
 
 
 def build_user_agent(env: Mapping[str, str]) -> str:
@@ -108,8 +273,13 @@ def build_browser_user_agent(env: Mapping[str, str]) -> str | None:
     browser_user_agent = env.get(BROWSER_USER_AGENT_ENV_VAR, "").strip()
     if browser_user_agent:
         return browser_user_agent
-    shared_user_agent = env.get(USER_AGENT_ENV_VAR, "").strip()
-    return shared_user_agent or None
+    return None
+
+
+def build_publisher_user_agent(env: Mapping[str, str]) -> str:
+    return (
+        env.get(BROWSER_USER_AGENT_ENV_VAR, "").strip() or DEFAULT_PUBLISHER_USER_AGENT
+    )
 
 
 def _configured_download_dir(env: Mapping[str, str] | None = None) -> Path | None:

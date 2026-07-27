@@ -89,7 +89,9 @@ MDPI_BROWSER_PROFILE = ProviderBrowserProfile(
 )
 
 
-def _mdpi_landing_url(metadata: Mapping[str, Any], doi: str | None = None) -> str | None:
+def _mdpi_landing_url(
+    metadata: Mapping[str, Any], doi: str | None = None
+) -> str | None:
     landing = normalize_text(str(metadata.get("landing_page_url") or ""))
     if is_mdpi_url(landing):
         return landing
@@ -117,7 +119,7 @@ def _metadata_pdf_urls(metadata: Mapping[str, Any]) -> list[str]:
 class MdpiClient(browser_workflow.BrowserWorkflowClient):
     name = MDPI_BROWSER_PROFILE.name
     profile = MDPI_BROWSER_PROFILE
-    waterfall_steps = ("article_html", "pdf_fallback", "metadata_only")
+    route_order = ("article_html", "pdf_fallback", "metadata_only")
     article_asset_failure_warning = False
 
     def html_candidates(self, doi: str, metadata: Mapping[str, Any]) -> list[str]:
@@ -158,7 +160,9 @@ class MdpiClient(browser_workflow.BrowserWorkflowClient):
 
     def article_source_for_payload(self, raw_payload: RawFulltextPayload) -> str:
         content = raw_payload.content
-        route = normalize_text(content.route_kind if content is not None else "").lower()
+        route = normalize_text(
+            content.route_kind if content is not None else ""
+        ).lower()
         if route == PDF_FALLBACK:
             return "mdpi_pdf"
         return "mdpi_html"

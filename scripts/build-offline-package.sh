@@ -23,7 +23,8 @@ Builds a CPython 3.11-3.14 offline runtime package containing:
   - command wrappers under bin/
   - private Python launcher under runtime/paper-fetch-python
   - texmath under formula-tools/
-  - cloakbrowser Python package, which downloads/locates the Chrome binary on first browser-backed use
+  - image-tools directory and installer wrapper for optional Ghostscript/libvips converters
+  - the full browser and PDF extras; browser binaries are not bundled
 Linux builds produce a self-extracting .sh installer. macOS builds produce a .tar.gz bundle.
 EOF
 }
@@ -150,12 +151,12 @@ build_project_runtime() {
   "$PYTHON_BIN" -m pip download \
     --dest "$wheelhouse" \
     --only-binary=:all: \
-    "${wheels[0]}"
+    "${wheels[0]}[full]"
 
   shopt -s nullglob
-  local cloakbrowser_wheels=("$wheelhouse"/cloakbrowser-*.whl)
+  local camoufox_wheels=("$wheelhouse"/camoufox-*.whl)
   shopt -u nullglob
-  [ "${#cloakbrowser_wheels[@]}" -gt 0 ] || die "Dependency wheelhouse is missing cloakbrowser-*.whl."
+  [ "${#camoufox_wheels[@]}" -gt 0 ] || die "Dependency wheelhouse is missing camoufox-*.whl."
 
   log "Installing project runtime into package"
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
@@ -164,23 +165,53 @@ build_project_runtime() {
     --no-index \
     --find-links "$wheelhouse" \
     --only-binary=:all: \
-    "${wheels[0]}"
+    "${wheels[0]}[full]"
 
   log "Precompiling Python runtime bytecode"
   "$PYTHON_BIN" -m compileall -q "$site_packages"
 
   PYTHONPATH="$site_packages${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PYTHON_BIN" -X utf8 -c 'import cloakbrowser; import playwright; import paper_fetch; import paper_fetch.mcp.server; from paper_fetch.runtime_browser import BrowserContextManager; assert hasattr(cloakbrowser, "ensure_binary"); assert BrowserContextManager is not None'
+    "$PYTHON_BIN" -X utf8 -c 'import camoufox; import playwright; import pymupdf; import paper_fetch; import paper_fetch.mcp.server; from paper_fetch.runtime_browser import BrowserContextManager; assert hasattr(camoufox, "Camoufox"); assert BrowserContextManager is not None'
 }
 
 bundle_formula_tools() {
   local staging="$1"
+  local formula_tools="$staging/formula-tools"
+  local node_bin npm_bin texmath_bin texmath_version version_output latex_output
   log "Bundling formula tools"
+  node_bin="$(command -v node || true)"
+  npm_bin="$(command -v npm || true)"
+  [ -n "$node_bin" ] || die "Bundling formula tools requires Node.js."
+  [ -n "$npm_bin" ] || die "Bundling formula tools requires npm."
+
   PYTHONPATH="$staging/runtime/site-packages${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PYTHON_BIN" -m paper_fetch.formula.install --target-dir "$staging/formula-tools" --no-node
-  "$staging/formula-tools/bin/texmath" --help >/dev/null
+    "$PYTHON_BIN" -m paper_fetch.formula.install \
+      --target-dir "$formula_tools" \
+      --no-node
+  texmath_bin="$formula_tools/bin/texmath"
+  [ -x "$texmath_bin" ] || die "Bundled texmath executable is missing: $texmath_bin"
+  texmath_version="$(
+    PYTHONPATH="$staging/runtime/site-packages${PYTHONPATH:+:$PYTHONPATH}" \
+      "$PYTHON_BIN" -c 'from paper_fetch.formula.install import TEXMATH_VERSION; print(TEXMATH_VERSION)'
+  )"
+  version_output="$("$texmath_bin" --version 2>&1)"
+  [ "$version_output" = "Version $texmath_version" ] \
+    || die "Bundled texmath version mismatch: expected $texmath_version, got ${version_output:-<empty>}."
+  latex_output="$(
+    printf '%s' '<math xmlns="http://www.w3.org/1998/Math/MathML"><mfrac><msub><mi>x</mi><mn>1</mn></msub><msqrt><mrow><mi>y</mi><mo>+</mo><mn>1</mn></mrow></msqrt></mfrac></math>' \
+      | "$texmath_bin" -f mathml -t tex
+  )"
+  [ "$latex_output" = '\frac{x_{1}}{\sqrt{y + 1}}' ] \
+    || die "Bundled texmath failed the complex MathML conversion smoke test."
+  latex_output="$(
+    printf '%s' '<math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><munderover><mo>∑</mo><mi>i</mi><mi>n</mi></munderover><msup><mi>x</mi><mi>i</mi></msup></mrow></math>' \
+      | "$texmath_bin" -f mathml -t tex
+  )"
+  [ "$latex_output" = '\sum\limits_{i}^{n}x^{i}' ] \
+    || die "Bundled texmath failed the limit-style MathML conversion smoke test."
+
   PYTHONPATH="$staging/runtime/site-packages${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PYTHON_BIN" - "$staging/formula-tools" <<'PY'
+    "$PYTHON_BIN" - "$formula_tools" <<'PY'
 from pathlib import Path
 import sys
 
@@ -188,6 +219,21 @@ from paper_fetch.formula.install import stage_bundled_node_workspace
 
 stage_bundled_node_workspace(Path(sys.argv[1]))
 PY
+  "$npm_bin" ci --omit=dev --silent --prefix "$formula_tools"
+  printf '<math><mi>x</mi></math>' \
+    | "$node_bin" "$formula_tools/mathml_to_latex_cli.mjs" \
+    | grep -q 'x'
+}
+
+bundle_image_tools() {
+  local staging="$1"
+  log "Bundling image conversion tools"
+  mkdir -p "$staging/image-tools"
+  PYTHONPATH="$staging/runtime/site-packages${PYTHONPATH:+:$PYTHONPATH}" \
+    "$PYTHON_BIN" -m paper_fetch.image_tools.install \
+      --target-dir "$staging/image-tools" \
+      --offline-bundle \
+      --repo-root "$REPO_DIR"
 }
 
 write_cmd_wrappers() {
@@ -245,7 +291,20 @@ INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 exec "$INSTALL_ROOT/runtime/paper-fetch-python" -X utf8 -m paper_fetch.formula.install "$@"
 EOF
 
-  chmod +x "$runtime/paper-fetch-python" "$bin/paper-fetch" "$bin/paper-fetch-mcp" "$bin/paper-fetch-install-formula-tools"
+  cat > "$bin/paper-fetch-install-image-tools" <<'EOF'
+#!/usr/bin/env bash
+set -euo pipefail
+
+INSTALL_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+exec "$INSTALL_ROOT/runtime/paper-fetch-python" -X utf8 -m paper_fetch.image_tools.install "$@"
+EOF
+
+  chmod +x \
+    "$runtime/paper-fetch-python" \
+    "$bin/paper-fetch" \
+    "$bin/paper-fetch-mcp" \
+    "$bin/paper-fetch-install-formula-tools" \
+    "$bin/paper-fetch-install-image-tools"
 }
 
 write_offline_readme() {
@@ -260,19 +319,20 @@ write_offline_readme() {
   cat > "$staging/README.offline.md" <<'EOF'
 # Paper Fetch Offline Package
 
-This package includes an installed Python runtime under `runtime/site-packages`, a private Python launcher at `runtime/paper-fetch-python`, command wrappers under `bin/`, and formula tools.
+This package includes an installed Python runtime under `runtime/site-packages`, a private Python launcher at `runtime/paper-fetch-python`, command wrappers under `bin/`, formula tools, and image-tools configuration for optional conversion tools.
+The offline build does not bundle Ghostscript/libvips from the build host PATH; AMS EPS/TIFF source figure conversion falls back to webpage JPG/PNG candidates when those tools are unavailable.
 The `bin/` directory exposes paper-fetch commands only; it does not include a generic `python` wrapper.
-It does not redistribute a browser binary for browser-backed providers; cloakbrowser downloads or locates Chrome on first use.
+It does not redistribute a browser binary for browser-backed providers. Default Camoufox may fetch its runtime on the first real browser-backed request; fully offline hosts must preinstall the complete Camoufox runtime.
 EOF
 
   printf '\n%s\n\n' "$install_line" >> "$staging/README.offline.md"
 
   cat >> "$staging/README.offline.md" <<'EOF'
-Browser-backed providers auto-start a managed cloakbrowser Chrome when `CLOAKBROWSER_CDP_ENDPOINT` is unset.
-Set `CLOAKBROWSER_CDP_ENDPOINT` only when you want to reuse an already-running browser, or set `CLOAKBROWSER_BINARY_PATH` to use a preinstalled Chrome binary.
-Set `CLOAKBROWSER_HEADLESS=false` only when running with a display-capable session.
+Browser-backed providers use native Camoufox.
+Set `PAPER_FETCH_BROWSER_HEADLESS=false` only when running with a display-capable session.
 
-The installer writes `CLOAKBROWSER_HEADLESS=true` and `PAPER_FETCH_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36"` into `offline.env` by default for browser-backed publisher fetches.
+The installer writes `PAPER_FETCH_BROWSER_HEADLESS=true` into `offline.env`. It does not override Camoufox's generated Firefox user agent or fingerprint settings.
+`activate-offline.sh` parses `offline.env` with python-dotenv and exports valid key/value pairs; it does not source the file as shell code.
 EOF
 }
 
@@ -301,11 +361,18 @@ write_manifest_and_checksums() {
   local target_platform="$3"
   local target_arch="$4"
   local python_tag="$5"
-  local git_revision
+  local git_revision skill_name skill_bundle_json
   git_revision="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
+  skill_name="$(installer_manifest_value skill.name)"
+  skill_bundle_json="$(
+    "$PYTHON_BIN" "$REPO_DIR/src/paper_fetch/skill_integrity.py" build \
+      --skill-dir "$staging/skills/$skill_name" \
+      --name "$skill_name" \
+      --root "skills/$skill_name"
+  )"
 
   log "Writing manifest and checksums"
-  "$PYTHON_BIN" - "$staging" "$version" "$git_revision" "$target_platform" "$target_arch" "$python_tag" "$INSTALLER_MANIFEST_FILE" <<'PY'
+  "$PYTHON_BIN" - "$staging" "$version" "$git_revision" "$target_platform" "$target_arch" "$python_tag" "$INSTALLER_MANIFEST_FILE" "$skill_bundle_json" <<'PY'
 from __future__ import annotations
 
 import json
@@ -321,12 +388,13 @@ target_platform = sys.argv[4]
 target_arch = sys.argv[5]
 python_tag = sys.argv[6]
 installer_manifest = json.loads(Path(sys.argv[7]).read_text(encoding="utf-8"))
+skill_bundle = json.loads(sys.argv[8])
 site_packages = staging / "runtime" / "site-packages"
 installed_packages = sorted(path.name for path in site_packages.glob("*.dist-info"))
 manifest_name_key = f"{target_platform}_manifest_name"
 
 payload = {
-    "schema_version": 2,
+    "schema_version": 3,
     "name": installer_manifest["packages"][manifest_name_key],
     "project": installer_manifest["project"],
     "version": version,
@@ -338,13 +406,15 @@ payload = {
         "python_tag": python_tag,
     },
     "entrypoint": "install-offline.sh",
+    "skill_bundle": skill_bundle,
     "components": {
         "python_runtime": "runtime/site-packages",
         "command_wrappers": "bin",
         "installed_package_count": len(installed_packages),
         "installer_manifest": "installer/manifest.json",
         "formula_tools": "formula-tools",
-        "cloakbrowser": {
+        "image_tools": "image-tools",
+        "camoufox": {
             "python_package": "runtime/site-packages",
             "browser_binary": "not_bundled",
         },
@@ -455,6 +525,7 @@ main() {
   copy_runtime_assets "$staging"
   build_project_runtime "$staging"
   bundle_formula_tools "$staging"
+  bundle_image_tools "$staging"
   write_cmd_wrappers "$staging"
   write_offline_readme "$staging" "$target_platform"
   write_manifest_and_checksums "$staging" "$version" "$target_platform" "$target_arch" "$python_tag"

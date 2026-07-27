@@ -7,18 +7,27 @@ from collections.abc import Mapping
 
 from paper_fetch.artifacts import ArtifactStore
 from paper_fetch.models import article_from_markdown
-from paper_fetch.providers._waterfall import ProviderWaterfallStep, run_provider_waterfall
+from paper_fetch.providers._waterfall import (
+    DEFAULT_WATERFALL_CONTINUE_CODES,
+    ProviderWaterfallStep,
+    run_provider_waterfall,
+)
 from paper_fetch.providers.base import (
+    combine_provider_failures,
     ProviderFailure,
     ProviderClient,
     ProviderContent,
     RawFulltextPayload,
 )
 from paper_fetch.runtime import RuntimeContext
-from paper_fetch.tracing import trace_from_markers
+from paper_fetch.tracing import trace_event, trace_from_markers
 
 
-def _payload(*, source_url: str = "https://example.test/article", markers: list[str] | None = None) -> RawFulltextPayload:
+def _payload(
+    *,
+    source_url: str = "https://example.test/article",
+    markers: list[str] | None = None,
+) -> RawFulltextPayload:
     body = b"<html><body>Article</body></html>"
     return RawFulltextPayload(
         provider="template",
@@ -37,12 +46,21 @@ def _payload(*, source_url: str = "https://example.test/article", markers: list[
 
 
 class ProviderWaterfallRunnerTests(unittest.TestCase):
+    def test_step_default_continue_codes_match_provider_fallback_contract(self) -> None:
+        step = ProviderWaterfallStep(label="html", run=lambda _state: _payload())
+
+        self.assertEqual(step.continue_codes, DEFAULT_WATERFALL_CONTINUE_CODES)
+
     def test_runner_accumulates_warnings_and_stops_after_success(self) -> None:
         calls: list[str] = []
 
         def first(_state):
             calls.append("first")
-            raise ProviderFailure("no_result", "HTML was abstract only.", warnings=["first warning"])
+            raise ProviderFailure(
+                "no_result",
+                "HTML was abstract only.",
+                warnings=["first warning", "trying pdf"],
+            )
 
         def second(_state):
             calls.append("second")
@@ -71,7 +89,9 @@ class ProviderWaterfallRunnerTests(unittest.TestCase):
         )
 
         self.assertEqual(calls, ["first", "second"])
-        self.assertEqual(payload.warnings, ["first warning", "trying pdf", "pdf success"])
+        self.assertEqual(
+            payload.warnings, ["first warning", "trying pdf", "pdf success"]
+        )
         self.assertEqual(
             [event.marker() for event in payload.trace if event.marker()],
             ["fulltext:template_html_fail", "fulltext:template_pdf_ok"],
@@ -83,12 +103,16 @@ class ProviderWaterfallRunnerTests(unittest.TestCase):
                 [
                     ProviderWaterfallStep(
                         label="html",
-                        run=lambda _state: (_ for _ in ()).throw(ProviderFailure("no_result", "HTML failed.")),
+                        run=lambda _state: (_ for _ in ()).throw(
+                            ProviderFailure("no_result", "HTML failed.")
+                        ),
                         failure_marker="fulltext:template_html_fail",
                     ),
                     ProviderWaterfallStep(
                         label="pdf",
-                        run=lambda _state: (_ for _ in ()).throw(ProviderFailure("no_result", "PDF failed.")),
+                        run=lambda _state: (_ for _ in ()).throw(
+                            ProviderFailure("no_result", "PDF failed.")
+                        ),
                         failure_marker="fulltext:template_pdf_fail",
                     ),
                 ]
@@ -100,6 +124,133 @@ class ProviderWaterfallRunnerTests(unittest.TestCase):
         self.assertEqual(
             raised.exception.source_trail,
             ["fulltext:template_html_fail", "fulltext:template_pdf_fail"],
+        )
+
+    def test_runner_combines_initial_trail_when_all_steps_fail(self) -> None:
+        with self.assertRaises(ProviderFailure) as raised:
+            run_provider_waterfall(
+                [
+                    ProviderWaterfallStep(
+                        label="html",
+                        run=lambda _state: (_ for _ in ()).throw(
+                            ProviderFailure(
+                                "no_result",
+                                "HTML failed.",
+                                source_trail=["fulltext:template_html_fail"],
+                            )
+                        ),
+                    )
+                ],
+                initial_source_trail=["fulltext:template_landing_ok"],
+            )
+
+        self.assertEqual(
+            raised.exception.source_trail,
+            ["fulltext:template_landing_ok", "fulltext:template_html_fail"],
+        )
+
+    def test_runner_short_circuit_failure_keeps_prior_state(self) -> None:
+        with self.assertRaises(ProviderFailure) as raised:
+            run_provider_waterfall(
+                [
+                    ProviderWaterfallStep(
+                        label="html",
+                        run=lambda _state: (_ for _ in ()).throw(
+                            ProviderFailure(
+                                "rate_limited",
+                                "HTML was rate limited.",
+                                retry_after_seconds=9,
+                                warnings=["html warning"],
+                            )
+                        ),
+                        failure_marker="fulltext:template_html_fail",
+                    ),
+                    ProviderWaterfallStep(
+                        label="pdf",
+                        run=lambda _state: (_ for _ in ()).throw(
+                            ProviderFailure("no_access", "PDF was blocked.")
+                        ),
+                        failure_marker="fulltext:template_pdf_fail",
+                        continue_codes=(),
+                    ),
+                ]
+            )
+
+        self.assertEqual(raised.exception.code, "no_access")
+        self.assertEqual(raised.exception.retry_after_seconds, 9)
+        self.assertEqual(raised.exception.warnings, ["html warning"])
+        self.assertEqual(
+            raised.exception.source_trail,
+            ["fulltext:template_html_fail", "fulltext:template_pdf_fail"],
+        )
+
+    def test_runner_custom_final_failure_keeps_state_fields(self) -> None:
+        def final_failure(_state):
+            return ProviderFailure("error", "Custom final failure.")
+
+        with self.assertRaises(ProviderFailure) as raised:
+            run_provider_waterfall(
+                [
+                    ProviderWaterfallStep(
+                        label="html",
+                        run=lambda _state: (_ for _ in ()).throw(
+                            ProviderFailure(
+                                "rate_limited",
+                                "HTML was rate limited.",
+                                retry_after_seconds=11,
+                                missing_env=["HTML_TOKEN"],
+                                warnings=["html warning"],
+                            )
+                        ),
+                        failure_marker="fulltext:template_html_fail",
+                    )
+                ],
+                final_failure_factory=final_failure,
+            )
+
+        self.assertEqual(raised.exception.code, "error")
+        self.assertEqual(raised.exception.retry_after_seconds, 11)
+        self.assertEqual(raised.exception.missing_env, ["HTML_TOKEN"])
+        self.assertEqual(raised.exception.warnings, ["html warning"])
+        self.assertEqual(raised.exception.source_trail, ["fulltext:template_html_fail"])
+
+    def test_combine_provider_failures_preserves_retry_after_and_dedupes_details(
+        self,
+    ) -> None:
+        combined = combine_provider_failures(
+            [
+                (
+                    "html",
+                    ProviderFailure(
+                        "no_result",
+                        "HTML failed.",
+                        warnings=["shared", "html warning"],
+                        source_trail=["fulltext:template_html_fail", "shared_marker"],
+                    ),
+                ),
+                (
+                    "pdf",
+                    ProviderFailure(
+                        "rate_limited",
+                        "PDF was rate limited.",
+                        retry_after_seconds=7,
+                        warnings=["shared", "pdf warning"],
+                        source_trail=["shared_marker", "fulltext:template_pdf_fail"],
+                    ),
+                ),
+            ]
+        )
+
+        self.assertEqual(combined.code, "no_result")
+        self.assertEqual(combined.retry_after_seconds, 7)
+        self.assertEqual(combined.warnings, ["shared", "html warning", "pdf warning"])
+        self.assertEqual(
+            combined.source_trail,
+            [
+                "fulltext:template_html_fail",
+                "shared_marker",
+                "fulltext:template_pdf_fail",
+            ],
         )
 
     def test_runner_skips_step_when_condition_is_false(self) -> None:
@@ -137,9 +288,44 @@ class ProviderWaterfallRunnerTests(unittest.TestCase):
         self.assertEqual(calls, ["first", "second"])
         self.assertEqual(payload.content.source_url, "https://example.test/article")
 
+    def test_runner_preserves_structured_failure_trace_on_fallback_success(
+        self,
+    ) -> None:
+        payload = _payload()
+        payload.trace = [
+            trace_event(
+                "fulltext",
+                "template_html",
+                "fail",
+                code="managed_chrome_cdp_timeout",
+                message="CDP endpoint timed out.",
+            )
+        ]
+
+        result = run_provider_waterfall(
+            [
+                ProviderWaterfallStep(
+                    label="pdf",
+                    run=lambda _state: payload,
+                    success_markers=("fulltext:template_pdf_fallback_ok",),
+                )
+            ],
+            initial_source_trail=["fulltext:template_html_fail"],
+        )
+
+        html_event = next(
+            event
+            for event in result.trace
+            if event.marker() == "fulltext:template_html_fail"
+        )
+        self.assertEqual(html_event.code, "managed_chrome_cdp_timeout")
+        self.assertEqual(html_event.message, "CDP endpoint timed out.")
+
 
 class RawFulltextPayloadMetadataCompatibilityTests(unittest.TestCase):
-    def test_metadata_magic_keys_are_not_ingested_as_structured_payload_fields(self) -> None:
+    def test_metadata_magic_keys_are_not_ingested_as_structured_payload_fields(
+        self,
+    ) -> None:
         payload = RawFulltextPayload(
             provider="template",
             source_url="https://example.test/article",
@@ -150,13 +336,20 @@ class RawFulltextPayloadMetadataCompatibilityTests(unittest.TestCase):
                 "reason": "legacy reason",
                 "markdown_text": "# Legacy\n\nBody text",
                 "merged_metadata": {"title": "Merged Legacy Title"},
-                "availability_diagnostics": {"accepted": True, "reason": "body_sufficient"},
-                "html_fetcher": "cloakbrowser",
-                "browser_context_seed": {"browser_final_url": "https://example.test/final"},
+                "availability_diagnostics": {
+                    "accepted": True,
+                    "reason": "body_sufficient",
+                },
+                "html_fetcher": "camoufox",
+                "browser_context_seed": {
+                    "browser_final_url": "https://example.test/final"
+                },
                 "suggested_filename": "legacy.html",
                 "html_failure_reason": "abstract_only",
                 "html_failure_message": "HTML exposed only abstract content.",
-                "extracted_assets": [{"kind": "figure", "url": "https://example.test/f1.png"}],
+                "extracted_assets": [
+                    {"kind": "figure", "url": "https://example.test/f1.png"}
+                ],
                 "warnings": ["legacy warning"],
                 "source_trail": ["fulltext:template_html_ok"],
                 "custom_passthrough": "kept",
@@ -199,14 +392,23 @@ class RawFulltextPayloadMetadataCompatibilityTests(unittest.TestCase):
                 body=body,
                 markdown_text="# Typed\n\nBody text",
                 merged_metadata={"title": "Merged Typed Title"},
-                diagnostics={"availability_diagnostics": {"accepted": True, "reason": "body_sufficient"}},
+                diagnostics={
+                    "availability_diagnostics": {
+                        "accepted": True,
+                        "reason": "body_sufficient",
+                    }
+                },
                 reason="typed reason",
-                fetcher="cloakbrowser",
-                browser_context_seed={"browser_final_url": "https://example.test/final"},
+                fetcher="camoufox",
+                browser_context_seed={
+                    "browser_final_url": "https://example.test/final"
+                },
                 suggested_filename="typed.html",
                 html_failure_reason="abstract_only",
                 html_failure_message="HTML exposed only abstract content.",
-                extracted_assets=[{"kind": "figure", "url": "https://example.test/f1.png"}],
+                extracted_assets=[
+                    {"kind": "figure", "url": "https://example.test/f1.png"}
+                ],
             ),
             warnings=["typed warning"],
             trace=trace_from_markers(["fulltext:template_html_ok"]),
@@ -216,23 +418,41 @@ class RawFulltextPayloadMetadataCompatibilityTests(unittest.TestCase):
         self.assertEqual(payload.metadata["route"], "html")
         self.assertEqual(payload.metadata["reason"], "typed reason")
         self.assertEqual(payload.metadata["markdown_text"], "# Typed\n\nBody text")
-        self.assertEqual(payload.metadata["merged_metadata"], {"title": "Merged Typed Title"})
-        self.assertEqual(payload.metadata["availability_diagnostics"], {"accepted": True, "reason": "body_sufficient"})
-        self.assertEqual(payload.metadata["html_fetcher"], "cloakbrowser")
-        self.assertEqual(payload.metadata["browser_context_seed"], {"browser_final_url": "https://example.test/final"})
+        self.assertEqual(
+            payload.metadata["merged_metadata"], {"title": "Merged Typed Title"}
+        )
+        self.assertEqual(
+            payload.metadata["availability_diagnostics"],
+            {"accepted": True, "reason": "body_sufficient"},
+        )
+        self.assertEqual(payload.metadata["html_fetcher"], "camoufox")
+        self.assertEqual(
+            payload.metadata["browser_context_seed"],
+            {"browser_final_url": "https://example.test/final"},
+        )
         self.assertEqual(payload.metadata["suggested_filename"], "typed.html")
         self.assertEqual(payload.metadata["html_failure_reason"], "abstract_only")
-        self.assertEqual(payload.metadata["html_failure_message"], "HTML exposed only abstract content.")
-        self.assertEqual(payload.metadata["extracted_assets"], [{"kind": "figure", "url": "https://example.test/f1.png"}])
+        self.assertEqual(
+            payload.metadata["html_failure_message"],
+            "HTML exposed only abstract content.",
+        )
+        self.assertEqual(
+            payload.metadata["extracted_assets"],
+            [{"kind": "figure", "url": "https://example.test/f1.png"}],
+        )
         self.assertEqual(payload.metadata["warnings"], ["typed warning"])
-        self.assertEqual(payload.metadata["source_trail"], ["fulltext:template_html_ok"])
+        self.assertEqual(
+            payload.metadata["source_trail"], ["fulltext:template_html_ok"]
+        )
         self.assertEqual(payload.metadata["custom_passthrough"], "kept")
 
 
 class _TemplateClient(ProviderClient):
     name = "template"
 
-    def fetch_raw_fulltext(self, doi: str, metadata: Mapping[str, object], *, context=None) -> RawFulltextPayload:
+    def fetch_raw_fulltext(
+        self, doi: str, metadata: Mapping[str, object], *, context=None
+    ) -> RawFulltextPayload:
         del context
         return _payload()
 
@@ -250,12 +470,23 @@ class _TemplateClient(ProviderClient):
             source="template",
             metadata=metadata,
             doi=str(metadata.get("doi") or "") or None,
-            markdown_text=raw_payload.content.markdown_text if raw_payload.content is not None else "",
+            markdown_text=raw_payload.content.markdown_text
+            if raw_payload.content is not None
+            else "",
             warnings=list(raw_payload.warnings),
             trace=list(raw_payload.trace),
         )
 
-    def download_related_assets(self, doi, metadata, raw_payload, output_dir, *, asset_profile="all", context=None):
+    def download_related_assets(
+        self,
+        doi,
+        metadata,
+        raw_payload,
+        output_dir,
+        *,
+        asset_profile="all",
+        context=None,
+    ):
         del context
         raise ProviderFailure("error", "asset backend failed")
 
@@ -362,9 +593,14 @@ class ProviderFetchResultTemplateTests(unittest.TestCase):
             )
 
         self.assertIn("custom asset warning: asset backend failed", result.warnings)
-        self.assertIn("download:template_assets_failed", [event.marker() for event in result.trace if event.marker()])
+        self.assertIn(
+            "download:template_assets_failed",
+            [event.marker() for event in result.trace if event.marker()],
+        )
 
-    def test_base_fetch_result_passes_same_runtime_context_to_all_provider_hooks(self) -> None:
+    def test_base_fetch_result_passes_same_runtime_context_to_all_provider_hooks(
+        self,
+    ) -> None:
         seen: list[object] = []
 
         class ContextRecordingClient(_TemplateClient):
@@ -372,7 +608,16 @@ class ProviderFetchResultTemplateTests(unittest.TestCase):
                 seen.append(context)
                 return super().fetch_raw_fulltext(doi, metadata, context=context)
 
-            def download_related_assets(self, doi, metadata, raw_payload, output_dir, *, asset_profile="all", context=None):
+            def download_related_assets(
+                self,
+                doi,
+                metadata,
+                raw_payload,
+                output_dir,
+                *,
+                asset_profile="all",
+                context=None,
+            ):
                 seen.append(context)
                 return {"assets": [], "asset_failures": []}
 
@@ -406,17 +651,24 @@ class ProviderFetchResultTemplateTests(unittest.TestCase):
 
         self.assertEqual(seen, [runtime_context, runtime_context, runtime_context])
 
-    def test_base_fetch_result_uses_artifact_store_download_dir_when_supplied(self) -> None:
+    def test_base_fetch_result_uses_artifact_store_download_dir_when_supplied(
+        self,
+    ) -> None:
         client = _TemplateClient()
         output_dirs: list[Path | None] = []
 
-        def fake_download_related_assets(doi, metadata, raw_payload, output_dir, *, asset_profile="all", context=None):
+        def fake_download_related_assets(
+            doi, metadata, raw_payload, output_dir, *, asset_profile="all", context=None
+        ):
             del context
             output_dirs.append(output_dir)
             return {"assets": [], "asset_failures": []}
 
         client.download_related_assets = fake_download_related_assets
-        with tempfile.TemporaryDirectory() as legacy_tmpdir, tempfile.TemporaryDirectory() as artifact_tmpdir:
+        with (
+            tempfile.TemporaryDirectory() as legacy_tmpdir,
+            tempfile.TemporaryDirectory() as artifact_tmpdir,
+        ):
             artifact_dir = Path(artifact_tmpdir)
             result = client.fetch_result(
                 "10.5555/template",

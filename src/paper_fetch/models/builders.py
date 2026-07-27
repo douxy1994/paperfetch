@@ -20,7 +20,11 @@ from .markdown import (
     strip_leading_markdown_title_heading,
     strip_markdown_images,
 )
-from .quality import apply_quality_assessment, classify_content
+from .quality import (
+    apply_quality_assessment,
+    classify_content,
+    coerce_asset_provenance,
+)
 from .render import rewrite_markdown_asset_links
 from .schema import (
     ArticleModel,
@@ -48,6 +52,7 @@ from .sections import (
 )
 from .tokens import build_token_estimate_breakdown
 
+
 def local_asset_link(value: Any) -> str | None:
     normalized = safe_text(value)
     if not normalized:
@@ -65,6 +70,13 @@ def _optional_int(value: Any) -> int | None:
     return integer if integer >= 0 else None
 
 
+def _asset_provenance(entry: Mapping[str, Any]) -> list[str]:
+    values = coerce_asset_provenance(entry.get("provenance"))
+    if safe_text(entry.get("conversion_source_format")):
+        values.append("source_converted")
+    return list(dict.fromkeys(values))
+
+
 def _asset_from_entry(
     entry: Mapping[str, Any],
     *,
@@ -73,7 +85,9 @@ def _asset_from_entry(
     render_state: str | None = None,
 ) -> Asset:
     link = entry.get("link")
-    url = local_asset_link(link if link is not None else entry.get("url") or entry.get("source_url"))
+    url = local_asset_link(
+        link if link is not None else entry.get("url") or entry.get("source_url")
+    )
     original_url = next(
         (
             safe_text(entry.get(field))
@@ -112,6 +126,7 @@ def _asset_from_entry(
         downloaded_bytes=_optional_int(entry.get("downloaded_bytes")),
         width=_optional_int(entry.get("width")),
         height=_optional_int(entry.get("height")),
+        provenance=_asset_provenance(entry),
     )
 
 
@@ -136,7 +151,10 @@ def build_metadata(metadata: Mapping[str, Any]) -> Metadata:
         title=normalize_inline_html_text(metadata.get("title")) or None,
         authors=normalize_authors(metadata.get("authors")),
         abstract=normalize_abstract_text(metadata.get("abstract")) or None,
-        journal=normalize_inline_html_text(metadata.get("journal_title") or metadata.get("journal")) or None,
+        journal=normalize_inline_html_text(
+            metadata.get("journal_title") or metadata.get("journal")
+        )
+        or None,
         published=normalize_inline_html_text(metadata.get("published")) or None,
         keywords=[
             normalize_inline_html_text(item)
@@ -221,7 +239,9 @@ def _normalized_reference_raw(item: Mapping[str, Any]) -> str:
     author_values = item.get("authors") or item.get("author") or item.get("creators")
     if isinstance(author_values, str):
         authors = [safe_text(author_values)]
-    elif isinstance(author_values, Sequence) and not isinstance(author_values, (bytes, bytearray)):
+    elif isinstance(author_values, Sequence) and not isinstance(
+        author_values, (bytes, bytearray)
+    ):
         authors = [safe_text(value) for value in author_values if safe_text(value)]
     else:
         authors = []
@@ -245,7 +265,8 @@ def article_from_structure(
     metadata: Mapping[str, Any],
     doi: str | None,
     abstract_lines: list[str],
-    abstract_sections: Sequence[ExtractedAbstractBlock | Mapping[str, Any] | Section] | None = None,
+    abstract_sections: Sequence[ExtractedAbstractBlock | Mapping[str, Any] | Section]
+    | None = None,
     body_lines: list[str],
     figure_entries: Sequence[Mapping[str, Any]],
     table_entries: Sequence[Mapping[str, Any]],
@@ -264,14 +285,21 @@ def article_from_structure(
 ) -> ArticleModel:
     article_metadata = build_metadata(metadata)
     effective_trace = list(trace or trace_from_markers(source_trail))
-    explicit_abstract_sections = _abstract_sections_from_blocks(abstract_sections) or _abstract_sections_from_lines(abstract_lines)
-    abstract_text = first_abstract_text(abstract_text=None, sections=explicit_abstract_sections)
+    explicit_abstract_sections = _abstract_sections_from_blocks(
+        abstract_sections
+    ) or _abstract_sections_from_lines(abstract_lines)
+    abstract_text = first_abstract_text(
+        abstract_text=None, sections=explicit_abstract_sections
+    )
     if abstract_text and not normalize_text(article_metadata.abstract):
         article_metadata.abstract = abstract_text
     elif abstract_text:
         article_metadata.abstract = abstract_text
 
-    sections = [*explicit_abstract_sections, *lines_to_sections(body_lines, fallback_heading="", preserve_images=True)]
+    sections = [
+        *explicit_abstract_sections,
+        *lines_to_sections(body_lines, fallback_heading="", preserve_images=True),
+    ]
     if conversion_notes:
         sections.append(
             Section(
@@ -283,18 +311,42 @@ def article_from_structure(
         )
 
     assets: list[Asset] = []
-    consumed_figure_keys = {normalize_text(key) for key in inline_figure_keys or [] if normalize_text(key)}
-    consumed_table_keys = {normalize_text(key) for key in inline_table_keys or [] if normalize_text(key)}
+    consumed_figure_keys = {
+        normalize_text(key) for key in inline_figure_keys or [] if normalize_text(key)
+    }
+    consumed_table_keys = {
+        normalize_text(key) for key in inline_table_keys or [] if normalize_text(key)
+    }
     for entry in figure_entries:
         key = normalize_text(entry.get("key"))
-        assets.append(_asset_from_entry(entry, kind="figure", heading_fallback="Figure", render_state="inline" if key in consumed_figure_keys else "appendix"))
+        assets.append(
+            _asset_from_entry(
+                entry,
+                kind="figure",
+                heading_fallback="Figure",
+                render_state="inline" if key in consumed_figure_keys else "appendix",
+            )
+        )
     for entry in table_entries:
         key = normalize_text(entry.get("key"))
-        assets.append(_asset_from_entry(entry, kind="table", heading_fallback="Table", render_state="inline" if key in consumed_table_keys else "appendix"))
+        assets.append(
+            _asset_from_entry(
+                entry,
+                kind="table",
+                heading_fallback="Table",
+                render_state="inline" if key in consumed_table_keys else "appendix",
+            )
+        )
     for entry in supplement_entries:
-        assets.append(_asset_from_entry(entry, kind="supplementary", heading_fallback="Supplementary Material"))
+        assets.append(
+            _asset_from_entry(
+                entry, kind="supplementary", heading_fallback="Supplementary Material"
+            )
+        )
 
-    normalized_references = list(references or build_references(metadata.get("references")))
+    normalized_references = list(
+        references or build_references(metadata.get("references"))
+    )
     token_estimate_breakdown = build_token_estimate_breakdown(
         abstract_text=article_metadata.abstract,
         sections=sections,
@@ -302,7 +354,9 @@ def article_from_structure(
     )
     token_estimate = token_estimate_breakdown.abstract + token_estimate_breakdown.body
 
-    content_kind = classify_content(sections=sections, abstract_text=article_metadata.abstract)
+    content_kind = classify_content(
+        sections=sections, abstract_text=article_metadata.abstract
+    )
     article = ArticleModel(
         doi=doi or safe_text(metadata.get("doi")) or None,
         source=source,
@@ -324,15 +378,20 @@ def article_from_structure(
     diagnostics_payload = availability_diagnostics
     has_provider_diagnostics = diagnostics_payload is not None
     if diagnostics_payload is None:
-        from ..quality.html_availability import assess_structured_article_fulltext_availability
+        from ..quality.html_availability import (
+            assess_structured_article_fulltext_availability,
+        )
 
-        diagnostics_payload = assess_structured_article_fulltext_availability(article, title=article_metadata.title).to_dict()
+        diagnostics_payload = assess_structured_article_fulltext_availability(
+            article, title=article_metadata.title
+        ).to_dict()
     return apply_quality_assessment(
         article,
         availability_diagnostics=diagnostics_payload,
         semantic_losses=semantic_losses,
         extra_flags=quality_flags,
-        allow_downgrade_from_diagnostics=allow_downgrade_from_diagnostics and has_provider_diagnostics,
+        allow_downgrade_from_diagnostics=allow_downgrade_from_diagnostics
+        and has_provider_diagnostics,
     )
 
 
@@ -342,7 +401,8 @@ def article_from_markdown(
     metadata: Mapping[str, Any],
     doi: str | None,
     markdown_text: str,
-    abstract_sections: Sequence[ExtractedAbstractBlock | Mapping[str, Any] | Section] | None = None,
+    abstract_sections: Sequence[ExtractedAbstractBlock | Mapping[str, Any] | Section]
+    | None = None,
     section_hints: Sequence[SectionHint | Mapping[str, Any]] | None = None,
     assets: Sequence[Mapping[str, Any]] | None = None,
     warnings: list[str] | None = None,
@@ -358,13 +418,16 @@ def article_from_markdown(
     normalized_assets = [
         _asset_from_entry(
             item,
-            kind=safe_text(item.get("kind") or item.get("asset_type") or "asset") or "asset",
+            kind=safe_text(item.get("kind") or item.get("asset_type") or "asset")
+            or "asset",
             heading_fallback="Asset",
         )
         for item in (assets or [])
     ]
     normalized = normalize_inline_citation_markdown(
-        strip_leading_markdown_title_heading(markdown_text, title=article_metadata.title)
+        strip_leading_markdown_title_heading(
+            markdown_text, title=article_metadata.title
+        )
     )
     normalized = rewrite_markdown_asset_links(normalized, normalized_assets)
     _apply_provider_render_policy(normalized, normalized_assets, source=source)
@@ -375,21 +438,32 @@ def article_from_markdown(
         preserve_images=True,
         section_hints=section_hints,
     )
-    parsed_sections = [_normalize_inline_citations_in_section(section) for section in parsed_sections]
-    normalize_methods_summary = _has_old_nature_methods_summary_structure(parsed_sections, section_hints)
+    parsed_sections = [
+        _normalize_inline_citations_in_section(section) for section in parsed_sections
+    ]
+    normalize_methods_summary = _has_old_nature_methods_summary_structure(
+        parsed_sections, section_hints
+    )
     explicit_abstract_sections = [
         _normalize_inline_citations_in_section(section)
         for section in _abstract_sections_from_blocks(abstract_sections)
     ]
     sections = list(explicit_abstract_sections)
-    extracted_abstract = first_abstract_text(abstract_text=None, sections=explicit_abstract_sections)
+    extracted_abstract = first_abstract_text(
+        abstract_text=None, sections=explicit_abstract_sections
+    )
     for section in parsed_sections:
-        if explicit_abstract_sections and normalize_text(section.kind).lower() == "abstract":
+        if (
+            explicit_abstract_sections
+            and normalize_text(section.kind).lower() == "abstract"
+        ):
             continue
         if _section_matches_explicit_abstract(section, explicit_abstract_sections):
             continue
         original_section = section
-        stripped_section = _strip_leading_explicit_abstract_paragraphs(section, explicit_abstract_sections)
+        stripped_section = _strip_leading_explicit_abstract_paragraphs(
+            section, explicit_abstract_sections
+        )
         promoted_section = _promote_stripped_methods_summary_section(
             original_section,
             stripped_section,
@@ -404,7 +478,12 @@ def article_from_markdown(
     inline_abstract, sections = split_leading_inline_abstract(sections)
     if inline_abstract:
         extracted_abstract = normalize_inline_citation_markdown(inline_abstract)
-    article_metadata.abstract = normalize_inline_citation_markdown(extracted_abstract or article_metadata.abstract or "") or None
+    article_metadata.abstract = (
+        normalize_inline_citation_markdown(
+            extracted_abstract or article_metadata.abstract or ""
+        )
+        or None
+    )
     references = build_references(metadata.get("references"))
     token_estimate_breakdown = build_token_estimate_breakdown(
         abstract_text=article_metadata.abstract,
@@ -412,7 +491,9 @@ def article_from_markdown(
         references=references,
     )
     token_estimate = token_estimate_breakdown.abstract + token_estimate_breakdown.body
-    content_kind = classify_content(sections=sections, abstract_text=article_metadata.abstract)
+    content_kind = classify_content(
+        sections=sections, abstract_text=article_metadata.abstract
+    )
     article = ArticleModel(
         doi=doi or safe_text(metadata.get("doi")) or None,
         source=source,
@@ -447,7 +528,8 @@ def article_from_markdown(
         availability_diagnostics=diagnostics_payload,
         semantic_losses=semantic_losses,
         extra_flags=quality_flags,
-        allow_downgrade_from_diagnostics=allow_downgrade_from_diagnostics and has_provider_diagnostics,
+        allow_downgrade_from_diagnostics=allow_downgrade_from_diagnostics
+        and has_provider_diagnostics,
     )
 
 

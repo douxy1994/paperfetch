@@ -15,6 +15,18 @@ $InstallerManifest = Get-Content -LiteralPath $InstallerManifestPath -Raw | Conv
 $SkillName = [string]$InstallerManifest.skill.name
 $OfflineManagedBegin = [string]$InstallerManifest.managed_blocks.offline.begin
 $OfflineManagedEnd = [string]$InstallerManifest.managed_blocks.offline.end
+$OfflineEnvKeys = @(
+    "PAPER_FETCH_DOWNLOAD_DIR",
+    "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "PAPER_FETCH_IMAGE_TOOLS_DIR",
+    "MATHML_TO_LATEX_NODE_BIN",
+    "PAPER_FETCH_BROWSER_HEADLESS",
+    "PYTHONUTF8",
+    "PYTHONIOENCODING"
+)
+if ($null -ne $InstallerManifest.env_sets -and $null -ne $InstallerManifest.env_sets.offline_env_keys) {
+    $OfflineEnvKeys = @($InstallerManifest.env_sets.offline_env_keys | ForEach-Object { [string]$_ })
+}
 $WindowsSetupBaseName = [string]$InstallerManifest.packages.windows_setup_base_name
 $BuildDir = if ($env:PAPER_FETCH_OFFLINE_BUILD_DIR) {
     [System.IO.Path]::GetFullPath($env:PAPER_FETCH_OFFLINE_BUILD_DIR)
@@ -24,6 +36,7 @@ $BuildDir = if ($env:PAPER_FETCH_OFFLINE_BUILD_DIR) {
 if ([string]::IsNullOrWhiteSpace($OutputDir)) {
     $OutputDir = Join-Path $RepoDir "dist"
 }
+$OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 $ProjectWheelPath = ""
 $DependencyWheelhouse = ""
 
@@ -139,10 +152,10 @@ function Build-ProjectWheelhouse {
     $script:DependencyWheelhouse = $wheelhouse
 
     Write-Log "Downloading Windows dependency wheelhouse"
-    Invoke-Native $PythonBin -m pip download --dest $wheelhouse --only-binary=:all: $projectWheelPath
-    $cloakbrowserWheels = @(Get-ChildItem -Path $wheelhouse -Filter "cloakbrowser-*.whl" -ErrorAction SilentlyContinue)
-    if ($cloakbrowserWheels.Count -eq 0) {
-        throw "Dependency wheelhouse is missing cloakbrowser-*.whl."
+    Invoke-Native $PythonBin -m pip download --dest $wheelhouse --only-binary=:all: "$($projectWheelPath)[full]"
+    $camoufoxWheels = @(Get-ChildItem -Path $wheelhouse -Filter "camoufox-*.whl" -ErrorAction SilentlyContinue)
+    if ($camoufoxWheels.Count -eq 0) {
+        throw "Dependency wheelhouse is missing camoufox-*.whl."
     }
 }
 
@@ -155,7 +168,7 @@ function New-BuildVenv {
     if ([string]::IsNullOrWhiteSpace($script:ProjectWheelPath) -or [string]::IsNullOrWhiteSpace($script:DependencyWheelhouse)) {
         throw "Project wheelhouse must be built before creating the Windows build venv."
     }
-    Invoke-Native $buildPython -m pip install --no-index --find-links $script:DependencyWheelhouse $script:ProjectWheelPath
+    Invoke-Native $buildPython -m pip install --no-index --find-links $script:DependencyWheelhouse "$($script:ProjectWheelPath)[full]"
     return $buildPython
 }
 
@@ -218,7 +231,7 @@ function Install-EmbeddedPythonPackages {
     $previousSkip = $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD
     try {
         $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = "1"
-        Invoke-Native $PythonBin -m pip install --no-index --find-links $script:DependencyWheelhouse --only-binary=:all: --target $sitePackages $script:ProjectWheelPath
+        Invoke-Native $PythonBin -m pip install --no-index --find-links $script:DependencyWheelhouse --only-binary=:all: --target $sitePackages "$($script:ProjectWheelPath)[full]"
     } finally {
         $env:PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = $previousSkip
     }
@@ -240,7 +253,25 @@ function Add-FormulaTools {
     if (-not (Test-Path -LiteralPath $texmath)) {
         throw "Missing bundled texmath.exe: $texmath"
     }
-    Invoke-Native $texmath --help
+    $texmathVersion = & $BuildPython -c "from paper_fetch.formula.install import TEXMATH_VERSION; print(TEXMATH_VERSION)"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not read the pinned texmath version."
+    }
+    $texmathVersion = $texmathVersion.Trim()
+    $versionOutput = (& $texmath --version 2>&1 | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $versionOutput -ne "Version $texmathVersion") {
+        throw "Bundled texmath version mismatch: expected $texmathVersion, got $versionOutput."
+    }
+    $complexMathml = '<math xmlns="http://www.w3.org/1998/Math/MathML"><mfrac><msub><mi>x</mi><mn>1</mn></msub><msqrt><mrow><mi>y</mi><mo>+</mo><mn>1</mn></mrow></msqrt></mfrac></math>'
+    $latexOutput = ($complexMathml | & $texmath -f mathml -t tex | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $latexOutput -ne '\frac{x_{1}}{\sqrt{y + 1}}') {
+        throw "Bundled texmath failed the complex MathML conversion smoke test."
+    }
+    $limitMathml = '<math xmlns="http://www.w3.org/1998/Math/MathML"><mrow><munderover><mo>∑</mo><mi>i</mi><mi>n</mi></munderover><msup><mi>x</mi><mi>i</mi></msup></mrow></math>'
+    $latexOutput = ($limitMathml | & $texmath -f mathml -t tex | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or $latexOutput -ne '\sum\limits_{i}^{n}x^{i}') {
+        throw "Bundled texmath failed the limit-style MathML conversion smoke test."
+    }
 
     $stageNodeWorkspace = @'
 from pathlib import Path
@@ -251,6 +282,24 @@ from paper_fetch.formula.install import stage_bundled_node_workspace
 stage_bundled_node_workspace(Path(sys.argv[1]))
 '@
     Invoke-Native $BuildPython -c $stageNodeWorkspace $target
+    Invoke-Native npm ci --omit=dev --silent --prefix $target
+    $node = (Get-Command node -ErrorAction Stop).Source
+    $nodeLatex = ('<math><mi>x</mi></math>' | & $node (Join-Path $target "mathml_to_latex_cli.mjs") | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or -not $nodeLatex.Contains("x")) {
+        throw "Bundled mathml-to-latex fallback failed its smoke test."
+    }
+}
+
+function Add-ImageTools {
+    param(
+        [string]$Staging,
+        [string]$BuildPython
+    )
+
+    Write-Log "Bundling image conversion tools"
+    $target = Join-Path $Staging "image-tools"
+    New-Item -ItemType Directory -Force -Path $target | Out-Null
+    Invoke-Native $BuildPython -m paper_fetch.image_tools.install --target-dir $target --offline-bundle --repo-root $RepoDir
 }
 
 function Write-CmdWrappers {
@@ -283,6 +332,15 @@ set "PYTHONIOENCODING=utf-8"
 exit /b %ERRORLEVEL%
 '@
     Set-Content -LiteralPath (Join-Path $bin "paper-fetch-mcp.cmd") -Value $mcp -Encoding ASCII
+
+    $imageTools = @'
+@echo off
+setlocal
+set "PAPER_FETCH_ROOT=%~dp0.."
+"%PAPER_FETCH_ROOT%\runtime\python.exe" -X utf8 -m paper_fetch.image_tools.install %*
+exit /b %ERRORLEVEL%
+'@
+    Set-Content -LiteralPath (Join-Path $bin "paper-fetch-install-image-tools.cmd") -Value $imageTools -Encoding ASCII
 }
 
 function Add-SkillAgentManifest {
@@ -302,23 +360,40 @@ interface:
 function Write-DefaultOfflineEnv {
     param([string]$Staging)
 
-    $content = @"
-ELSEVIER_API_KEY=""
+    function ConvertTo-StagingEnvPath {
+        param([string]$Path)
+        return $Path.Replace("\", "/")
+    }
 
-$OfflineManagedBegin
-PAPER_FETCH_DOWNLOAD_DIR='$($Staging.Replace("\", "/"))/downloads'
-PAPER_FETCH_FORMULA_TOOLS_DIR='$($Staging.Replace("\", "/"))/formula-tools'
-MATHML_TO_LATEX_NODE_BIN='$($Staging.Replace("\", "/"))/runtime/Lib/site-packages/playwright/driver/node.exe'
-CLOAKBROWSER_HEADLESS='true'
-PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'
-# Optional: connect to an already-running Chrome/CloakBrowser CDP endpoint.
-# CLOAKBROWSER_CDP_ENDPOINT='ws://127.0.0.1:9222/devtools/browser/...'
-# Optional: use a preinstalled Chrome/CloakBrowser binary instead of cloakbrowser download.
-# CLOAKBROWSER_BINARY_PATH='C:/path/to/chrome.exe'
-PYTHONUTF8='1'
-PYTHONIOENCODING='utf-8'
-$OfflineManagedEnd
-"@
+    function Quote-DotenvString {
+        param([string]$Value)
+        return "'" + $Value.Replace("'", "\'") + "'"
+    }
+
+    function Get-DefaultOfflineEnvValue {
+        param([string]$Name)
+
+        switch ($Name) {
+            "PAPER_FETCH_DOWNLOAD_DIR" { return (ConvertTo-StagingEnvPath "$Staging/downloads") }
+            "PAPER_FETCH_FORMULA_TOOLS_DIR" { return (ConvertTo-StagingEnvPath "$Staging/formula-tools") }
+            "PAPER_FETCH_IMAGE_TOOLS_DIR" { return (ConvertTo-StagingEnvPath "$Staging/image-tools") }
+            "MATHML_TO_LATEX_NODE_BIN" { return (ConvertTo-StagingEnvPath "$Staging/runtime/Lib/site-packages/playwright/driver/node.exe") }
+            "PAPER_FETCH_BROWSER_HEADLESS" { return "true" }
+            "PYTHONUTF8" { return "1" }
+            "PYTHONIOENCODING" { return "utf-8" }
+            default { throw "Unknown offline env key in installer manifest: $Name" }
+        }
+    }
+
+    $lines = New-Object System.Collections.Generic.List[string]
+    $lines.Add('ELSEVIER_API_KEY=""')
+    $lines.Add("")
+    $lines.Add($OfflineManagedBegin)
+    foreach ($name in $OfflineEnvKeys) {
+        $lines.Add("$name=$(Quote-DotenvString ([string](Get-DefaultOfflineEnvValue $name)))")
+    }
+    $lines.Add($OfflineManagedEnd)
+    $content = ($lines.ToArray() -join [Environment]::NewLine) + [Environment]::NewLine
     [System.IO.File]::WriteAllText((Join-Path $Staging "offline.env"), $content, [System.Text.UTF8Encoding]::new($false))
 }
 
@@ -328,13 +403,13 @@ function Write-OfflineReadme {
     $content = @'
 # Paper Fetch Windows Offline Installer
 
-This installer includes the embedded Python runtime, installed Python packages, and formula tools.
-It does not redistribute a browser binary for browser-backed providers; cloakbrowser downloads or locates Chrome on first use.
+This installer includes the embedded Python runtime, installed Python packages, formula tools, and image-tools configuration for optional conversion tools.
+The offline build does not bundle Ghostscript/libvips from the build host PATH; AMS EPS/TIFF source figure conversion falls back to webpage JPG/PNG candidates when those tools are unavailable.
+It does not redistribute a browser binary for browser-backed providers. Default Camoufox may fetch its runtime on the first real browser-backed request; fully offline hosts must preinstall the complete Camoufox runtime.
 Formula conversion uses the bundled Playwright driver Node via `MATHML_TO_LATEX_NODE_BIN`; do not rely on a bare `node` from PATH in Codex Desktop sessions.
 
-Browser-backed providers auto-start a managed cloakbrowser Chrome when `CLOAKBROWSER_CDP_ENDPOINT` is unset.
-Set `CLOAKBROWSER_CDP_ENDPOINT` only when you want to reuse an already-running browser, or set `CLOAKBROWSER_BINARY_PATH` to use a preinstalled Chrome binary.
-Set `CLOAKBROWSER_HEADLESS=false` only when running with a display-capable session.
+Browser-backed providers use native Camoufox.
+Set `PAPER_FETCH_BROWSER_HEADLESS=false` only when running with a display-capable session.
 '@
     [System.IO.File]::WriteAllText((Join-Path $Staging "README.offline.md"), $content, [System.Text.UTF8Encoding]::new($false))
 }
@@ -355,8 +430,16 @@ function Write-ManifestAndChecksums {
         $gitRevision = $null
     }
 
+    $skillManifestTool = Join-Path (Join-Path (Join-Path $RepoDir "src") "paper_fetch") "skill_integrity.py"
+    $skillRoot = Join-Path (Join-Path $Staging "skills") $SkillName
+    $skillBundleOutput = & $PythonBin $skillManifestTool build --skill-dir $skillRoot --name $SkillName --root "skills/$SkillName"
+    if ($LASTEXITCODE -ne 0) {
+        throw "Could not build the staged skill bundle manifest."
+    }
+    $skillBundle = ($skillBundleOutput -join [Environment]::NewLine) | ConvertFrom-Json
+
     $payload = [ordered]@{
-        schema_version = 2
+        schema_version = 3
         name = [string]$InstallerManifest.packages.windows_manifest_name
         project = [string]$InstallerManifest.project
         version = $Version
@@ -369,6 +452,7 @@ function Write-ManifestAndChecksums {
             python_runtime = "cpython-$EmbeddedPythonVersion-embed-amd64"
         }
         entrypoint = "$SetupBaseName.exe"
+        skill_bundle = $skillBundle
         components = [ordered]@{
             runtime = "runtime"
             bin = "bin"
@@ -376,7 +460,8 @@ function Write-ManifestAndChecksums {
             installer_manifest = "installer/manifest.json"
             command_wrappers = "bin"
             formula_tools = "formula-tools"
-            cloakbrowser = [ordered]@{
+            image_tools = "image-tools"
+            camoufox = [ordered]@{
                 python_package = "runtime/Lib/site-packages"
                 browser_binary = "not_bundled"
             }
@@ -407,6 +492,7 @@ function Assert-RuntimeOnlyStaging {
         "runtime/Lib/site-packages/paper_fetch/__init__.py",
         "bin/paper-fetch.cmd",
         "bin/paper-fetch-mcp.cmd",
+        "bin/paper-fetch-install-image-tools.cmd",
         "skills/$SkillName/SKILL.md",
         "installer/manifest.json",
         "scripts/windows-installer-helper.ps1"
@@ -494,6 +580,7 @@ $buildPython = New-BuildVenv
 Add-EmbeddedPythonRuntime $staging
 Install-EmbeddedPythonPackages $staging
 Add-FormulaTools -Staging $staging -BuildPython $buildPython
+Add-ImageTools -Staging $staging -BuildPython $buildPython
 Write-CmdWrappers $staging
 Add-SkillAgentManifest $staging
 Write-DefaultOfflineEnv $staging

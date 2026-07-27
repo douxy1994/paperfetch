@@ -34,6 +34,7 @@ class MarkdownSaveSpec:
     filename: str | None = None
     request_label: str = "save_markdown"
     on_saved: MarkdownSavedHook | None = None
+    overwrite: bool = True
 
 
 @dataclass(frozen=True)
@@ -50,7 +51,9 @@ class FetchPipelineRequest:
     clients: Mapping[str, object] | None = None
     cancel_check: Callable[[], bool] | None = None
     fetch_cache: Any | None = None
-    cache_hooks: FetchPipelineCacheHooks = field(default_factory=FetchPipelineCacheHooks)
+    cache_hooks: FetchPipelineCacheHooks = field(
+        default_factory=FetchPipelineCacheHooks
+    )
     markdown_save: MarkdownSaveSpec | None = None
 
 
@@ -66,7 +69,9 @@ class FetchPipeline:
     fetch_paper_fn: FetchPaperFn
 
     def runtime_context(self, request: FetchPipelineRequest) -> RuntimeContext:
-        artifact_mode: ArtifactMode = "none" if request.no_download else request.artifact_mode
+        artifact_mode: ArtifactMode = (
+            "none" if request.no_download else request.artifact_mode
+        )
         return RuntimeContext(
             env=request.env,
             transport=request.transport,
@@ -116,8 +121,12 @@ class FetchPipeline:
                     render=request.markdown_save.render,
                     markdown_filename=request.markdown_save.filename,
                     request_label=request.markdown_save.request_label,
+                    overwrite=request.markdown_save.overwrite,
                 )
-                if saved_markdown_path is not None and request.markdown_save.on_saved is not None:
+                if (
+                    saved_markdown_path is not None
+                    and request.markdown_save.on_saved is not None
+                ):
                     request.markdown_save.on_saved(envelope, saved_markdown_path)
 
             return FetchPipelineResult(

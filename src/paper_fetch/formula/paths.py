@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from importlib.resources import files
+from importlib.resources.abc import Traversable
 from pathlib import Path
 from collections.abc import Mapping
 
@@ -25,7 +26,9 @@ def normalize_optional_path(value: str | os.PathLike[str] | None) -> Path | None
 
 def repo_root() -> Path | None:
     candidate = Path(__file__).resolve().parents[3]
-    if (candidate / "install-formula-tools.sh").exists() and (candidate / "src" / "paper_fetch").exists():
+    if (candidate / "install-formula-tools.sh").exists() and (
+        candidate / "src" / "paper_fetch"
+    ).exists():
         return candidate
     return None
 
@@ -62,7 +65,9 @@ def formula_tools_search_dirs(env: Mapping[str, str] | None = None) -> list[Path
     return candidates
 
 
-def formula_tools_subpaths(relative_path: str | Path, env: Mapping[str, str] | None = None) -> list[Path]:
+def formula_tools_subpaths(
+    relative_path: str | Path, env: Mapping[str, str] | None = None
+) -> list[Path]:
     relative = Path(relative_path)
     return [root / relative for root in formula_tools_search_dirs(env)]
 
@@ -76,7 +81,9 @@ def texmath_binary_candidates(env: Mapping[str, str] | None = None) -> list[Path
     return candidates
 
 
-def mathml_to_latex_script_candidates(env: Mapping[str, str] | None = None) -> list[Path]:
+def mathml_to_latex_script_candidates(
+    env: Mapping[str, str] | None = None,
+) -> list[Path]:
     active_env = env or os.environ
     candidates: list[Path] = []
 
@@ -97,15 +104,21 @@ def mathml_to_latex_script_candidates(env: Mapping[str, str] | None = None) -> l
     return candidates
 
 
-def mathml_to_latex_worker_script_candidates(env: Mapping[str, str] | None = None) -> list[Path]:
+def mathml_to_latex_worker_script_candidates(
+    env: Mapping[str, str] | None = None,
+) -> list[Path]:
     active_env = env or os.environ
     candidates: list[Path] = []
 
-    configured = normalize_optional_path(active_env.get("MATHML_TO_LATEX_WORKER_SCRIPT"))
+    configured = normalize_optional_path(
+        active_env.get("MATHML_TO_LATEX_WORKER_SCRIPT")
+    )
     if configured is not None:
         candidates.append(configured)
 
-    for candidate in formula_tools_subpaths(FORMULA_NODE_WORKER_SCRIPT_NAME, active_env):
+    for candidate in formula_tools_subpaths(
+        FORMULA_NODE_WORKER_SCRIPT_NAME, active_env
+    ):
         if candidate not in candidates:
             candidates.append(candidate)
 
@@ -118,5 +131,5 @@ def mathml_to_latex_worker_script_candidates(env: Mapping[str, str] | None = Non
     return candidates
 
 
-def bundled_formula_resources() -> object:
+def bundled_formula_resources() -> Traversable:
     return files(BUNDLED_FORMULA_RESOURCES_PACKAGE)

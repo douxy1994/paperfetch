@@ -14,6 +14,10 @@ from paper_fetch.extraction.markdown_render import (
     render_formula,
     render_list,
     render_table,
+    render_table_block,
+)
+from paper_fetch.extraction.markdown_render.table_format import (
+    render_aligned_markdown_table,
 )
 
 
@@ -38,6 +42,7 @@ class MarkdownRenderIrTests(unittest.TestCase):
                 "page_url": None,
                 "locator": None,
                 "image_fallback_url": None,
+                "fallback_message": "",
             },
         )
         self.assertEqual(
@@ -47,11 +52,73 @@ class MarkdownRenderIrTests(unittest.TestCase):
                 "",
                 "Observed values.",
                 "",
-                "| A | B |",
+                "| A   | B   |",
                 "| --- | --- |",
-                "| 1 | 2 |",
+                "| 1   | 2   |",
                 "",
                 "Footnote.",
+                "",
+            ],
+        )
+
+    def test_table_renderer_consumes_headers_before_rows(self) -> None:
+        table = MarkdownTable(
+            label="Table 2",
+            caption="",
+            headers=["Column A", "Column B"],
+            rows=[["value a", "value b"]],
+        )
+
+        markdown_lines = render_table(table)
+
+        self.assertIn("| Column A | Column B |", markdown_lines)
+        self.assertIn("| value a  | value b  |", markdown_lines)
+        self.assertLess(
+            markdown_lines.index("| Column A | Column B |"),
+            markdown_lines.index("| value a  | value b  |"),
+        )
+
+    def test_table_renderer_uses_canonical_formatter_for_edge_cells(self) -> None:
+        table = MarkdownTable(
+            label="Table 3",
+            caption="",
+            headers=["Name", "Value"],
+            rows=[["A|B", "first\nsecond"], ["ragged"]],
+        )
+
+        rendered = render_table(table)
+        table_lines = [line for line in rendered if line.startswith("|")]
+
+        self.assertEqual(
+            table_lines,
+            render_aligned_markdown_table(
+                [["Name", "Value"], ["A|B", "first\nsecond"], ["ragged"]]
+            ),
+        )
+        self.assertIn(r"A\|B", "\n".join(table_lines))
+        self.assertIn("first<br>second", "\n".join(table_lines))
+        self.assertEqual(
+            {line.replace(r"\|", "").count("|") for line in table_lines}, {3}
+        )
+
+    def test_table_block_renders_fallback_message_without_image(self) -> None:
+        rendered = render_table_block(
+            {
+                "kind": "fallback",
+                "heading": "Table 4",
+                "caption": "Unavailable table.",
+                "fallback_message": "Table content could not be converted.",
+            }
+        )
+
+        self.assertEqual(
+            rendered,
+            [
+                "Table 4",
+                "",
+                "Unavailable table.",
+                "",
+                "Table content could not be converted.",
                 "",
             ],
         )
@@ -65,14 +132,21 @@ class MarkdownRenderIrTests(unittest.TestCase):
         )
 
         self.assertEqual(asdict(figure)["asset_url"], "figures/f1.png")
-        self.assertEqual(render_figure(figure), ["![Figure 1](figures/f1.png)", "", "Rendered figure.", ""])
+        self.assertEqual(
+            render_figure(figure),
+            ["![Figure 1](figures/f1.png)", "", "Rendered figure.", ""],
+        )
 
     def test_formula_caption_and_list_renderers(self) -> None:
-        formula = MarkdownFormula(label="Equation 1.", latex="x = y + z", display_mode=True)
+        formula = MarkdownFormula(
+            label="Equation 1.", latex="x = y + z", display_mode=True
+        )
         caption = MarkdownCaption(label="Figure 2.", text="A caption.")
         items = MarkdownList(items=["First", "Second"], ordered=True)
 
-        self.assertEqual(render_formula(formula), ["Equation 1.", "", "$$", "x = y + z", "$$", ""])
+        self.assertEqual(
+            render_formula(formula), ["Equation 1.", "", "$$", "x = y + z", "$$", ""]
+        )
         self.assertEqual(render_caption(caption), "**Figure 2.** A caption.")
         self.assertEqual(render_list(items), ["1. First", "2. Second", ""])
 

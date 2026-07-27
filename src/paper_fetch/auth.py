@@ -5,25 +5,35 @@ from __future__ import annotations
 from dataclasses import dataclass, replace
 import re
 from pathlib import Path
+from typing import Any
 from collections.abc import Callable, Mapping
 
 from .config import (
-    AMS_STORAGE_STATE_JSON_ENV_VAR,
+    BROWSER_HEADLESS_ENV_VAR,
+    BROWSER_TIMEOUT_MS_ENV_VAR,
     BROWSER_USER_AGENT_ENV_VAR,
-    CLOAKBROWSER_HEADLESS_ENV_VAR,
-    CLOAKBROWSER_TIMEOUT_MS_ENV_VAR,
     WILEY_STORAGE_STATE_JSON_ENV_VAR,
     build_runtime_env,
 )
 from .provider_catalog import ordered_provider_specs
-from .providers import _cloakbrowser
+from .providers.browser_runtime import (
+    BrowserRuntimeConfig,
+    ensure_runtime_ready,
+    load_runtime_config,
+    save_storage_state,
+    storage_state_path,
+)
+from .providers.browser_runtime.paths import (
+    runtime_with_default_storage_profile,
+)
+from .providers.browser_runtime.context import context_options_for_config
+from .providers.browser_runtime.camoufox_manager import (
+    CamoufoxPersistentContextManager,
+)
 from .providers.base import ProviderFailure
 from .reason_codes import ERROR
-from .runtime_browser import BrowserContextManager, browser_context_options
+from .runtime_browser import BrowserContextManager
 from .utils import normalize_text, provider_display_name
-
-
-AMS_AUTH_URL = "https://journals.ametsoc.org/doi/10.1175/MWR-D-10-05037.1"
 
 
 @dataclass(frozen=True)
@@ -34,21 +44,24 @@ class AuthTarget:
 
 AUTH_TARGETS: Mapping[str, AuthTarget] = {
     "wiley": AuthTarget(
-        doi="10.1111/gcb.16414",
-        url="https://onlinelibrary.wiley.com/doi/full/10.1111/gcb.16414",
+        doi="10.1111/gcb.15322",
+        url="https://onlinelibrary.wiley.com/doi/full/10.1111/gcb.15322",
     ),
     "science": AuthTarget(
-        doi="10.1126/science.ady3136",
-        url="https://www.science.org/doi/full/10.1126/science.ady3136",
+        doi="10.1126/science.adz3492",
+        url="https://www.science.org/doi/full/10.1126/science.adz3492",
     ),
     "pnas": AuthTarget(
         doi="10.1073/pnas.2406303121",
         url="https://www.pnas.org/doi/full/10.1073/pnas.2406303121",
     ),
-    "ams": AuthTarget(doi="10.1175/mwr-d-10-05037.1", url=AMS_AUTH_URL),
     "mdpi": AuthTarget(
         doi="10.3390/membranes15030093",
         url="https://www.mdpi.com/2077-0375/15/3/93",
+    ),
+    "royalsocietypublishing": AuthTarget(
+        doi="10.1098/rsos.201200",
+        url="https://royalsocietypublishing.org/doi/10.1098/rsos.201200",
     ),
     "annualreviews": AuthTarget(
         doi="10.1146/annurev-control-030123-013355",
@@ -69,7 +82,6 @@ AUTH_TARGETS: Mapping[str, AuthTarget] = {
 }
 
 _LEGACY_AUTH_STORAGE_STATE_ENV_VARS = {
-    "ams": AMS_STORAGE_STATE_JSON_ENV_VAR,
     "wiley": WILEY_STORAGE_STATE_JSON_ENV_VAR,
 }
 
@@ -88,9 +100,7 @@ class AuthResult:
 
 def browser_auth_provider_names() -> tuple[str, ...]:
     return tuple(
-        spec.name
-        for spec in ordered_provider_specs()
-        if spec.requires_browser_runtime
+        spec.name for spec in ordered_provider_specs() if spec.requires_browser_runtime
     )
 
 
@@ -107,7 +117,9 @@ def _require_browser_auth_provider(provider: str) -> str:
     return provider_key
 
 
-def _auth_target_for_provider(provider_key: str, *, target_url: str | None) -> AuthTarget:
+def _auth_target_for_provider(
+    provider_key: str, *, target_url: str | None
+) -> AuthTarget:
     auth_target = AUTH_TARGETS.get(provider_key)
     if auth_target is not None:
         return auth_target
@@ -133,7 +145,9 @@ def _dotenv_quote(value: str) -> str:
 
 def upsert_env_file(path: Path, values: Mapping[str, str]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    existing_lines = path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    existing_lines = (
+        path.read_text(encoding="utf-8").splitlines() if path.exists() else []
+    )
     pending = dict(values)
     output_lines: list[str] = []
     assignment_pattern = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
@@ -199,23 +213,24 @@ def _wait_for_manual_completion(
 
 
 def _runtime_with_auth_storage(
-    runtime: _cloakbrowser.CloakBrowserRuntimeConfig,
+    runtime: BrowserRuntimeConfig,
     *,
     env: Mapping[str, str],
     provider: str,
     storage_state_path: Path | None = None,
-) -> _cloakbrowser.CloakBrowserRuntimeConfig:
-    updates: dict[str, object] = {}
-    if storage_state_path is not None:
-        updates["storage_state_path"] = storage_state_path.expanduser().resolve()
+) -> BrowserRuntimeConfig:
     if runtime.profile_dir is None and runtime.user_data_dir is None:
-        updates["user_data_dir"] = _cloakbrowser._default_provider_user_data_dir(
-            env,
+        runtime = runtime_with_default_storage_profile(
+            runtime,
+            env=env,
             provider=provider,
         )
-    if not updates:
+    if storage_state_path is None:
         return runtime
-    return replace(runtime, **updates)
+    return replace(
+        runtime,
+        storage_state_path=storage_state_path.expanduser().resolve(),
+    )
 
 
 def authenticate_provider_profile(
@@ -232,49 +247,64 @@ def authenticate_provider_profile(
     active_url = target_url or auth_target.url
 
     runtime_env = build_runtime_env()
-    runtime_env[CLOAKBROWSER_HEADLESS_ENV_VAR] = "0"
+    runtime_env[BROWSER_HEADLESS_ENV_VAR] = "0"
     legacy_storage_env_var = _LEGACY_AUTH_STORAGE_STATE_ENV_VARS.get(provider_key)
     if legacy_storage_env_var is not None:
         runtime_env.pop(legacy_storage_env_var, None)
     if timeout_ms is not None:
-        runtime_env[CLOAKBROWSER_TIMEOUT_MS_ENV_VAR] = str(timeout_ms)
+        runtime_env[BROWSER_TIMEOUT_MS_ENV_VAR] = str(timeout_ms)
     if browser_user_agent:
         runtime_env[BROWSER_USER_AGENT_ENV_VAR] = browser_user_agent
 
-    runtime = _cloakbrowser.load_runtime_config(
+    runtime = load_runtime_config(
         runtime_env,
         provider=provider_key,
         doi=auth_target.doi,
-        require_storage_state=False,
     )
     runtime = _runtime_with_auth_storage(
         runtime,
         env=runtime_env,
         provider=provider_key,
     )
-    _cloakbrowser.ensure_runtime_ready(runtime)
+    ensure_runtime_ready(runtime)
 
     profile_dir = runtime.profile_dir or runtime.user_data_dir
-    resolved_storage_state_path = _cloakbrowser._storage_state_path(runtime)
-    manager = None
+    resolved_storage_state_path = storage_state_path(runtime)
+    manager: Any | None = None
     context = None
     page = None
     final_url: str | None = None
     title: str | None = None
     try:
-        manager = BrowserContextManager(
-            binary_path=runtime.binary_path,
-            cdp_endpoint=runtime.cdp_endpoint,
-            profile_dir=runtime.profile_dir,
-            user_data_dir=runtime.user_data_dir,
-        )
-        context = manager.new_context(
-            headless=False,
-            **browser_context_options(
-                user_agent=normalize_text(runtime.user_agent),
-                **_cloakbrowser._storage_context_options(runtime),
+        if runtime.backend == "camoufox":
+            if browser_user_agent:
+                raise ProviderFailure(
+                    ERROR,
+                    "--browser-user-agent cannot be used with Camoufox because it would make the generated Firefox fingerprint inconsistent.",
+                )
+            if profile_dir is None:
+                raise ProviderFailure(
+                    ERROR,
+                    "Camoufox authentication requires a provider profile directory.",
+                )
+            profile_dir.mkdir(parents=True, exist_ok=True)
+            manager = CamoufoxPersistentContextManager(
+                user_data_dir=str(profile_dir),
+                binary_path=runtime.binary_path,
+                headless=False,
             )
-        )
+            context = manager.new_context()
+        else:
+            manager = BrowserContextManager(
+                binary_path=runtime.binary_path,
+                cdp_endpoint=runtime.cdp_endpoint,
+                profile_dir=runtime.profile_dir,
+                user_data_dir=runtime.user_data_dir,
+            )
+            context = manager.new_context(
+                headless=False,
+                **context_options_for_config(runtime),
+            )
         page = context.new_page()
         page.goto(active_url, wait_until="domcontentloaded", timeout=runtime.timeout_ms)
         _wait_for_manual_completion(
@@ -289,7 +319,7 @@ def authenticate_provider_profile(
             title = normalize_text(str(page.title() or "")) or None
         except Exception:
             title = None
-        _cloakbrowser._save_storage_state(
+        save_storage_state(
             context,
             runtime,
             filter_url=final_url or active_url,
@@ -298,7 +328,9 @@ def authenticate_provider_profile(
         raise
     except Exception as exc:
         message = normalize_text(str(exc)) or exc.__class__.__name__
-        raise ProviderFailure(ERROR, f"{provider_label} authentication failed: {message}") from exc
+        raise ProviderFailure(
+            ERROR, f"{provider_label} authentication failed: {message}"
+        ) from exc
     finally:
         for value in (page, context, manager):
             try:

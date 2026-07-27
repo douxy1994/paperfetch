@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import re
+from dataclasses import dataclass, replace
 from typing import Any
 from collections.abc import Mapping
 from urllib.parse import quote, urljoin
@@ -28,11 +29,19 @@ from ..extraction.markdown_render.tables import normalize_table_cell_text
 from ..models import AssetProfile
 from ..publisher_identity import extract_doi, normalize_doi
 from ..quality.html_availability import (
+    HTML_CONTAINER_SCOPE_ARTICLE,
+    HTML_CONTAINER_SCOPE_EXPLICIT_BODY,
+    HTML_CONTAINER_SCOPE_PAGE,
+    HtmlContainerEvidence,
     HtmlQualityAssessor,
     availability_failure_message,
+    html_container_evidence,
 )
 from ..utils import normalize_text
-from ._html_section_markdown import render_clean_text_from_html, render_container_markdown
+from ._html_section_markdown import (
+    render_clean_text_from_html,
+    render_container_markdown,
+)
 
 
 ANNUALREVIEWS_ARTICLE_SELECTORS = (
@@ -56,6 +65,12 @@ ANNUALREVIEWS_EXTRACTION_CLEANUP_SELECTORS = (
     ".access-options",
     ".article-header-metadata",
     ".article-title-and-authors",
+    ".mostreadcontainer",
+    ".mostcitedcontainer",
+    ".morelikethiscontainer",
+    "#js-recommend-load",
+    "#metrics_content",
+    "dialog",
     ".showPPT",
     ".js-references",
     ".open-table-fullscreen",
@@ -84,10 +99,14 @@ ANNUALREVIEWS_FRONT_MATTER_EXACT_TEXTS = (
     "Download PDF",
     "Toggle display:",
 )
-ANNUALREVIEWS_FRONT_MATTER_CONTAINS_TOKENS = (
-    "Access provided by:",
+ANNUALREVIEWS_FRONT_MATTER_CONTAINS_TOKENS = ("Access provided by:",)
+# SITE_UI_COPY_REGRESSION_MARKER: Annual Reviews post-content recommendation labels; keep tied to empty-shell replay tests.
+# STRUCTURAL_UI_COPY_HOOK: provider-scoped post-content cutoff, not a generic body denylist.
+ANNUALREVIEWS_POST_CONTENT_BREAK_TOKENS = (
+    "most read this month",
+    "most cited",
+    "related articles from annual reviews",
 )
-ANNUALREVIEWS_POST_CONTENT_BREAK_TOKENS: tuple[str, ...] = ()
 ANNUALREVIEWS_SUPPLEMENTARY_TEXT_TOKENS: tuple[str, ...] = ()
 ANNUALREVIEWS_SITE_RULE_OVERRIDES: dict[str, object] = {}
 ANNUALREVIEWS_NOISE_PROFILE = "annualreviews"
@@ -127,6 +146,12 @@ _REFERENCE_LEADING_LABEL_RE = re.compile(
 _HEADING_RE = re.compile(r"^(#{2,6})\s+(.+?)\s*$")
 _PUNCT_SPACE_RE = re.compile(r"\s+([,.;:])")
 _TABLE_BLOCK_CLASS = "annualreviews-markdown-table"
+
+
+@dataclass(frozen=True)
+class _AnnualreviewsContainerSelection:
+    node: Tag
+    evidence: HtmlContainerEvidence
 
 
 def direct_article_url(doi: str) -> str:
@@ -223,15 +248,35 @@ def _node_text(node: Tag | None) -> str:
     return normalize_text(node.get_text(" ", strip=True))
 
 
-def _select_article_container(soup: BeautifulSoup) -> Tag | None:
+def _select_article_container(
+    soup: BeautifulSoup,
+) -> _AnnualreviewsContainerSelection | None:
     for selector in ANNUALREVIEWS_ARTICLE_SELECTORS:
         node = soup.select_one(selector)
         if isinstance(node, Tag) and len(_node_text(node)) >= 1200:
-            return node
-    for selector in ("#html-body", "article", "main"):
+            return _AnnualreviewsContainerSelection(
+                node=node,
+                evidence=html_container_evidence(
+                    node,
+                    selector=selector,
+                    scope=HTML_CONTAINER_SCOPE_EXPLICIT_BODY,
+                ),
+            )
+    for selector, scope in (
+        ("#html-body", HTML_CONTAINER_SCOPE_EXPLICIT_BODY),
+        ("article", HTML_CONTAINER_SCOPE_ARTICLE),
+        ("main", HTML_CONTAINER_SCOPE_PAGE),
+    ):
         node = soup.select_one(selector)
         if isinstance(node, Tag) and len(_node_text(node)) >= 1200:
-            return node
+            return _AnnualreviewsContainerSelection(
+                node=node,
+                evidence=html_container_evidence(
+                    node,
+                    selector=selector,
+                    scope=scope,
+                ),
+            )
     return None
 
 
@@ -287,7 +332,9 @@ def _normalize_section_headings(container: Tag) -> None:
             continue
         label_node = lowest.find_previous_sibling(class_="label")
         label = _node_text(label_node if isinstance(label_node, Tag) else None)
-        title = _canonical_heading(" ".join(item for item in (label, _node_text(lowest)) if item))
+        title = _canonical_heading(
+            " ".join(item for item in (label, _node_text(lowest)) if item)
+        )
         if isinstance(label_node, Tag):
             label_node.decompose()
         if title:
@@ -352,11 +399,15 @@ def _figure_caption(figure: Tag) -> str:
 
 
 def _normalize_figures(container: Tag, source_url: str) -> None:
-    for figure in list(container.select(".html-fulltext-responsive-figure, div.figure")):
+    for figure in list(
+        container.select(".html-fulltext-responsive-figure, div.figure")
+    ):
         if not isinstance(figure, Tag):
             continue
         figure.name = "figure"
-        for node in list(figure.select(".downloadAsPptContainer, .figure-duplicate-label")):
+        for node in list(
+            figure.select(".downloadAsPptContainer, .figure-duplicate-label")
+        ):
             if isinstance(node, Tag):
                 node.decompose()
         for anchor in list(figure.find_all("a", href=True)):
@@ -391,7 +442,9 @@ def _normalize_figures(container: Tag, source_url: str) -> None:
             image["data-full-size"] = full_size
         if figure_url:
             image[INLINE_FIGURE_SRC_ATTR] = figure_url
-        image[INLINE_FIGURE_ALT_ATTR] = caption or normalize_text(str(image.get("alt") or "Figure")) or "Figure"
+        image[INLINE_FIGURE_ALT_ATTR] = (
+            caption or normalize_text(str(image.get("alt") or "Figure")) or "Figure"
+        )
 
 
 def _table_cell_text(cell: Tag) -> str:
@@ -500,7 +553,14 @@ def _normalize_references(container: Tag) -> None:
 def _cleaned_article_html(
     html_text: str,
     source_url: str,
-) -> tuple[str, str, int, list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[
+    str,
+    str,
+    int,
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    HtmlContainerEvidence,
+]:
     soup = BeautifulSoup(html_text, choose_parser())
     html_metadata = parse_html_metadata(html_text, source_url)
     return _cleaned_article_html_from_soup(
@@ -517,14 +577,21 @@ def _cleaned_article_html_from_soup(
     source_url: str,
     *,
     html_metadata: Mapping[str, Any] | None = None,
-) -> tuple[str, str, int, list[dict[str, Any]], list[dict[str, Any]]]:
-    container = _select_article_container(soup)
-    if container is None:
+) -> tuple[
+    str,
+    str,
+    int,
+    list[dict[str, Any]],
+    list[dict[str, Any]],
+    HtmlContainerEvidence,
+]:
+    selection = _select_article_container(soup)
+    if selection is None:
         raise HtmlExtractionFailure(
             "article_container_not_found",
             "Could not identify the Annual Reviews full-text container.",
         )
-    cleaned = copy.deepcopy(container)
+    cleaned = copy.deepcopy(selection.node)
     _remove_noise_nodes(cleaned)
     _normalize_section_headings(cleaned)
     _normalize_figures(cleaned, source_url)
@@ -535,7 +602,9 @@ def _cleaned_article_html_from_soup(
     title = _extract_page_title_from_soup(soup, metadata=html_metadata)
     container_text_length = len(_node_text(cleaned))
     section_hints = collect_html_section_hints(cleaned, title=title)
-    abstract_sections = _abstract_sections(cleaned, html_metadata or parse_html_metadata(html_text, source_url))
+    abstract_sections = _abstract_sections(
+        cleaned, html_metadata or parse_html_metadata(html_text, source_url)
+    )
     article_soup = BeautifulSoup("<article></article>", choose_parser())
     article = article_soup.find("article")
     if not isinstance(article, Tag):
@@ -544,10 +613,19 @@ def _cleaned_article_html_from_soup(
             "Could not create normalized Annual Reviews article container.",
         )
     article.extend(copy.copy(child) for child in cleaned.contents)
-    return str(article), title, container_text_length, section_hints, abstract_sections
+    return (
+        str(article),
+        title,
+        container_text_length,
+        section_hints,
+        abstract_sections,
+        replace(selection.evidence, tag="article", synthetic=True),
+    )
 
 
-def _abstract_sections(container: Tag, html_metadata: Mapping[str, Any]) -> list[dict[str, str]]:
+def _abstract_sections(
+    container: Tag, html_metadata: Mapping[str, Any]
+) -> list[dict[str, str]]:
     abstract_node = container.select_one(".article-abstract")
     if isinstance(abstract_node, Tag):
         paragraphs = [
@@ -556,7 +634,9 @@ def _abstract_sections(container: Tag, html_metadata: Mapping[str, Any]) -> list
             if _node_text(paragraph)
         ]
         if paragraphs:
-            return [{"heading": "Abstract", "text": normalize_text(" ".join(paragraphs))}]
+            return [
+                {"heading": "Abstract", "text": normalize_text(" ".join(paragraphs))}
+            ]
     abstract = normalize_text(str(html_metadata.get("abstract") or ""))
     return [{"heading": "Abstract", "text": abstract}] if abstract else []
 
@@ -605,7 +685,9 @@ def annualreviews_normalize_markdown(text: str) -> str:
             continue
         if lowered in _NOISY_LINES:
             continue
-        if any(token.lower() in lowered for token in ANNUALREVIEWS_MARKDOWN_PROMO_TOKENS):
+        if any(
+            token.lower() in lowered for token in ANNUALREVIEWS_MARKDOWN_PROMO_TOKENS
+        ):
             if len(normalized) < 240:
                 continue
         cleaned_lines: list[str] = []
@@ -697,10 +779,14 @@ def _extract_keywords_from_soup(
 
 
 def extract_asset_html_scopes(html_text: str, source_url: str) -> tuple[str, str]:
-    article_html, _title, _container_text_length, _section_hints, _abstract_sections = _cleaned_article_html(
-        html_text,
-        source_url,
-    )
+    (
+        article_html,
+        _title,
+        _container_text_length,
+        _section_hints,
+        _abstract_sections,
+        _container_evidence,
+    ) = _cleaned_article_html(html_text, source_url)
     return article_html, ""
 
 
@@ -746,11 +832,17 @@ def _dedupe_assets(assets: list[dict[str, str]]) -> list[dict[str, str]]:
 
 def blocking_fallback_signals(html_text: str) -> list[str]:
     soup = BeautifulSoup(html_text, choose_parser())
-    container = _select_article_container(soup)
-    if container is not None and len(_node_text(container)) >= 1200:
+    selection = _select_article_container(soup)
+    if (
+        selection is not None
+        and selection.evidence.scope != HTML_CONTAINER_SCOPE_PAGE
+        and len(_node_text(selection.node)) >= 1200
+    ):
         return []
     text = normalize_text(soup.get_text(" ", strip=True)).lower()
     signals: list[str] = []
+    if selection is not None and selection.evidence.scope == HTML_CONTAINER_SCOPE_PAGE:
+        signals.append("untrusted_article_container")
     if "full text loading" in text:
         signals.append("full_text_loading_shell")
     if "the full text of this item is not currently available" in text:
@@ -771,7 +863,14 @@ def extract_markdown(
         html_metadata,
         doi=str((metadata or {}).get("doi") or html_metadata.get("doi") or "") or None,
     )
-    article_html, title, container_text_length, section_hints, abstract_sections = _cleaned_article_html_from_soup(
+    (
+        article_html,
+        title,
+        container_text_length,
+        section_hints,
+        abstract_sections,
+        container_evidence,
+    ) = _cleaned_article_html_from_soup(
         soup,
         html_text,
         source_url,
@@ -818,6 +917,7 @@ def extract_markdown(
         final_url=source_url,
         container_tag="article",
         container_text_length=container_text_length,
+        container_evidence=container_evidence,
         section_hints=section_hints,
     )
     if not diagnostics.accepted:
@@ -828,10 +928,15 @@ def extract_markdown(
 
     extraction_payload = {
         "title": title,
-        "abstract_text": normalize_text(abstract_sections[0]["text"]) if abstract_sections else None,
+        "abstract_text": normalize_text(abstract_sections[0]["text"])
+        if abstract_sections
+        else None,
         "abstract_sections": abstract_sections,
         "section_hints": section_hints,
         "container_tag": "article",
+        "container_selector": container_evidence.selector,
+        "container_scope": container_evidence.scope,
+        "container_synthetic": container_evidence.synthetic,
         "container_text_length": container_text_length,
         "availability_diagnostics": diagnostics.to_dict(),
         "extracted_authors": extract_authors(html_text),

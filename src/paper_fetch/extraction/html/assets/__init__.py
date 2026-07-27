@@ -17,6 +17,14 @@ from ._kind import (
 from .figures import (
     clean_noisy_image_alt_text as clean_noisy_image_alt_text,
     extract_figure_assets as extract_figure_assets,
+    extract_full_size_figure_image_url as extract_full_size_figure_image_url,
+)
+from .dom import (
+    FULL_SIZE_IMAGE_ATTRS as FULL_SIZE_IMAGE_ATTRS,
+    PREVIEW_IMAGE_ATTRS as PREVIEW_IMAGE_ATTRS,
+    _soup_attr_url as _soup_attr_url,
+    looks_like_full_size_asset_url as looks_like_full_size_asset_url,
+    supplementary_response_block_reason as supplementary_response_block_reason,
 )
 from .formulas import extract_formula_assets as extract_formula_assets
 from .identity import (
@@ -34,8 +42,20 @@ from .supplementary import (
     supplementary_file_suffixes as supplementary_file_suffixes,
     supplementary_text_tokens_for_profile as supplementary_text_tokens_for_profile,
 )
+from .download import (
+    browser_asset_recovery_allowed as browser_asset_recovery_allowed,
+)
+from .figures import FigurePageFetcher as FigurePageFetcher
 
-_PUBLIC_MODULES = (_dom, _figures, _formulas, _supplementary, _identity, _kind, download)
+_PUBLIC_MODULES = (
+    _dom,
+    _figures,
+    _formulas,
+    _supplementary,
+    _identity,
+    _kind,
+    download,
+)
 
 for _module in _PUBLIC_MODULES:
     globals().update({name: getattr(_module, name) for name in _module.__all__})

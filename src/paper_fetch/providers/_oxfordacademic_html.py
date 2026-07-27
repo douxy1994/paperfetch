@@ -20,9 +20,15 @@ from ..extraction.html.tables import render_table_markdown
 from ..models import AssetProfile
 from ..publisher_identity import normalize_doi
 from ..utils import normalize_text
-from ._html_section_markdown import render_clean_text_from_html, render_container_markdown
+from ._html_section_markdown import (
+    render_clean_text_from_html,
+    render_container_markdown,
+)
 from ._html_references import extract_numbered_references_from_html
-from ._pdf_candidates import extract_pdf_candidate_urls_from_html, extract_pdf_url_from_metadata_links
+from ._pdf_candidates import (
+    extract_pdf_candidate_urls_from_html,
+    extract_pdf_url_from_metadata_links,
+)
 
 
 OXFORDACADEMIC_NOISE_PROFILE = "oxfordacademic"
@@ -110,9 +116,7 @@ OXFORDACADEMIC_MARKDOWN_NOISE_LINES = frozenset(
         "Download all slides",
     }
 )
-OXFORDACADEMIC_SUPPLEMENTARY_LINK_SELECTORS = (
-    ".dataSuppLink",
-)
+OXFORDACADEMIC_SUPPLEMENTARY_LINK_SELECTORS = (".dataSuppLink",)
 OXFORDACADEMIC_PARAGRAPH_BLOCK_CLASS = "block-child-p"
 OXFORD_CITATION_FIELD_PATTERN = re.compile(
     r"(?P<key>citation_[A-Za-z0-9_]+)\s*=\s*(?P<value>[^;]*)"
@@ -141,9 +145,54 @@ def _append_unique(values: list[str], candidate: str | None) -> None:
         values.append(normalized)
 
 
-def citation_reference_metadata(metadata: Mapping[str, Any]) -> list[dict[str, str | None]]:
-    raw_meta = metadata.get("raw_meta") if isinstance(metadata.get("raw_meta"), Mapping) else {}
-    raw_values = raw_meta.get("citation_reference") if isinstance(raw_meta, Mapping) else []
+def _nodes_with_class(
+    root: BeautifulSoup | Tag,
+    class_name: str,
+    *,
+    tag_name: str | None = None,
+) -> list[Tag]:
+    nodes = (
+        root.find_all(tag_name, class_=class_name)
+        if tag_name
+        else root.find_all(class_=class_name)
+    )
+    return [node for node in nodes if isinstance(node, Tag)]
+
+
+def _first_with_class(
+    root: BeautifulSoup | Tag,
+    class_name: str,
+    *,
+    tag_name: str | None = None,
+) -> Tag | None:
+    node = (
+        root.find(tag_name, class_=class_name)
+        if tag_name
+        else root.find(class_=class_name)
+    )
+    return node if isinstance(node, Tag) else None
+
+
+def _selector_class_name(selector: str) -> str | None:
+    if not selector.startswith("."):
+        return None
+    class_name = selector[1:]
+    if not class_name or any(char.isspace() for char in class_name):
+        return None
+    return class_name
+
+
+def citation_reference_metadata(
+    metadata: Mapping[str, Any],
+) -> list[dict[str, str | None]]:
+    raw_meta = (
+        metadata.get("raw_meta")
+        if isinstance(metadata.get("raw_meta"), Mapping)
+        else {}
+    )
+    raw_values = (
+        raw_meta.get("citation_reference") if isinstance(raw_meta, Mapping) else []
+    )
     if isinstance(raw_values, str):
         raw_values = [raw_values]
     references: list[dict[str, str | None]] = []
@@ -191,10 +240,18 @@ def _clean_citation_reference_metadata(raw: str) -> dict[str, str | None]:
             fields.setdefault(key, []).append(value)
     if not fields:
         cleaned_raw = _clean_reference_sentence(raw)
-        return {"raw": cleaned_raw, "doi": None, "title": None, "year": None} if cleaned_raw else {}
+        return (
+            {"raw": cleaned_raw, "doi": None, "title": None, "year": None}
+            if cleaned_raw
+            else {}
+        )
 
     authors = fields.get("citation_author") or []
-    author_text = ", ".join(normalize_text(author).rstrip(" ,;") for author in authors if normalize_text(author))
+    author_text = ", ".join(
+        normalize_text(author).rstrip(" ,;")
+        for author in authors
+        if normalize_text(author)
+    )
     year = _first_citation_field(fields, "citation_year")
     title = _first_citation_field(fields, "citation_title")
     journal = _first_citation_field(fields, "citation_journal_title")
@@ -215,7 +272,12 @@ def _clean_citation_reference_metadata(raw: str) -> dict[str, str | None]:
     _append_reference_part(parts, ", ".join(publication_parts))
     _append_reference_part(parts, publisher)
     cleaned_raw = _clean_reference_sentence(". ".join(parts) or raw)
-    return {"raw": cleaned_raw, "doi": doi, "title": title or None, "year": year or None}
+    return {
+        "raw": cleaned_raw,
+        "doi": doi,
+        "title": title or None,
+        "year": year or None,
+    }
 
 
 def merge_metadata_with_html(
@@ -232,17 +294,25 @@ def merge_metadata_with_html(
     normalized_doi = normalize_doi(str(merged.get("doi") or doi or ""))
     if normalized_doi and not merged.get("doi"):
         merged["doi"] = normalized_doi
-    references = extract_numbered_references_from_html(html_text) or citation_reference_metadata(merged)
+    references = extract_numbered_references_from_html(
+        html_text
+    ) or citation_reference_metadata(merged)
     if references:
-        merged["references"] = references
-    return merged
+        merged_payload: dict[str, Any] = dict(merged)
+        merged_payload["references"] = references
+        return merged_payload
+    return dict(merged)
 
 
 def _supplementary_lines(soup: BeautifulSoup) -> list[str]:
     lines: list[str] = []
     seen: set[str] = set()
     for selector in OXFORDACADEMIC_SUPPLEMENTARY_LINK_SELECTORS:
-        for node in soup.select(selector):
+        class_name = _selector_class_name(selector)
+        nodes = (
+            _nodes_with_class(soup, class_name) if class_name else soup.select(selector)
+        )
+        for node in nodes:
             text = render_clean_text_from_html(
                 node,
                 collapse_prose_line_breaks=True,
@@ -251,7 +321,10 @@ def _supplementary_lines(soup: BeautifulSoup) -> list[str]:
                 continue
             normalized = normalize_text(text)
             lowered = normalized.lower()
-            if "supplementary" not in lowered and "/oup/backfile/" not in str(node).lower():
+            if (
+                "supplementary" not in lowered
+                and "/oup/backfile/" not in str(node).lower()
+            ):
                 continue
             if normalized in seen:
                 continue
@@ -262,9 +335,9 @@ def _supplementary_lines(soup: BeautifulSoup) -> list[str]:
 
 def _article_body(soup: BeautifulSoup) -> Any:
     return (
-        soup.select_one(".article-body")
-        or soup.select_one(".widget-ArticleFulltext")
-        or soup.select_one("article")
+        _first_with_class(soup, "article-body")
+        or _first_with_class(soup, "widget-ArticleFulltext")
+        or soup.find("article")
         or soup.body
         or soup
     )
@@ -273,7 +346,11 @@ def _article_body(soup: BeautifulSoup) -> Any:
 def _normalize_oxford_body_for_rendering(body: Any) -> None:
     if not isinstance(body, Tag):
         return
-    for node in body.select(f"div.{OXFORDACADEMIC_PARAGRAPH_BLOCK_CLASS}"):
+    for node in _nodes_with_class(
+        body,
+        OXFORDACADEMIC_PARAGRAPH_BLOCK_CLASS,
+        tag_name="div",
+    ):
         node.name = "p"
     for comment in body.find_all(string=lambda value: isinstance(value, Comment)):
         if "citationlinks" in str(comment).lower():
@@ -299,17 +376,25 @@ def extract_markdown(
     body = _article_body(soup)
     _normalize_oxford_body_for_rendering(body)
     for selector in OXFORDACADEMIC_EXTRACTION_CLEANUP_SELECTORS:
-        for node in list(body.select(selector)):
+        class_name = _selector_class_name(selector)
+        nodes = (
+            _nodes_with_class(body, class_name) if class_name else body.select(selector)
+        )
+        for node in list(nodes):
             node.decompose()
 
     table_replacements: dict[str, str] = {}
-    for index, wrapper in enumerate(list(body.select(".table-wrap")), start=1):
-        table = wrapper.select_one(".table-overflow table") or wrapper.select_one("table")
+    for index, wrapper in enumerate(
+        list(_nodes_with_class(body, "table-wrap")), start=1
+    ):
+        overflow = _first_with_class(wrapper, "table-overflow")
+        table = overflow.find("table") if overflow is not None else None
+        table = table or wrapper.find("table")
         if table is None:
             continue
-        label = render_clean_text_from_html(wrapper.select_one(".label"))
+        label = render_clean_text_from_html(_first_with_class(wrapper, "label"))
         caption = render_clean_text_from_html(
-            wrapper.select_one(".caption"),
+            _first_with_class(wrapper, "caption"),
             collapse_prose_line_breaks=True,
         )
         rendered_table = render_table_markdown(table, label=label, caption=caption)
@@ -336,9 +421,7 @@ def extract_markdown(
     )
     if supplementary_lines:
         markdown = clean_rendered_markdown(
-            markdown
-            + "\n\n## Supplementary Files\n\n"
-            + "\n".join(supplementary_lines)
+            markdown + "\n\n## Supplementary Files\n\n" + "\n".join(supplementary_lines)
         )
     body_html = str(body)
     return OxfordAcademicExtraction(
@@ -371,8 +454,7 @@ def pdf_candidate_urls(
     ):
         normalized = normalize_text(value)
         if normalized and (
-            "/article-pdf/" in normalized.lower()
-            or normalized.lower().endswith(".pdf")
+            "/article-pdf/" in normalized.lower() or normalized.lower().endswith(".pdf")
         ):
             _append_unique(candidates, normalized)
     if html_text and source_url:
@@ -381,7 +463,9 @@ def pdf_candidate_urls(
     normalized_doi = normalize_doi(str(doi or metadata.get("doi") or ""))
     if normalized_doi:
         _append_unique(candidates, f"https://academic.oup.com/doi/pdf/{normalized_doi}")
-        _append_unique(candidates, f"https://academic.oup.com/doi/epdf/{normalized_doi}")
+        _append_unique(
+            candidates, f"https://academic.oup.com/doi/epdf/{normalized_doi}"
+        )
     return candidates
 
 

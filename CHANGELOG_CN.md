@@ -6,6 +6,219 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 4.0.1 - 2026-07-27
+
+### 修复
+
+- Linux、macOS、Windows 离线包恢复原生 texmath 0.13.2 作为首选公式后端；复用 POSIX 可执行文件时改为复制而非保留构建机符号链接，并继续将锁定的 `mathml-to-latex` 作为二级回退。
+- 调用 Inno Setup 前规范化 Windows 相对输出目录，并允许稳定发布重跑在不移动不可变源码 tag 的前提下覆盖受信任打包工具。
+- 修复 4.0 CI 拆分时中断的每日 `dependency-latest` 滚动 prerelease：为九个冻结平台/ABI 快照解析 `full` extra，复用共享离线 workflow 构建并校验 wheelhouse，恢复精确资产覆盖和发布后完整性验证。
+- 稳定版从 `CHANGELOG_CN.md` 提取对应版本章节，滚动 prerelease 使用中文状态模板；两条发布路径今后都只附带中文 Release Notes，不再生成英文说明。
+
+## 4.0.0 - 2026-07-26
+
+### 破坏性变更
+
+- 移除已弃用的 CloakBrowser 后端和全部 `CLOAKBROWSER_*` 兼容配置；Camoufox 成为唯一受支持的浏览器后端。
+- 默认安装改为轻量 core；浏览器正文提取和 PDF 转换分别需要 `browser`、`pdf` 或 `full` extra。
+
+### 变更
+
+- 新增全局与高风险模块的分支覆盖率报告、完整生产包类型检查、unit 运行状态隔离、有界 cookie-aware 下载和安全 XML 解析。
+- 以 `pyproject.toml` 为项目版本事实源，采用 SPDX 许可证元数据，并补全发布与供应链元数据。
+
+### 修复
+
+- 在保留 `pymupdf4llm` 1.28.0 的前提下稳定共享 PDF Markdown 结构，用无 provider/DOI 特例的规则修复确定性标题漂移。
+- 对 Royal Society Silverchair 的 `view-large` 与 CDN URL 变体做逻辑图片去重，同时保留首选大图 URL、预览 URL、图号和 caption。
+- 在去除 HTML 重复标题 section 并应用 PDF、Royal Society 修复后，刷新并完成全部 26 份受影响 golden 的 agent 审核。
+
+## 3.2.1 - 2026-07-25
+
+### 变更
+
+- 将 GitHub Actions 中全部 Python 环境初始化步骤从 `actions/setup-python@v6` 升级到 `actions/setup-python@v7`。
+- 将已弃用 CloakBrowser 的兼容范围从 `>=0.4,<0.5` 扩展到 `>=0.4,<0.6`，覆盖 0.5.x Python wrapper，同时保持 Camoufox 为唯一默认浏览器后端。
+- 将 KaTeX 从 `0.17.0` 升级到 `0.18.1`，并同步根目录与内置公式工具的 manifest 和 lockfile。
+
+## 3.2.0 - 2026-07-22
+
+### 新增
+
+- 新增浏览器中立的 runtime context/session 契约，统一承载原生 Firefox/Juggler Camoufox 与已弃用 CloakBrowser，并提供 provider 独立状态和正式后端文档。
+- IEEE landing、REST HTML、PDF、figure/table/formula、multimedia discovery 与 supplementary file 新增 direct-first selected-browser recovery；仅认证失败、HTML challenge 和网络失败进入浏览器恢复。
+- 新增每日 `dependency-latest` 滚动 prerelease：从最新稳定 `v*` Release 解析完整的 Python 直接/传递运行时依赖矩阵，仅在源码或 wheel 集合变化时重建全部 9 个离线安装包，并提供显式 `force_refresh` 恢复入口。
+- 新增依赖快照工具与契约测试，覆盖逐目标 wheel 清单、确定性的跨平台 manifest、依赖集合比较，以及构建前的 wheel 文件名/SHA256 校验。
+
+### 变更
+
+- Camoufox 改为唯一默认浏览器后端；CloakBrowser 在整个 3.x 中仅可显式选择，首次选择发出一次 `FutureWarning`，最早于 4.0.0 移除；旧 `CLOAKBROWSER_*` 变量不再隐式选择后端。
+- 后端选择保持严格，不做自动跨后端 fallback；所有 runtime config 必须携带 backend，Camoufox/CloakBrowser 状态目录继续隔离。
+- 为 `camoufox>=0.5.4,<0.6` 的已支持组合把 Playwright 约束为 `<1.61`；同一运行时/owning thread 复用 Camoufox 进程，完整 HTML 使用 `commit` 加 provider DOM readiness，且不全局屏蔽图片、字体或样式。
+- 滚动更新复用现有 Linux、macOS 和 Windows 离线构建 job 并消费冻结 wheelhouse；发布阶段移动固定 prerelease tag、精确覆盖并核验安装包/manifest/checksum assets，上一次资产缺失或校验失败时触发重建，同时不改变稳定版 latest Release。
+
+### 修复
+
+- 修复 IEEE large/preview 内联资源重复渲染，并区分“部分资源失败”和“全部资源未能下载”的警告语义。
+- 修复干净 `setup-python` 环境缺少仅解析阶段使用的 `packaging` 时，滚动离线构建在实际打包前失败的问题；`merge`、`compare` 与构建前 `verify` 现在保持标准库自包含。
+- 修复滚动 prerelease 指向较旧稳定版源码 commit 时的发布权限问题：tag 与 Release 变更改用仓库级 `ROLLING_RELEASE_TOKEN`，同时保持 job 内置 token 只读。
+- 修复 Windows 离线安装脚本环境变量数组末尾逗号导致打包前 PowerShell 解析失败的问题，并为三个发布脚本增加静态回归契约。
+- 修复稳定版发布 job 因依赖链中按设计跳过的依赖刷新任务而被 GitHub 隐式 `success()` 条件跳过的问题；发布条件现在始终求值，并显式要求全部直接质量门和离线构建成功。
+
+## 3.1.3 - 2026-07-15
+
+### 新增
+
+- managed Chrome profile、启动、CDP、context 和 page 阶段新增稳定的浏览器生命周期失败 code；有界且脱敏的 stderr 诊断会贯通 browser preflight、provider trace、fallback payload、CLI manifest 与 agent 指引。
+
+### 变更
+
+- CLI 与 MCP 批量执行现在会跨条目空档保留同一个共享 browser manager，并采用带宽限期的协作式取消、仅一次的浏览器关闭升级，以及 CLI 第一次/第二次 Ctrl-C 分级处理。
+- 扩展 macOS 离线浏览器 smoke 与单元契约，覆盖保守的陈旧 profile 恢复、4 worker/50 context 复用、取消收敛、诊断脱敏和 fallback provenance。
+
+### 修复
+
+- 修复异常退出后 managed Chrome profile 无法复用的问题：同时核验 singleton 的 owner、host、PID/profile 与 socket，仅归档已确认陈旧的链接并保留恢复记录；首次启动留下新的陈旧 singleton 时最多恢复并重试一次。
+- 修复 browser/PDF 与 metadata fallback 丢失精确 HTML/browser 失败 trace 的问题；fallback 成功后 acceptance 仍保留 degraded，浏览器 runtime 失败也不再错误建议执行出版社认证，而是引导先修复本地 runtime 状态。
+
+## 3.1.2 - 2026-07-14
+
+### 变更
+
+- HTML 全文验收改为同时要求可信的 article/body container scope 与实质正文证据；合成 `<article>` 规范化会保留原始 scope，并把 `EXTRACTION_REVISION` 提升到 3，使旧的误判 sidecar 重新抓取。
+- 新增聚焦的离线 CI 门和真实 Annual Reviews 空壳 replay，覆盖共享 availability、provider PDF fallback 与 block corpus 回归。
+
+### 修复
+
+- 修复空 full-text marker 与大量 Most Read、Most Cited、Recommended、Related 模块仅凭页面文字量被升级为全文的问题。
+- 修复 Annual Reviews 空落地页未触发 HTML 质量失败和既有 PDF fallback 的问题；同时锁住 Wiley `10.1002/joc.3370130706` 的摘要 datalayer 阻断行为。
+
+## 3.1.1 - 2026-07-14
+
+### 新增
+
+- `asset_profile=all` 新增有界的 IOP 补充材料展开流程：先识别同 DOI 的 `/data` 索引，再复用 browser cookie/Referer 提取并下载 `SM` 编号附件。
+- CI 新增聚焦契约门，覆盖 IOP 补充材料抽取、显式资产 Referer 透传、签名 URL 脱敏和 browser challenge 回归。
+
+### 修复
+
+- 修复 IOP 补充材料发现误把 `/data` 索引 HTML、figure 下载控件、二维码、父 DOI 不匹配、被阻断索引或空 scope 当作附件的问题；无法解析的已声明索引现在会产生结构化资产失败。
+- 修复 browser-backed 补充附件请求未透传显式 Referer，以及 cache key 和保留的资产诊断未脱敏 AWS `X-Amz-*`、`Signature`、`AWSAccessKeyId` 查询值的问题。
+
+## 3.1.0 - 2026-07-13
+
+### 新增
+
+- CLI、MCP、cache 和持久批量任务新增统一资产验收与 manifest v2 记录，覆盖确定性输出 hash、audit/reconcile/resume、有界并发、取消和限流停止语义。
+- 新增无网络 provider/runtime 诊断、browser preflight 与 provider catalog MCP resource/tool、紧凑 cache 检查，以及带明确落盘和 resume 模式的结构化 `batch_fetch` MCP tool。
+- `paper-fetch doctor --json` 新增机器可读安装 provenance，汇总源码与 distribution 版本、默认 User-Agent、PATH entrypoint、离线 target/revision/build 信息、安装 runtime metadata 和三个宿主的 skill 副本。
+
+### 变更
+
+- 静态 skill 改为薄而自包含的 workflow 入口，拆分 workflow、presets、acceptance、CLI、environment、tool-contract 和 failure-handling reference；source、staging 与安装副本均使用成熟 Markdown parser 验证链接。
+- 离线 manifest schema 升级到 3；Linux、macOS、Windows bundle 都记录完整 skill 文件清单及逐文件 SHA256，安装器会在宿主安装前后拒绝缺失、多余、符号链接或 hash 漂移的 skill 内容。
+- 按向后兼容新增功能准备 SemVer minor `3.1.0`，同步 Python 包 metadata、稳定工具 User-Agent、Windows 安装器默认版本、部署说明和中英文 changelog。
+- CI 新增跨 CLI/MCP/cache/manifest 的轻量契约门；package smoke 改在 checkout 外构建并验证版本、全部 console scripts、MCP EOF 与静态安装 provenance，同时保持 live/offline 重任务仅显式触发。
+
+### 修复
+
+- 修复源码、当前 distribution metadata 和 PATH CLI 处于不同版本时缺少具体路径证据的问题；源码开发态没有 offline manifest 时现在报告不适用，不再误判为安装失败。
+
+## 3.0.1 - 2026-07-04
+
+### 变更
+
+- `paper-fetch browser-preflight` / `paper-fetch auth` 的 Wiley 和 Science 内置样例改为结构更轻、已有 fixture 覆盖的 full-text 页面，减少默认 browser preflight 的慢解析耗时。
+- `paper-fetch browser-preflight` / `paper-fetch auth royalsocietypublishing` 新增 Royal Society Publishing 内置样例，默认预检现在会覆盖该 browser-backed provider。
+- 默认 GitHub Actions CI 移除完整 unit/devtools/coverage job；本地 `scripts/dev-preflight.sh` 仍保留完整 unit、devtools 和可选 coverage 检查。
+- 刷新用户与 agent 文档：恢复 README 展示内容和抓取效果截图，同时保留精简快速上手路径；修正 AMS direct HTTP / browser runtime 表述，统一 CLI `--output-dir` 默认文件名说明为论文 stem 命名，并把 onboarding 中已完成 provider 示例替换为占位 provider 示例。
+
+## 3.0.0 - 2026-07-03
+
+### 变更
+
+- browser-backed provider 现在通过公共 `browser_runtime` backend facade 访问 CloakBrowser；auth、preflight、HTML fetch 和 seeded PDF fallback 共享 storage/profile 路径解析、storage-state 写锁和原子写入。
+- external CDP 现在会报告是否借用已有 context、忽略了哪些 context option，以及 storage-state cookie 注入数量；新增 `PAPER_FETCH_CDP_EXTERNAL_NEW_CONTEXT=1` 可在外部浏览器中创建新 context。
+- browser-backed 资产下载在安全的 caller-thread attempt 内会复用线程本地 page/context；遇到 Playwright 线程所有权异常会自动降级回 per-call close。
+- browser 图片抓取现在对单图 seed warm、page fetch、request-context fetch、直接导航和图片等待共用一个 wall-clock 总预算；PDF fallback 的 browser seed 改为轻量 warm，已拿到 cookie seed 时不再重复导航 seed URL。
+- 本地转换链路现在会缓存 Ghostscript/libvips 候选路径与 `--version` 探测；公式转换继续复用既有结果缓存/worker，并新增 subprocess 调用次数测试；无图片导出的 PDF Markdown 渲染会按 PDF hash 复用，并带字节/页数 guard 与渲染诊断。
+- browser HTML、seeded PDF fallback、browser asset retry 和 browser preflight 循环新增协作式取消检查。
+- `paper-fetch browser-preflight` 现在会对内置样例复用各 browser-backed provider 的正常 HTML candidates 和 HTML bootstrap 重试语义，但仍不触发 PDF fallback。
+- 移除 PNAS fast browser HTML preflight 特例；PNAS 现在先走标准 browser workflow HTML bootstrap，再按需进入 seeded PDF fallback。
+- AMS 改为无需浏览器的 direct HTTP HTML provider，并新增 direct HTTP PDF fallback；成功时发布 `ams_html` 或 `ams_pdf`，仍不参与 browser auth / preflight / status，也不尝试 seeded-browser PDF fallback。
+- CI 离线包 job 现在只在 `v*` tag push 或手动 dispatch 时运行，普通 push/PR 只保留常规质量门。
+- 质量门禁现在把 mypy 覆盖扩展到 runtime/config/quality/PDF fallback/browser-runtime/formula core 路径，并在 mypy 配置层启用 `no_site_packages`；CI 与本地 coverage preflight 都强制 unit coverage baseline 40，同时移除 `tests/**` 全局 `B023` ruff ignore。
+- 离线安装器现在从 `installer/manifest.json` 派生 MCP、`offline.env`、shell 和 activate runtime env key，一致传播包内 Node / Python encoding 配置；验证脚本覆盖 Antigravity MCP，并且 `activate-offline.sh` 只按 dotenv 解析 env 文件，不再执行其中的 shell 代码。
+- `RuntimeContext.parse_cache` 访问器现在使用锁和同 key in-flight 协调，并发 parser memoization 对每个 key 只执行一次 supplier。
+- MCP tool 输出现在统一带顶层 `schema_version=1`，provider/HTTP 错误细节会进入机器可读字段；批量任务遇到 rate-limit category、HTTP 429 或 retry-after hint 会停止继续提交，并保留 `abort_reason.retry_after_seconds`。
+- MCP cache-index 读取现在校验 `INDEX_VERSION`，旧版/坏 manifest 只有显式 rescan 才会重建；`list_cached` 新增 `cache_mode="index"|"refresh"|"rescan"`，structured resolve 会把 `title`/`authors`/`year` 作为独立 resolver 信号，并把 provider/Crossref primary-secondary metadata merge 语义收敛到一个 rule-backed helper。
+- provider waterfall 现在会对访问失败、限流、无结果和通用 provider 失败一致继续后续 fallback route；最终失败会去重聚合 warnings/source trail，并保留 retry-after 细节。
+- provider registry 冷启动路径现在不会在根 `paper_fetch` import 时加载 provider entry module、`trafilatura` 或 `idutils`；provider discovery 改为显式内置入口清单加缓存 AST 检测动态入口，browser workflow 的字符串路线标签改放在 `route_order`，不再塞进 `waterfall_steps`。
+- 共享 Markdown 表格渲染现在统一复用 canonical pipe-table formatter；IR 与 HTML 路径都会消费显式 headers、转义 pipe/单元格换行、补齐 ragged rows，并渲染 fallback message。
+- HTML 派生的公式与 citation 渲染现在会为 inline TeX 保留数学分隔符，formula image URL 启发式会先让位于显式 figure 上下文，并让 section renderer 与 Atypon renderer 共用同一个数字 citation payload helper。
+- 同步 README、CLI/MCP instructions、provider/runtime/deployment/extraction 文档、AMS onboarding manifest / access review / cleaning-chain 证据，以及 provider runtime 优化计划，使其匹配新的 browser-runtime 与 AMS direct-HTTP 归属边界。
+- 扩展 unit 与 integration 覆盖：包含 AMS direct HTTP HTML/PDF fallback、browser-preflight provider candidates 与不触发 PDF 的行为、external-CDP new-context 诊断、browser runtime facade 接线，以及 browser workflow 依赖分组。
+
+## 2.8.0 - 2026-07-02
+
+### 新增
+
+- 新增基于 provider path template 的 URL DOI 提取：支持 query parameter 中的 DOI、已知 route/扩展名后缀剥离，以及 AMS 旧式 SICI `view` / `downloadpdf` slug；许多带 DOI 的出版社 URL 现在可直接解析，不必先抓 landing page。
+- 新增 `scripts/dev-preflight.sh --coverage`，并让 CI unit job 生成 coverage baseline 报告（`term-missing` 和 `coverage.xml`），第一阶段只产出信号，不设置覆盖率阈值。
+
+### 变更
+
+- publisher-facing landing/PDF 请求和 browser workflow 改为通过 `build_publisher_user_agent` 使用浏览器形态 UA；`PAPER_FETCH_USER_AGENT` 继续只作为工具/API UA，不再默认传给 browser context。
+- Royal Society Publishing 从 direct HTTP DOI/PDF 抓取改为共享 CDP browser HTML 加 seeded-browser PDF workflow，同时保持 `royalsocietypublishing_html` / `royalsocietypublishing_pdf` source 和不走 XML route 的契约。
+- 标题查询解析现在会在 Crossref metadata 明确存在正式期刊版本时，优先选择与 preprint 分数接近的正式出版候选。
+- mypy 覆盖面扩展到 136 个项目源码文件，新增覆盖 HTML extraction、browser workflow、Atypon browser workflow、shared JATS/common Markdown helper、CloakBrowser helper、service、artifacts、image conversion 和 resolver 模块。
+- 本地和 CI 质量门禁现在会执行 `ruff format --check`、保留 ruff lint、优先使用 repo-local `.venv/bin/python` 或显式 `PYTHON_BIN`、提前提示缺失的开发依赖，并在本地 preflight 中用 `mypy --no-site-packages` 检查项目文件。
+- 对全 Python 代码库应用 `ruff format`，并同步调整 module layout 与 asset contract 守护测试，使其匹配格式化后的源码形态。
+
+### 修复
+
+- 修复扩展后的 mypy 契约检查：BeautifulSoup 属性值在传入 helper 前会先规整为文本，可选 HTML 依赖 fallback 在类型检查下保持可用，并让 MCP request/resource/result 类型与当前 SDK 签名对齐。
+- 修复 browser-backed 批量并发：managed CDP browser manager 现在会按 provider/browser 配置在同一进程内共享，避免同一 provider profile 的 CLI/MCP 并发抓取互相争抢 `.paper-fetch-profile.lock`；隔离 context 会使用调用线程自己的 CDP 连接，避免跨线程复用 Playwright sync 对象。
+- 修复 SICI DOI normalize 与 URL DOI 后缀处理：`<...>` / `;` 等 DOI 后缀会被保留；Frontiers `/full`、IOP `/pdf`、Wiley `/fullpdf`、Springer `.pdf` 等 provider route token 只有在 provider catalog template 能证明其为路由/扩展名时才会被剥离。
+- 修复 official PDF fallback 的降级行为：真实 PDF 已下载但 Markdown extraction 不可用时，会保留 provider source trail 和本地 PDF artifact，并通过 warning 说明 PDF-only 状态，不再替换为 Crossref/general metadata-only 结果。
+- 修复 publisher landing/probe 请求误把稳定的 `paper-fetch-skill/<version>` 工具 UA 发给浏览器形态出版社路线的问题。
+- 修复 `PdfFallbackStrategy`、browser runtime ownership、provider URL/route 行为和 asset-download contract marker 扫描相关的文档/契约漂移，并同步仓库级 ruff format 后的测试窗口。
+
+## 2.7.1 - 2026-07-01
+
+### 新增
+
+- 新增 `paper-fetch browser-preflight`：串行打开 browser-backed provider 的内置样例页，成功时保存 provider 归属的 storage-state JSON，失败时报告需要运行 `paper-fetch auth` 的出版社。
+
+### 变更
+
+- PDF/ePDF fallback 图片导出现在会在有 DOI 时使用与 HTML/XML 资产下载一致的 DOI 归属 `<doi>_assets/` 目录；无 DOI 的内部调用仍保留旧的 `body_assets/` 回退。
+
+### 修复
+
+- AMS 公式图片提取现在会优先读取 lazy `data-image-src` 中的真实 GIF URL，再避开 `Blank.svg` 占位图；纯图片公式会使用出版社真实公式资产渲染和下载。
+- AMS direct HTTP HTML preflight 现在会在解析前跟随 DOI 3xx 跳转到出版社全文页，同时仍拒绝 challenge 页面；公开 AMS 文章可保留在无需浏览器的 `ams_html` 路径，不再误落到 browser/PDF fallback。
+- PDF fallback 源文件落盘命名现在优先使用 provider payload 中合并后的 metadata；arXiv 这类抓取后才补齐标题、作者和年份的路径不再退回 `unknown_unknown_<doi>.pdf`。
+
+## 2.7.0 - 2026-07-01
+
+### 新增
+
+- 新增 AMS direct HTTP HTML preflight：在 CDP browser fallback 之前先用等价浏览器请求头请求公开 AMS 正文页，公开页面可减少浏览器启动，同时保留原有 browser/PDF 恢复路线。
+- 新增 AMS `Download Figure` EPS/TIFF 源图处理：正文 figure 资产会优先使用 publisher 源文件；Ghostscript/libvips 可用时转为 PNG，同时保留原始源文件和转换元数据；转换工具不可用或转换失败时继续回退网页 JPG/PNG 候选。
+- 新增可选图片转换工具链：`paper-fetch-install-image-tools`、`install-image-tools.sh`、`PAPER_FETCH_IMAGE_TOOLS_DIR`、`PAPER_FETCH_GHOSTSCRIPT_BIN`、`PAPER_FETCH_VIPS_BIN`、`PAPER_FETCH_EPS_DPI` 和 `PAPER_FETCH_IMAGE_TOOL_TIMEOUT_SECONDS`，并同步离线安装器环境变量。
+
+### 变更
+
+- Linux、macOS、Windows 离线包构建现在只配置 image-tools 路径，不再把构建机 `PATH` 上的 `gs`/`vips` 符号链接打进包内；Ghostscript/libvips 仍是可选运行时工具。
+- arXiv Atom API metadata enrichment 改为使用 60 秒专用超时，并对 timeout/5xx 做 2 次 transient retry；provider status 也会暴露这些诊断设置。
+
+### 修复
+
+- 修复 direct HTTP browser-workflow 资产下载：AMS 未启动 browser runtime 时，资产失败不会再尝试刷新 browser seed；supplementary 下载也会继承和正文 figure 一致的 seeded Referer 行为。
+- 忽略 repo-local `.image-tools/` 产物，避免本机 Ghostscript/libvips 暂存链接被误提交。
+- 同步 README、provider、deployment、architecture、extraction-rule、离线安装器、CI 和单测，覆盖 AMS 源图、图片转换回退和离线 image-tools 行为。
+
 ## 2.6.2 - 2026-06-27
 
 ### 变更

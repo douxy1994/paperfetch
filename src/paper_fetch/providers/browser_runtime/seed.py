@@ -7,6 +7,7 @@ from collections.abc import Mapping
 import urllib.parse
 
 from ...utils import normalize_text
+from .types import BrowserContextSeed
 import contextlib
 
 CLOUDFLARE_COOKIE_NAMES = frozenset(
@@ -96,8 +97,12 @@ def browser_cookie_matches_url(cookie: Mapping[str, Any], url: str | None) -> bo
 
     cookie_url = normalize_text(str(cookie.get("url") or ""))
     if cookie_url:
-        cookie_host = normalize_text(urllib.parse.urlparse(cookie_url).hostname or "").lower()
-        return bool(cookie_host and (host == cookie_host or host.endswith(f".{cookie_host}")))
+        cookie_host = normalize_text(
+            urllib.parse.urlparse(cookie_url).hostname or ""
+        ).lower()
+        return bool(
+            cookie_host and (host == cookie_host or host.endswith(f".{cookie_host}"))
+        )
     return True
 
 
@@ -112,20 +117,97 @@ def filter_browser_cookies_for_url(
     ]
 
 
+def browser_context_seed_from_session(
+    context: Any,
+    *,
+    final_url: str,
+    user_agent: str | None,
+    backend: str,
+    fetcher: str | None = None,
+) -> dict[str, Any]:
+    """Capture a safe reusable seed from a selected-backend browser session."""
+
+    already_filtered = False
+    try:
+        cookies = context.cookies([final_url])
+        already_filtered = True
+    except TypeError:
+        try:
+            cookies = context.cookies()
+        except Exception:
+            cookies = []
+    except Exception:
+        cookies = []
+    if not already_filtered:
+        cookies = filter_browser_cookies_for_url(list(cookies or []), final_url)
+    backend_name = normalize_text(backend).lower()
+    fetcher_name = normalize_text(fetcher) or backend_name
+    return {
+        "browser_cookies": normalize_browser_cookies_for_playwright(
+            list(cookies or []),
+            fallback_url=final_url,
+        ),
+        "browser_user_agent": normalize_text(user_agent) or None,
+        "browser_final_url": normalize_text(final_url) or None,
+        "paper_fetch_html_fetcher": fetcher_name,
+        "diagnostics": {"browser_backend": backend_name},
+    }
+
+
+def browser_context_seed_from_mapping(
+    seed: Mapping[str, Any] | None,
+) -> BrowserContextSeed:
+    if not isinstance(seed, Mapping):
+        return {
+            "browser_cookies": [],
+            "browser_user_agent": None,
+            "browser_final_url": None,
+        }
+    final_url = normalize_text(str(seed.get("browser_final_url") or "")) or None
+    typed: BrowserContextSeed = {
+        "browser_cookies": normalize_browser_cookies_for_playwright(
+            seed.get("browser_cookies")
+            if isinstance(seed.get("browser_cookies"), list)
+            else None,
+            fallback_url=final_url,
+        ),
+        "browser_user_agent": normalize_text(str(seed.get("browser_user_agent") or ""))
+        or None,
+        "browser_final_url": final_url,
+    }
+    html_fetcher = normalize_text(str(seed.get("paper_fetch_html_fetcher") or ""))
+    if html_fetcher:
+        typed["paper_fetch_html_fetcher"] = html_fetcher
+    diagnostics = seed.get("diagnostics")
+    if isinstance(diagnostics, Mapping):
+        typed["diagnostics"] = dict(diagnostics)
+    metadata = seed.get("metadata")
+    if isinstance(metadata, Mapping):
+        typed["metadata"] = dict(metadata)
+    return typed
+
+
+def browser_context_seed_to_mapping(
+    seed: Mapping[str, Any] | None,
+) -> dict[str, Any]:
+    return dict(browser_context_seed_from_mapping(seed))
+
+
 def merge_browser_context_seeds(*seeds: Mapping[str, Any] | None) -> dict[str, Any]:
     merged_cookies: list[dict[str, Any]] = []
     cookie_positions: dict[tuple[str, str, str, str], int] = {}
     merged_user_agent: str | None = None
     merged_final_url: str | None = None
+    merged_html_fetcher: str | None = None
+    merged_diagnostics: dict[str, Any] = {}
+    merged_metadata: dict[str, Any] = {}
 
     for seed in seeds:
-        if not isinstance(seed, Mapping):
+        typed_seed = browser_context_seed_from_mapping(seed)
+        if not typed_seed:
             continue
 
-        cookies = normalize_browser_cookies_for_playwright(
-            seed.get("browser_cookies") if isinstance(seed.get("browser_cookies"), list) else None,
-            fallback_url=normalize_text(str(seed.get("browser_final_url") or "")) or None,
-        )
+        cookies = typed_seed.get("browser_cookies") or []
         for cookie in cookies:
             key = (
                 normalize_text(str(cookie.get("name") or "")),
@@ -140,19 +222,37 @@ def merge_browser_context_seeds(*seeds: Mapping[str, Any] | None) -> dict[str, A
             else:
                 merged_cookies[position] = cookie
 
-        user_agent = normalize_text(str(seed.get("browser_user_agent") or ""))
+        user_agent = normalize_text(str(typed_seed.get("browser_user_agent") or ""))
         if user_agent:
             merged_user_agent = user_agent
 
-        final_url = normalize_text(str(seed.get("browser_final_url") or ""))
+        final_url = normalize_text(str(typed_seed.get("browser_final_url") or ""))
         if final_url:
             merged_final_url = final_url
+        html_fetcher = normalize_text(
+            str(typed_seed.get("paper_fetch_html_fetcher") or "")
+        )
+        if html_fetcher:
+            merged_html_fetcher = html_fetcher
+        diagnostics = typed_seed.get("diagnostics")
+        if isinstance(diagnostics, Mapping):
+            merged_diagnostics.update(diagnostics)
+        metadata = typed_seed.get("metadata")
+        if isinstance(metadata, Mapping):
+            merged_metadata.update(metadata)
 
-    return {
+    merged: BrowserContextSeed = {
         "browser_cookies": merged_cookies,
         "browser_user_agent": merged_user_agent,
         "browser_final_url": merged_final_url,
     }
+    if merged_html_fetcher:
+        merged["paper_fetch_html_fetcher"] = merged_html_fetcher
+    if merged_diagnostics:
+        merged["diagnostics"] = merged_diagnostics
+    if merged_metadata:
+        merged["metadata"] = merged_metadata
+    return dict(merged)
 
 
 def parse_optional_int(value: Any) -> int | None:

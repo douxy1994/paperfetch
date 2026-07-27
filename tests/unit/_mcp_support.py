@@ -13,18 +13,25 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from paper_fetch.http import RequestCancelledError
+from paper_fetch.browser_preflight import (
+    BrowserPreflightResult,
+    run_browser_provider_preflight,
+)
+from paper_fetch.http import RequestCancelledError, RequestFailure
 from paper_fetch.mcp import batch as mcp_batch
+from paper_fetch.mcp import browser_preflight as mcp_browser_preflight
 from paper_fetch.mcp import cache_payloads as mcp_cache_payloads
 from paper_fetch.mcp import fetch_tool as mcp_fetch_tool
 from paper_fetch.mcp._deps import MCPDeps, default_mcp_deps
 from paper_fetch.mcp.cache_index import (
+    IDENTITY_PROOF_MARKDOWN_REGISTRATION,
     LOCK_DIRNAME,
     cache_lock_dir,
     cache_scope_id,
     find_cached_entry,
     list_cache_entries,
     preferred_cached_entries,
+    register_markdown_entry,
     refresh_cache_index_for_doi,
     scoped_cache_index_resource_uri,
     scoped_cached_resource_uri_prefix,
@@ -87,6 +94,8 @@ def _mcp_deps_from_namespace(**overrides) -> MCPDeps:
         "find_cached_entry": mcp_tools.find_cached_entry,
         "list_cache_entries": mcp_tools.list_cache_entries,
         "preferred_cached_entries": mcp_tools.preferred_cached_entries,
+        "register_markdown_entry": mcp_tools.register_markdown_entry,
+        "run_browser_provider_preflight": mcp_tools.run_browser_provider_preflight,
     }
     values.update(overrides)
     return MCPDeps(**values)
@@ -127,7 +136,9 @@ async def _call_async_with_namespace_deps(func, kwargs: dict[str, object]):
 
 
 def _support_build_server():
-    with mock.patch.object(mcp_server, "default_mcp_deps", side_effect=_mcp_deps_from_namespace):
+    with mock.patch.object(
+        mcp_server, "default_mcp_deps", side_effect=_mcp_deps_from_namespace
+    ):
         return mcp_server.build_server()
 
 
@@ -144,28 +155,60 @@ mcp_tools = SimpleNamespace(
     _inline_image_contents=mcp_fetch_tool._inline_image_contents,
     _payload_from_envelope=payload_from_envelope,
     _write_cached_fetch_envelope=mcp_fetch_tool._write_cached_fetch_envelope,
-    batch_check_payload=lambda **kwargs: _call_with_namespace_deps(mcp_batch.batch_check_payload, kwargs),
-    batch_check_tool_async=lambda **kwargs: _call_async_with_namespace_deps(mcp_batch.batch_check_tool_async, kwargs),
-    batch_resolve_payload=lambda **kwargs: _call_with_namespace_deps(mcp_batch.batch_resolve_payload, kwargs),
-    batch_resolve_tool_async=lambda **kwargs: _call_async_with_namespace_deps(mcp_batch.batch_resolve_tool_async, kwargs),
+    batch_check_payload=lambda **kwargs: _call_with_namespace_deps(
+        mcp_batch.batch_check_payload, kwargs
+    ),
+    batch_check_tool_async=lambda **kwargs: _call_async_with_namespace_deps(
+        mcp_batch.batch_check_tool_async, kwargs
+    ),
+    batch_resolve_payload=lambda **kwargs: _call_with_namespace_deps(
+        mcp_batch.batch_resolve_payload, kwargs
+    ),
+    batch_resolve_tool_async=lambda **kwargs: _call_async_with_namespace_deps(
+        mcp_batch.batch_resolve_tool_async, kwargs
+    ),
+    browser_preflight_payload=lambda **kwargs: _call_with_namespace_deps(
+        mcp_browser_preflight.browser_preflight_payload, kwargs
+    ),
+    browser_preflight_tool_async=lambda **kwargs: _call_async_with_namespace_deps(
+        mcp_browser_preflight.browser_preflight_tool_async, kwargs
+    ),
     build_clients=build_clients,
     build_fetch_tool_result=mcp_fetch_tool.build_fetch_tool_result,
     build_runtime_env=build_runtime_env,
     error_payload_from_exception=error_payload_from_exception,
-    fetch_paper_payload=lambda **kwargs: _call_with_namespace_deps(mcp_fetch_tool.fetch_paper_payload, kwargs),
-    fetch_paper_tool_async=lambda **kwargs: _call_async_with_namespace_deps(mcp_fetch_tool.fetch_paper_tool_async, kwargs),
+    fetch_paper_payload=lambda **kwargs: _call_with_namespace_deps(
+        mcp_fetch_tool.fetch_paper_payload, kwargs
+    ),
+    fetch_paper_tool_async=lambda **kwargs: _call_async_with_namespace_deps(
+        mcp_fetch_tool.fetch_paper_tool_async, kwargs
+    ),
     find_cached_entry=find_cached_entry,
-    get_cached_payload=lambda **kwargs: _call_with_namespace_deps(mcp_cache_payloads.get_cached_payload, kwargs),
-    has_fulltext_tool=lambda **kwargs: _call_with_namespace_deps(mcp_fetch_tool.has_fulltext_tool, kwargs),
+    get_cached_payload=lambda **kwargs: _call_with_namespace_deps(
+        mcp_cache_payloads.get_cached_payload, kwargs
+    ),
+    has_fulltext_tool=lambda **kwargs: _call_with_namespace_deps(
+        mcp_fetch_tool.has_fulltext_tool, kwargs
+    ),
     list_cache_entries=list_cache_entries,
-    list_cached_payload=lambda **kwargs: _call_with_namespace_deps(mcp_cache_payloads.list_cached_payload, kwargs),
+    list_cached_payload=lambda **kwargs: _call_with_namespace_deps(
+        mcp_cache_payloads.list_cached_payload, kwargs
+    ),
     parse_structured_log_message=parse_structured_log_message,
     preferred_cached_entries=preferred_cached_entries,
-    provider_status_tool=lambda **kwargs: _call_with_namespace_deps(mcp_fetch_tool.provider_status_tool, kwargs),
+    provider_status_tool=lambda **kwargs: _call_with_namespace_deps(
+        mcp_fetch_tool.provider_status_tool, kwargs
+    ),
     refresh_cache_index_for_doi=refresh_cache_index_for_doi,
+    register_markdown_entry=register_markdown_entry,
+    run_browser_provider_preflight=run_browser_provider_preflight,
     resolve_mcp_download_dir=resolve_mcp_download_dir,
-    resolve_paper_payload=lambda **kwargs: _call_with_namespace_deps(mcp_fetch_tool.resolve_paper_payload, kwargs),
-    resolve_paper_tool=lambda **kwargs: _call_with_namespace_deps(mcp_fetch_tool.resolve_paper_tool, kwargs),
+    resolve_paper_payload=lambda **kwargs: _call_with_namespace_deps(
+        mcp_fetch_tool.resolve_paper_payload, kwargs
+    ),
+    resolve_paper_tool=lambda **kwargs: _call_with_namespace_deps(
+        mcp_fetch_tool.resolve_paper_tool, kwargs
+    ),
     service_fetch_paper=fetch_paper,
     service_probe_has_fulltext=probe_has_fulltext,
     service_resolve_paper=resolve_paper,
@@ -191,7 +234,9 @@ def sample_article() -> ArticleModel:
             journal="Example Journal",
             published="2026-01-01",
         ),
-        sections=[Section(heading="Introduction", level=2, kind="body", text="Example body.")],
+        sections=[
+            Section(heading="Introduction", level=2, kind="body", text="Example body.")
+        ],
         references=[],
         assets=[],
         quality=Quality(
@@ -199,7 +244,9 @@ def sample_article() -> ArticleModel:
             token_estimate=128,
             warnings=["example warning"],
             source_trail=["source:ok"],
-            token_estimate_breakdown=TokenEstimateBreakdown(abstract=32, body=96, refs=24),
+            token_estimate_breakdown=TokenEstimateBreakdown(
+                abstract=32, body=96, refs=24
+            ),
         ),
     )
 
@@ -207,7 +254,9 @@ def sample_article() -> ArticleModel:
 def sample_envelope(*, modes: set[str], doi: str = "10.1000/example") -> FetchEnvelope:
     article = sample_article()
     article.doi = doi
-    article.metadata.title = "Example Article" if doi == "10.1000/example" else f"Article for {doi}"
+    article.metadata.title = (
+        "Example Article" if doi == "10.1000/example" else f"Article for {doi}"
+    )
     return FetchEnvelope(
         doi=doi,
         source="elsevier_xml",
@@ -218,7 +267,9 @@ def sample_envelope(*, modes: set[str], doi: str = "10.1000/example") -> FetchEn
         token_estimate_breakdown=article.quality.token_estimate_breakdown,
         quality=article.quality,
         article=article if "article" in modes else None,
-        markdown="# Example Article\n\nExample body.\n" if "markdown" in modes else None,
+        markdown="# Example Article\n\nExample body.\n"
+        if "markdown" in modes
+        else None,
         metadata=article.metadata if "metadata" in modes else None,
     )
 
@@ -259,7 +310,22 @@ def create_cached_downloads(download_dir: Path, doi: str) -> None:
     base = sanitize_filename(doi)
     download_dir.mkdir(parents=True, exist_ok=True)
     (download_dir / f"{base}.xml").write_text("<article />", encoding="utf-8")
-    (download_dir / f"{base}.md").write_text("# Cached Markdown\n", encoding="utf-8")
+    (download_dir / f"{base}.md").write_text(
+        "\n".join(
+            [
+                "---",
+                f'doi: "{doi}"',
+                'source: "unit_test"',
+                "has_fulltext: true",
+                'content_kind: "fulltext"',
+                "---",
+                "",
+                "# Cached Markdown",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
     asset_dir = download_dir / f"{base}_assets"
     asset_dir.mkdir(parents=True, exist_ok=True)
     (asset_dir / "figure-1.png").write_bytes(b"\x89PNG\r\n")
@@ -306,7 +372,9 @@ def write_binary(path: Path, size: int = 8) -> None:
     path.write_bytes(b"\x89PNG\r\n" + (b"x" * max(0, size - 6)))
 
 
-def fake_service_fetch_with_cached_downloads(query, *, modes=None, context=None, **kwargs):
+def fake_service_fetch_with_cached_downloads(
+    query, *, modes=None, context=None, **kwargs
+):
     download_dir = context.download_dir if context is not None else None
     if download_dir is not None:
         create_cached_downloads(download_dir, query)
@@ -327,7 +395,9 @@ class FakeSession:
         self.messages: list[dict[str, object]] = []
         self.resource_list_changed_calls = 0
 
-    async def send_log_message(self, *, level, data, logger=None, related_request_id=None) -> None:
+    async def send_log_message(
+        self, *, level, data, logger=None, related_request_id=None
+    ) -> None:
         self.messages.append(
             {
                 "level": level,
@@ -347,7 +417,10 @@ class FakeContext:
         self.session = FakeSession()
         self.request_id = "unit-request"
 
-    async def report_progress(self, progress: float, total: float | None = None, message: str | None = None) -> None:
+    async def report_progress(
+        self, progress: float, total: float | None = None, message: str | None = None
+    ) -> None:
         self.progress.append((progress, total, message))
+
 
 __all__ = [name for name in globals() if not name.startswith("__")]

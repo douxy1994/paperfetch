@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 from ...extraction.html.figure_links import (
     inject_inline_figure_links,
@@ -13,7 +13,7 @@ from ...extraction.html.figure_links import (
 from ...extraction.html.language import collect_html_abstract_blocks
 from ...extraction.html.section_scan import SectionScanState
 from ...extraction.html.semantics import normalize_heading, node_source_selector
-from ...extraction.html.shared import short_text as _short_text
+from ...extraction.html.shared import attr_text, short_text as _short_text
 from ...extraction.html.tables import inject_inline_table_blocks
 from ...models import normalize_markdown_text
 from ...utils import normalize_text
@@ -37,6 +37,7 @@ from .profile import (
 )
 
 from bs4 import Tag
+
 
 def _abstract_section_payloads(container: Tag) -> list[dict[str, Any]]:
     structural_nodes = _structural_abstract_nodes(container)
@@ -70,8 +71,14 @@ def _abstract_section_payloads(container: Tag) -> list[dict[str, Any]]:
     ]
 
 
-def _ensure_body_markdown_heading(markdown_text: str, *, title: str | None = None) -> str:
-    blocks = [normalize_markdown_text(block) for block in re.split(r"\n\s*\n", markdown_text) if normalize_text(block)]
+def _ensure_body_markdown_heading(
+    markdown_text: str, *, title: str | None = None
+) -> str:
+    blocks = [
+        normalize_markdown_text(block)
+        for block in re.split(r"\n\s*\n", markdown_text)
+        if normalize_text(block)
+    ]
     if not blocks:
         return normalize_markdown_text(markdown_text)
 
@@ -101,7 +108,12 @@ def _abstract_block_texts(node: Tag) -> list[str]:
     for candidate in node.find_all(True):
         if candidate is heading:
             continue
-        if normalize_text(candidate.get("role") or "").lower() == "paragraph" or candidate.name in {"p", "li"}:
+        if attr_text(
+            candidate.get("role")
+        ).lower() == "paragraph" or candidate.name in {
+            "p",
+            "li",
+        }:
             text = _render_non_table_inline_text(candidate)
             if text and text not in seen:
                 texts.append(text)
@@ -118,7 +130,9 @@ def _abstract_block_texts(node: Tag) -> list[str]:
     return [fallback_text] if fallback_text else []
 
 
-def _missing_abstract_markdown(container: Tag, markdown_text: str, *, publisher: str) -> str:
+def _missing_abstract_markdown(
+    container: Tag, markdown_text: str, *, publisher: str
+) -> str:
     existing_normalized = normalize_text(markdown_text)
     leading_semantic_text = _leading_semantic_markdown_text(markdown_text)
     abstract_blocks: list[str] = []
@@ -138,9 +152,9 @@ def _missing_abstract_markdown(container: Tag, markdown_text: str, *, publisher:
         "\n\n".join(abstract_blocks),
         noise_profile=_noise_profile_for_publisher(publisher),
     )
-    suppress_missing_abstract = (
-        _publisher_profile(publisher).markdown_hooks.suppress_missing_abstract
-    )
+    suppress_missing_abstract = _publisher_profile(
+        publisher
+    ).markdown_hooks.suppress_missing_abstract
     if suppress_missing_abstract is not None and suppress_missing_abstract(
         markdown_text
     ):
@@ -183,12 +197,12 @@ def rewrite_inline_figure_links(
 def _inject_inline_table_blocks(
     markdown_text: str,
     *,
-    table_entries: list[Mapping[str, str]] | None,
+    table_entries: Sequence[Mapping[str, str]] | None,
     publisher: str,
 ) -> str:
     return inject_inline_table_blocks(
         markdown_text,
-        table_entries=table_entries,
+        table_entries=list(table_entries) if table_entries is not None else None,
         clean_markdown_fn=lambda value: clean_markdown(
             value,
             noise_profile=_noise_profile_for_publisher(publisher),
@@ -196,11 +210,15 @@ def _inject_inline_table_blocks(
     )
 
 
-def _abstract_block_texts_from_payloads(payloads: list[Mapping[str, Any]] | None) -> list[str]:
+def _abstract_block_texts_from_payloads(
+    payloads: Sequence[Mapping[str, Any]] | None,
+) -> list[str]:
     texts: list[str] = []
     seen: set[str] = set()
     for payload in payloads or []:
-        normalized = normalize_text(normalize_markdown_text(str(payload.get("text") or "")))
+        normalized = normalize_text(
+            normalize_markdown_text(str(payload.get("text") or ""))
+        )
         if normalized and normalized not in seen:
             texts.append(normalized)
             seen.add(normalized)
@@ -234,7 +252,9 @@ def _semantic_text_matches(left: str, right: str) -> bool:
     left_words = left_text.split()
     right_words = right_text.split()
     shared_prefix_words = _shared_prefix_word_count(left_words, right_words)
-    required_prefix_words = min(24, max(12, min(len(left_words), len(right_words)) // 3))
+    required_prefix_words = min(
+        24, max(12, min(len(left_words), len(right_words)) // 3)
+    )
     return shared_prefix_words >= required_prefix_words
 
 
@@ -257,14 +277,20 @@ def _leading_semantic_markdown_text(markdown_text: str, *, limit: int = 6) -> st
     return "\n\n".join(leading_blocks)
 
 
-def _block_matches_known_abstract_text(block: str, abstract_block_texts: list[str]) -> bool:
+def _block_matches_known_abstract_text(
+    block: str, abstract_block_texts: list[str]
+) -> bool:
     normalized_block = normalize_text(normalize_markdown_text(block))
     if not normalized_block:
         return False
     for known in abstract_block_texts:
         if not known:
             continue
-        if normalized_block == known or normalized_block in known or known in normalized_block:
+        if (
+            normalized_block == known
+            or normalized_block in known
+            or known in normalized_block
+        ):
             return True
         if _semantic_text_matches(block, known):
             return True
@@ -283,18 +309,28 @@ def _postprocess_browser_workflow_markdown(
     *,
     title: str | None,
     publisher: str,
-    figure_assets: list[Mapping[str, Any]] | None = None,
-    table_entries: list[Mapping[str, str]] | None = None,
+    figure_assets: Sequence[Mapping[str, Any]] | None = None,
+    table_entries: Sequence[Mapping[str, str]] | None = None,
     abstract_block_texts: list[str] | None = None,
 ) -> str:
-    markdown_text = _normalize_browser_workflow_markdown(markdown_text, publisher=publisher)
-    blocks = [normalize_markdown_text(block) for block in re.split(r"\n\s*\n", markdown_text) if normalize_text(block)]
+    markdown_text = _normalize_browser_workflow_markdown(
+        markdown_text, publisher=publisher
+    )
+    blocks = [
+        normalize_markdown_text(block)
+        for block in re.split(r"\n\s*\n", markdown_text)
+        if normalize_text(block)
+    ]
     profile = _publisher_profile(publisher)
     markdown_hooks = profile.markdown_hooks
     kept: list[str] = []
     normalized_title = normalize_text(title or "")
     normalized_title_lower = normalized_title.lower()
-    known_abstract_blocks = [normalize_text(text) for text in abstract_block_texts or [] if normalize_text(text)]
+    known_abstract_blocks = [
+        normalize_text(text)
+        for text in abstract_block_texts or []
+        if normalize_text(text)
+    ]
     title_kept = False
     started_content = False
     state = SectionScanState()
@@ -386,9 +422,7 @@ def _postprocess_browser_workflow_markdown(
                 and not is_auxiliary_block
                 and not _block_matches_known_abstract_text(block, known_abstract_blocks)
             ):
-                keep_unknown_abstract_block = (
-                    markdown_hooks.keep_unknown_abstract_block
-                )
+                keep_unknown_abstract_block = markdown_hooks.keep_unknown_abstract_block
                 keep_in_abstract = (
                     abstract_prose_blocks_seen == 0
                     and keep_unknown_abstract_block is not None
@@ -435,7 +469,11 @@ def _postprocess_browser_workflow_markdown(
             publisher=publisher,
         ):
             continue
-        if not started_content and not is_auxiliary_block and not _is_substantial_prose(normalized_block):
+        if (
+            not started_content
+            and not is_auxiliary_block
+            and not _is_substantial_prose(normalized_block)
+        ):
             continue
         if not title_kept and normalized_title:
             kept.insert(0, f"# {normalized_title}")
@@ -446,7 +484,8 @@ def _postprocess_browser_workflow_markdown(
     if not kept and normalized_title:
         kept.append(f"# {normalized_title}")
     elif normalized_title and not any(
-        (_markdown_heading_info(block) or (0, ""))[1].lower() == normalized_title_lower for block in kept
+        (_markdown_heading_info(block) or (0, ""))[1].lower() == normalized_title_lower
+        for block in kept
     ):
         kept.insert(0, f"# {normalized_title}")
     cleaned = clean_markdown(
@@ -454,11 +493,13 @@ def _postprocess_browser_workflow_markdown(
         noise_profile=_noise_profile_for_publisher(publisher),
     )
     cleaned = _normalize_browser_workflow_markdown(cleaned, publisher=publisher)
-    cleaned = _inject_inline_table_blocks(cleaned, table_entries=table_entries, publisher=publisher)
+    cleaned = _inject_inline_table_blocks(
+        cleaned, table_entries=table_entries, publisher=publisher
+    )
     cleaned = _normalize_browser_workflow_markdown(cleaned, publisher=publisher)
     return _inject_inline_figure_links(
         cleaned,
-        figure_assets=figure_assets,
+        figure_assets=list(figure_assets) if figure_assets is not None else None,
         publisher=publisher,
     )
 

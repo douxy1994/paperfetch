@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import base64
 from collections.abc import Callable, Mapping
+from dataclasses import dataclass
 import mimetypes
 from pathlib import Path
 import stat as _stat_module
@@ -15,11 +16,11 @@ from mcp.server.fastmcp import Context
 from mcp.types import CallToolResult, ImageContent, TextContent
 
 from ..artifacts import ArtifactMode
+from ..diagnostics import provider_status_payload as _shared_provider_status_payload
 from ..http import HttpTransport
 from ..models import ArticleModel, Asset, FetchEnvelope
-from ..provider_catalog import is_official_provider, provider_status_order
-from ..providers.base import ProviderStatusResult, build_provider_status_check
-from ..reason_codes import ERROR
+from ..provider_catalog import provider_status_order
+from ..resolve.query import StructuredResolveRequest
 from ..runtime import RuntimeContext
 from ..utils import extend_unique, normalize_text
 from ..workflow.pipeline import FetchPipeline, FetchPipelineCacheHooks
@@ -35,12 +36,13 @@ from .fetch_cache import (
     payload_from_envelope as _payload_from_envelope,
 )
 from .log_bridge import PaperFetchLogBridge
-from .results import _tool_result, error_payload_from_exception
+from .results import _tool_result, error_payload_from_exception, with_schema_version
 from .schemas import (
     FetchPaperRequest,
     FetchStrategyInput,
     HasFulltextRequest,
     InlineImageBudget,
+    ProviderStatusRequest,
     ResolvePaperRequest,
 )
 
@@ -76,21 +78,36 @@ def _markdown_output_dir_for_fetch_request(
     resolved_download_dir = _resolve_download_dir(runtime_env, download_dir, deps=deps)
     if resolved_download_dir is not None:
         return resolved_download_dir
-    return _resolve_download_dir(runtime_env, _MCP_DEFAULT_DOWNLOAD_DIR, deps=deps) or Path.cwd()
+    return (
+        _resolve_download_dir(runtime_env, _MCP_DEFAULT_DOWNLOAD_DIR, deps=deps)
+        or Path.cwd()
+    )
 
 
-def _save_markdown_for_fetch_request(
+@dataclass(frozen=True)
+class SavedMarkdownResult:
+    path: Path
+    output_dir: Path
+    cache_entry: dict[str, Any] | None
+
+
+def _save_markdown_result_for_fetch_request(
     envelope: FetchEnvelope,
     request: FetchPaperRequest,
     *,
     env: Mapping[str, str] | None,
     download_dir: Path | None | object,
     context: RuntimeContext | None = None,
+    overwrite: bool = True,
     deps: MCPDeps = default_mcp_deps(),
-) -> Path | None:
+) -> SavedMarkdownResult | None:
     if not request.save_markdown:
         return None
-    runtime_env = dict(context.env) if context is not None and context.env is not None else deps.build_runtime_env(env)
+    runtime_env = (
+        dict(context.env)
+        if context is not None and context.env is not None
+        else deps.build_runtime_env(env)
+    )
     markdown_output_path = _markdown_output_dir_for_fetch_request(
         request,
         runtime_env=runtime_env,
@@ -102,13 +119,44 @@ def _save_markdown_for_fetch_request(
         output_dir=markdown_output_path,
         render=request.to_render_options(),
         markdown_filename=request.markdown_filename,
+        overwrite=overwrite,
     )
-    if saved_path is not None and envelope.doi:
-        FetchCache(
+    if saved_path is None:
+        return None
+    cache_entry = None
+    if envelope.doi:
+        cache_entry = FetchCache(
             saved_path.parent,
             refresh_cache_index_for_doi_fn=deps.refresh_cache_index_for_doi,
-        ).refresh_for_doi(envelope.doi)
-    return saved_path
+            register_markdown_entry_fn=deps.register_markdown_entry,
+        ).register_markdown(saved_path, envelope)
+    return SavedMarkdownResult(
+        path=saved_path,
+        output_dir=markdown_output_path,
+        cache_entry=cache_entry,
+    )
+
+
+def _save_markdown_for_fetch_request(
+    envelope: FetchEnvelope,
+    request: FetchPaperRequest,
+    *,
+    env: Mapping[str, str] | None,
+    download_dir: Path | None | object,
+    context: RuntimeContext | None = None,
+    overwrite: bool = True,
+    deps: MCPDeps = default_mcp_deps(),
+) -> Path | None:
+    result = _save_markdown_result_for_fetch_request(
+        envelope,
+        request,
+        env=env,
+        download_dir=download_dir,
+        context=context,
+        overwrite=overwrite,
+        deps=deps,
+    )
+    return result.path if result is not None else None
 
 
 def _load_cached_fetch_envelope(
@@ -141,11 +189,18 @@ def _write_cached_fetch_envelope(
     ).write_fetch_envelope(envelope, request)
 
 
-def _call_service_resolve_paper(query: str, *, context: RuntimeContext, deps: MCPDeps = default_mcp_deps()) -> Any:
+def _call_service_resolve_paper(
+    query: str | StructuredResolveRequest,
+    *,
+    context: RuntimeContext,
+    deps: MCPDeps = default_mcp_deps(),
+) -> Any:
     return deps.service_resolve_paper(query, context=context)
 
 
-def _call_service_probe_has_fulltext(query: str, *, context: RuntimeContext, deps: MCPDeps = default_mcp_deps()) -> Any:
+def _call_service_probe_has_fulltext(
+    query: str, *, context: RuntimeContext, deps: MCPDeps = default_mcp_deps()
+) -> Any:
     return deps.service_probe_has_fulltext(query, context=context)
 
 
@@ -160,9 +215,15 @@ def _fetch_paper_envelope(
     cancel_check: Callable[[], bool] | None = None,
     deps: MCPDeps = default_mcp_deps(),
 ) -> FetchEnvelope:
-    runtime_env = dict(context.env) if context is not None and context.env is not None else deps.build_runtime_env(env)
+    runtime_env = (
+        dict(context.env)
+        if context is not None and context.env is not None
+        else deps.build_runtime_env(env)
+    )
     cache_download_dir = (
-        _resolve_download_dir(runtime_env, download_dir, deps=deps) if _needs_download_dir_for_fetch(request) else None
+        _resolve_download_dir(runtime_env, download_dir, deps=deps)
+        if _needs_download_dir_for_fetch(request)
+        else None
     )
     service_download_dir = None if request.no_download else cache_download_dir
 
@@ -175,33 +236,97 @@ def _fetch_paper_envelope(
         )
 
     def write_cached(envelope: FetchEnvelope) -> None:
-        if not request.no_download and service_download_dir is not None and envelope.doi:
-            deps.write_cached_fetch_envelope(service_download_dir, envelope, request, deps=deps)
+        if (
+            not request.no_download
+            and service_download_dir is not None
+            and envelope.doi
+        ):
+            deps.write_cached_fetch_envelope(
+                service_download_dir, envelope, request, deps=deps
+            )
 
-    return FetchPipeline(deps.service_fetch_paper).run(
-        build_fetch_pipeline_request(
-            query=request.query,
-            modes=_service_modes_for_fetch_request(request, include_article_for_assets=include_article_for_assets),  # type: ignore[arg-type]
-            strategy=request.strategy.to_service_strategy(),
-            render=request.to_render_options(),
-            env=runtime_env,
-            transport=transport,
-            context=context,
-            cancel_check=cancel_check,
-            download_dir=cache_download_dir,
-            artifact_mode=request.artifact_mode,  # type: ignore[arg-type]
-            no_download=request.no_download,
-            fetch_cache=FetchCache(service_download_dir),
-            cache_hooks=FetchPipelineCacheHooks(load=load_cached, write=write_cached),
+    return (
+        FetchPipeline(deps.service_fetch_paper)
+        .run(
+            build_fetch_pipeline_request(
+                query=request.query,
+                modes=_service_modes_for_fetch_request(
+                    request, include_article_for_assets=include_article_for_assets
+                ),  # type: ignore[arg-type]
+                strategy=request.strategy.to_service_strategy(),
+                render=request.to_render_options(),
+                env=runtime_env,
+                transport=transport,
+                context=context,
+                cancel_check=cancel_check,
+                download_dir=cache_download_dir,
+                artifact_mode=request.artifact_mode,
+                no_download=request.no_download,
+                fetch_cache=FetchCache(service_download_dir),
+                cache_hooks=FetchPipelineCacheHooks(
+                    load=load_cached, write=write_cached
+                ),
+            )
         )
-    ).envelope
+        .envelope
+    )
 
 
 def _fetch_envelope_cache_path(download_dir: Path, doi: str) -> Path:
     return fetch_envelope_cache_path(download_dir, doi)
 
 
-def _response_payload_from_envelope(envelope: FetchEnvelope, request: FetchPaperRequest) -> dict[str, Any]:
+def _resolve_request_from_inputs(
+    *,
+    query: str | None,
+    title: str | None,
+    authors: list[str] | str | None,
+    year: int | None,
+) -> ResolvePaperRequest:
+    return ResolvePaperRequest.model_validate(
+        {
+            "query": query,
+            "title": title,
+            "authors": authors,
+            "year": year,
+        }
+    )
+
+
+def _fetch_request_from_inputs(
+    *,
+    query: str,
+    modes: list[str] | None,
+    strategy: FetchStrategyInput | Mapping[str, Any] | None,
+    include_refs: str | None,
+    max_tokens: int | str,
+    prefer_cache: bool,
+    no_download: bool,
+    artifact_mode: ArtifactMode,
+    save_markdown: bool,
+    markdown_output_dir: str | None,
+    markdown_filename: str | None,
+) -> FetchPaperRequest:
+    return FetchPaperRequest.model_validate(
+        {
+            "query": query,
+            "modes": modes,
+            "strategy": strategy,
+            "include_refs": include_refs,
+            "max_tokens": max_tokens,
+            "prefer_cache": prefer_cache,
+            "no_download": no_download,
+            "artifact_mode": artifact_mode,
+            "save_markdown": save_markdown,
+            "markdown_output_dir": markdown_output_dir,
+            "markdown_filename": markdown_filename,
+        }
+    )
+
+
+def _response_payload_from_envelope(
+    envelope: FetchEnvelope, request: FetchPaperRequest
+) -> dict[str, Any]:
     payload = _payload_from_envelope(envelope, request)
     if not request.save_markdown:
         return payload
@@ -225,10 +350,19 @@ def resolve_paper_payload(
     context: RuntimeContext | None = None,
     deps: MCPDeps = default_mcp_deps(),
 ) -> dict[str, Any]:
-    request = ResolvePaperRequest(query=query, title=title, authors=authors, year=year)  # type: ignore[arg-type]
-    runtime_context = context or RuntimeContext(env=deps.build_runtime_env(env), transport=transport)
-    resolved = _call_service_resolve_paper(request.composed_query(), context=runtime_context, deps=deps)
-    return resolved.to_dict()
+    request = _resolve_request_from_inputs(
+        query=query, title=title, authors=authors, year=year
+    )
+    runtime_context = context or RuntimeContext(
+        env=deps.build_runtime_env(env), transport=transport
+    )
+    service_query: str | StructuredResolveRequest = (
+        request.query if request.query is not None else request.to_resolution_request()
+    )
+    resolved = _call_service_resolve_paper(
+        service_query, context=runtime_context, deps=deps
+    )
+    return with_schema_version(resolved.to_dict())
 
 
 def has_fulltext_payload(
@@ -240,11 +374,15 @@ def has_fulltext_payload(
     deps: MCPDeps = default_mcp_deps(),
 ) -> dict[str, Any]:
     request = HasFulltextRequest(query=query)
-    runtime_context = context or RuntimeContext(env=deps.build_runtime_env(env), transport=transport)
-    probe_result = _call_service_probe_has_fulltext(request.query, context=runtime_context, deps=deps)
+    runtime_context = context or RuntimeContext(
+        env=deps.build_runtime_env(env), transport=transport
+    )
+    probe_result = _call_service_probe_has_fulltext(
+        request.query, context=runtime_context, deps=deps
+    )
     payload = probe_result.to_dict()
     payload.pop("title", None)
-    return payload
+    return with_schema_version(payload)
 
 
 def fetch_paper_payload(
@@ -266,10 +404,10 @@ def fetch_paper_payload(
     context: RuntimeContext | None = None,
     deps: MCPDeps = default_mcp_deps(),
 ) -> dict[str, Any]:
-    request = FetchPaperRequest(
+    request = _fetch_request_from_inputs(
         query=query,
-        modes=modes,  # type: ignore[arg-type]
-        strategy=strategy,  # type: ignore[arg-type]
+        modes=modes,
+        strategy=strategy,
         include_refs=include_refs,
         max_tokens=max_tokens,
         prefer_cache=prefer_cache,
@@ -299,59 +437,30 @@ def fetch_paper_payload(
     payload = _response_payload_from_envelope(envelope, request)
     if saved_markdown_path is not None:
         payload["saved_markdown_path"] = str(saved_markdown_path)
-    return payload
-
-
-def _provider_status_error_payload(
-    provider: str,
-    *,
-    official_provider: bool,
-    message: str,
-) -> dict[str, Any]:
-    return ProviderStatusResult(
-        provider=provider,
-        status=ERROR,
-        available=False,
-        official_provider=official_provider,
-        notes=[],
-        checks=[build_provider_status_check("diagnostics", ERROR, message)],
-    ).to_dict()
+    return with_schema_version(payload)
 
 
 def provider_status_payload(
     *,
+    provider: str | None = None,
+    group: str | None = None,
+    detail: str = "full",
     env: Mapping[str, str] | None = None,
     transport: HttpTransport | None = None,
     deps: MCPDeps = default_mcp_deps(),
 ) -> dict[str, Any]:
-    runtime_env = deps.build_runtime_env(env)
-    active_transport = transport or HttpTransport()
-    clients = deps.build_clients(transport=active_transport, env=runtime_env)
-    results: list[dict[str, Any]] = []
-
-    for provider_name in _PROVIDER_STATUS_ORDER:
-        client = clients.get(provider_name)
-        if client is None:
-            results.append(
-                _provider_status_error_payload(
-                    provider_name,
-                    official_provider=is_official_provider(provider_name),
-                    message=f"{provider_name} is not registered in the provider client registry.",
-                )
-            )
-            continue
-        try:
-            results.append(client.probe_status().to_dict())
-        except Exception as error:
-            results.append(
-                _provider_status_error_payload(
-                    provider_name,
-                    official_provider=bool(getattr(client, "official_provider", is_official_provider(provider_name))),
-                    message=f"Provider diagnostics failed unexpectedly: {error}",
-                )
-            )
-
-    return {"providers": results}
+    request = ProviderStatusRequest.model_validate(
+        {"provider": provider, "group": group, "detail": detail}
+    )
+    return _shared_provider_status_payload(
+        provider=request.provider,
+        group=request.group,
+        detail=request.detail,
+        env=env,
+        transport=transport,
+        build_runtime_env_fn=deps.build_runtime_env,
+        build_clients_fn=deps.build_clients,
+    )
 
 
 def _is_body_figure_asset(asset: Asset) -> bool:
@@ -416,7 +525,10 @@ def _inline_image_contents(
         if selected_count >= budget.max_images:
             omitted += 1
             continue
-        if size > budget.max_bytes_per_image or total_bytes + size > budget.max_total_bytes:
+        if (
+            size > budget.max_bytes_per_image
+            or total_bytes + size > budget.max_total_bytes
+        ):
             omitted += 1
             continue
 
@@ -457,7 +569,7 @@ def build_fetch_tool_result(
     extra_content: list[TextContent | ImageContent] = []
 
     resolved_asset_profile = effective_asset_profile(
-        request.strategy.asset_profile,  # type: ignore[arg-type]
+        request.strategy.asset_profile,
         source_name=envelope.source,
     )
     if not request.save_markdown and resolved_asset_profile in {"body", "all"}:
@@ -518,11 +630,23 @@ def has_fulltext_tool(
 
 def provider_status_tool(
     *,
+    provider: str | None = None,
+    group: str | None = None,
+    detail: str = "full",
     env: Mapping[str, str] | None = None,
     deps: MCPDeps = default_mcp_deps(),
 ) -> CallToolResult:
     try:
-        return _tool_result(provider_status_payload(env=env, deps=deps), is_error=False)
+        return _tool_result(
+            provider_status_payload(
+                provider=provider,
+                group=group,
+                detail=detail,
+                env=env,
+                deps=deps,
+            ),
+            is_error=False,
+        )
     except Exception as error:
         return _tool_result(error_payload_from_exception(error), is_error=True)
 
@@ -545,12 +669,14 @@ async def fetch_paper_tool_async(
     ctx: Context | None = None,
     deps: MCPDeps = default_mcp_deps(),
 ) -> CallToolResult:
-    await report_progress(ctx, 0, _FETCH_PROGRESS_TOTAL, "Validating fetch_paper request")
+    await report_progress(
+        ctx, 0, _FETCH_PROGRESS_TOTAL, "Validating fetch_paper request"
+    )
     try:
-        request = FetchPaperRequest(
+        request = _fetch_request_from_inputs(
             query=query,
-            modes=modes,  # type: ignore[arg-type]
-            strategy=strategy,  # type: ignore[arg-type]
+            modes=modes,
+            strategy=strategy,
             include_refs=include_refs,
             max_tokens=max_tokens,
             prefer_cache=prefer_cache,
@@ -561,7 +687,9 @@ async def fetch_paper_tool_async(
             markdown_filename=markdown_filename,
         )
     except Exception as error:
-        await report_progress(ctx, _FETCH_PROGRESS_TOTAL, _FETCH_PROGRESS_TOTAL, "fetch_paper failed")
+        await report_progress(
+            ctx, _FETCH_PROGRESS_TOTAL, _FETCH_PROGRESS_TOTAL, "fetch_paper failed"
+        )
         return _tool_result(error_payload_from_exception(error), is_error=True)
 
     await report_progress(ctx, 1, _FETCH_PROGRESS_TOTAL, "Fetching paper content")
@@ -603,12 +731,18 @@ async def fetch_paper_tool_async(
             download_dir=download_dir,
             deps=deps,
         )
-        result = build_fetch_tool_result(envelope, request, saved_markdown_path=saved_markdown_path)
-        await report_progress(ctx, _FETCH_PROGRESS_TOTAL, _FETCH_PROGRESS_TOTAL, "fetch_paper complete")
+        result = build_fetch_tool_result(
+            envelope, request, saved_markdown_path=saved_markdown_path
+        )
+        await report_progress(
+            ctx, _FETCH_PROGRESS_TOTAL, _FETCH_PROGRESS_TOTAL, "fetch_paper complete"
+        )
         return result
     except asyncio.CancelledError:
         cancelled.set()
         raise
     except Exception as error:
-        await report_progress(ctx, _FETCH_PROGRESS_TOTAL, _FETCH_PROGRESS_TOTAL, "fetch_paper failed")
+        await report_progress(
+            ctx, _FETCH_PROGRESS_TOTAL, _FETCH_PROGRESS_TOTAL, "fetch_paper failed"
+        )
         return _tool_result(error_payload_from_exception(error), is_error=True)

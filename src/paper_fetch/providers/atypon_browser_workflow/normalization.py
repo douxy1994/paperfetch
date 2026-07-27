@@ -23,11 +23,12 @@ from ...extraction.html.semantics import (
     ANCILLARY_TOKENS,
     BACK_MATTER_TOKENS,
     BODY_CONTAINER_TOKENS,
-    has_explicit_reference_marker,
     node_identity_text,
     normalize_heading,
 )
 from ...extraction.html.shared import (
+    attr_text,
+    direct_child_tags as _direct_child_tags,
     short_text as _short_text,
     soup_root as _soup_root,
 )
@@ -47,7 +48,7 @@ from ...extraction.html.tables import (
     table_rows,
     wrap_table_text_fragment,
 )
-from ...markdown.citations import is_citation_link, numeric_citation_payload
+from ...markdown.citations import numeric_citation_payload_from_html_node
 from ...markdown.images import render_markdown_image
 from ...utils import normalize_text
 from .._atypon_browser_workflow_profiles import publisher_profile as _publisher_profile
@@ -88,29 +89,11 @@ def _normalize_table_inline_text(value: str) -> str:
     return normalize_table_inline_text(value)
 
 
-def _has_explicit_bibliography_marker(node: Tag) -> bool:
-    return has_explicit_reference_marker(node)
-
-
 def _numeric_citation_payload_from_inline_node(node: Any) -> str | None:
-    if not isinstance(node, Tag):
-        return None
-    text = normalize_text(node.get_text(" ", strip=True))
-    payload = numeric_citation_payload(text)
-    if payload is None:
-        return None
-    href = normalize_text(str(node.get("href") or ""))
-    if node.name == "a" and (
-        _has_explicit_bibliography_marker(node) or is_citation_link(href, text)
-    ):
-        return payload
-    if node.name in {"sup", "i", "em"}:
-        anchors = [match for match in node.find_all("a") if isinstance(match, Tag)]
-        if anchors and all(
-            _numeric_citation_payload_from_inline_node(anchor) for anchor in anchors
-        ):
-            return payload
-    return None
+    return numeric_citation_payload_from_html_node(
+        node,
+        wrapper_tags=("sup", "i", "em"),
+    )
 
 
 def _wrap_table_text_fragment(text: str, marker: str | None) -> str:
@@ -309,7 +292,7 @@ def _figure_label_from_node_identifier(node: Tag) -> str:
 
 def _caption_label(node: Tag, *, kind: str) -> str:
     label_pattern = FIGURE_LABEL_PATTERN if kind == "Figure" else TABLE_LABEL_PATTERN
-    selectors = (
+    selectors: tuple[str, ...] = (
         ".figure__title",
         "header .label",
         ".label",
@@ -525,7 +508,9 @@ def _figure_like_nodes(
     return _dedupe_top_level_nodes(nodes)
 
 
-BOXED_TEXT_LABEL_PATTERN = re.compile(r"^(?P<label>Box\s+\d+[A-Za-z]?\.?)\s*(?P<caption>.*)$", flags=re.IGNORECASE)
+BOXED_TEXT_LABEL_PATTERN = re.compile(
+    r"^(?P<label>Box\s+\d+[A-Za-z]?\.?)\s*(?P<caption>.*)$", flags=re.IGNORECASE
+)
 
 
 def _boxed_text_replacement_target(node: Tag) -> Tag:
@@ -551,7 +536,9 @@ def _normalize_boxed_text_blocks(container: Tag) -> None:
 
         lines: list[str] = []
         caption_node = node.find("figcaption")
-        caption = _render_caption_text(caption_node) if isinstance(caption_node, Tag) else ""
+        caption = (
+            _render_caption_text(caption_node) if isinstance(caption_node, Tag) else ""
+        )
         match = BOXED_TEXT_LABEL_PATTERN.match(caption)
         if match is not None:
             label = normalize_text(match.group("label"))
@@ -560,8 +547,8 @@ def _normalize_boxed_text_blocks(container: Tag) -> None:
         elif caption:
             lines.append(caption)
 
-        for paragraph in node.find_all(attrs={"role": "paragraph"}, recursive=False):
-            if not isinstance(paragraph, Tag):
+        for paragraph in _direct_child_tags(node):
+            if attr_text(paragraph.get("role")).lower() != "paragraph":
                 continue
             text = _render_non_table_inline_text(paragraph)
             if text:
@@ -762,7 +749,6 @@ __all__ = [
     "_flatten_table_header_rows",
     "_formula_image_markdown",
     "_formula_image_url_from_node",
-    "_has_explicit_bibliography_marker",
     "_inline_math_replacement_target",
     "_insert_split_paragraph",
     "_is_display_formula_math",

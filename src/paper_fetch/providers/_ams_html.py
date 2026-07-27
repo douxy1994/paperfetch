@@ -17,6 +17,7 @@ from ._ams_references import (
 )
 
 from ._ams_assets import (
+    extract_asset_html_scopes as extract_asset_html_scopes,
     scoped_asset_extractor as scoped_asset_extractor,
 )
 
@@ -43,6 +44,7 @@ from ._ams_dom import (
 def __getattr__(name: str) -> Any:
     return getattr(_impl, name)
 
+
 __all__ = [
     "_AUTHOR_PIPELINE",
     "_normalize_ams_markdown_text",
@@ -55,6 +57,7 @@ __all__ = [
     "ams_keep_unknown_abstract_block",
     "ams_normalize_markdown",
     "blocking_fallback_signals",
+    "extract_asset_html_scopes",
     "extract_authors",
     "extract_references",
     "finalize_extraction",

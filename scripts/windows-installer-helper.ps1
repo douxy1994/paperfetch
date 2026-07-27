@@ -21,8 +21,18 @@ $McpEnvKeys = @(
     "PAPER_FETCH_ENV_FILE",
     "PAPER_FETCH_DOWNLOAD_DIR",
     "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "PAPER_FETCH_IMAGE_TOOLS_DIR",
     "MATHML_TO_LATEX_NODE_BIN",
-    "CLOAKBROWSER_HEADLESS"
+    "PAPER_FETCH_BROWSER_HEADLESS"
+)
+$OfflineEnvKeys = @(
+    "PAPER_FETCH_DOWNLOAD_DIR",
+    "PAPER_FETCH_FORMULA_TOOLS_DIR",
+    "PAPER_FETCH_IMAGE_TOOLS_DIR",
+    "MATHML_TO_LATEX_NODE_BIN",
+    "PAPER_FETCH_BROWSER_HEADLESS",
+    "PYTHONUTF8",
+    "PYTHONIOENCODING"
 )
 $InstallerWarnings = New-Object System.Collections.Generic.List[string]
 
@@ -45,6 +55,9 @@ function Import-InstallerManifest {
     $script:CodexManagedBegin = [string]$manifest.managed_blocks.codex.begin
     $script:CodexManagedEnd = [string]$manifest.managed_blocks.codex.end
     $script:McpEnvKeys = @($manifest.mcp.env_keys | ForEach-Object { [string]$_ })
+    if ($null -ne $manifest.env_sets -and $null -ne $manifest.env_sets.offline_env_keys) {
+        $script:OfflineEnvKeys = @($manifest.env_sets.offline_env_keys | ForEach-Object { [string]$_ })
+    }
     Normalize-McpEnvKeys
 
     if ([string]::IsNullOrWhiteSpace($script:SkillName) -or
@@ -53,7 +66,8 @@ function Import-InstallerManifest {
         [string]::IsNullOrWhiteSpace($script:OfflineManagedEnd) -or
         [string]::IsNullOrWhiteSpace($script:CodexManagedBegin) -or
         [string]::IsNullOrWhiteSpace($script:CodexManagedEnd) -or
-        $script:McpEnvKeys.Count -eq 0) {
+        $script:McpEnvKeys.Count -eq 0 -or
+        $script:OfflineEnvKeys.Count -eq 0) {
         throw "installer manifest is missing required installer constants."
     }
 }
@@ -63,20 +77,17 @@ function Normalize-McpEnvKeys {
     $seenHeadless = $false
     foreach ($key in $script:McpEnvKeys) {
         if ($key -in @(
-            "PLAYWRIGHT_BROWSERS_PATH",
-            "CLOAKBROWSER_BINARY_PATH",
-            "CLOAKBROWSER_PROFILE_DIR",
-            "CLOAKBROWSER_USER_DATA_DIR"
+            "PLAYWRIGHT_BROWSERS_PATH"
         )) {
             continue
         }
-        if ($key -eq "CLOAKBROWSER_HEADLESS") {
+        if ($key -eq "PAPER_FETCH_BROWSER_HEADLESS") {
             $seenHeadless = $true
         }
         $filtered.Add($key)
     }
     if (-not $seenHeadless) {
-        $filtered.Add("CLOAKBROWSER_HEADLESS")
+        $filtered.Add("PAPER_FETCH_BROWSER_HEADLESS")
     }
     $script:McpEnvKeys = $filtered.ToArray()
 }
@@ -183,6 +194,12 @@ function Quote-DotenvValue {
     return "'$escaped'"
 }
 
+function Quote-DotenvString {
+    param([string]$Value)
+    $escaped = $Value.Replace("'", "\'")
+    return "'$escaped'"
+}
+
 function ConvertTo-TomlString {
     param([string]$Value)
     $escaped = $Value.Replace("\", "\\").Replace('"', '\"')
@@ -193,6 +210,7 @@ function Get-McpEnv {
     $offlineEnv = Join-Path $InstallRoot "offline.env"
     $downloads = Join-Path $InstallRoot "downloads"
     $formulaTools = Join-Path $InstallRoot "formula-tools"
+    $imageTools = Join-Path $InstallRoot "image-tools"
 
     $values = @{
         PYTHONUTF8 = "1"
@@ -200,8 +218,9 @@ function Get-McpEnv {
         PAPER_FETCH_ENV_FILE = (ConvertTo-FullPath $offlineEnv)
         PAPER_FETCH_DOWNLOAD_DIR = (ConvertTo-FullPath $downloads)
         PAPER_FETCH_FORMULA_TOOLS_DIR = (ConvertTo-FullPath $formulaTools)
+        PAPER_FETCH_IMAGE_TOOLS_DIR = (ConvertTo-FullPath $imageTools)
         MATHML_TO_LATEX_NODE_BIN = (ConvertTo-FullPath (Get-MathmlToLatexNode))
-        CLOAKBROWSER_HEADLESS = "true"
+        PAPER_FETCH_BROWSER_HEADLESS = "true"
     }
     $ordered = [ordered]@{}
     foreach ($key in $McpEnvKeys) {
@@ -217,6 +236,25 @@ function Set-ProcessRuntimeEnv {
     foreach ($entry in (Get-McpEnv).GetEnumerator()) {
         [Environment]::SetEnvironmentVariable($entry.Key, [string]$entry.Value, "Process")
     }
+}
+
+function Get-OfflineEnvValue {
+    param([string]$Name)
+
+    $envMap = Get-McpEnv
+    if (-not $envMap.Contains($Name)) {
+        throw "Unknown offline env key in installer manifest: $Name"
+    }
+    return [string]$envMap[$Name]
+}
+
+function Format-DotenvAssignment {
+    param([string]$Name, [string]$Value)
+
+    if ($Name -in @("PYTHONUTF8", "PYTHONIOENCODING", "PAPER_FETCH_BROWSER_HEADLESS")) {
+        return "$Name=$(Quote-DotenvString $Value)"
+    }
+    return "$Name=$(Quote-DotenvValue $Value)"
 }
 
 function Remove-ManagedEnvBlock {
@@ -242,7 +280,6 @@ function Remove-ManagedEnvBlock {
 
 function Write-ManagedEnvFile {
     $target = Join-Path $InstallRoot "offline.env"
-    $envMap = Get-McpEnv
     $lines = New-Object System.Collections.Generic.List[string]
     if (Test-Path -LiteralPath $target -PathType Leaf) {
         $existing = Get-Content -LiteralPath $target
@@ -258,26 +295,10 @@ function Write-ManagedEnvFile {
     }
     $lines.Add("")
     $lines.Add($OfflineManagedBegin)
-    foreach ($name in @(
-        "PAPER_FETCH_DOWNLOAD_DIR",
-        "PAPER_FETCH_FORMULA_TOOLS_DIR",
-        "MATHML_TO_LATEX_NODE_BIN",
-        "CLOAKBROWSER_HEADLESS",
-        "PYTHONUTF8",
-        "PYTHONIOENCODING"
-    )) {
-        $value = [string]$envMap[$name]
-        if ($name -in @("PYTHONUTF8", "PYTHONIOENCODING", "CLOAKBROWSER_HEADLESS")) {
-            $lines.Add("$name='$value'")
-        } else {
-            $lines.Add("$name=$(Quote-DotenvValue $value)")
-        }
+    foreach ($name in $OfflineEnvKeys) {
+        $value = [string](Get-OfflineEnvValue $name)
+        $lines.Add((Format-DotenvAssignment -Name $name -Value $value))
     }
-    $lines.Add("PAPER_FETCH_BROWSER_USER_AGENT='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36'")
-    $lines.Add("# Optional: connect to an already-running Chrome/CloakBrowser CDP endpoint.")
-    $lines.Add("# CLOAKBROWSER_CDP_ENDPOINT='ws://127.0.0.1:9222/devtools/browser/...'")
-    $lines.Add("# Optional: use a preinstalled Chrome/CloakBrowser binary instead of cloakbrowser download.")
-    $lines.Add("# CLOAKBROWSER_BINARY_PATH='C:/path/to/chrome.exe'")
     $lines.Add($OfflineManagedEnd)
     [System.IO.File]::WriteAllLines($target, $lines, [System.Text.UTF8Encoding]::new($false))
 }
@@ -293,6 +314,24 @@ function Copy-InstalledSkill {
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $Destination
     New-Item -ItemType Directory -Force -Path $Destination | Out-Null
     Copy-Item -Path (Join-Path $source "*") -Destination $Destination -Recurse -Force
+    Test-SkillBundleIntegrity -SkillDir $Destination
+}
+
+function Test-SkillBundleIntegrity {
+    param([string]$SkillDir)
+
+    $manifestPath = Join-Path $InstallRoot "offline-manifest.json"
+    if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
+        throw "Missing offline manifest: $manifestPath"
+    }
+    Invoke-RuntimePythonScript -Script @'
+from pathlib import Path
+import sys
+
+from paper_fetch.skill_integrity import require_valid_skill_bundle
+
+require_valid_skill_bundle(Path(sys.argv[1]), skill_dir=Path(sys.argv[2]))
+'@ -Arguments @($manifestPath, $SkillDir)
 }
 
 function Get-AntigravityHome {
@@ -611,6 +650,8 @@ path.write_text(json.dumps(data, indent=2, ensure_ascii=False) + "\n", encoding=
 function Invoke-SmokeChecks {
     $texmath = ConvertTo-FullPath (Join-Path (Join-Path $InstallRoot "formula-tools") "bin/texmath.exe")
     $node = ConvertTo-FullPath (Get-MathmlToLatexNode)
+    $gs = Join-Path (Join-Path $InstallRoot "image-tools") "bin/gswin64c.exe"
+    $vips = Join-Path (Join-Path $InstallRoot "image-tools") "bin/vips.exe"
 
     Set-ProcessRuntimeEnv
     Write-Log "Running bundled Python smoke checks"
@@ -623,22 +664,31 @@ assert "providers" in payload
 '@
 
     $browserRuntimeCheck = @'
-import cloakbrowser
+import camoufox
 import playwright
+import pymupdf
 from paper_fetch.runtime_browser import BrowserContextManager
 
-assert hasattr(cloakbrowser, "ensure_binary")
+assert hasattr(camoufox, "Camoufox")
 assert BrowserContextManager is not None
 '@
     Invoke-RuntimePythonScript -Script $browserRuntimeCheck
     Invoke-Checked -FilePath $texmath -Arguments @("--help")
     Invoke-Checked -FilePath $node -Arguments @("--version")
+    if (Test-Path -LiteralPath $gs -PathType Leaf) {
+        Invoke-Checked -FilePath $gs -Arguments @("--version")
+    }
+    if (Test-Path -LiteralPath $vips -PathType Leaf) {
+        Invoke-Checked -FilePath $vips -Arguments @("--version")
+    }
 }
 
 switch ($Action) {
     "Install" {
+        $bundledSkill = Join-Path (Join-Path $InstallRoot "skills") $SkillName
+        Invoke-InstallerStep -Name "bundled skill integrity" -Required -ScriptBlock { Test-SkillBundleIntegrity -SkillDir $bundledSkill }
         Invoke-InstallerStep -Name "offline.env update" -Required -ScriptBlock { Write-ManagedEnvFile }
-        Invoke-InstallerStep -Name "skill installation" -ScriptBlock { Install-Skills }
+        Invoke-InstallerStep -Name "skill installation" -Required -ScriptBlock { Install-Skills }
         Invoke-InstallerStep -Name "PATH update" -ScriptBlock { Add-UserPathEntry (Join-Path $InstallRoot "bin") }
         Invoke-InstallerStep -Name "Codex MCP registration" -ScriptBlock { Register-CodexMcp }
         Invoke-InstallerStep -Name "Claude MCP registration" -ScriptBlock { Register-ClaudeMcp }
@@ -659,6 +709,8 @@ switch ($Action) {
         try { Unregister-AntigravityMcp } catch { Write-Warn $_.Exception.Message }
     }
     "Smoke" {
+        $bundledSkill = Join-Path (Join-Path $InstallRoot "skills") $SkillName
+        Test-SkillBundleIntegrity -SkillDir $bundledSkill
         Invoke-SmokeChecks
     }
 }

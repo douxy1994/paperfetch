@@ -14,13 +14,15 @@ from ...extraction.html.assets import (
     SUPPLEMENTARY_KIND,
     extract_scoped_html_assets,
 )
+from ...extraction.html.assets.download import browser_asset_recovery_allowed
 from ...models import AssetProfile
+from ...http import RequestCancelledError
 from ...utils import dedupe_normalized, empty_asset_results, normalize_text
 from ..browser_runtime import (
     BrowserRuntimeFailure,
     merge_browser_context_seeds,
 )
-from .assets import _merge_download_attempt_results
+from .assets import _download_asset_match_tokens, _merge_download_attempt_results
 from .shared import BrowserWorkflowDeps
 
 
@@ -31,6 +33,8 @@ class BrowserAssetDownloadPlan:
     asset_profile: AssetProfile
     body_assets: list[dict[str, Any]]
     supplementary_assets: list[dict[str, Any]]
+    fetch_policy: str = "browser_first"
+    candidate_builder: Any | None = None
 
 
 @dataclass(frozen=True)
@@ -89,6 +93,7 @@ def run_browser_asset_download_attempt(
     opener_requester,
     deps: BrowserWorkflowDeps,
 ) -> BrowserAssetDownloadResult:
+    _raise_if_cancelled(recovery.runtime_context)
     return _run_browser_asset_download_attempt(
         plan,
         recovery,
@@ -112,6 +117,7 @@ def retry_failed_browser_assets(
     opener_requester,
     deps: BrowserWorkflowDeps,
 ) -> BrowserAssetDownloadResult:
+    _raise_if_cancelled(recovery.runtime_context)
     failed_body_assets = deps._assets_matching_download_failures(
         plan.body_assets,
         previous.failures,
@@ -124,7 +130,10 @@ def retry_failed_browser_assets(
     )
     if not failed_body_assets and not failed_supplementary_assets:
         return previous
+    if recovery.runtime is None:
+        return previous
 
+    _raise_if_cancelled(recovery.runtime_context)
     refreshed_seed = deps.refresh_browser_context_seed(
         _seed_urls_for(recovery, recovery.browser_context_seed),
         publisher=recovery.provider,
@@ -148,6 +157,167 @@ def retry_failed_browser_assets(
         _result_mapping(retry_result),
     )
     return _download_result_from_mapping(merged, deps=deps)
+
+
+def download_browser_backed_related_assets(
+    plan: BrowserAssetDownloadPlan,
+    recovery: BrowserAssetRecoveryContext,
+    *,
+    image_fetcher_factory,
+    file_fetcher_factory,
+    opener_requester,
+    deps: BrowserWorkflowDeps,
+    refresh_once: bool = True,
+) -> dict[str, list[dict[str, Any]]]:
+    """Run one bounded browser-aware asset attempt and one optional seed refresh."""
+
+    result = run_browser_asset_download_attempt(
+        plan,
+        recovery,
+        image_fetcher_factory=image_fetcher_factory,
+        file_fetcher_factory=file_fetcher_factory,
+        opener_requester=opener_requester,
+        deps=deps,
+    )
+    recovery_allowed = plan.fetch_policy != "direct_then_browser" or any(
+        _asset_failure_allows_browser_recovery(failure) for failure in result.failures
+    )
+    if refresh_once and result.failures and recovery_allowed:
+        result = retry_failed_browser_assets(
+            plan,
+            result,
+            recovery,
+            image_fetcher_factory=image_fetcher_factory,
+            file_fetcher_factory=file_fetcher_factory,
+            opener_requester=opener_requester,
+            deps=deps,
+        )
+    return {
+        "assets": [*result.body_results, *result.supplementary_results],
+        "asset_failures": result.failures,
+    }
+
+
+def _asset_failure_allows_browser_recovery(failure: Mapping[str, Any]) -> bool:
+    diagnostic = failure.get("diagnostic")
+    details = diagnostic if isinstance(diagnostic, Mapping) else {}
+    status_value = failure.get("status", failure.get("status_code"))
+    if status_value is None:
+        status_value = details.get("status", details.get("status_code"))
+    try:
+        status = int(status_value) if status_value is not None else None
+    except (TypeError, ValueError):
+        status = None
+    return browser_asset_recovery_allowed(
+        status=status,
+        content_type=normalize_text(
+            str(failure.get("content_type") or details.get("content_type") or "")
+        ),
+        reason=normalize_text(
+            str(failure.get("reason") or details.get("reason") or "")
+        ),
+        error_category=normalize_text(
+            str(failure.get("error_category") or details.get("error_category") or "")
+        ),
+    )
+
+
+def _tier_candidate_builder(
+    base_builder: Any, *, preview: bool
+) -> Callable[..., list[str]]:
+    def build(*args: Any, **kwargs: Any) -> list[str]:
+        asset = kwargs.get("asset")
+        candidates = list(base_builder(*args, **kwargs))
+        if not isinstance(asset, Mapping):
+            return candidates
+        preview_url = normalize_text(
+            str(asset.get("preview_url") or asset.get("url") or "")
+        )
+        full_size_url = normalize_text(
+            str(
+                asset.get("download_url")
+                or asset.get("full_size_url")
+                or asset.get("original_url")
+                or ""
+            )
+        )
+        if not preview_url or preview_url == full_size_url:
+            return [] if preview else candidates
+        if preview:
+            return [candidate for candidate in candidates if candidate == preview_url]
+        full_candidates = [
+            candidate for candidate in candidates if candidate != preview_url
+        ]
+        return full_candidates or candidates
+
+    return build
+
+
+def _assets_matching_any_failure(
+    assets: list[dict[str, Any]], failures: list[dict[str, Any]]
+) -> list[dict[str, Any]]:
+    failure_tokens = [_download_asset_match_tokens(failure) for failure in failures]
+    return [
+        asset
+        for asset in assets
+        if any(
+            _download_asset_match_tokens(asset) & tokens
+            for tokens in failure_tokens
+            if tokens
+        )
+    ]
+
+
+def _annotate_split_browser_recovery(
+    result: Mapping[str, Any], direct_failures: list[dict[str, Any]]
+) -> dict[str, list[dict[str, Any]]]:
+    assets = [dict(asset) for asset in list(result.get("assets") or [])]
+    for asset in assets:
+        asset_tokens = _download_asset_match_tokens(asset)
+        direct_failure = next(
+            (
+                failure
+                for failure in direct_failures
+                if asset_tokens & _download_asset_match_tokens(failure)
+            ),
+            None,
+        )
+        if direct_failure is None:
+            continue
+        browser_backend = normalize_text(str(asset.get("browser_backend") or ""))
+        final_fetcher = normalize_text(
+            str(asset.get("final_fetcher") or browser_backend or "selected_browser")
+        )
+        asset["recovery_attempts"] = [
+            {
+                key: value
+                for key, value in {
+                    "stage": "direct",
+                    "status": direct_failure.get("status"),
+                    "content_type": direct_failure.get("content_type"),
+                    "reason": direct_failure.get("reason"),
+                    "error_category": direct_failure.get("error_category"),
+                }.items()
+                if value not in (None, "")
+            },
+            {
+                key: value
+                for key, value in {
+                    "stage": "browser",
+                    "browser_backend": browser_backend or None,
+                    "content_type": asset.get("content_type"),
+                    "reason": "recovered",
+                    "final_fetcher": final_fetcher,
+                }.items()
+                if value not in (None, "")
+            },
+        ]
+    return {
+        "assets": assets,
+        "asset_failures": [
+            dict(failure) for failure in list(result.get("asset_failures") or [])
+        ],
+    }
 
 
 def _asset_profile_from_plan_profile(profile: Any) -> AssetProfile:
@@ -210,6 +380,7 @@ def _run_browser_asset_download_attempt(
     opener_requester,
     deps: BrowserWorkflowDeps,
 ) -> BrowserAssetDownloadResult:
+    _raise_if_cancelled(recovery.runtime_context)
     attempt_seed = merge_browser_context_seeds(
         {"browser_cookies": recovery.browser_cookies},
         current_seed,
@@ -222,6 +393,8 @@ def _run_browser_asset_download_attempt(
             return merge_browser_context_seeds(attempt_seed)
 
     def raw_figure_page_fetcher(figure_page_url: str) -> tuple[str, str] | None:
+        if recovery.runtime is None:
+            return None
         try:
             html_result = deps.fetch_html_with_browser(
                 [figure_page_url],
@@ -245,8 +418,23 @@ def _run_browser_asset_download_attempt(
         if callable(figure_page_fetcher_factory)
         else raw_figure_page_fetcher
     )
+
     def seed_urls_getter() -> list[str]:
         return _seed_urls_for(recovery, attempt_seed_snapshot())
+
+    def seeded_asset_headers(seed_snapshot: Mapping[str, Any]) -> dict[str, str]:
+        seed_urls = _seed_urls_for(recovery, seed_snapshot)
+        referer = normalize_text(str(seed_snapshot.get("browser_final_url") or ""))
+        if not referer and seed_urls:
+            referer = seed_urls[-1]
+        return {"Referer": referer} if referer else {}
+
+    def seeded_asset_user_agent(seed_snapshot: Mapping[str, Any]) -> str:
+        if recovery.runtime is not None and recovery.runtime.backend == "camoufox":
+            return normalize_text(
+                str(seed_snapshot.get("browser_user_agent") or "")
+            ) or normalize_text(recovery.user_agent)
+        return recovery.user_agent
 
     image_document_fetcher = _build_attempt_document_fetcher(
         recovery,
@@ -265,26 +453,115 @@ def _run_browser_asset_download_attempt(
         fetcher_factory=file_fetcher_factory,
     )
     try:
+
         def download_body_assets() -> Mapping[str, Any]:
+            _raise_if_cancelled(recovery.runtime_context)
             if not attempt_body_assets:
                 return empty_asset_results()
-            return deps.download_assets(
+            seed_snapshot = attempt_seed_snapshot()
+            base_candidate_builder = (
+                plan.candidate_builder
+                or deps._browser_workflow_image_download_candidates
+            )
+            common_kwargs = {
+                "article_id": plan.article_id,
+                "output_dir": plan.output_dir,
+                "user_agent": seeded_asset_user_agent(seed_snapshot),
+                "asset_profile": plan.asset_profile,
+                "headers": seeded_asset_headers(seed_snapshot),
+                "browser_context_seed": seed_snapshot,
+                "seed_urls": _seed_urls_for(recovery, seed_snapshot),
+                "figure_page_fetcher": figure_page_fetcher,
+            }
+            if plan.fetch_policy != "direct_then_browser" or not serial_browser_assets:
+                return deps.download_assets(
+                    FIGURE_KIND,
+                    attempt_settings.get("transport"),
+                    assets=attempt_body_assets,
+                    candidate_builder=base_candidate_builder,
+                    image_document_fetcher=image_document_fetcher,
+                    asset_download_concurrency=attempt_settings.get(
+                        "asset_download_concurrency"
+                    ),
+                    fetch_policy=plan.fetch_policy,
+                    **common_kwargs,
+                )
+
+            full_candidate_builder = _tier_candidate_builder(
+                base_candidate_builder, preview=False
+            )
+            direct_result = deps.download_assets(
                 FIGURE_KIND,
                 attempt_settings.get("transport"),
-                article_id=plan.article_id,
                 assets=attempt_body_assets,
-                output_dir=plan.output_dir,
-                user_agent=recovery.user_agent,
-                asset_profile=plan.asset_profile,
-                figure_page_fetcher=figure_page_fetcher,
-                candidate_builder=deps._browser_workflow_image_download_candidates,
-                image_document_fetcher=image_document_fetcher,
+                candidate_builder=full_candidate_builder,
+                image_document_fetcher=None,
                 asset_download_concurrency=attempt_settings.get(
                     "asset_download_concurrency"
                 ),
+                fetch_policy="direct_then_browser",
+                **common_kwargs,
             )
+            eligible_failures = [
+                dict(failure)
+                for failure in list(direct_result.get("asset_failures") or [])
+                if _asset_failure_allows_browser_recovery(failure)
+            ]
+            browser_assets = deps._assets_matching_download_failures(
+                attempt_body_assets,
+                eligible_failures,
+                retry_scope="body",
+            )
+            merged_result = dict(direct_result)
+            if browser_assets:
+                browser_result = deps.download_assets(
+                    FIGURE_KIND,
+                    attempt_settings.get("transport"),
+                    assets=browser_assets,
+                    candidate_builder=full_candidate_builder,
+                    image_document_fetcher=image_document_fetcher,
+                    asset_download_concurrency=1,
+                    fetch_policy="browser_first",
+                    **common_kwargs,
+                )
+                browser_result = _annotate_split_browser_recovery(
+                    browser_result, eligible_failures
+                )
+                merged_result = _merge_download_attempt_results(
+                    direct_result, browser_result
+                )
+
+            preview_assets = [
+                asset
+                for asset in _assets_matching_any_failure(
+                    attempt_body_assets,
+                    [
+                        dict(failure)
+                        for failure in list(merged_result.get("asset_failures") or [])
+                    ],
+                )
+                if normalize_text(
+                    str(asset.get("preview_url") or asset.get("url") or "")
+                )
+            ]
+            if not preview_assets:
+                return merged_result
+            preview_result = deps.download_assets(
+                FIGURE_KIND,
+                attempt_settings.get("transport"),
+                assets=preview_assets,
+                candidate_builder=_tier_candidate_builder(
+                    base_candidate_builder, preview=True
+                ),
+                image_document_fetcher=image_document_fetcher,
+                asset_download_concurrency=1,
+                fetch_policy="direct_then_browser",
+                **common_kwargs,
+            )
+            return _merge_download_attempt_results(merged_result, preview_result)
 
         def download_supplementary_assets() -> Mapping[str, Any]:
+            _raise_if_cancelled(recovery.runtime_context)
             if not attempt_supplementary_assets:
                 return empty_asset_results()
             supplementary_kwargs: dict[str, Any] = {}
@@ -297,29 +574,76 @@ def _run_browser_asset_download_attempt(
                     "opener_requester"
                 ]
             seed_snapshot = attempt_seed_snapshot()
-            return deps.download_assets(
+            common_kwargs = {
+                "article_id": plan.article_id,
+                "output_dir": plan.output_dir,
+                "user_agent": seeded_asset_user_agent(seed_snapshot),
+                "asset_profile": plan.asset_profile,
+                "headers": seeded_asset_headers(seed_snapshot),
+                "browser_context_seed": seed_snapshot,
+                "seed_urls": _seed_urls_for(recovery, seed_snapshot),
+                **supplementary_kwargs,
+            }
+            if plan.fetch_policy != "direct_then_browser" or not serial_browser_assets:
+                return deps.download_assets(
+                    SUPPLEMENTARY_KIND,
+                    attempt_settings.get("transport"),
+                    assets=attempt_supplementary_assets,
+                    file_document_fetcher=file_document_fetcher,
+                    asset_download_concurrency=attempt_settings.get(
+                        "asset_download_concurrency"
+                    ),
+                    fetch_policy=plan.fetch_policy,
+                    **common_kwargs,
+                )
+
+            direct_result = deps.download_assets(
                 SUPPLEMENTARY_KIND,
                 attempt_settings.get("transport"),
-                article_id=plan.article_id,
                 assets=attempt_supplementary_assets,
-                output_dir=plan.output_dir,
-                user_agent=recovery.user_agent,
-                asset_profile=plan.asset_profile,
-                browser_context_seed=seed_snapshot,
-                seed_urls=_seed_urls_for(recovery, seed_snapshot),
-                file_document_fetcher=file_document_fetcher,
+                file_document_fetcher=None,
                 asset_download_concurrency=attempt_settings.get(
                     "asset_download_concurrency"
                 ),
-                **supplementary_kwargs,
+                fetch_policy="direct_then_browser",
+                **common_kwargs,
             )
+            eligible_failures = [
+                dict(failure)
+                for failure in list(direct_result.get("asset_failures") or [])
+                if _asset_failure_allows_browser_recovery(failure)
+            ]
+            browser_assets = deps._assets_matching_download_failures(
+                attempt_supplementary_assets,
+                eligible_failures,
+                retry_scope="supplementary",
+            )
+            if not browser_assets:
+                return direct_result
+            browser_result = deps.download_assets(
+                SUPPLEMENTARY_KIND,
+                attempt_settings.get("transport"),
+                assets=browser_assets,
+                file_document_fetcher=file_document_fetcher,
+                asset_download_concurrency=1,
+                fetch_policy="browser_first",
+                **common_kwargs,
+            )
+            browser_result = _annotate_split_browser_recovery(
+                browser_result, eligible_failures
+            )
+            return _merge_download_attempt_results(direct_result, browser_result)
 
         serial_browser_assets = bool(
             attempt_settings.get("serial_browser_assets")
             or _requires_caller_thread(image_document_fetcher)
             or _requires_caller_thread(file_document_fetcher)
         )
-        if attempt_body_assets and attempt_supplementary_assets and not serial_browser_assets:
+        if (
+            attempt_body_assets
+            and attempt_supplementary_assets
+            and not serial_browser_assets
+        ):
             with ThreadPoolExecutor(max_workers=2) as executor:
                 body_future = executor.submit(download_body_assets)
                 supplementary_future = executor.submit(download_supplementary_assets)
@@ -329,12 +653,17 @@ def _run_browser_asset_download_attempt(
             body_result = download_body_assets()
             supplementary_result = download_supplementary_assets()
         return BrowserAssetDownloadResult(
-            body_results=[dict(asset) for asset in list(body_result.get("assets") or [])],
+            body_results=[
+                dict(asset) for asset in list(body_result.get("assets") or [])
+            ],
             supplementary_results=[
                 dict(asset) for asset in list(supplementary_result.get("assets") or [])
             ],
             failures=[
-                *[dict(failure) for failure in list(body_result.get("asset_failures") or [])],
+                *[
+                    dict(failure)
+                    for failure in list(body_result.get("asset_failures") or [])
+                ],
                 *[
                     dict(failure)
                     for failure in list(
@@ -348,6 +677,12 @@ def _run_browser_asset_download_attempt(
             close_fetcher = getattr(fetcher, "close", None)
             if callable(close_fetcher):
                 close_fetcher()
+
+
+def _raise_if_cancelled(runtime_context: Any | None) -> None:
+    cancel_check = getattr(runtime_context, "cancel_check", None)
+    if callable(cancel_check) and cancel_check() is True:
+        raise RequestCancelledError("Request cancelled.")
 
 
 def _build_attempt_document_fetcher(
@@ -372,6 +707,7 @@ def _build_attempt_document_fetcher(
         cdp_endpoint=getattr(recovery.runtime, "cdp_endpoint", None),
         profile_dir=getattr(recovery.runtime, "profile_dir", None),
         user_data_dir=getattr(recovery.runtime, "user_data_dir", None),
+        browser_config=recovery.runtime,
     )
 
 
@@ -409,7 +745,9 @@ def _attempt_settings(opener_requester: Any) -> dict[str, Any]:
     return settings
 
 
-def _result_mapping(result: BrowserAssetDownloadResult) -> dict[str, list[dict[str, Any]]]:
+def _result_mapping(
+    result: BrowserAssetDownloadResult,
+) -> dict[str, list[dict[str, Any]]]:
     return {
         "assets": [
             *[dict(asset) for asset in result.body_results],
@@ -430,5 +768,7 @@ def _download_result_from_mapping(
     return BrowserAssetDownloadResult(
         body_results=body_results,
         supplementary_results=supplementary_results,
-        failures=[dict(failure) for failure in list(result.get("asset_failures") or [])],
+        failures=[
+            dict(failure) for failure in list(result.get("asset_failures") or [])
+        ],
     )

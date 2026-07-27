@@ -29,11 +29,17 @@ class _ProviderFakeBrowserContext:
         self.closed = True
 
 
-class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProviderTestCase):
-    def test_ams_provider_download_related_assets_downloads_full_size_figure(self) -> None:
+class AtyponBrowserWorkflowProviderAssetDownloadTests(
+    AtyponBrowserWorkflowProviderTestCase
+):
+    def test_ams_provider_download_related_assets_downloads_full_size_figure(
+        self,
+    ) -> None:
         """asset-download-contract: provider=ams"""
 
-        landing_url = "https://journals.ametsoc.org/view/journals/clim/37/24/JCLI-D-23-0738.1.xml"
+        landing_url = (
+            "https://journals.ametsoc.org/view/journals/clim/37/24/JCLI-D-23-0738.1.xml"
+        )
         figure_url = "https://journals.ametsoc.org/view/journals/clim/37/24/full-JCLI-D-23-0738.1-f1.jpg"
         preview_url = "https://journals.ametsoc.org/view/journals/clim/37/24/inline-JCLI-D-23-0738.1-f1.jpg"
         image_body = png_header(640, 480)
@@ -93,8 +99,12 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 _build_shared_browser_image_fetcher=mocked_builder,
             )
             with (
-                mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
-                mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
+                mock.patch.object(
+                    html_assets, "_build_cookie_seeded_opener"
+                ) as mocked_opener,
+                mock.patch.object(
+                    html_assets, "_request_with_opener"
+                ) as mocked_request,
             ):
                 result = client.download_related_assets(
                     "10.1175/jcli-d-23-0738.1",
@@ -112,7 +122,9 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                     downloaded_assets=result["assets"],
                     asset_failures=result["asset_failures"],
                 )
-                rendered = article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
+                rendered = article.to_ai_markdown(
+                    asset_profile="body", max_tokens="full_text"
+                )
 
         mocked_builder.assert_called_once()
         self.assertEqual(mocked_builder.call_args.kwargs["cdp_endpoint"], cdp_endpoint)
@@ -193,8 +205,12 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 _build_shared_browser_image_fetcher=mocked_builder,
             )
             with (
-                mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
-                mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
+                mock.patch.object(
+                    html_assets, "_build_cookie_seeded_opener"
+                ) as mocked_opener,
+                mock.patch.object(
+                    html_assets, "_request_with_opener"
+                ) as mocked_request,
             ):
                 result = client.download_related_assets(
                     "10.1021/acsomega.4c03987",
@@ -212,7 +228,9 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                     downloaded_assets=result["assets"],
                     asset_failures=result["asset_failures"],
                 )
-                rendered = article.to_ai_markdown(asset_profile="body", max_tokens="full_text")
+                rendered = article.to_ai_markdown(
+                    asset_profile="body", max_tokens="full_text"
+                )
 
         mocked_builder.assert_called_once()
         mocked_opener.assert_not_called()
@@ -231,7 +249,9 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         self.assertIn(f"![Figure 1]({saved_path})", rendered)
         self.assertNotIn(figure_url, rendered)
 
-    def test_science_provider_download_related_assets_body_profile_ignores_supplementary(self) -> None:
+    def test_science_provider_download_related_assets_body_profile_ignores_supplementary(
+        self,
+    ) -> None:
         """asset-download-contract: provider=science"""
 
         html = """
@@ -265,7 +285,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 content_type="text/html",
                 body=html.encode("utf-8"),
                 route="html",
-                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n"
+                + ("Body text " * 120),
                 browser_context_seed={},
             )
             mocked_fetch = mock.Mock()
@@ -278,8 +299,12 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 _build_shared_browser_image_fetcher=mocked_builder,
             )
             with (
-                mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
-                mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
+                mock.patch.object(
+                    html_assets, "_build_cookie_seeded_opener"
+                ) as mocked_opener,
+                mock.patch.object(
+                    html_assets, "_request_with_opener"
+                ) as mocked_request,
             ):
                 result = client.download_related_assets(
                     SCIENCE_SAMPLE.doi,
@@ -303,7 +328,10 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         self.assertEqual(result["assets"][0]["download_tier"], "full_size")
         self.assertEqual(result["asset_failures"], [])
         self.assertEqual(saved_bytes, png_header(640, 480))
-    def test_science_provider_download_related_assets_all_profile_downloads_supplementary_via_file_fetcher(self) -> None:
+
+    def test_science_provider_download_related_assets_all_profile_downloads_supplementary_via_file_fetcher(
+        self,
+    ) -> None:
         figure_url = "https://www.science.org/images/large/figure1.png"
         supplementary_url = "https://www.science.org/doi/suppl/10.1126/science.sample/suppl_file/appendix.pdf"
         html = f"""
@@ -358,7 +386,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 content_type="text/html",
                 body=html.encode("utf-8"),
                 route="html",
-                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n"
+                + ("Body text " * 120),
                 browser_context_seed={},
             )
             mocked_image_builder = mock.Mock(return_value=shared_image_fetcher)
@@ -371,8 +400,12 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 _build_shared_browser_file_fetcher=mocked_file_builder,
             )
             with (
-                mock.patch.object(html_assets, "_build_cookie_seeded_opener", return_value=object()) as mocked_opener,
-                mock.patch.object(html_assets, "_request_with_opener", return_value=challenge_html) as mocked_request,
+                mock.patch.object(
+                    html_assets, "_build_cookie_seeded_opener", return_value=object()
+                ) as mocked_opener,
+                mock.patch.object(
+                    html_assets, "_request_with_opener", return_value=challenge_html
+                ) as mocked_request,
             ):
                 result = client.download_related_assets(
                     SCIENCE_SAMPLE.doi,
@@ -386,10 +419,18 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         mocked_request.assert_called_once()
         mocked_image_builder.assert_called_once()
         mocked_file_builder.assert_called_once()
-        self.assertTrue(mocked_image_builder.call_args.kwargs["use_runtime_shared_browser"])
-        self.assertTrue(mocked_file_builder.call_args.kwargs["use_runtime_shared_browser"])
-        self.assertEqual(mocked_image_builder.call_args.kwargs["cdp_endpoint"], cdp_endpoint)
-        self.assertEqual(mocked_file_builder.call_args.kwargs["cdp_endpoint"], cdp_endpoint)
+        self.assertTrue(
+            mocked_image_builder.call_args.kwargs["use_runtime_shared_browser"]
+        )
+        self.assertTrue(
+            mocked_file_builder.call_args.kwargs["use_runtime_shared_browser"]
+        )
+        self.assertEqual(
+            mocked_image_builder.call_args.kwargs["cdp_endpoint"], cdp_endpoint
+        )
+        self.assertEqual(
+            mocked_file_builder.call_args.kwargs["cdp_endpoint"], cdp_endpoint
+        )
         self.assertTrue(mocked_file_builder.call_args.kwargs["thread_local"])
         self.assertEqual(transport.calls, [])
         shared_image_fetcher.assert_called_once()
@@ -401,6 +442,7 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         )
         self.assertEqual(result["assets"][1]["download_tier"], "supplementary_file")
         self.assertEqual(result["asset_failures"], [])
+
     def test_browser_asset_fetchers_reuse_runtime_keyed_browser_manager(self) -> None:
         figure_url = "https://www.science.org/images/large/figure1.png"
         supplementary_url = "https://www.science.org/doi/suppl/10.1126/science.sample/suppl_file/appendix.pdf"
@@ -446,8 +488,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
             runtime_context.new_browser_context = mock.Mock(
                 side_effect=AssertionError("unkeyed runtime browser should not be used")
             )
-            runtime_context.new_browser_context_for_config = mock.Mock(
-                wraps=runtime_context.new_browser_context_for_config
+            runtime_context.new_browser_context_for_runtime_config = mock.Mock(
+                wraps=runtime_context.new_browser_context_for_runtime_config
             )
             raw_payload = _typed_raw_payload(
                 provider="science",
@@ -455,7 +497,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 content_type="text/html",
                 body=html.encode("utf-8"),
                 route="html",
-                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n"
+                + ("Body text " * 120),
                 browser_context_seed={},
             )
             install_browser_workflow_deps(
@@ -465,7 +508,7 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
             )
             with (
                 mock.patch(
-                    "paper_fetch.runtime_browser.BrowserContextManager.new_context",
+                    "paper_fetch.providers.browser_runtime.camoufox_manager.CamoufoxBrowserManager.new_context",
                     new=new_private_context,
                 ),
                 mock.patch.object(
@@ -489,8 +532,12 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                         "url": supplementary_url,
                     },
                 ),
-                mock.patch.object(html_assets, "_build_cookie_seeded_opener", return_value=object()),
-                mock.patch.object(html_assets, "_request_with_opener", return_value=challenge_html),
+                mock.patch.object(
+                    html_assets, "_build_cookie_seeded_opener", return_value=object()
+                ),
+                mock.patch.object(
+                    html_assets, "_request_with_opener", return_value=challenge_html
+                ),
             ):
                 result = client.download_related_assets(
                     SCIENCE_SAMPLE.doi,
@@ -502,8 +549,10 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 )
 
         runtime_context.new_browser_context.assert_not_called()
-        self.assertEqual(runtime_context.new_browser_context_for_config.call_count, 2)
-        self.assertEqual(len(runtime_context._browser_context_managers), 1)
+        self.assertEqual(
+            runtime_context.new_browser_context_for_runtime_config.call_count, 2
+        )
+        self.assertEqual(len(runtime_context._camoufox_browser_managers), 1)
         self.assertEqual(transport.calls, [])
         self.assertEqual(
             [asset["kind"] for asset in result["assets"]],
@@ -512,7 +561,10 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         self.assertEqual(result["asset_failures"], [])
         self.assertEqual(len(private_contexts), 2)
         self.assertTrue(all(context.closed for context in private_contexts))
-    def test_pnas_provider_download_related_assets_uses_figure_page_and_falls_back_to_preview(self) -> None:
+
+    def test_pnas_provider_download_related_assets_uses_figure_page_and_falls_back_to_preview(
+        self,
+    ) -> None:
         figure_page_url = "https://www.pnas.org/figures/figure-1"
         preview_url = "https://www.pnas.org/images/preview/figure1.png"
         full_size_url = "https://www.pnas.org/images/original/figure1.png"
@@ -528,12 +580,26 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         transport = AssetTransport({})
         client = pnas_provider.PnasClient(transport=transport, env={})
         initial_seed = {
-            "browser_cookies": [{"name": "cf_clearance", "value": "secret", "domain": ".pnas.org", "path": "/"}],
+            "browser_cookies": [
+                {
+                    "name": "cf_clearance",
+                    "value": "secret",
+                    "domain": ".pnas.org",
+                    "path": "/",
+                }
+            ],
             "browser_user_agent": "Mozilla/5.0",
             "browser_final_url": PNAS_SAMPLE.landing_url,
         }
         warmed_seed = {
-            "browser_cookies": [{"name": "sessionid", "value": "warm", "domain": ".pnas.org", "path": "/"}],
+            "browser_cookies": [
+                {
+                    "name": "sessionid",
+                    "value": "warm",
+                    "domain": ".pnas.org",
+                    "path": "/",
+                }
+            ],
             "browser_user_agent": "Mozilla/5.0",
             "browser_final_url": figure_page_url,
         }
@@ -557,7 +623,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 content_type="text/html",
                 body=html.encode("utf-8"),
                 route="html",
-                markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n"
+                + ("Body text " * 120),
                 browser_context_seed=initial_seed,
             )
             mocked_fetch = mock.Mock(
@@ -585,8 +652,12 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 _build_shared_browser_image_fetcher=mocked_builder,
             )
             with (
-                mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
-                mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
+                mock.patch.object(
+                    html_assets, "_build_cookie_seeded_opener"
+                ) as mocked_opener,
+                mock.patch.object(
+                    html_assets, "_request_with_opener"
+                ) as mocked_request,
             ):
                 result = client.download_related_assets(
                     PNAS_SAMPLE.doi,
@@ -604,12 +675,18 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         mocked_opener.assert_not_called()
         mocked_request.assert_not_called()
         self.assertEqual(transport.calls, [])
-        self.assertEqual([call.args[0] for call in shared_fetcher.call_args_list], [full_size_url, preview_url])
+        self.assertEqual(
+            [call.args[0] for call in shared_fetcher.call_args_list],
+            [full_size_url, preview_url],
+        )
         self.assertEqual(len(result["assets"]), 1)
         self.assertEqual(result["asset_failures"], [])
         self.assertEqual(result["assets"][0]["download_tier"], "preview")
         self.assertEqual(saved_bytes, png_header(320, 240))
-    def test_pnas_provider_download_related_assets_uses_shared_browser_primary_path_before_preview(self) -> None:
+
+    def test_pnas_provider_download_related_assets_uses_shared_browser_primary_path_before_preview(
+        self,
+    ) -> None:
         """rule: rule-browser-primary-image-download-path
         asset-download-contract: provider=pnas
         """
@@ -628,7 +705,14 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         transport = AssetTransport({})
         client = pnas_provider.PnasClient(transport=transport, env={})
         initial_seed = {
-            "browser_cookies": [{"name": "cf_clearance", "value": "secret", "domain": ".pnas.org", "path": "/"}],
+            "browser_cookies": [
+                {
+                    "name": "cf_clearance",
+                    "value": "secret",
+                    "domain": ".pnas.org",
+                    "path": "/",
+                }
+            ],
             "browser_user_agent": "Mozilla/5.0",
             "browser_final_url": PNAS_SAMPLE.landing_url,
         }
@@ -650,7 +734,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 content_type="text/html",
                 body=html.encode("utf-8"),
                 route="html",
-                markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n"
+                + ("Body text " * 120),
                 browser_context_seed=initial_seed,
             )
             install_browser_workflow_deps(
@@ -679,8 +764,12 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
             )
             mocked_builder = client.deps._build_shared_browser_image_fetcher
             with (
-                mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
-                mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
+                mock.patch.object(
+                    html_assets, "_build_cookie_seeded_opener"
+                ) as mocked_opener,
+                mock.patch.object(
+                    html_assets, "_request_with_opener"
+                ) as mocked_request,
             ):
                 result = client.download_related_assets(
                     PNAS_SAMPLE.doi,
@@ -702,6 +791,7 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         self.assertEqual(result["asset_failures"], [])
         self.assertEqual(result["assets"][0]["download_tier"], "full_size")
         self.assertEqual(saved_bytes, b"\xff\xd8\xffprimary-image")
+
     def test_pnas_provider_reuses_cached_figure_page_for_repeated_assets(self) -> None:
         figure_page_url = "https://www.pnas.org/figures/figure-1"
         preview_url_one = "https://www.pnas.org/images/preview/figure1-a.png"
@@ -724,7 +814,14 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         transport = AssetTransport({})
         client = pnas_provider.PnasClient(transport=transport, env={})
         seed = {
-            "browser_cookies": [{"name": "cf_clearance", "value": "secret", "domain": ".pnas.org", "path": "/"}],
+            "browser_cookies": [
+                {
+                    "name": "cf_clearance",
+                    "value": "secret",
+                    "domain": ".pnas.org",
+                    "path": "/",
+                }
+            ],
             "browser_user_agent": "Mozilla/5.0",
             "browser_final_url": PNAS_SAMPLE.landing_url,
         }
@@ -745,7 +842,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 content_type="text/html",
                 body=html.encode("utf-8"),
                 route="html",
-                markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                markdown_text=f"# {PNAS_SAMPLE.title}\n\n## Results\n\n"
+                + ("Body text " * 120),
                 browser_context_seed=seed,
             )
             mocked_fetch = mock.Mock(
@@ -785,8 +883,14 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         self.assertEqual(shared_fetcher.call_count, 1)
         self.assertEqual(len(result["assets"]), 2)
         self.assertEqual(result["asset_failures"], [])
-        self.assertEqual([asset["download_url"] for asset in result["assets"]], [full_size_url, full_size_url])
-    def test_science_provider_reuses_cached_image_candidate_for_repeated_assets(self) -> None:
+        self.assertEqual(
+            [asset["download_url"] for asset in result["assets"]],
+            [full_size_url, full_size_url],
+        )
+
+    def test_science_provider_reuses_cached_image_candidate_for_repeated_assets(
+        self,
+    ) -> None:
         full_size_url = "https://www.science.org/images/original/figure1.png"
         preview_url_one = "https://www.science.org/images/preview/figure1-a.png"
         preview_url_two = "https://www.science.org/images/preview/figure1-b.png"
@@ -809,7 +913,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 content_type="text/html",
                 body=html.encode("utf-8"),
                 route="html",
-                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n"
+                + ("Body text " * 120),
                 browser_context_seed={},
             )
             mocked_fetch = mock.Mock()
@@ -860,7 +965,11 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
         self.assertEqual(shared_fetcher.call_count, 1)
         self.assertEqual(len(result["assets"]), 2)
         self.assertEqual(result["asset_failures"], [])
-        self.assertEqual([asset["download_url"] for asset in result["assets"]], [full_size_url, full_size_url])
+        self.assertEqual(
+            [asset["download_url"] for asset in result["assets"]],
+            [full_size_url, full_size_url],
+        )
+
     def test_science_provider_records_preview_dimensions_and_acceptance(self) -> None:
         preview_url = "https://www.science.org/images/preview/figure1.png"
         html = f"""
@@ -891,7 +1000,8 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 content_type="text/html",
                 body=html.encode("utf-8"),
                 route="html",
-                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n" + ("Body text " * 120),
+                markdown_text=f"# {SCIENCE_SAMPLE.title}\n\n## Results\n\n"
+                + ("Body text " * 120),
                 browser_context_seed={},
             )
             mocked_fetch = mock.Mock()
@@ -904,8 +1014,12 @@ class AtyponBrowserWorkflowProviderAssetDownloadTests(AtyponBrowserWorkflowProvi
                 _build_shared_browser_image_fetcher=mocked_builder,
             )
             with (
-                mock.patch.object(html_assets, "_build_cookie_seeded_opener") as mocked_opener,
-                mock.patch.object(html_assets, "_request_with_opener") as mocked_request,
+                mock.patch.object(
+                    html_assets, "_build_cookie_seeded_opener"
+                ) as mocked_opener,
+                mock.patch.object(
+                    html_assets, "_request_with_opener"
+                ) as mocked_request,
             ):
                 result = client.download_related_assets(
                     SCIENCE_SAMPLE.doi,

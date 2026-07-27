@@ -18,6 +18,7 @@ from ..signals import (
     SUPPLEMENTARY_BLOCKING_TITLE_TOKENS,
 )
 from ..shared import (
+    attr_text,
     html_text_snippet as _html_text_snippet,
     html_title_snippet as _html_title_snippet,
 )
@@ -47,7 +48,9 @@ ACCEPTABLE_PREVIEW_MIN_WIDTH = 300
 ACCEPTABLE_PREVIEW_MIN_HEIGHT = 200
 
 
-ACCEPTABLE_PREVIEW_MIN_AREA = ACCEPTABLE_PREVIEW_MIN_WIDTH * ACCEPTABLE_PREVIEW_MIN_HEIGHT
+ACCEPTABLE_PREVIEW_MIN_AREA = (
+    ACCEPTABLE_PREVIEW_MIN_WIDTH * ACCEPTABLE_PREVIEW_MIN_HEIGHT
+)
 
 
 ACCEPTABLE_WIDE_PREVIEW_MIN_WIDTH = 600
@@ -83,7 +86,9 @@ def _response_dimensions(response: Mapping[str, Any]) -> tuple[int, int] | None:
     return image_dimensions_from_bytes(response.get("body", b""))
 
 
-def supplementary_response_block_reason(content_type: str | None, body: bytes | bytearray | None) -> str:
+def supplementary_response_block_reason(
+    content_type: str | None, body: bytes | bytearray | None
+) -> str:
     normalized_content_type = normalize_text(content_type).split(";", 1)[0].lower()
     if normalized_content_type and "html" not in normalized_content_type:
         return ""
@@ -91,7 +96,9 @@ def supplementary_response_block_reason(content_type: str | None, body: bytes | 
         return ""
     title = _html_title_snippet(body).lower()
     snippet = _html_text_snippet(body).lower()
-    if any(token in title or token in snippet for token in _CLOUDFLARE_CHALLENGE_TOKENS):
+    if any(
+        token in title or token in snippet for token in _CLOUDFLARE_CHALLENGE_TOKENS
+    ):
         return CLOUDFLARE_CHALLENGE
     if any(token in title for token in SUPPLEMENTARY_BLOCKING_TITLE_TOKENS):
         return "login_or_access_html"
@@ -103,7 +110,10 @@ def supplementary_response_block_reason(content_type: str | None, body: bytes | 
 def preview_dimensions_are_acceptable(width: int | None, height: int | None) -> bool:
     normalized_width = int(width or 0)
     normalized_height = int(height or 0)
-    if normalized_width >= ACCEPTABLE_PREVIEW_MIN_WIDTH and normalized_height >= ACCEPTABLE_PREVIEW_MIN_HEIGHT:
+    if (
+        normalized_width >= ACCEPTABLE_PREVIEW_MIN_WIDTH
+        and normalized_height >= ACCEPTABLE_PREVIEW_MIN_HEIGHT
+    ):
         return True
     return (
         normalized_width >= ACCEPTABLE_WIDE_PREVIEW_MIN_WIDTH
@@ -126,7 +136,9 @@ def _first_url_from_srcset(value: str | None) -> str:
         url = pieces[0].strip()
         score = 0.0
         for descriptor in pieces[1:]:
-            match = re.match(r"^([0-9]+(?:\.[0-9]+)?)(w|x)$", descriptor.strip().lower())
+            match = re.match(
+                r"^([0-9]+(?:\.[0-9]+)?)(w|x)$", descriptor.strip().lower()
+            )
             if not match:
                 continue
             multiplier = 1000.0 if match.group(2) == "x" else 1.0
@@ -145,9 +157,9 @@ def _soup_attr_url(tag: Any, *attrs: str) -> str:
         if not raw:
             continue
         if attr.endswith("srcset"):
-            candidate = _first_url_from_srcset(raw)
+            candidate = _first_url_from_srcset(attr_text(raw))
         else:
-            candidate = normalize_text(str(raw))
+            candidate = attr_text(raw)
         if candidate:
             return candidate
     return ""
@@ -172,8 +184,14 @@ def _collect_tag_attr_urls(tag: Any, source_url: str, *attrs: str) -> list[str]:
             continue
         values = [raw] if not isinstance(raw, list) else raw
         for value in values:
-            candidate = _first_url_from_srcset(value) if attr.endswith("srcset") else normalize_text(str(value))
-            absolute_candidate = urllib.parse.urljoin(source_url, candidate) if candidate else ""
+            candidate = (
+                _first_url_from_srcset(attr_text(value))
+                if attr.endswith("srcset")
+                else attr_text(value)
+            )
+            absolute_candidate = (
+                urllib.parse.urljoin(source_url, candidate) if candidate else ""
+            )
             if absolute_candidate and absolute_candidate not in urls:
                 urls.append(absolute_candidate)
     return urls

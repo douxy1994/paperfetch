@@ -11,6 +11,7 @@ from ....extraction.html.shared import (
     html_title_snippet as _html_title_snippet,
 )
 from ....runtime import RuntimeContext
+from ...browser_runtime.types import BrowserRuntimeConfig
 from ....utils import normalize_text
 from .context import (
     _BaseBrowserDocumentFetcher,
@@ -34,6 +35,7 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
         cdp_endpoint: str | None = None,
         profile_dir: Any = None,
         user_data_dir: Any = None,
+        browser_config: BrowserRuntimeConfig | None = None,
     ) -> None:
         super().__init__(
             browser_context_seed_getter=browser_context_seed_getter,
@@ -46,6 +48,7 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
             cdp_endpoint=cdp_endpoint,
             profile_dir=profile_dir,
             user_data_dir=user_data_dir,
+            browser_config=browser_config,
         )
 
     def __call__(
@@ -60,7 +63,7 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
         self._sync_context_cookies()
         self._warm_seed_urls(force=False)
         for attempt in range(3):
-            result = self._fetch_with_context_request(normalized_url)
+            result = self._fetch_with_context_request(normalized_url, asset)
             if result is not None:
                 return result
             if attempt == 0:
@@ -90,13 +93,21 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
             reason=reason,
         )
 
-    def _fetch_with_context_request(self, file_url: str) -> dict[str, Any] | None:
+    def _fetch_with_context_request(
+        self,
+        file_url: str,
+        asset: Mapping[str, Any],
+    ) -> dict[str, Any] | None:
         if self._context is None:
             return None
+        request_headers = {"Accept": "*/*"}
+        referer_url = normalize_text(str(asset.get("referer_url") or ""))
+        if referer_url:
+            request_headers["Referer"] = referer_url
         try:
             response = self._context.request.get(
                 file_url,
-                headers={"Accept": "*/*"},
+                headers=request_headers,
                 timeout=60000,
             )
         except Exception as exc:
@@ -156,12 +167,15 @@ class _ThreadLocalSharedBrowserFileDocumentFetcher(_ThreadLocalSharedDocumentFet
         cdp_endpoint: str | None = None,
         profile_dir: Any = None,
         user_data_dir: Any = None,
+        browser_config: BrowserRuntimeConfig | None = None,
     ) -> None:
+        requires_caller_thread = (
+            runtime_context is not None and use_runtime_shared_browser
+        )
         super().__init__(
             log_event="browser_workflow_file_fetcher_thread_created",
-            requires_caller_thread=(
-                runtime_context is not None and use_runtime_shared_browser
-            ),
+            requires_caller_thread=requires_caller_thread,
+            close_after_call=not requires_caller_thread,
             fetcher_factory=lambda: _SharedBrowserFileDocumentFetcher(
                 browser_context_seed_getter=browser_context_seed_getter,
                 seed_urls_getter=seed_urls_getter,
@@ -173,6 +187,7 @@ class _ThreadLocalSharedBrowserFileDocumentFetcher(_ThreadLocalSharedDocumentFet
                 cdp_endpoint=cdp_endpoint,
                 profile_dir=profile_dir,
                 user_data_dir=user_data_dir,
+                browser_config=browser_config,
             ),
         )
 
@@ -190,10 +205,8 @@ def _build_shared_browser_file_fetcher(
     profile_dir: Any = None,
     user_data_dir: Any = None,
     thread_local: bool = False,
-) -> (
-    _ThreadLocalSharedBrowserFileDocumentFetcher
-    | _SharedBrowserFileDocumentFetcher
-):
+    browser_config: BrowserRuntimeConfig | None = None,
+) -> _ThreadLocalSharedBrowserFileDocumentFetcher | _SharedBrowserFileDocumentFetcher:
     fetcher_cls: (
         type[_ThreadLocalSharedBrowserFileDocumentFetcher]
         | type[_SharedBrowserFileDocumentFetcher]
@@ -214,4 +227,5 @@ def _build_shared_browser_file_fetcher(
         cdp_endpoint=cdp_endpoint,
         profile_dir=profile_dir,
         user_data_dir=user_data_dir,
+        browser_config=browser_config,
     )

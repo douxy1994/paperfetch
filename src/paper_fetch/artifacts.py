@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+import contextlib
 from dataclasses import dataclass, field
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Literal
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
+from filelock import FileLock
+from platformdirs import user_runtime_path
+
+from .config import APP_NAME
 from .extraction.html.assets.dom import preview_dimensions_are_acceptable
-from .models import AssetProfile
+from .models import ArticleModel, AssetProfile, AssetQualitySummary
 from .provider_catalog import provider_persists_provider_html
 from .reason_codes import PDF_FALLBACK
 from .tracing import download_marker
@@ -23,11 +29,29 @@ from .utils import (
     provider_display_name,
     safe_text,
 )
-import contextlib
-
 
 ArtifactMode = Literal["markdown-assets", "all", "none"]
 DEFAULT_ARTIFACT_MODE: ArtifactMode = "all"
+ARTIFACT_LOCK_DIRNAME = "locks"
+
+
+def artifact_file_lock_path(
+    path: Path,
+    *,
+    scope: Literal["artifact", "run"] = "artifact",
+) -> Path:
+    """Return a stable path-scoped lock outside the user's output namespace."""
+
+    digest = hashlib.sha256(
+        str(path.expanduser().resolve(strict=False)).encode(
+            "utf-8", errors="surrogatepass"
+        )
+    ).hexdigest()[:24]
+    return (
+        user_runtime_path(APP_NAME, appauthor=False)
+        / ARTIFACT_LOCK_DIRNAME
+        / f"{scope}-{digest}.lock"
+    )
 
 
 @dataclass(frozen=True)
@@ -86,7 +110,9 @@ class ArtifactStore:
         *,
         artifact_mode: ArtifactMode = DEFAULT_ARTIFACT_MODE,
     ) -> ArtifactStore:
-        return cls(DownloadPolicy(download_dir=download_dir, artifact_mode=artifact_mode))
+        return cls(
+            DownloadPolicy(download_dir=download_dir, artifact_mode=artifact_mode)
+        )
 
     @property
     def download_dir(self) -> Path | None:
@@ -112,16 +138,33 @@ class ArtifactStore:
     def allows_structured_sidecars(self) -> bool:
         return self.policy.allows_structured_sidecars
 
-    def write_text_file(self, path: Path, text: str, *, encoding: str = "utf-8") -> Path:
+    def write_text_file(
+        self,
+        path: Path,
+        text: str,
+        *,
+        encoding: str = "utf-8",
+        overwrite: bool = True,
+        use_lock: bool = False,
+    ) -> Path:
         path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(path.suffix + ".part")
-        try:
-            tmp_path.write_text(text, encoding=encoding)
-            tmp_path.replace(path)
-        except Exception:
-            with contextlib.suppress(OSError):
-                tmp_path.unlink(missing_ok=True)
-            raise
+        lock_path = artifact_file_lock_path(path)
+        if use_lock:
+            lock_path.parent.mkdir(parents=True, exist_ok=True)
+        lock = FileLock(str(lock_path)) if use_lock else contextlib.nullcontext()
+        with lock:
+            if path.exists() and not overwrite:
+                raise FileExistsError(
+                    f"refusing to overwrite existing artifact without explicit permission: {path}"
+                )
+            tmp_path = path.with_suffix(path.suffix + ".part")
+            try:
+                tmp_path.write_text(text, encoding=encoding)
+                tmp_path.replace(path)
+            except Exception:
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink(missing_ok=True)
+                raise
         return path
 
     def write_bytes_file(self, path: Path, body: bytes) -> Path:
@@ -136,11 +179,20 @@ class ArtifactStore:
             raise
         return path
 
-    def write_json_file(self, path: Path, payload: Mapping[str, Any]) -> Path:
+    def write_json_file(
+        self,
+        path: Path,
+        payload: Mapping[str, Any],
+        *,
+        overwrite: bool = True,
+        use_lock: bool = False,
+    ) -> Path:
         return self.write_text_file(
             path,
             json.dumps(dict(payload), ensure_ascii=False, indent=2),
             encoding="utf-8",
+            overwrite=overwrite,
+            use_lock=use_lock,
         )
 
     def save_provider_payload(
@@ -153,31 +205,35 @@ class ArtifactStore:
     ) -> tuple[list[str], list[str]]:
         if content is None or not content.needs_local_copy:
             return [], []
-        provider_slug = safe_text(provider_name or "provider").lower().replace(" ", "_") or "provider"
+        provider_slug = (
+            safe_text(provider_name or "provider").lower().replace(" ", "_")
+            or "provider"
+        )
         provider_label = provider_display_name(provider_slug)
         if self.download_dir is None:
-            return [f"{provider_label} official PDF/binary was not written to disk because --no-download was set."], [
-                download_marker(provider_slug, "skipped")
-            ]
+            return [
+                f"{provider_label} official PDF/binary was not written to disk because --no-download was set."
+            ], [download_marker(provider_slug, "skipped")]
         if not self.policy.allows_provider_payload(content):
             return [], []
+        naming_metadata = _payload_naming_metadata(content, metadata)
         output_path = build_output_path(
             self.download_dir,
             doi,
-            safe_text(metadata.get("title")),
+            safe_text(naming_metadata.get("title")),
             content.content_type,
             content.source_url,
-            authors=metadata.get("authors") or None,
-            year=_extract_year(safe_text(metadata.get("published")) or None),
+            authors=naming_metadata.get("authors") or None,
+            year=_extract_year(safe_text(naming_metadata.get("published")) or None),
         )
         if output_path is not None:
             saved_path = self.write_bytes_file(output_path, content.body)
-            return [f"{provider_label} official full text was downloaded as PDF/binary to {saved_path}."], [
-                download_marker(provider_slug, "saved")
-            ]
-        return [f"{provider_label} official full text was available only as PDF/binary and could not be written to disk."], [
-            download_marker(f"{provider_slug}_save_failed")
-        ]
+            return [
+                f"{provider_label} official full text was downloaded as PDF/binary to {saved_path}."
+            ], [download_marker(provider_slug, "saved")]
+        return [
+            f"{provider_label} official full text was available only as PDF/binary and could not be written to disk."
+        ], [download_marker(f"{provider_slug}_save_failed")]
 
     def provider_html_output_path(
         self,
@@ -187,14 +243,20 @@ class ArtifactStore:
         doi: str | None,
         metadata: Mapping[str, Any],
     ) -> Path | None:
-        if content is None or not self.policy.allows_provider_html:
+        if (
+            content is None
+            or self.download_dir is None
+            or not self.policy.allows_provider_html
+        ):
             return None
         if not provider_persists_provider_html(provider_name):
             return None
         if normalize_text(content.route_kind).lower() != "html":
             return None
 
-        extension = extension_from_content_type(content.content_type, content.source_url).lower()
+        extension = extension_from_content_type(
+            content.content_type, content.source_url
+        ).lower()
         if extension not in {".html", ".htm"}:
             return None
 
@@ -225,7 +287,9 @@ class ArtifactStore:
         if output_path is None or content is None:
             return [], []
         self.write_bytes_file(output_path, content.body)
-        return [], [download_marker(f"{normalize_text(provider_name).lower()}_html", "saved")]
+        return [], [
+            download_marker(f"{normalize_text(provider_name).lower()}_html", "saved")
+        ]
 
     def apply_provider_artifacts(
         self,
@@ -239,23 +303,43 @@ class ArtifactStore:
         if self.asset_download_dir is None:
             return
         if asset_profile == "none":
-            extend_unique(source_trail, [download_marker(f"{provider_name}_assets_skipped_profile_none")])
+            extend_unique(
+                source_trail,
+                [download_marker(f"{provider_name}_assets_skipped_profile_none")],
+            )
             return
+        skip_trace_markers = [
+            event.marker() for event in artifacts.skip_trace if event.marker()
+        ]
         if artifacts.skip_warning:
             extend_unique(warnings, [artifacts.skip_warning])
-            extend_unique(source_trail, [event.marker() for event in artifacts.skip_trace if event.marker()])
+        if skip_trace_markers:
+            extend_unique(source_trail, skip_trace_markers)
+        if artifacts.skip_warning or artifacts.text_only:
             return
         if artifacts.assets:
-            extend_unique(source_trail, [download_marker(f"{provider_name}_assets_saved_profile_{asset_profile}")])
+            extend_unique(
+                source_trail,
+                [
+                    download_marker(
+                        f"{provider_name}_assets_saved_profile_{asset_profile}"
+                    )
+                ],
+            )
             preview_assets = [
                 asset
                 for asset in artifacts.assets
                 if normalize_text(asset.get("download_tier")).lower() == "preview"
             ]
-            preview_accepted_count = sum(1 for asset in preview_assets if _preview_asset_accepted(asset))
+            preview_accepted_count = sum(
+                1 for asset in preview_assets if _preview_asset_accepted(asset)
+            )
             preview_fallback_count = len(preview_assets) - preview_accepted_count
             if preview_accepted_count:
-                extend_unique(source_trail, [download_marker(f"{provider_name}_assets_preview", "accepted")])
+                extend_unique(
+                    source_trail,
+                    [download_marker(f"{provider_name}_assets_preview", "accepted")],
+                )
             if preview_fallback_count:
                 extend_unique(
                     warnings,
@@ -266,18 +350,53 @@ class ArtifactStore:
                         )
                     ],
                 )
-                extend_unique(source_trail, [download_marker(f"{provider_name}_assets_preview_fallback")])
+                extend_unique(
+                    source_trail,
+                    [download_marker(f"{provider_name}_assets_preview_fallback")],
+                )
         if artifacts.asset_failures:
+            asset_failure_message = (
+                f"{provider_display_name(provider_name)} related assets were only partially downloaded "
+                if artifacts.assets
+                else f"{provider_display_name(provider_name)} related assets could not be downloaded "
+            )
             extend_unique(
                 warnings,
-                [
-                    (
-                        f"{provider_display_name(provider_name)} related assets were only partially downloaded "
-                        f"({len(artifacts.asset_failures)} failed)."
-                    )
-                ],
+                [f"{asset_failure_message}({len(artifacts.asset_failures)} failed)."],
             )
-            extend_unique(source_trail, [download_marker(f"{provider_name}_asset_failures")])
+            extend_unique(
+                source_trail, [download_marker(f"{provider_name}_asset_failures")]
+            )
+
+    def audit_article_assets(
+        self,
+        article: ArticleModel,
+        *,
+        asset_profile: AssetProfile,
+        asset_failures: Sequence[Mapping[str, Any]] | None = None,
+        archive_enabled: bool | None = None,
+    ) -> AssetQualitySummary:
+        """Attach a pure, read-only asset audit without changing text quality."""
+
+        from .quality.assets import build_asset_quality_summary
+
+        summary = build_asset_quality_summary(
+            article.assets,
+            asset_failures=(
+                asset_failures
+                if asset_failures is not None
+                else article.quality.asset_failures
+            ),
+            asset_profile=asset_profile,
+            archive_enabled=(
+                self.asset_download_dir is not None
+                if archive_enabled is None
+                else archive_enabled
+            ),
+            base_dir=self.download_dir,
+        )
+        article.quality.asset_summary = summary
+        return summary
 
 
 def _preview_asset_accepted(asset: Mapping[str, Any]) -> bool:
@@ -289,6 +408,19 @@ def _preview_asset_accepted(asset: Mapping[str, Any]) -> bool:
     except (TypeError, ValueError):
         return False
     return preview_dimensions_are_acceptable(width, height)
+
+
+def _payload_naming_metadata(
+    content: Any, metadata: Mapping[str, Any]
+) -> dict[str, Any]:
+    naming_metadata = dict(metadata)
+    content_metadata = getattr(content, "merged_metadata", None)
+    if not isinstance(content_metadata, Mapping):
+        return naming_metadata
+    for key, value in content_metadata.items():
+        if value not in (None, "", [], {}):
+            naming_metadata[str(key)] = value
+    return naming_metadata
 
 
 def _is_pdf_fallback_content(content: Any) -> bool:

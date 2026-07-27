@@ -4,13 +4,12 @@ from __future__ import annotations
 
 from functools import partial
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from collections.abc import Mapping
 
 from ...config import (
-    CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR,
     build_browser_user_agent,
-    build_user_agent,
+    build_publisher_user_agent,
     resolve_asset_download_concurrency,
 )
 from ...extraction.html import decode_html
@@ -20,7 +19,7 @@ from ...models import AssetProfile
 from ...publisher_identity import normalize_doi
 from ...quality.reason_codes import FULLTEXT
 from ...runtime import RuntimeContext
-from ...tracing import download_marker, fulltext_marker, trace_from_markers
+from ...tracing import download_marker, fulltext_marker, trace_event, trace_from_markers
 from ...utils import empty_asset_results, normalize_text, provider_display_name
 from .shared import (
     BrowserWorkflowDeps,
@@ -51,9 +50,8 @@ from .article import (
 )
 from .asset_download import (
     BrowserAssetRecoveryContext,
+    download_browser_backed_related_assets,
     plan_browser_asset_download,
-    retry_failed_browser_assets,
-    run_browser_asset_download_attempt,
 )
 from .profile import ProviderBrowserProfile
 
@@ -62,6 +60,7 @@ class BrowserWorkflowClient(ProviderClient):
     name = "browser_workflow"
     article_source_name: str | None = None
     profile: ProviderBrowserProfile | None = None
+    route_order: tuple[str, ...] = ()
 
     def __init__(
         self,
@@ -71,7 +70,7 @@ class BrowserWorkflowClient(ProviderClient):
     ) -> None:
         self.transport = transport
         self.env = dict(env)
-        self.user_agent = build_user_agent(env)
+        self.user_agent = build_publisher_user_agent(env)
         self.browser_user_agent = build_browser_user_agent(env)
         self.deps = deps
 
@@ -110,6 +109,13 @@ class BrowserWorkflowClient(ProviderClient):
         if profile is not None and profile.label:
             return profile.label
         return provider_display_name(self.name)
+
+    def _direct_http_asset_mode(self, seed: Mapping[str, Any]) -> bool:
+        return (
+            self.name == "ams"
+            and normalize_text(str(seed.get("paper_fetch_html_fetcher") or ""))
+            == "direct_http"
+        )
 
     def allow_pdf_fallback_after_html_failure(
         self,
@@ -150,6 +156,7 @@ class BrowserWorkflowClient(ProviderClient):
         self.deps.ensure_runtime_ready(runtime)
         return self.deps.fetch_seeded_browser_pdf_payload(
             provider=self.name,
+            doi=normalized_doi,
             runtime=runtime,
             pdf_candidates=self.pdf_candidates(normalized_doi, metadata),
             html_candidates=self.html_candidates(normalized_doi, metadata),
@@ -216,15 +223,16 @@ class BrowserWorkflowClient(ProviderClient):
     def fetch_raw_fulltext(
         self,
         doi: str,
-        metadata: ProviderMetadata,
+        metadata: Mapping[str, Any],
         *,
         context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         context = self._runtime_context(context)
+        provider_metadata = cast(ProviderMetadata, metadata)
         bootstrap = self.deps.bootstrap_browser_workflow(
             self,
             doi,
-            metadata,
+            provider_metadata,
             context=context,
             deps=self.deps,
         )
@@ -246,6 +254,19 @@ class BrowserWorkflowClient(ProviderClient):
                     f"{self.name} HTML route was not usable; skipping PDF fallback."
                 ],
                 source_trail=[fulltext_marker(self.name, "fail", route="html")],
+                trace=(
+                    [
+                        trace_event(
+                            "fulltext",
+                            f"{self.name}_html",
+                            "fail",
+                            code=bootstrap.html_failure_reason,
+                            message=bootstrap.html_failure_message,
+                        )
+                    ]
+                    if bootstrap.html_failure_reason
+                    else []
+                ),
             )
 
         initial_warning = (
@@ -257,6 +278,7 @@ class BrowserWorkflowClient(ProviderClient):
             try:
                 return self.deps.fetch_seeded_browser_pdf_payload(
                     provider=self.name,
+                    doi=normalize_doi(str(metadata.get("doi") or "")) or doi,
                     runtime=bootstrap.runtime,
                     pdf_candidates=bootstrap.pdf_candidates,
                     html_candidates=bootstrap.html_candidates,
@@ -265,6 +287,7 @@ class BrowserWorkflowClient(ProviderClient):
                     browser_context_seed=bootstrap.browser_context_seed,
                     html_failure_reason=bootstrap.html_failure_reason,
                     html_failure_message=bootstrap.html_failure_message,
+                    html_failure_diagnostics=bootstrap.html_failure_diagnostics,
                     warnings=[],
                     success_source_trail=[],
                     context=context,
@@ -279,6 +302,19 @@ class BrowserWorkflowClient(ProviderClient):
                     (
                         f"{self.name} full text could not be retrieved via HTML or PDF fallback. "
                         f"HTML failure: {reason} PDF failure: {exc.message}"
+                    ),
+                    trace=(
+                        [
+                            trace_event(
+                                "fulltext",
+                                f"{self.name}_html",
+                                "fail",
+                                code=bootstrap.html_failure_reason,
+                                message=bootstrap.html_failure_message,
+                            )
+                        ]
+                        if bootstrap.html_failure_reason
+                        else []
                     ),
                 ) from exc
 
@@ -322,6 +358,7 @@ class BrowserWorkflowClient(ProviderClient):
         context: RuntimeContext | None = None,
     ) -> PreparedFetchResultPayload:
         context = self._runtime_context(context)
+        provider_metadata = cast(ProviderMetadata, metadata)
         raw_payload = prepared.raw_payload
         content = raw_payload.content
         if content is None or normalize_text(content.route_kind).lower() != "html":
@@ -343,17 +380,15 @@ class BrowserWorkflowClient(ProviderClient):
         try:
             recovered_payload = self._recover_pdf_payload_from_abstract_only_html(
                 doi,
-                metadata,
+                provider_metadata,
                 raw_payload,
                 context=context,
             )
         except (ProviderFailure, PdfFallbackFailure):
             provider_label = self.provider_label()
             prepared.finalize_warnings.append(
-                
-                    f"{provider_label} HTML route only exposed abstract-level content after markdown extraction, "
-                    "and PDF fallback did not return usable full text; returning abstract-only content."
-                
+                f"{provider_label} HTML route only exposed abstract-level content after markdown extraction, "
+                "and PDF fallback did not return usable full text; returning abstract-only content."
             )
             return prepared
 
@@ -389,7 +424,7 @@ class BrowserWorkflowClient(ProviderClient):
     def download_related_assets(
         self,
         doi: str,
-        metadata: ProviderMetadata,
+        metadata: Mapping[str, Any],
         raw_payload: RawFulltextPayload,
         output_dir,
         *,
@@ -438,7 +473,9 @@ class BrowserWorkflowClient(ProviderClient):
             }
             html_text = decode_html(
                 raw_payload.body,
-                content_type=content.content_type if content is not None else raw_payload.content_type,
+                content_type=content.content_type
+                if content is not None
+                else raw_payload.content_type,
             )
         else:
             plan_profile = {
@@ -460,23 +497,25 @@ class BrowserWorkflowClient(ProviderClient):
         if not plan.body_assets and not plan.supplementary_assets:
             return empty_asset_results()
 
-        runtime = self.deps.load_runtime_config(
-            self.env,
-            provider=self.name,
-            doi=normalized_doi,
+        raw_browser_context_seed = (
+            dict(content.browser_context_seed or {}) if content is not None else {}
         )
-        self.deps.ensure_runtime_ready(runtime)
-        browser_context_seed = merge_browser_context_seeds(
-            content.browser_context_seed if content is not None else None
-        )
-        external_cdp_endpoint = bool(
-            normalize_text(getattr(runtime, "cdp_endpoint", None))
-            or normalize_text((getattr(context, "env", {}) or {}).get(CLOAKBROWSER_CDP_ENDPOINT_ENV_VAR))
-        )
+        direct_http_asset_mode = self._direct_http_asset_mode(raw_browser_context_seed)
+        browser_context_seed = merge_browser_context_seeds(raw_browser_context_seed)
+        if direct_http_asset_mode:
+            browser_context_seed["paper_fetch_html_fetcher"] = "direct_http"
+        if direct_http_asset_mode:
+            runtime = None
+        else:
+            runtime = self.deps.load_runtime_config(
+                self.env,
+                provider=self.name,
+                doi=normalized_doi,
+            )
+            self.deps.ensure_runtime_ready(runtime)
+        camoufox_backend = bool(runtime is not None and runtime.backend == "camoufox")
         asset_download_concurrency = (
-            1
-            if external_cdp_endpoint
-            else resolve_asset_download_concurrency(context.env)
+            1 if camoufox_backend else resolve_asset_download_concurrency(context.env)
         )
         recovery = BrowserAssetRecoveryContext(
             runtime=runtime,
@@ -501,11 +540,19 @@ class BrowserWorkflowClient(ProviderClient):
             "transport": self.transport,
             "asset_download_concurrency": asset_download_concurrency,
             "figure_page_fetcher_factory": _MemoizedFigurePageFetcher,
-            "serial_browser_assets": external_cdp_endpoint,
+            "serial_browser_assets": camoufox_backend,
         }
-        image_fetcher_factory = partial(self._browser_asset_image_fetcher, context)
-        file_fetcher_factory = partial(self._browser_asset_file_fetcher, context)
-        result = run_browser_asset_download_attempt(
+        image_fetcher_factory = (
+            (lambda **_request: None)
+            if direct_http_asset_mode
+            else partial(self._browser_asset_image_fetcher, context)
+        )
+        file_fetcher_factory = (
+            (lambda **_request: None)
+            if direct_http_asset_mode
+            else partial(self._browser_asset_file_fetcher, context)
+        )
+        return download_browser_backed_related_assets(
             plan,
             recovery,
             image_fetcher_factory=image_fetcher_factory,
@@ -513,20 +560,6 @@ class BrowserWorkflowClient(ProviderClient):
             opener_requester=requester,
             deps=self.deps,
         )
-        if result.failures:
-            result = retry_failed_browser_assets(
-                plan,
-                result,
-                recovery,
-                image_fetcher_factory=image_fetcher_factory,
-                file_fetcher_factory=file_fetcher_factory,
-                opener_requester=requester,
-                deps=self.deps,
-            )
-        return {
-            "assets": [*result.body_results, *result.supplementary_results],
-            "asset_failures": result.failures,
-        }
 
     def _browser_asset_image_fetcher(self, context: RuntimeContext, **request):
         profile = self.profile
@@ -547,6 +580,7 @@ class BrowserWorkflowClient(ProviderClient):
             cdp_endpoint=request.get("cdp_endpoint"),
             profile_dir=request.get("profile_dir"),
             user_data_dir=request.get("user_data_dir"),
+            browser_config=request.get("browser_config"),
         )
         # Figures fan out several candidate URLs per asset (full-size, figure
         # page, preview), so the same image URL is frequently fetched more than
@@ -574,12 +608,13 @@ class BrowserWorkflowClient(ProviderClient):
             cdp_endpoint=request.get("cdp_endpoint"),
             profile_dir=request.get("profile_dir"),
             user_data_dir=request.get("user_data_dir"),
+            browser_config=request.get("browser_config"),
             thread_local=True,
         )
 
     def to_article_model(
         self,
-        metadata: ProviderMetadata,
+        metadata: Mapping[str, Any],
         raw_payload: RawFulltextPayload,
         *,
         downloaded_assets: list[Mapping[str, Any]] | None = None,
@@ -588,12 +623,16 @@ class BrowserWorkflowClient(ProviderClient):
     ):
         context = self._runtime_context(context)
         profile = self.require_profile()
+        provider_metadata = cast(ProviderMetadata, metadata)
         return browser_workflow_article_from_payload(
             self,
-            merge_provider_owned_authors(
-                metadata,
-                raw_payload,
-                fallback_extractor=profile.fallback_author_extractor,
+            cast(
+                ProviderMetadata,
+                merge_provider_owned_authors(
+                    provider_metadata,
+                    raw_payload,
+                    fallback_extractor=profile.fallback_author_extractor,
+                ),
             ),
             raw_payload,
             downloaded_assets=downloaded_assets,

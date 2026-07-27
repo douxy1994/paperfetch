@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 from pathlib import Path
 import sys
 import threading
@@ -16,11 +17,19 @@ from paper_fetch.providers import (
     _pdf_common,
     _pdf_fallback,
 )
+from paper_fetch.providers.browser_workflow import pdf_fallback as browser_pdf_fallback
 from paper_fetch.runtime import RuntimeContext
+from tests.unit._browser_workflow_deps import browser_workflow_deps
 from tests.unit._paper_fetch_support import RecordingTransport
 
 
 class PdfFallbackHelperTests(unittest.TestCase):
+    def setUp(self) -> None:
+        _pdf_common._clear_pdf_markdown_render_cache()
+
+    def tearDown(self) -> None:
+        _pdf_common._clear_pdf_markdown_render_cache()
+
     def test_sanitize_storage_state_uses_shared_cloudflare_cookie_tokens(self) -> None:
         self.assertIs(
             _pdf_common.CLOUDFLARE_COOKIE_NAMES,
@@ -56,6 +65,84 @@ class PdfFallbackHelperTests(unittest.TestCase):
 
         self.assertEqual(sanitized["cookies"], [{"name": "session", "value": "kept"}])
 
+    def test_seeded_browser_pdf_payload_uses_lightweight_warm_and_skips_seed_when_cookie_seeded(
+        self,
+    ) -> None:
+        pdf_url = "https://example.test/article.pdf"
+        article_url = "https://example.test/article"
+        warmed_seed = {
+            "browser_cookies": [
+                {
+                    "name": "sessionid",
+                    "value": "warm",
+                    "domain": ".example.test",
+                    "path": "/",
+                }
+            ],
+            "browser_user_agent": "UnitTest/1.0",
+            "browser_final_url": article_url,
+        }
+        mocked_warm = mock.Mock(return_value=warmed_seed)
+        mocked_fetch_pdf = mock.Mock(
+            return_value=_pdf_common.PdfFetchResult(
+                source_url=pdf_url,
+                final_url=pdf_url,
+                pdf_bytes=b"%PDF-1.7 browser",
+                markdown_text="# PDF\n\nBody",
+                suggested_filename="article.pdf",
+            )
+        )
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = types.SimpleNamespace(
+                backend="camoufox",
+                artifact_dir=Path(tmpdir),
+                headless=True,
+                user_agent="UnitTest/1.0",
+                storage_state_path=None,
+                profile_dir=None,
+                user_data_dir=None,
+            )
+            payload = browser_pdf_fallback.fetch_seeded_browser_pdf_payload(
+                provider="wiley",
+                doi="10.1000/example",
+                runtime=runtime,
+                pdf_candidates=[pdf_url],
+                html_candidates=[article_url],
+                landing_page_url=article_url,
+                user_agent="UnitTest/1.0",
+                browser_context_seed={},
+                html_failure_reason="html_blocked",
+                html_failure_message="HTML blocked",
+                html_failure_diagnostics={
+                    "browser_failure": {
+                        "stage": "cdp_connect",
+                        "code": "cdp_connect_failed",
+                    }
+                },
+                deps=browser_workflow_deps(
+                    pdf_browser_context_seed=mocked_warm,
+                    fetch_pdf_with_browser=mocked_fetch_pdf,
+                ),
+            )
+
+        self.assertEqual(payload.content.route_kind, "pdf_fallback")
+        self.assertEqual(
+            payload.content.diagnostics["html_failure"]["browser_failure"]["stage"],
+            "cdp_connect",
+        )
+        self.assertEqual(payload.trace[0].code, "html_blocked")
+        self.assertEqual(payload.trace[0].message, "HTML blocked")
+        mocked_warm.assert_called_once()
+        self.assertTrue(mocked_warm.call_args.kwargs["lightweight"])
+        mocked_fetch_pdf.assert_called_once()
+        self.assertEqual(mocked_fetch_pdf.call_args.kwargs["referer"], article_url)
+        self.assertIsNone(mocked_fetch_pdf.call_args.kwargs["seed_urls"])
+        self.assertEqual(
+            mocked_fetch_pdf.call_args.kwargs["browser_cookies"],
+            warmed_seed["browser_cookies"],
+        )
+
     def test_pdf_fallback_strategy_delegates_http_fetch_options(self) -> None:
         calls: list[dict[str, object]] = []
 
@@ -82,7 +169,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
             timeout=42,
             artifact_dir=Path("artifacts/pdf"),
             seed_urls=["https://example.org/article"],
-            browser_cookies=[{"name": "token", "value": "abc", "domain": ".example.org"}],
+            browser_cookies=[
+                {"name": "token", "value": "abc", "domain": ".example.org"}
+            ],
             fetcher=fake_fetcher,
         )
 
@@ -90,14 +179,20 @@ class PdfFallbackHelperTests(unittest.TestCase):
 
         self.assertEqual(result.final_url, "https://example.org/article.pdf")
         self.assertEqual(calls[0]["transport"], transport)
-        self.assertEqual(calls[0]["candidate_urls"], ["https://example.org/article.pdf"])
+        self.assertEqual(
+            calls[0]["candidate_urls"], ["https://example.org/article.pdf"]
+        )
         self.assertEqual(calls[0]["headers"], {"User-Agent": "UnitTest/1.0"})
         self.assertEqual(calls[0]["timeout"], 42)
         self.assertEqual(calls[0]["artifact_dir"], Path("artifacts/pdf"))
         self.assertEqual(calls[0]["seed_urls"], ["https://example.org/article"])
-        self.assertEqual(calls[0]["browser_cookies"], [{"name": "token", "value": "abc", "domain": ".example.org"}])
+        self.assertEqual(
+            calls[0]["browser_cookies"],
+            [{"name": "token", "value": "abc", "domain": ".example.org"}],
+        )
+        self.assertTrue(calls[0]["allow_pdf_only"])
 
-    def test_pdf_fallback_uses_cloakbrowser(self) -> None:
+    def test_pdf_fallback_uses_camoufox(self) -> None:
         pdf_url = "https://example.org/article.pdf"
         final_url = "https://example.org/downloaded/article.pdf"
 
@@ -105,7 +200,7 @@ class PdfFallbackHelperTests(unittest.TestCase):
             suggested_filename = "article.pdf"
 
             def save_as(self, path: str) -> None:
-                Path(path).write_bytes(b"%PDF-1.7 cloakbrowser")
+                Path(path).write_bytes(b"%PDF-1.7 camoufox")
 
         class FakeDownloadInfo:
             value = FakeDownload()
@@ -180,7 +275,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
 
         mocked_new_context.assert_called_once()
         self.assertFalse(mocked_new_context.call_args.kwargs["headless"])
-        self.assertEqual(mocked_new_context.call_args.kwargs["user_agent"], "UnitTest/1.0")
+        self.assertEqual(
+            mocked_new_context.call_args.kwargs["user_agent"], "UnitTest/1.0"
+        )
         mocked_sync_playwright.assert_not_called()
         self.assertEqual(fake_context.page.goto_calls[0]["url"], pdf_url)
         self.assertEqual(fake_context.page.expect_download_calls, [30000])
@@ -188,7 +285,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(pdf_results[0]["final_url"], final_url)
         self.assertEqual(fake_context.close_count, 1)
 
-    def test_pdf_fallback_hands_sync_browser_work_to_thread_inside_asyncio_loop(self) -> None:
+    def test_pdf_fallback_hands_sync_browser_work_to_thread_inside_asyncio_loop(
+        self,
+    ) -> None:
         pdf_url = "https://example.org/article.pdf"
         main_thread_id = threading.get_ident()
         new_context_thread_ids: list[int] = []
@@ -197,7 +296,7 @@ class PdfFallbackHelperTests(unittest.TestCase):
             suggested_filename = "article.pdf"
 
             def save_as(self, path: str) -> None:
-                Path(path).write_bytes(b"%PDF-1.7 cloakbrowser")
+                Path(path).write_bytes(b"%PDF-1.7 camoufox")
 
         class FakeDownloadInfo:
             value = FakeDownload()
@@ -253,7 +352,7 @@ class PdfFallbackHelperTests(unittest.TestCase):
                     return_value=_pdf_common.PdfFetchResult(
                         source_url=pdf_url,
                         final_url="https://example.org/downloaded/article.pdf",
-                        pdf_bytes=b"%PDF-1.7 cloakbrowser",
+                        pdf_bytes=b"%PDF-1.7 camoufox",
                         markdown_text="# Example\n\n## Results\n\nBody text",
                         suggested_filename="article.pdf",
                     ),
@@ -265,7 +364,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(len(new_context_thread_ids), 1)
         self.assertNotEqual(new_context_thread_ids[0], main_thread_id)
 
-    def test_pdf_fallback_thread_handoff_uses_thread_local_browser_manager(self) -> None:
+    def test_pdf_fallback_thread_handoff_uses_thread_local_browser_manager(
+        self,
+    ) -> None:
         pdf_url = "https://example.org/article.pdf"
         test_case = self
         main_thread_id = threading.get_ident()
@@ -276,7 +377,7 @@ class PdfFallbackHelperTests(unittest.TestCase):
             suggested_filename = "article.pdf"
 
             def save_as(self, path: str) -> None:
-                Path(path).write_bytes(b"%PDF-1.7 cloakbrowser")
+                Path(path).write_bytes(b"%PDF-1.7 camoufox")
 
         class FakeDownloadInfo:
             value = FakeDownload()
@@ -340,7 +441,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 mock.patch.object(
                     runtime_context,
                     "new_browser_context_for_config",
-                    side_effect=AssertionError("runtime browser manager must not cross threads"),
+                    side_effect=AssertionError(
+                        "runtime browser manager must not cross threads"
+                    ),
                 ) as mocked_runtime_new_context,
                 mock.patch(
                     "paper_fetch.runtime_browser.BrowserContextManager",
@@ -352,7 +455,7 @@ class PdfFallbackHelperTests(unittest.TestCase):
                     return_value=_pdf_common.PdfFetchResult(
                         source_url=pdf_url,
                         final_url="https://example.org/downloaded/article.pdf",
-                        pdf_bytes=b"%PDF-1.7 cloakbrowser",
+                        pdf_bytes=b"%PDF-1.7 camoufox",
                         markdown_text="# Example\n\n## Results\n\nBody text",
                         suggested_filename="article.pdf",
                     ),
@@ -366,14 +469,18 @@ class PdfFallbackHelperTests(unittest.TestCase):
         mocked_runtime_new_context.assert_not_called()
         self.assertEqual(len(new_context_thread_ids), 1)
         self.assertNotEqual(new_context_thread_ids[0], main_thread_id)
-        self.assertEqual(manager_init_kwargs, [
-            {
-                "binary_path": None,
-                "cdp_endpoint": None,
-                "profile_dir": profile_dir,
-                "user_data_dir": user_data_dir,
-            }
-        ])
+        self.assertEqual(
+            manager_init_kwargs,
+            [
+                {
+                    "binary_path": None,
+                    "cdp_endpoint": None,
+                    "external_new_context": False,
+                    "profile_dir": profile_dir,
+                    "user_data_dir": user_data_dir,
+                }
+            ],
+        )
 
     def test_seeded_browser_pdf_fallback_tries_browser_like_http_first(self) -> None:
         pdf_url = "https://pubs.acs.org/doi/pdf/10.1021/example"
@@ -395,7 +502,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 ) as mocked_http,
                 mock.patch(
                     "paper_fetch.runtime_browser.BrowserContextManager.new_context",
-                    side_effect=AssertionError("seeded direct PDF should not launch browser"),
+                    side_effect=AssertionError(
+                        "seeded direct PDF should not launch browser"
+                    ),
                 ),
             ):
                 result = _pdf_fallback.fetch_pdf_with_browser(
@@ -415,7 +524,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(headers["Sec-Fetch-Dest"], "document")
         self.assertEqual(mocked_http.call_args.kwargs["seed_urls"], [seed_url])
 
-    def test_extract_pdf_candidate_urls_from_html_finds_meta_and_download_links(self) -> None:
+    def test_extract_pdf_candidate_urls_from_html_finds_meta_and_download_links(
+        self,
+    ) -> None:
         html = """
         <html><head>
           <meta name="citation_pdf_url" content="/article.pdf" />
@@ -425,7 +536,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
         </body></html>
         """
 
-        candidates = _pdf_candidates.extract_pdf_candidate_urls_from_html(html, "https://example.org/articles/test")
+        candidates = _pdf_candidates.extract_pdf_candidate_urls_from_html(
+            html, "https://example.org/articles/test"
+        )
 
         self.assertEqual(
             candidates,
@@ -436,7 +549,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
             ],
         )
 
-    def test_browser_pdf_viewer_html_response_refetches_pdf_from_request_context(self) -> None:
+    def test_browser_pdf_viewer_html_response_refetches_pdf_from_request_context(
+        self,
+    ) -> None:
         class FakeNavigationResponse:
             headers = {"content-type": "application/pdf"}
 
@@ -495,9 +610,13 @@ class PdfFallbackHelperTests(unittest.TestCase):
             request_context.urls,
             ["https://example.org/docserver/fulltext/example.pdf?token=1"],
         )
-        self.assertEqual(mocked_from_bytes.call_args.kwargs["pdf_bytes"], b"%PDF-1.7 annualreviews")
+        self.assertEqual(
+            mocked_from_bytes.call_args.kwargs["pdf_bytes"], b"%PDF-1.7 annualreviews"
+        )
 
-    def test_extract_pdf_candidate_urls_from_html_finds_iframe_pdf_sources(self) -> None:
+    def test_extract_pdf_candidate_urls_from_html_finds_iframe_pdf_sources(
+        self,
+    ) -> None:
         html = """
         <html><body>
           <iframe src="/viewer.html?file=/doi/pdfdirect/10.1111/test" type="application/pdf"></iframe>
@@ -509,10 +628,15 @@ class PdfFallbackHelperTests(unittest.TestCase):
             "https://example.org/articles/test",
         )
 
-        self.assertIn("https://example.org/viewer.html?file=/doi/pdfdirect/10.1111/test", candidates)
+        self.assertIn(
+            "https://example.org/viewer.html?file=/doi/pdfdirect/10.1111/test",
+            candidates,
+        )
         self.assertIn("https://example.org/doi/pdfdirect/10.1111/test", candidates)
 
-    def test_pdf_url_token_groups_document_shared_and_route_specific_semantics(self) -> None:
+    def test_pdf_url_token_groups_document_shared_and_route_specific_semantics(
+        self,
+    ) -> None:
         for token in _pdf_candidates.PDF_URL_COMMON_TOKENS:
             self.assertIn(token, _pdf_candidates.PDF_HREF_TOKENS)
             self.assertIn(token, _pdf_candidates.BROWSER_WORKFLOW_PDF_URL_TOKENS)
@@ -524,13 +648,21 @@ class PdfFallbackHelperTests(unittest.TestCase):
     def test_rule_based_pdf_candidates_cover_springer(self) -> None:
         springer_candidates = _pdf_candidates.build_springer_pdf_candidates(
             "10.1038/example",
-            {"landing_page_url": "https://www.nature.com/articles/example", "fulltext_links": []},
+            {
+                "landing_page_url": "https://www.nature.com/articles/example",
+                "fulltext_links": [],
+            },
             html_text="<html></html>",
             source_url="https://www.nature.com/articles/example",
         )
 
-        self.assertIn("https://www.nature.com/articles/example.pdf", springer_candidates)
-        self.assertIn("https://link.springer.com/content/pdf/10.1038%2Fexample.pdf", springer_candidates)
+        self.assertIn(
+            "https://www.nature.com/articles/example.pdf", springer_candidates
+        )
+        self.assertIn(
+            "https://link.springer.com/content/pdf/10.1038%2Fexample.pdf",
+            springer_candidates,
+        )
 
     def test_springer_pdf_candidates_preserve_snapshot_order(self) -> None:
         candidates = _pdf_candidates.build_springer_pdf_candidates(
@@ -595,13 +727,19 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 suggested_filename="article.pdf",
             ),
         ):
-            result = _pdf_fallback.fetch_pdf_over_http(transport, [first_url, second_url])
+            result = _pdf_fallback.fetch_pdf_over_http(
+                transport, [first_url, second_url]
+            )
 
         self.assertEqual(result.source_url, second_url)
         self.assertEqual(len(transport.calls), 2)
-        self.assertIn("application/pdf", str(transport.calls[0]["headers"].get("Accept")))
+        self.assertIn(
+            "application/pdf", str(transport.calls[0]["headers"].get("Accept"))
+        )
 
-    def test_fetch_pdf_over_http_records_non_pdf_html_diagnostics_and_artifact(self) -> None:
+    def test_fetch_pdf_over_http_records_non_pdf_html_diagnostics_and_artifact(
+        self,
+    ) -> None:
         pdf_url = "https://example.org/stamp/stamp.jsp?arnumber=123"
         html = b"""
         <html>
@@ -630,7 +768,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
 
             failure_html = Path(tmpdir) / "pdf.failure.html"
             self.assertTrue(failure_html.is_file())
-            self.assertIn("IEEE Xplore Full-Text PDF", failure_html.read_text(encoding="utf-8"))
+            self.assertIn(
+                "IEEE Xplore Full-Text PDF", failure_html.read_text(encoding="utf-8")
+            )
 
         self.assertEqual(ctx.exception.kind, "downloaded_file_not_pdf")
         details = ctx.exception.details
@@ -666,7 +806,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
             _pdf_fallback,
             "pdf_fetch_result_from_bytes",
             side_effect=[
-                _pdf_common.PdfFetchFailure("empty_pdf_markdown", "PDF fallback produced empty Markdown."),
+                _pdf_common.PdfFetchFailure(
+                    "empty_pdf_markdown", "PDF fallback produced empty Markdown."
+                ),
                 _pdf_common.PdfFetchResult(
                     source_url=second_url,
                     final_url=second_url,
@@ -676,19 +818,54 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 ),
             ],
         ):
-            result = _pdf_fallback.fetch_pdf_over_http(transport, [first_url, second_url])
+            result = _pdf_fallback.fetch_pdf_over_http(
+                transport, [first_url, second_url]
+            )
 
         self.assertEqual(result.source_url, second_url)
         self.assertEqual(len(transport.calls), 2)
+
+    def test_pdf_fetch_result_allows_pdf_only_when_markdown_render_fails(self) -> None:
+        pdf_url = "https://example.org/scanned.pdf"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with mock.patch.object(
+                _pdf_common,
+                "render_pdf_markdown_result",
+                side_effect=_pdf_common.PdfFetchFailure(
+                    "insufficient_pdf_markdown",
+                    "PDF text extraction did not produce enough usable Markdown.",
+                ),
+            ):
+                result = _pdf_common.pdf_fetch_result_from_bytes(
+                    artifact_dir=Path(tmpdir),
+                    source_url=pdf_url,
+                    final_url=pdf_url,
+                    pdf_bytes=b"%PDF-1.7 scanned",
+                    suggested_filename="scanned.pdf",
+                    allow_pdf_only=True,
+                )
+
+            self.assertTrue(list(Path(tmpdir).glob("*.pdf")))
+
+        self.assertEqual(result.markdown_text, "")
+        self.assertEqual(result.pdf_bytes, b"%PDF-1.7 scanned")
+        self.assertIn(_pdf_common.PDF_ONLY_MARKDOWN_WARNING, result.warnings)
 
     def test_render_pdf_markdown_uses_default_when_markdown_is_usable(self) -> None:
         pdf_path = Path("article.pdf")
         default_markdown = "# Example\n\n" + ("body text " * 140)
 
         with (
-            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=default_markdown),
+            mock.patch.object(
+                _pdf_common,
+                "_render_default_pdf_markdown",
+                return_value=default_markdown,
+            ),
             mock.patch.object(_pdf_common, "_pdf_text_layer_stats") as mocked_stats,
-            mock.patch.object(_pdf_common, "_render_transparent_pdf_markdown") as mocked_transparent,
+            mock.patch.object(
+                _pdf_common, "_render_transparent_pdf_markdown"
+            ) as mocked_transparent,
         ):
             result = _pdf_common.render_pdf_markdown(pdf_path)
 
@@ -696,7 +873,180 @@ class PdfFallbackHelperTests(unittest.TestCase):
         mocked_stats.assert_not_called()
         mocked_transparent.assert_not_called()
 
-    def test_default_pdf_markdown_protects_pymupdf_text_subprocess_decoding(self) -> None:
+    def test_pdf_markdown_structure_promotes_missing_alpha_subsection(self) -> None:
+        markdown = "\n".join(
+            [
+                "# _a. First project_",
+                "",
+                "First body.",
+                "",
+                "# _b. Second project_",
+                "",
+                "Second body.",
+                "",
+                "_c. Third project_",
+                "",
+                "Third body.",
+            ]
+        )
+
+        normalized = _pdf_common._normalize_pdf_markdown_structure(markdown)
+
+        self.assertIn("# _c. Third project_", normalized)
+
+    def test_pdf_markdown_structure_removes_empty_preamble_noise_heading(self) -> None:
+        markdown = "\n".join(
+            [
+                "## **<u>Further</u>**",
+                "",
+                "###### ANNUAL REVIEWS",
+                "",
+                "Publisher details.",
+                "",
+                "## Introduction",
+                "",
+                "Body.",
+            ]
+        )
+
+        normalized = _pdf_common._normalize_pdf_markdown_structure(markdown)
+
+        self.assertNotIn("Further", normalized)
+        self.assertIn("###### ANNUAL REVIEWS", normalized)
+
+    def test_pdf_markdown_structure_removes_empty_title_h1_in_preamble(self) -> None:
+        markdown = "\n".join(
+            [
+                "Cover text.",
+                "",
+                "## Article category",
+                "",
+                "# A sufficiently descriptive article title",
+                "",
+                "### First Author and Second Author",
+                "",
+                "## Abstract",
+                "",
+                "Abstract body.",
+            ]
+        )
+
+        normalized = _pdf_common._normalize_pdf_markdown_structure(markdown)
+
+        self.assertNotIn("# A sufficiently descriptive article title", normalized)
+        self.assertIn("Article category", normalized)
+        self.assertIn("### First Author and Second Author", normalized)
+
+    def test_pdf_markdown_structure_removes_first_prose_h1_before_author_heading(
+        self,
+    ) -> None:
+        markdown = "\n".join(
+            [
+                "Cover text.",
+                "",
+                "# A sufficiently descriptive article title",
+                "",
+                "### First Author and Second Author",
+                "",
+                "## Abstract",
+                "",
+                "Abstract body.",
+            ]
+        )
+
+        normalized = _pdf_common._normalize_pdf_markdown_structure(markdown)
+
+        self.assertNotIn("# A sufficiently descriptive article title", normalized)
+
+    def test_pdf_markdown_structure_preserves_fragment_h1_before_author_heading(
+        self,
+    ) -> None:
+        markdown = "\n".join(
+            [
+                "Cover text.",
+                "",
+                "# _− i_ **C** 3 **H** 7 **I and C** 3 **H** 8",
+                "",
+                "### First Author and Second Author",
+                "",
+                "## Abstract",
+                "",
+                "Abstract body.",
+            ]
+        )
+
+        normalized = _pdf_common._normalize_pdf_markdown_structure(markdown)
+
+        self.assertIn("# _− i_ **C** 3 **H** 7 **I and C** 3 **H** 8", normalized)
+
+    def test_pdf_markdown_structure_preserves_h1_with_body(self) -> None:
+        markdown = "\n".join(
+            [
+                "# A sufficiently descriptive article title",
+                "",
+                "Author and abstract text.",
+                "",
+                "## Introduction",
+                "",
+                "Body.",
+            ]
+        )
+
+        normalized = _pdf_common._normalize_pdf_markdown_structure(markdown)
+
+        self.assertIn("# A sufficiently descriptive article title", normalized)
+
+    def test_pdf_markdown_structure_demotes_repeated_running_header(self) -> None:
+        running_header = "Author et al.: A repeated running header"
+        markdown = "\n".join(
+            [
+                running_header,
+                "",
+                "## Introduction",
+                "",
+                "Page one.",
+                "",
+                f"## {running_header}",
+                "",
+                "Page two.",
+                "",
+                running_header,
+                "",
+                f"## {running_header}",
+                "",
+                "Page three.",
+            ]
+        )
+
+        normalized = _pdf_common._normalize_pdf_markdown_structure(markdown)
+
+        self.assertNotIn(f"## {running_header}", normalized)
+        self.assertEqual(normalized.count(running_header), 4)
+
+    def test_pdf_markdown_structure_preserves_valid_empty_parent_headings(self) -> None:
+        markdown = "\n".join(
+            [
+                "## 2. Methods",
+                "",
+                "### 2.1 Sampling",
+                "",
+                "Methods body.",
+                "",
+                "## 3. Results",
+                "",
+                "### 3.1 Primary result",
+                "",
+                "Results body.",
+            ]
+        )
+
+        normalized = _pdf_common._normalize_pdf_markdown_structure(markdown)
+
+        self.assertEqual(normalized, markdown)
+
+    def test_default_pdf_markdown_protects_pymupdf_text_subprocess_decoding(
+        self,
+    ) -> None:
         calls: list[dict[str, object]] = []
 
         def fake_run(*args, **kwargs):
@@ -724,7 +1074,52 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(result, "## Results\n\nExtracted PDF body.")
         self.assertEqual(calls[0]["errors"], "replace")
 
-    def test_render_pdf_markdown_result_does_not_write_images_for_asset_profile_none(self) -> None:
+    def test_default_pdf_markdown_subprocess_patch_only_mutates_owner_thread(
+        self,
+    ) -> None:
+        calls: list[tuple[str, dict[str, object]]] = []
+        owner_entered = threading.Event()
+        release_owner = threading.Event()
+
+        def fake_run(*args, **kwargs):
+            label = str(args[0][0])
+            calls.append((label, dict(kwargs)))
+            return mock.Mock(returncode=1, stdout="", stderr="")
+
+        def fake_to_markdown(path: str) -> str:
+            self.assertEqual(path, "sample.pdf")
+            _pdf_common.subprocess.run(["owner"], text=True)
+            owner_entered.set()
+            self.assertTrue(release_owner.wait(timeout=5))
+            return "# Example\n\n" + ("owner body " * 140)
+
+        fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+        result_holder: list[str] = []
+
+        with (
+            mock.patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}),
+            mock.patch.object(_pdf_common.subprocess, "run", side_effect=fake_run),
+        ):
+            worker = threading.Thread(
+                target=lambda: result_holder.append(
+                    _pdf_common._render_default_pdf_markdown(Path("sample.pdf"))
+                )
+            )
+            worker.start()
+            self.assertTrue(owner_entered.wait(timeout=5))
+            _pdf_common.subprocess.run(["other"], text=True)
+            release_owner.set()
+            worker.join(timeout=5)
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(len(result_holder), 1)
+        kwargs_by_label = {label: kwargs for label, kwargs in calls}
+        self.assertEqual(kwargs_by_label["owner"]["errors"], "replace")
+        self.assertNotIn("errors", kwargs_by_label["other"])
+
+    def test_render_pdf_markdown_result_does_not_write_images_for_asset_profile_none(
+        self,
+    ) -> None:
         calls: list[dict[str, object]] = []
 
         def fake_to_markdown(path: str, **kwargs) -> str:
@@ -748,12 +1143,118 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(calls, [{}])
         self.assertEqual(result.assets, [])
 
-    def test_render_pdf_markdown_result_writes_body_images_for_body_asset_profile(self) -> None:
+    def test_pdf_fetch_result_from_bytes_reuses_cached_markdown_for_same_pdf(
+        self,
+    ) -> None:
+        calls: list[str] = []
+
+        def fake_to_markdown(path: str, **kwargs) -> str:
+            calls.append(path)
+            self.assertEqual(kwargs, {})
+            return "# Example\n\n" + ("cached body text " * 140)
+
+        fake_pymupdf4llm = types.SimpleNamespace(to_markdown=fake_to_markdown)
+        pdf_bytes = b"%PDF-1.7 cached bytes"
+
+        with (
+            mock.patch.dict(sys.modules, {"pymupdf4llm": fake_pymupdf4llm}),
+            mock.patch.object(_pdf_common, "_pdf_page_count", return_value=3),
+        ):
+            first = _pdf_common.pdf_fetch_result_from_bytes(
+                artifact_dir=None,
+                source_url="https://example.org/one.pdf",
+                final_url="https://example.org/one.pdf",
+                pdf_bytes=pdf_bytes,
+                suggested_filename="one.pdf",
+            )
+            second = _pdf_common.pdf_fetch_result_from_bytes(
+                artifact_dir=None,
+                source_url="https://example.org/two.pdf",
+                final_url="https://example.org/two.pdf",
+                pdf_bytes=pdf_bytes,
+                suggested_filename="two.pdf",
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(first.markdown_text, second.markdown_text)
+        self.assertEqual(first.diagnostics["pdf_markdown_cache"]["status"], "miss")
+        self.assertEqual(second.diagnostics["pdf_markdown_cache"]["status"], "hit")
+        self.assertEqual(second.diagnostics["pdf_pages"], 3)
+        self.assertEqual(second.diagnostics["pdf_bytes"], len(pdf_bytes))
+
+    def test_pdf_fetch_result_from_bytes_rejects_pdf_larger_than_guard(self) -> None:
+        with (
+            mock.patch.dict(os.environ, {"PAPER_FETCH_PDF_MAX_BYTES": "8"}),
+            mock.patch.object(
+                _pdf_common, "render_pdf_markdown_result"
+            ) as mocked_render,
+        ):
+            with self.assertRaises(_pdf_common.PdfFetchFailure) as ctx:
+                _pdf_common.pdf_fetch_result_from_bytes(
+                    artifact_dir=None,
+                    source_url="https://example.org/large.pdf",
+                    final_url="https://example.org/large.pdf",
+                    pdf_bytes=b"%PDF-1.7 large payload",
+                )
+
+        self.assertEqual(ctx.exception.kind, "pdf_too_large")
+        self.assertEqual(ctx.exception.details["max_pdf_bytes"], 8)
+        mocked_render.assert_not_called()
+
+    def test_pdf_fetch_result_from_bytes_rejects_too_many_pages_before_render(
+        self,
+    ) -> None:
+        with (
+            mock.patch.dict(os.environ, {"PAPER_FETCH_PDF_MAX_PAGES": "2"}),
+            mock.patch.object(_pdf_common, "_pdf_page_count", return_value=3),
+            mock.patch.object(
+                _pdf_common, "render_pdf_markdown_result"
+            ) as mocked_render,
+        ):
+            with self.assertRaises(_pdf_common.PdfFetchFailure) as ctx:
+                _pdf_common.pdf_fetch_result_from_bytes(
+                    artifact_dir=None,
+                    source_url="https://example.org/long.pdf",
+                    final_url="https://example.org/long.pdf",
+                    pdf_bytes=b"%PDF-1.7 long payload",
+                )
+
+        self.assertEqual(ctx.exception.kind, "pdf_too_many_pages")
+        self.assertEqual(ctx.exception.details["pdf_pages"], 3)
+        self.assertEqual(ctx.exception.details["max_pdf_pages"], 2)
+        mocked_render.assert_not_called()
+
+    def test_pdf_asset_output_dir_uses_doi_asset_dir_when_available(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            output_dir = Path(tmpdir) / "downloads"
+            context = RuntimeContext(
+                env={}, download_dir=output_dir, artifact_mode="markdown-assets"
+            )
+
+            self.assertEqual(
+                _pdf_common.pdf_asset_output_dir(
+                    context,
+                    asset_profile="body",
+                    doi="10.1016/test",
+                ),
+                output_dir / "10.1016_test_assets",
+            )
+            self.assertIsNone(
+                _pdf_common.pdf_asset_output_dir(
+                    context,
+                    asset_profile="none",
+                    doi="10.1016/test",
+                )
+            )
+
+    def test_render_pdf_markdown_result_writes_doi_images_for_body_asset_profile(
+        self,
+    ) -> None:
         calls: list[dict[str, object]] = []
 
         with tempfile.TemporaryDirectory() as tmpdir:
             output_dir = Path(tmpdir)
-            image_dir = output_dir / "body_assets"
+            image_dir = output_dir / "10.1234_test_assets"
             image_path = image_dir / "paper-0001-00.png"
 
             def fake_to_markdown(path: str, **kwargs) -> str:
@@ -769,21 +1270,27 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 result = _pdf_common.render_pdf_markdown_result(
                     Path("paper.pdf"),
                     asset_profile="body",
-                    asset_output_dir=output_dir,
+                    asset_output_dir=image_dir,
                     source_url="https://example.org/paper.pdf",
                 )
 
         self.assertEqual(calls[0]["write_images"], True)
         self.assertEqual(calls[0]["image_path"], str(image_dir))
-        self.assertIn("![Figure 1](body_assets/paper-0001-00.png)", result.markdown_text)
+        self.assertIn(
+            "![Figure 1](10.1234_test_assets/paper-0001-00.png)", result.markdown_text
+        )
         self.assertEqual(len(result.assets), 1)
         self.assertEqual(result.assets[0]["kind"], "figure")
         self.assertEqual(result.assets[0]["section"], "body")
         self.assertEqual(result.assets[0]["render_state"], "inline")
-        self.assertEqual(result.assets[0]["url"], "body_assets/paper-0001-00.png")
+        self.assertEqual(
+            result.assets[0]["url"], "10.1234_test_assets/paper-0001-00.png"
+        )
         self.assertEqual(result.assets[0]["path"], str(image_path))
 
-    def test_pdf_fetch_result_from_bytes_does_not_keep_temp_images_without_asset_output_dir(self) -> None:
+    def test_pdf_fetch_result_from_bytes_does_not_keep_temp_images_without_asset_output_dir(
+        self,
+    ) -> None:
         calls: list[dict[str, object]] = []
 
         def fake_to_markdown(path: str, **kwargs) -> str:
@@ -807,7 +1314,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(calls, [{}])
         self.assertEqual(result.assets, [])
 
-    def test_transparent_pdf_markdown_protects_pymupdf_text_subprocess_decoding(self) -> None:
+    def test_transparent_pdf_markdown_protects_pymupdf_text_subprocess_decoding(
+        self,
+    ) -> None:
         calls: list[dict[str, object]] = []
 
         def fake_run(*args, **kwargs):
@@ -843,12 +1352,16 @@ class PdfFallbackHelperTests(unittest.TestCase):
             ),
             mock.patch.object(_pdf_common.subprocess, "run", side_effect=fake_run),
         ):
-            result = _pdf_common._render_transparent_pdf_markdown(Path("transparent.pdf"))
+            result = _pdf_common._render_transparent_pdf_markdown(
+                Path("transparent.pdf")
+            )
 
         self.assertEqual(result, "## Results\n\nTransparent PDF body.")
         self.assertEqual(calls[0]["errors"], "replace")
 
-    def test_render_pdf_markdown_uses_transparent_fallback_for_license_footer(self) -> None:
+    def test_render_pdf_markdown_uses_transparent_fallback_for_license_footer(
+        self,
+    ) -> None:
         pdf_path = Path("legacy-ieee.pdf")
         default_markdown = "\n".join(
             [
@@ -860,7 +1373,11 @@ class PdfFallbackHelperTests(unittest.TestCase):
         legacy_markdown = "# Example\n\n" + ("transparent body text " * 260)
 
         with (
-            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=default_markdown),
+            mock.patch.object(
+                _pdf_common,
+                "_render_default_pdf_markdown",
+                return_value=default_markdown,
+            ),
             mock.patch.object(
                 _pdf_common,
                 "_pdf_text_layer_stats",
@@ -881,11 +1398,17 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(result, legacy_markdown)
         mocked_transparent.assert_called_once_with(pdf_path)
 
-    def test_render_pdf_markdown_does_not_use_transparent_fallback_without_transparent_text(self) -> None:
+    def test_render_pdf_markdown_does_not_use_transparent_fallback_without_transparent_text(
+        self,
+    ) -> None:
         default_markdown = "# Example\n\n" + ("short body " * 20)
 
         with (
-            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=default_markdown),
+            mock.patch.object(
+                _pdf_common,
+                "_render_default_pdf_markdown",
+                return_value=default_markdown,
+            ),
             mock.patch.object(
                 _pdf_common,
                 "_pdf_text_layer_stats",
@@ -895,7 +1418,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
                     transparent_words=0,
                 ),
             ),
-            mock.patch.object(_pdf_common, "_render_transparent_pdf_markdown") as mocked_transparent,
+            mock.patch.object(
+                _pdf_common, "_render_transparent_pdf_markdown"
+            ) as mocked_transparent,
         ):
             with self.assertRaises(_pdf_common.PdfFetchFailure) as ctx:
                 _pdf_common.render_pdf_markdown(Path("short.pdf"))
@@ -903,9 +1428,13 @@ class PdfFallbackHelperTests(unittest.TestCase):
         self.assertEqual(ctx.exception.kind, "insufficient_pdf_markdown")
         mocked_transparent.assert_not_called()
 
-    def test_render_pdf_markdown_preserves_empty_result_without_transparent_text(self) -> None:
+    def test_render_pdf_markdown_preserves_empty_result_without_transparent_text(
+        self,
+    ) -> None:
         with (
-            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=""),
+            mock.patch.object(
+                _pdf_common, "_render_default_pdf_markdown", return_value=""
+            ),
             mock.patch.object(
                 _pdf_common,
                 "_pdf_text_layer_stats",
@@ -915,7 +1444,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
                     transparent_words=0,
                 ),
             ),
-            mock.patch.object(_pdf_common, "_render_transparent_pdf_markdown") as mocked_transparent,
+            mock.patch.object(
+                _pdf_common, "_render_transparent_pdf_markdown"
+            ) as mocked_transparent,
         ):
             result = _pdf_common.render_pdf_markdown(Path("empty.pdf"))
 
@@ -930,7 +1461,11 @@ class PdfFallbackHelperTests(unittest.TestCase):
         legacy_markdown = "Authorized licensed use limited to: Example University. Restrictions apply."
 
         with (
-            mock.patch.object(_pdf_common, "_render_default_pdf_markdown", return_value=default_markdown),
+            mock.patch.object(
+                _pdf_common,
+                "_render_default_pdf_markdown",
+                return_value=default_markdown,
+            ),
             mock.patch.object(
                 _pdf_common,
                 "_pdf_text_layer_stats",
@@ -940,7 +1475,11 @@ class PdfFallbackHelperTests(unittest.TestCase):
                     transparent_words=780,
                 ),
             ),
-            mock.patch.object(_pdf_common, "_render_transparent_pdf_markdown", return_value=legacy_markdown),
+            mock.patch.object(
+                _pdf_common,
+                "_render_transparent_pdf_markdown",
+                return_value=legacy_markdown,
+            ),
         ):
             with self.assertRaises(_pdf_common.PdfFetchFailure) as ctx:
                 _pdf_common.render_pdf_markdown(Path("legacy-ieee.pdf"))
@@ -985,7 +1524,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 ),
             ],
         ):
-            result = _pdf_fallback.fetch_pdf_over_http(transport, [first_url, second_url])
+            result = _pdf_fallback.fetch_pdf_over_http(
+                transport, [first_url, second_url]
+            )
 
         self.assertEqual(result.source_url, second_url)
         self.assertEqual(len(transport.calls), 2)
@@ -1028,7 +1569,9 @@ class PdfFallbackHelperTests(unittest.TestCase):
                 raise AssertionError(f"unexpected url {request.full_url}")
 
         with (
-            mock.patch.object(_pdf_fallback.urllib.request, "build_opener", return_value=FakeOpener()),
+            mock.patch.object(
+                _pdf_fallback.urllib.request, "build_opener", return_value=FakeOpener()
+            ),
             mock.patch.object(
                 _pdf_fallback,
                 "pdf_fetch_result_from_bytes",
@@ -1080,28 +1623,49 @@ class PdfFallbackHelperTests(unittest.TestCase):
 
         class FakeOpener:
             def open(self, request, timeout=20):
-                open_calls.append({"url": request.full_url, "headers": dict(request.headers)})
+                open_calls.append(
+                    {"url": request.full_url, "headers": dict(request.headers)}
+                )
                 if request.full_url != pdf_url:
                     raise AssertionError(f"unexpected url {request.full_url}")
-                return FakeResponse(pdf_url, "application/pdf", b"%PDF-1.7 cookie-seeded")
+                return FakeResponse(
+                    pdf_url, "application/pdf", b"%PDF-1.7 cookie-seeded"
+                )
 
-        with mock.patch.object(
-            _pdf_fallback,
-            "pdf_fetch_result_from_bytes",
-            return_value=_pdf_common.PdfFetchResult(
-                source_url=pdf_url,
-                final_url=pdf_url,
-                pdf_bytes=b"%PDF-1.7 cookie-seeded",
-                markdown_text="# Example\n\n## Results\n\nBody text",
-                suggested_filename="article.pdf",
+        with (
+            mock.patch.object(
+                _pdf_fallback,
+                "pdf_fetch_result_from_bytes",
+                return_value=_pdf_common.PdfFetchResult(
+                    source_url=pdf_url,
+                    final_url=pdf_url,
+                    pdf_bytes=b"%PDF-1.7 cookie-seeded",
+                    markdown_text="# Example\n\n## Results\n\nBody text",
+                    suggested_filename="article.pdf",
+                ),
             ),
-        ), mock.patch.object(_pdf_fallback.urllib.request, "build_opener", return_value=FakeOpener()):
+            mock.patch.object(
+                _pdf_fallback.urllib.request, "build_opener", return_value=FakeOpener()
+            ),
+        ):
             result = _pdf_fallback.fetch_pdf_over_http(
                 RecordingTransport({}),
                 [pdf_url],
                 browser_cookies=[
-                    {"name": "cf_clearance", "value": "token", "domain": ".example.org", "path": "/", "secure": True},
-                    {"name": "other", "value": "ignored", "domain": ".other.org", "path": "/", "secure": True},
+                    {
+                        "name": "cf_clearance",
+                        "value": "token",
+                        "domain": ".example.org",
+                        "path": "/",
+                        "secure": True,
+                    },
+                    {
+                        "name": "other",
+                        "value": "ignored",
+                        "domain": ".other.org",
+                        "path": "/",
+                        "secure": True,
+                    },
                 ],
             )
 

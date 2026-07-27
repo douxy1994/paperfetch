@@ -5,7 +5,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Any, TypeVar
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
 from ....config import DEFAULT_ASSET_DOWNLOAD_CONCURRENCY
 
@@ -40,6 +40,7 @@ class AssetDownloadResolution:
     preview_url: str = ""
     full_size_url: str = ""
     download_tier_override: str = ""
+    provenance: tuple[str, ...] = ()
 
 
 def asset_download_worker_count(total: int, configured_concurrency: int | None) -> int:
@@ -64,12 +65,14 @@ def resolution_from_attempt(
     attempt: AssetDownloadAttempt | None,
     preview_url: str = "",
     full_size_url: str = "",
+    provenance: Sequence[str] = (),
 ) -> AssetDownloadResolution:
     if attempt is None:
         return AssetDownloadResolution(
             asset=dict(asset),
             preview_url=preview_url,
             full_size_url=full_size_url,
+            provenance=tuple(dict.fromkeys(provenance)),
         )
     return AssetDownloadResolution(
         asset=dict(asset),
@@ -79,6 +82,7 @@ def resolution_from_attempt(
         preview_url=preview_url,
         full_size_url=full_size_url,
         download_tier_override=attempt.download_tier_override,
+        provenance=tuple(dict.fromkeys(provenance)),
     )
 
 
@@ -91,7 +95,9 @@ def resolve_asset_downloads_in_order(
 ) -> list[AssetDownloadResolution | None]:
     if not work_items:
         return []
-    max_workers = asset_download_worker_count(len(work_items), asset_download_concurrency)
+    max_workers = asset_download_worker_count(
+        len(work_items), asset_download_concurrency
+    )
     if max_workers <= 1 and not force_worker_thread:
         return [resolver(item) for item in work_items]
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
@@ -102,7 +108,9 @@ def resolve_asset_downloads_in_order(
 def collect_downloads_from_resolutions(
     resolutions: list[AssetDownloadResolution | None],
     *,
-    saver: Callable[[AssetDownloadResolution], dict[str, Any] | AssetDownloadFailure | None],
+    saver: Callable[
+        [AssetDownloadResolution], dict[str, Any] | AssetDownloadFailure | None
+    ],
 ) -> dict[str, list[dict[str, Any]]]:
     downloads: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []

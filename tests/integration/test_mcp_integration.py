@@ -17,7 +17,8 @@ from paper_fetch.mcp.cache_index import (
     scoped_cached_resource_uri,
     scoped_cached_resource_uri_prefix,
 )
-from paper_fetch.provider_catalog import provider_status_order
+from paper_fetch.mcp.provider_catalog import PROVIDER_CATALOG_RESOURCE_URI
+from paper_fetch.provider_catalog import SOURCE_PROVIDER_MAP, provider_status_order
 from tests.paths import REPO_ROOT, SRC_DIR
 
 
@@ -29,6 +30,7 @@ SERVER_SCRIPT = textwrap.dedent(
     from paper_fetch.models import ArticleModel, Asset, FetchEnvelope, Metadata, Quality, Section, TokenEstimateBreakdown
     from dataclasses import replace
 
+    from paper_fetch.browser_preflight import BrowserPreflightResult
     from paper_fetch.mcp import server as mcp_server
     from paper_fetch.mcp._deps import default_mcp_deps
     from paper_fetch.mcp.server import main
@@ -38,10 +40,11 @@ SERVER_SCRIPT = textwrap.dedent(
     from paper_fetch.utils import sanitize_filename
 
     def fake_resolve(query, *, context=None):
+        lookup_query = query.lookup_query if hasattr(query, "lookup_query") else query
         return ResolvedQuery(
-            query=query,
+            query=lookup_query,
             query_kind="doi",
-            doi=query if query.startswith("10.") else "10.1000/example",
+            doi=lookup_query if lookup_query.startswith("10.") else "10.1000/example",
             landing_url="https://example.test/article",
             provider_hint="crossref",
             confidence=1.0,
@@ -57,7 +60,17 @@ SERVER_SCRIPT = textwrap.dedent(
             output_dir.mkdir(parents=True, exist_ok=True)
             base = sanitize_filename(query)
             (output_dir / f"{base}.xml").write_text("<article />", encoding="utf-8")
-            (output_dir / f"{base}.md").write_text("# Example Article\\n\\nExample body.\\n", encoding="utf-8")
+            (output_dir / f"{base}.md").write_text(
+                (
+                    "---\\n"
+                    f'doi: "{query}"\\n'
+                    'source: "crossref_meta"\\n'
+                    "has_fulltext: true\\n"
+                    'content_kind: "fulltext"\\n'
+                    "---\\n\\n# Example Article\\n\\nExample body.\\n"
+                ),
+                encoding="utf-8",
+            )
             asset_dir = output_dir / f"{base}_assets"
             asset_dir.mkdir(parents=True, exist_ok=True)
             figure_path = asset_dir / "figure-1.png"
@@ -184,7 +197,7 @@ SERVER_SCRIPT = textwrap.dedent(
                         build_provider_status_check(
                             "runtime_env",
                             "not_configured",
-                            "wiley browser runtime requires Playwright and CloakBrowser packages.",
+                            "wiley browser runtime requires Playwright and Camoufox packages.",
                         ),
                         build_provider_status_check(
                             "playwright_dependency",
@@ -204,7 +217,7 @@ SERVER_SCRIPT = textwrap.dedent(
                         build_provider_status_check(
                             "runtime_env",
                             "not_configured",
-                            "science browser runtime requires Playwright and CloakBrowser packages.",
+                            "science browser runtime requires Playwright and Camoufox packages.",
                         ),
                         build_provider_status_check(
                             "playwright_dependency",
@@ -301,19 +314,14 @@ SERVER_SCRIPT = textwrap.dedent(
             "ams": FakeProviderClient(
                 ProviderStatusResult(
                     provider="ams",
-                    status="not_configured",
-                    available=False,
+                    status="ready",
+                    available=True,
                     official_provider=True,
                     checks=[
                         build_provider_status_check(
-                            "runtime_env",
-                            "not_configured",
-                            "ams browser runtime requires Playwright and CloakBrowser packages.",
-                        ),
-                        build_provider_status_check(
-                            "playwright_dependency",
-                            "not_configured",
-                            "Playwright Python package is not installed.",
+                            "local_requirements",
+                            "ok",
+                            "AMS direct HTTP HTML route is available.",
                         ),
                     ],
                 )
@@ -331,6 +339,45 @@ SERVER_SCRIPT = textwrap.dedent(
             ),
         }
 
+    def fake_browser_preflight(
+        *,
+        providers=None,
+        target_url=None,
+        storage_state_path=None,
+        save_storage_state=True,
+        on_result=None,
+        **kwargs,
+    ):
+        del kwargs
+        provider = list(providers or ["wiley"])[0]
+        saved = False
+        if storage_state_path is not None and save_storage_state:
+            storage_state_path.parent.mkdir(parents=True, exist_ok=True)
+            storage_state_path.write_text('{"cookies": []}\\n', encoding="utf-8")
+            saved = True
+        result = BrowserPreflightResult(
+            provider=provider,
+            provider_label="Wiley",
+            ok=True,
+            target_url=target_url or "https://onlinelibrary.wiley.com/doi/full/10.1111/example",
+            final_url=target_url or "https://onlinelibrary.wiley.com/doi/full/10.1111/example",
+            title="Wiley preflight sample",
+            storage_state_path=storage_state_path,
+            diagnostics={
+                "browser_runtime_trace": {
+                    "storage_state_save": {
+                        "attempted": storage_state_path is not None and save_storage_state,
+                        "saved": saved,
+                        "path": str(storage_state_path) if storage_state_path is not None else None,
+                        "reason": None,
+                    }
+                }
+            },
+        )
+        if on_result is not None:
+            on_result(result, 1, 1)
+        return [result]
+
     def fake_default_mcp_deps():
         return replace(
             default_mcp_deps(),
@@ -338,6 +385,7 @@ SERVER_SCRIPT = textwrap.dedent(
             service_fetch_paper=fake_fetch,
             service_probe_has_fulltext=fake_probe,
             build_clients=fake_build_clients,
+            run_browser_provider_preflight=fake_browser_preflight,
         )
 
     mcp_server.default_mcp_deps = fake_default_mcp_deps
@@ -352,6 +400,8 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
             default_dir = Path(tmpdir) / "default"
             isolated_dir = Path(tmpdir) / "isolated"
             progress_updates: list[tuple[float, float | None, str | None]] = []
+            batch_fetch_progress: list[tuple[float, float | None, str | None]] = []
+            preflight_progress: list[tuple[float, float | None, str | None]] = []
             log_messages: list[object] = []
             protocol_messages: list[object] = []
             server = StdioServerParameters(
@@ -365,12 +415,26 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
             )
 
             with tempfile.TemporaryFile(mode="w+") as errlog:
-                async with stdio_client(server, errlog=errlog) as (read_stream, write_stream):
+                async with stdio_client(server, errlog=errlog) as (
+                    read_stream,
+                    write_stream,
+                ):
+
                     async def logging_callback(params) -> None:
                         log_messages.append(params.data)
 
                     async def progress_callback(progress, total, message) -> None:
                         progress_updates.append((progress, total, message))
+
+                    async def preflight_progress_callback(
+                        progress, total, message
+                    ) -> None:
+                        preflight_progress.append((progress, total, message))
+
+                    async def batch_fetch_progress_callback(
+                        progress, total, message
+                    ) -> None:
+                        batch_fetch_progress.append((progress, total, message))
 
                     async def message_handler(message) -> None:
                         protocol_messages.append(message)
@@ -391,7 +455,9 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
                             tool_names,
                             [
                                 "batch_check",
+                                "batch_fetch",
                                 "batch_resolve",
+                                "browser_preflight",
                                 "fetch_paper",
                                 "get_cached",
                                 "has_fulltext",
@@ -400,8 +466,42 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
                                 "resolve_paper",
                             ],
                         )
-                        self.assertTrue(all(tool.outputSchema is not None for tool in listed.tools))
-                        self.assertTrue(all(tool.annotations is not None for tool in listed.tools))
+                        self.assertTrue(
+                            all(tool.outputSchema is not None for tool in listed.tools)
+                        )
+                        self.assertTrue(
+                            all(tool.annotations is not None for tool in listed.tools)
+                        )
+                        batch_fetch_tool = next(
+                            tool for tool in listed.tools if tool.name == "batch_fetch"
+                        )
+                        self.assertEqual(
+                            batch_fetch_tool.inputSchema["properties"]["queries"][
+                                "maxItems"
+                            ],
+                            50,
+                        )
+                        self.assertEqual(
+                            batch_fetch_tool.inputSchema["properties"]["concurrency"][
+                                "maximum"
+                            ],
+                            8,
+                        )
+                        self.assertEqual(
+                            batch_fetch_tool.inputSchema["properties"]["detail"][
+                                "enum"
+                            ],
+                            ["compact", "bounded"],
+                        )
+                        browser_tool = next(
+                            tool
+                            for tool in listed.tools
+                            if tool.name == "browser_preflight"
+                        )
+                        self.assertFalse(browser_tool.annotations.readOnlyHint)
+                        self.assertFalse(browser_tool.annotations.destructiveHint)
+                        self.assertFalse(browser_tool.annotations.idempotentHint)
+                        self.assertTrue(browser_tool.annotations.openWorldHint)
 
                         prompts = await session.list_prompts()
                         self.assertEqual(
@@ -412,27 +512,51 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
                             "summarize_paper",
                             {"query": "10.1000/example", "focus": "methods"},
                         )
-                        self.assertIn("token_estimate_breakdown", summarize_prompt.messages[0].content.text)
+                        self.assertIn(
+                            "token_estimate_breakdown",
+                            summarize_prompt.messages[0].content.text,
+                        )
                         verify_prompt = await session.get_prompt(
                             "verify_citation_list",
-                            {"citations": "Citation A\\nCitation B", "mode": "metadata"},
+                            {
+                                "citations": "Citation A\\nCitation B",
+                                "mode": "metadata",
+                            },
                         )
-                        self.assertIn("batch_check", verify_prompt.messages[0].content.text)
+                        self.assertIn(
+                            "batch_check", verify_prompt.messages[0].content.text
+                        )
 
-                        resolved = await session.call_tool("resolve_paper", {"query": "10.1000/example"})
+                        resolved = await session.call_tool(
+                            "resolve_paper", {"query": "10.1000/example"}
+                        )
                         self.assertFalse(resolved.isError)
-                        self.assertEqual(resolved.structuredContent["doi"], "10.1000/example")
+                        self.assertEqual(
+                            resolved.structuredContent["doi"], "10.1000/example"
+                        )
                         structured_resolved = await session.call_tool(
                             "resolve_paper",
-                            {"title": "Example title", "authors": ["Alice Example"], "year": 2024},
+                            {
+                                "title": "Example title",
+                                "authors": ["Alice Example"],
+                                "year": 2024,
+                            },
                         )
                         self.assertFalse(structured_resolved.isError)
-                        self.assertEqual(structured_resolved.structuredContent["query"], "Example title Alice Example 2024")
+                        self.assertEqual(
+                            structured_resolved.structuredContent["query"],
+                            "Example title",
+                        )
 
-                        probe = await session.call_tool("has_fulltext", {"query": "10.1000/example"})
+                        probe = await session.call_tool(
+                            "has_fulltext", {"query": "10.1000/example"}
+                        )
                         self.assertFalse(probe.isError)
                         self.assertEqual(probe.structuredContent["state"], "likely_yes")
-                        self.assertEqual(probe.structuredContent["evidence"], ["crossref_fulltext_link"])
+                        self.assertEqual(
+                            probe.structuredContent["evidence"],
+                            ["crossref_fulltext_link"],
+                        )
 
                         provider_status = await session.call_tool("provider_status", {})
                         self.assertFalse(provider_status.isError)
@@ -441,13 +565,95 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
                             for item in provider_status.structuredContent["providers"]
                         }
                         self.assertEqual(
-                            [item["provider"] for item in provider_status.structuredContent["providers"]],
+                            [
+                                item["provider"]
+                                for item in provider_status.structuredContent[
+                                    "providers"
+                                ]
+                            ],
                             list(provider_status_order()),
                         )
-                        self.assertEqual(providers_by_name["crossref"]["status"], "ready")
-                        self.assertEqual(providers_by_name["elsevier"]["missing_env"], ["ELSEVIER_API_KEY"])
+                        self.assertEqual(
+                            providers_by_name["crossref"]["status"], "ready"
+                        )
+                        self.assertEqual(
+                            providers_by_name["elsevier"]["missing_env"],
+                            ["ELSEVIER_API_KEY"],
+                        )
                         self.assertIn("mdpi", providers_by_name)
                         self.assertEqual(providers_by_name["ams"]["provider"], "ams")
+
+                        compact_status = await session.call_tool(
+                            "provider_status",
+                            {"provider": "crossref", "detail": "compact"},
+                        )
+                        self.assertFalse(compact_status.isError)
+                        self.assertEqual(
+                            compact_status.structuredContent["provider_filter"],
+                            "crossref",
+                        )
+                        self.assertEqual(
+                            compact_status.structuredContent["providers"],
+                            [
+                                {
+                                    "provider": "crossref",
+                                    "status": "ready",
+                                    "reason_code": "static_requirements_ready",
+                                    "reason": (
+                                        "Static configuration and local dependencies "
+                                        "are ready; remote access was not checked."
+                                    ),
+                                    "suggested_action": "run the requested fetch",
+                                }
+                            ],
+                        )
+                        self.assertNotIn(
+                            "configuration", compact_status.structuredContent
+                        )
+
+                        storage_state_path = isolated_dir / "browser" / "wiley.json"
+                        live_preflight = await session.call_tool(
+                            "browser_preflight",
+                            {
+                                "provider": "wiley",
+                                "test_url": (
+                                    "https://onlinelibrary.wiley.com/doi/full/"
+                                    "10.1111/example"
+                                ),
+                                "storage_state_path": str(storage_state_path),
+                                "detail": "full",
+                            },
+                            progress_callback=preflight_progress_callback,
+                        )
+                        self.assertFalse(live_preflight.isError)
+                        self.assertEqual(
+                            live_preflight.structuredContent["status"], "ready"
+                        )
+                        self.assertEqual(
+                            live_preflight.structuredContent["results"][0]["status"],
+                            "ready",
+                        )
+                        self.assertEqual(
+                            live_preflight.structuredContent["results"][0][
+                                "storage_state"
+                            ]["saved"],
+                            True,
+                        )
+                        self.assertFalse(
+                            live_preflight.structuredContent["pdf_fallback_attempted"]
+                        )
+                        self.assertFalse(
+                            live_preflight.structuredContent["auth_attempted"]
+                        )
+                        self.assertTrue(storage_state_path.is_file())
+                        self.assertEqual(
+                            preflight_progress,
+                            [
+                                (0, 1, "Starting live browser_preflight"),
+                                (1, 1, "Preflight wiley: ready"),
+                                (1, 1, "browser_preflight complete"),
+                            ],
+                        )
 
                         custom_fetch = await session.call_tool(
                             "fetch_paper",
@@ -460,13 +666,20 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
                             progress_callback=progress_callback,
                         )
                         self.assertFalse(custom_fetch.isError)
-                        self.assertEqual(custom_fetch.structuredContent["article"], None)
+                        self.assertEqual(
+                            custom_fetch.structuredContent["article"], None
+                        )
                         self.assertEqual(
                             custom_fetch.structuredContent["token_estimate_breakdown"],
                             {"abstract": 16, "body": 48, "refs": 20},
                         )
-                        self.assertEqual([content.type for content in custom_fetch.content], ["text", "text", "image"])
-                        self.assertEqual(progress_updates[-1], (4, 4, "fetch_paper complete"))
+                        self.assertEqual(
+                            [content.type for content in custom_fetch.content],
+                            ["text", "text", "image"],
+                        )
+                        self.assertEqual(
+                            progress_updates[-1], (4, 4, "fetch_paper complete")
+                        )
                         self.assertTrue(
                             any(
                                 isinstance(message, dict)
@@ -485,93 +698,273 @@ class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
                         )
                         custom_cached = await session.call_tool(
                             "get_cached",
-                            {"doi": "10.1000/custom", "download_dir": str(isolated_dir)},
+                            {
+                                "doi": "10.1000/custom",
+                                "download_dir": str(isolated_dir),
+                            },
                         )
                         self.assertFalse(custom_cached.isError)
-                        self.assertEqual(custom_cached.structuredContent["status"], "hit")
-                        self.assertEqual(len(custom_cached.structuredContent["entries"]), 4)
+                        self.assertEqual(
+                            custom_cached.structuredContent["status"], "hit"
+                        )
+                        self.assertEqual(
+                            len(custom_cached.structuredContent["entries"]), 4
+                        )
 
-                        listed_custom = await session.call_tool("list_cached", {"download_dir": str(isolated_dir)})
+                        compact_cached = await session.call_tool(
+                            "get_cached",
+                            {
+                                "doi": "10.1000/custom",
+                                "download_dir": str(isolated_dir),
+                                "detail": "compact",
+                                "preferred_only": True,
+                                "modes": ["markdown"],
+                                "strategy": {"asset_profile": "body"},
+                            },
+                        )
+                        self.assertFalse(compact_cached.isError)
+                        self.assertEqual(
+                            compact_cached.structuredContent["status"], "hit"
+                        )
+                        self.assertNotIn("entries", compact_cached.structuredContent)
+                        self.assertEqual(
+                            set(compact_cached.structuredContent["preferred"]),
+                            {"markdown", "primary_payload"},
+                        )
+                        self.assertTrue(
+                            compact_cached.structuredContent["request_satisfied"]
+                        )
+                        self.assertEqual(
+                            len(
+                                compact_cached.structuredContent[
+                                    "cached_request_fingerprint"
+                                ]
+                            ),
+                            64,
+                        )
+
+                        listed_custom = await session.call_tool(
+                            "list_cached", {"download_dir": str(isolated_dir)}
+                        )
                         self.assertFalse(listed_custom.isError)
-                        self.assertEqual(len(listed_custom.structuredContent["entries"]), 4)
+                        self.assertEqual(
+                            len(listed_custom.structuredContent["entries"]), 4
+                        )
 
                         batch = await session.call_tool(
                             "batch_check",
-                            {"queries": ["10.1000/custom", "10.1000/other"], "mode": "metadata", "concurrency": 2},
+                            {
+                                "queries": ["10.1000/custom", "10.1000/other"],
+                                "mode": "metadata",
+                                "concurrency": 2,
+                            },
                         )
                         self.assertFalse(batch.isError)
                         self.assertEqual(batch.structuredContent["mode"], "metadata")
                         self.assertEqual(len(batch.structuredContent["results"]), 2)
-                        self.assertEqual(batch.structuredContent["results"][0]["probe_state"], "likely_yes")
-                        self.assertEqual(batch.structuredContent["results"][0]["source"], None)
-                        self.assertEqual(batch.structuredContent["results"][0]["token_estimate_breakdown"], None)
+                        self.assertEqual(
+                            batch.structuredContent["results"][0]["probe_state"],
+                            "likely_yes",
+                        )
+                        self.assertEqual(
+                            batch.structuredContent["results"][0]["source"], None
+                        )
+                        self.assertEqual(
+                            batch.structuredContent["results"][0][
+                                "token_estimate_breakdown"
+                            ],
+                            None,
+                        )
 
                         batch_resolved = await session.call_tool(
                             "batch_resolve",
-                            {"queries": ["10.1000/custom", "10.1000/other"], "concurrency": 2},
+                            {
+                                "queries": ["10.1000/custom", "10.1000/other"],
+                                "concurrency": 2,
+                            },
                         )
                         self.assertFalse(batch_resolved.isError)
                         self.assertEqual(
-                            [item["doi"] for item in batch_resolved.structuredContent["results"]],
+                            [
+                                item["doi"]
+                                for item in batch_resolved.structuredContent["results"]
+                            ],
                             ["10.1000/custom", "10.1000/other"],
                         )
 
-                        default_fetch = await session.call_tool("fetch_paper", {"query": "10.1000/default"})
+                        batch_fetched = await session.call_tool(
+                            "batch_fetch",
+                            {
+                                "queries": [
+                                    "10.1000/batch-one",
+                                    "10.1000/batch-two",
+                                ],
+                                "concurrency": 2,
+                                "strategy": {"asset_profile": "none"},
+                                "no_download": True,
+                                "artifact_mode": "none",
+                                "detail": "bounded",
+                                "content_max_chars": 24,
+                            },
+                            progress_callback=batch_fetch_progress_callback,
+                        )
+                        self.assertFalse(batch_fetched.isError)
+                        self.assertEqual(
+                            [
+                                item["index"]
+                                for item in batch_fetched.structuredContent["results"]
+                            ],
+                            [1, 2],
+                        )
+                        self.assertEqual(
+                            batch_fetched.structuredContent["content_returned_chars"],
+                            24,
+                        )
+                        self.assertTrue(
+                            all(
+                                "article" not in item and "markdown" not in item
+                                for item in batch_fetched.structuredContent["results"]
+                            )
+                        )
+                        self.assertEqual(
+                            batch_fetch_progress[0],
+                            (0, 2, "Starting batch_fetch"),
+                        )
+                        self.assertEqual(
+                            batch_fetch_progress[-1],
+                            (2, 2, "batch_fetch complete"),
+                        )
+
+                        default_fetch = await session.call_tool(
+                            "fetch_paper", {"query": "10.1000/default"}
+                        )
                         self.assertFalse(default_fetch.isError)
                         self.assertTrue(
                             any(
-                                isinstance(getattr(message, "root", None), mcp_types.ResourceListChangedNotification)
+                                isinstance(
+                                    getattr(message, "root", None),
+                                    mcp_types.ResourceListChangedNotification,
+                                )
                                 for message in protocol_messages
                             )
                         )
 
                         resources = await session.list_resources()
-                        resource_uris = sorted(str(resource.uri) for resource in resources.resources)
-                        self.assertIn("resource://paper-fetch/cache-index", resource_uris)
-                        self.assertTrue(any(uri.startswith("resource://paper-fetch/cached/") for uri in resource_uris))
+                        resource_uris = sorted(
+                            str(resource.uri) for resource in resources.resources
+                        )
+                        self.assertIn(
+                            "resource://paper-fetch/cache-index", resource_uris
+                        )
+                        self.assertIn(PROVIDER_CATALOG_RESOURCE_URI, resource_uris)
+                        self.assertTrue(
+                            any(
+                                uri.startswith("resource://paper-fetch/cached/")
+                                for uri in resource_uris
+                            )
+                        )
                         custom_scope_id = cache_scope_id(isolated_dir)
-                        custom_index_uri = scoped_cache_index_resource_uri(custom_scope_id)
+                        custom_index_uri = scoped_cache_index_resource_uri(
+                            custom_scope_id
+                        )
                         self.assertIn(custom_index_uri, resource_uris)
                         self.assertTrue(
-                            any(uri.startswith(scoped_cached_resource_uri_prefix(custom_scope_id)) for uri in resource_uris)
+                            any(
+                                uri.startswith(
+                                    scoped_cached_resource_uri_prefix(custom_scope_id)
+                                )
+                                for uri in resource_uris
+                            )
                         )
 
                         templates = await session.list_resource_templates()
-                        template_uris = [str(template.uriTemplate) for template in templates.resourceTemplates]
-                        self.assertIn("resource://paper-fetch/cached/{entry_id}", template_uris)
+                        template_uris = [
+                            str(template.uriTemplate)
+                            for template in templates.resourceTemplates
+                        ]
+                        self.assertIn(
+                            "resource://paper-fetch/cached/{entry_id}", template_uris
+                        )
 
-                        cache_index = await session.read_resource("resource://paper-fetch/cache-index")
+                        cache_index = await session.read_resource(
+                            "resource://paper-fetch/cache-index"
+                        )
                         cache_text = cache_index.contents[0].text
                         cache_payload = json.loads(cache_text)
-                        self.assertEqual(str(default_dir), cache_payload["download_dir"])
+                        self.assertEqual(
+                            str(default_dir), cache_payload["download_dir"]
+                        )
                         markdown_entry = next(
                             entry
                             for entry in cache_payload["entries"]
-                            if entry["doi"] == "10.1000/default" and entry["kind"] == "markdown"
+                            if entry["doi"] == "10.1000/default"
+                            and entry["kind"] == "markdown"
+                        )
+
+                        provider_catalog = await session.read_resource(
+                            PROVIDER_CATALOG_RESOURCE_URI
+                        )
+                        provider_catalog_payload = json.loads(
+                            provider_catalog.contents[0].text
+                        )
+                        self.assertEqual(
+                            provider_catalog_payload["resource_uri"],
+                            PROVIDER_CATALOG_RESOURCE_URI,
+                        )
+                        self.assertEqual(
+                            [
+                                item["provider"]
+                                for item in provider_catalog_payload["providers"]
+                            ],
+                            list(provider_status_order()),
+                        )
+                        self.assertEqual(
+                            provider_catalog_payload["source_provider_map"],
+                            dict(sorted(SOURCE_PROVIDER_MAP.items())),
                         )
 
                         markdown_resource = await session.read_resource(
                             f"resource://paper-fetch/cached/{markdown_entry['id']}"
                         )
-                        self.assertIn("# Example Article", markdown_resource.contents[0].text)
+                        self.assertIn(
+                            "# Example Article", markdown_resource.contents[0].text
+                        )
 
-                        custom_cache_index = await session.read_resource(custom_index_uri)
-                        custom_cache_payload = json.loads(custom_cache_index.contents[0].text)
-                        self.assertEqual(str(isolated_dir), custom_cache_payload["download_dir"])
+                        custom_cache_index = await session.read_resource(
+                            custom_index_uri
+                        )
+                        custom_cache_payload = json.loads(
+                            custom_cache_index.contents[0].text
+                        )
+                        self.assertEqual(
+                            str(isolated_dir), custom_cache_payload["download_dir"]
+                        )
                         custom_markdown_entry = next(
                             entry
                             for entry in custom_cache_payload["entries"]
-                            if entry["doi"] == "10.1000/custom" and entry["kind"] == "markdown"
+                            if entry["doi"] == "10.1000/custom"
+                            and entry["kind"] == "markdown"
                         )
                         custom_markdown_resource = await session.read_resource(
-                            scoped_cached_resource_uri(custom_scope_id, custom_markdown_entry["id"])
+                            scoped_cached_resource_uri(
+                                custom_scope_id, custom_markdown_entry["id"]
+                            )
                         )
-                        self.assertIn("# Example Article", custom_markdown_resource.contents[0].text)
+                        self.assertIn(
+                            "# Example Article",
+                            custom_markdown_resource.contents[0].text,
+                        )
 
-                        invalid = await session.call_tool("fetch_paper", {"query": "10.1000/example", "modes": ["pdf"]})
+                        invalid = await session.call_tool(
+                            "fetch_paper",
+                            {"query": "10.1000/example", "modes": ["pdf"]},
+                        )
                         self.assertTrue(invalid.isError)
-                        self.assertEqual(invalid.structuredContent["status"], "error")
-                        self.assertIn("unsupported output modes", invalid.structuredContent["reason"])
+                        self.assertIsNone(invalid.structuredContent)
+                        self.assertIn(
+                            "unsupported output modes",
+                            invalid.content[0].text,
+                        )
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from collections.abc import Iterator, Set as AbstractSet
 
 from ..metadata.types import ProviderMetadata
 from ..models import AssetProfile
@@ -14,7 +15,23 @@ from ..provider_catalog import (
 )
 from ..utils import normalize_text
 
-ALLOWED_PREFERRED_PROVIDERS = frozenset(provider_names())
+
+def allowed_preferred_providers() -> frozenset[str]:
+    return frozenset(provider_names())
+
+
+class _AllowedPreferredProviders(AbstractSet[str]):
+    def __contains__(self, value: object) -> bool:
+        return value in allowed_preferred_providers()
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(allowed_preferred_providers())
+
+    def __len__(self) -> int:
+        return len(allowed_preferred_providers())
+
+
+ALLOWED_PREFERRED_PROVIDERS: AbstractSet[str] = _AllowedPreferredProviders()
 
 
 def provider_default_asset_profile(provider_name: str | None) -> AssetProfile:
@@ -41,7 +58,13 @@ def effective_asset_profile(
 
 
 class PaperFetchFailure(Exception):
-    def __init__(self, status: str, reason: str, *, candidates: list[dict[str, Any]] | None = None) -> None:
+    def __init__(
+        self,
+        status: str,
+        reason: str,
+        *,
+        candidates: list[dict[str, Any]] | None = None,
+    ) -> None:
         super().__init__(reason)
         self.status = status
         self.reason = reason
@@ -85,21 +108,28 @@ class FetchStrategy:
         normalized = self.normalized_preferred_providers()
         if normalized is None:
             return
-        invalid = sorted(normalized - ALLOWED_PREFERRED_PROVIDERS)
+        allowed = allowed_preferred_providers()
+        invalid = sorted(normalized - allowed)
         if invalid:
             raise ValueError(
                 "unsupported preferred_providers values: "
                 + ", ".join(invalid)
                 + ". Expected one or more of: "
-                + ", ".join(sorted(ALLOWED_PREFERRED_PROVIDERS))
+                + ", ".join(sorted(allowed))
                 + "."
             )
 
     def normalized_preferred_providers(self) -> set[str] | None:
         if self.preferred_providers is None:
             return None
-        normalized = {normalize_text(item).lower() for item in self.preferred_providers if normalize_text(item)}
+        normalized = {
+            normalize_text(item).lower()
+            for item in self.preferred_providers
+            if normalize_text(item)
+        }
         return normalized or set()
 
-    def effective_asset_profile_for_provider(self, provider_name: str | None) -> AssetProfile:
+    def effective_asset_profile_for_provider(
+        self, provider_name: str | None
+    ) -> AssetProfile:
         return effective_asset_profile(self.asset_profile, provider_name=provider_name)

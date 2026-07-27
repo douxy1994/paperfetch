@@ -10,22 +10,24 @@ import xml.etree.ElementTree as ET
 
 from ..arxiv_id import arxiv_id_from_query, normalize_arxiv_id
 from ..http import (
-    DEFAULT_TIMEOUT_SECONDS,
     HttpTransport,
     RequestFailure,
     is_pdf_content_type,
 )
 from ..utils import normalize_text
+from ..xml_security import XmlParseFailure, parse_xml
 from ._arxiv_metadata import _dedupe_strings
 
 ARXIV_API_URL = "https://export.arxiv.org/api/query"
 ARXIV_API_ACCEPT = "application/atom+xml,application/xml,text/xml,*/*;q=0.8"
+ARXIV_API_TIMEOUT_SECONDS = 60
 ARXIV_API_DELAY_SECONDS = 0.0
-ARXIV_API_NUM_RETRIES = 0
+ARXIV_API_NUM_RETRIES = 2
 _ARXIV_ATOM_NAMESPACES = {
     "atom": "http://www.w3.org/2005/Atom",
     "arxiv": "http://arxiv.org/schemas/atom",
 }
+
 
 @dataclass(frozen=True)
 class ArxivSearch:
@@ -107,14 +109,18 @@ def _parse_arxiv_atom_result(
     authors = tuple(
         ArxivApiAuthor(name=name)
         for name in _dedupe_strings(
-            _atom_text(author, "atom:name")
-            for author in entry.findall("atom:author", _ARXIV_ATOM_NAMESPACES)
+            [
+                _atom_text(author, "atom:name")
+                for author in entry.findall("atom:author", _ARXIV_ATOM_NAMESPACES)
+            ]
         )
     )
     categories = tuple(
         _dedupe_strings(
-            category.get("term")
-            for category in entry.findall("atom:category", _ARXIV_ATOM_NAMESPACES)
+            [
+                category.get("term")
+                for category in entry.findall("atom:category", _ARXIV_ATOM_NAMESPACES)
+            ]
         )
     )
     primary_category = _atom_attr(entry, "arxiv:primary_category", "term")
@@ -141,8 +147,8 @@ def _parse_arxiv_atom_results(
     body: bytes, *, requested_ids: Sequence[str]
 ) -> list[ArxivApiResult]:
     try:
-        root = ET.fromstring(body.decode("utf-8", errors="replace"))
-    except ET.ParseError as exc:
+        root = parse_xml(body, source="arXiv API Atom XML")
+    except XmlParseFailure as exc:
         raise ValueError(f"Invalid arXiv API Atom XML: {exc}") from exc
     return [
         _parse_arxiv_atom_result(entry, requested_ids=requested_ids)
@@ -175,7 +181,9 @@ class InternalArxivApiClient:
                 "id_list": ",".join(requested_ids),
                 "max_results": str(max_results),
             },
-            timeout=DEFAULT_TIMEOUT_SECONDS,
+            timeout=ARXIV_API_TIMEOUT_SECONDS,
+            retry_on_transient=True,
+            transient_retries=ARXIV_API_NUM_RETRIES,
         )
         status_code = int(response.get("status_code") or 0)
         if status_code >= 400:

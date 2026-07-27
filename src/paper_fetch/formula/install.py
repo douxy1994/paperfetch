@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import argparse
 import os
+import re
 import shutil
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 from collections.abc import Sequence
@@ -18,13 +20,16 @@ from .paths import (
     TEXMATH_EXECUTABLE_NAMES,
 )
 
+TEXMATH_VERSION = "0.13.2"
+_TEXMATH_VERSION_PATTERN = re.compile(r"(?m)^Version ([0-9]+(?:\.[0-9]+)+)\s*$")
+
 
 def log(message: str) -> None:
     print(f"\033[1;34m==>\033[0m {message}")
 
 
 def warn(message: str) -> None:
-    print(f"\033[1;33m!!\033[0m {message}", file=os.sys.stderr)
+    print(f"\033[1;33m!!\033[0m {message}", file=sys.stderr)
 
 
 def _temporary_log_path(log_prefix: str) -> Path:
@@ -63,16 +68,28 @@ def _run_with_log(log_prefix: str, args: list[str], *, cwd: Path | None = None) 
         return False
 
 
-def have_working_texmath(path: Path) -> bool:
+def texmath_version(path: Path) -> str | None:
     if not path.exists() or not os.access(path, os.X_OK):
-        return False
-    process = subprocess.run(
-        [str(path), "--help"],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        check=False,
+        return None
+    try:
+        process = subprocess.run(
+            [str(path), "--version"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if process.returncode != 0:
+        return None
+    match = _TEXMATH_VERSION_PATTERN.search(
+        f"{process.stdout or ''}\n{process.stderr or ''}"
     )
-    return process.returncode == 0
+    return match.group(1) if match else None
+
+
+def have_working_texmath(path: Path) -> bool:
+    return texmath_version(path) == TEXMATH_VERSION
 
 
 def texmath_target_path(target_dir: Path) -> Path:
@@ -83,7 +100,12 @@ def texmath_target_path(target_dir: Path) -> Path:
 def stage_bundled_node_workspace(target_dir: Path) -> Path:
     target_dir.mkdir(parents=True, exist_ok=True)
     resource_root = bundled_formula_resources()
-    for name in (FORMULA_NODE_SCRIPT_NAME, FORMULA_NODE_WORKER_SCRIPT_NAME, "package.json", "package-lock.json"):
+    for name in (
+        FORMULA_NODE_SCRIPT_NAME,
+        FORMULA_NODE_WORKER_SCRIPT_NAME,
+        "package.json",
+        "package-lock.json",
+    ):
         resource = resource_root.joinpath(name)
         payload = resource.read_bytes()
         destination = target_dir / name
@@ -95,7 +117,11 @@ def stage_bundled_node_workspace(target_dir: Path) -> Path:
 
 def reuse_texmath_from_path(target_dir: Path) -> bool:
     system_texmath = next(
-        (candidate for name in TEXMATH_EXECUTABLE_NAMES if (candidate := shutil.which(name))),
+        (
+            candidate
+            for name in TEXMATH_EXECUTABLE_NAMES
+            if (candidate := shutil.which(name))
+        ),
         None,
     )
     if not system_texmath:
@@ -107,11 +133,8 @@ def reuse_texmath_from_path(target_dir: Path) -> bool:
     target.parent.mkdir(parents=True, exist_ok=True)
     if target != source:
         target.unlink(missing_ok=True)
-        if os.name == "nt":
-            shutil.copy2(source, target)
-        else:
-            target.symlink_to(source)
-    log(f"Using existing texmath at {source}")
+        shutil.copy2(source, target)
+    log(f"Using existing texmath {TEXMATH_VERSION} at {source}")
     return True
 
 
@@ -119,14 +142,15 @@ def install_texmath_with_cabal(target_dir: Path) -> bool:
     cabal = shutil.which("cabal")
     if not cabal:
         return False
-    log("Attempting to install texmath with cabal")
-    subprocess.run([cabal, "update"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+    log(f"Attempting to install texmath {TEXMATH_VERSION} with cabal")
+    if not _run_with_log("texmath-cabal-update-", [cabal, "update"]):
+        return False
     return _run_with_log(
         "texmath-cabal-",
         [
             cabal,
             "install",
-            "texmath",
+            f"texmath-{TEXMATH_VERSION}",
             "-fexecutable",
             f"--installdir={target_dir / 'bin'}",
             "--install-method=copy",
@@ -140,13 +164,13 @@ def install_texmath_with_stack(target_dir: Path) -> bool:
     stack = shutil.which("stack")
     if not stack:
         return False
-    log("Attempting to install texmath with stack")
+    log(f"Attempting to install texmath {TEXMATH_VERSION} with stack")
     return _run_with_log(
         "texmath-stack-",
         [
             stack,
             "install",
-            "texmath",
+            f"texmath-{TEXMATH_VERSION}",
             "--flag",
             "texmath:executable",
             "--local-bin-path",
@@ -158,15 +182,17 @@ def install_texmath_with_stack(target_dir: Path) -> bool:
 def ensure_texmath(target_dir: Path) -> bool:
     target = texmath_target_path(target_dir)
     if have_working_texmath(target):
-        log(f"Formula backend ready: texmath ({target})")
+        log(f"Formula backend ready: texmath {TEXMATH_VERSION} ({target})")
         return True
     if reuse_texmath_from_path(target_dir):
         return True
     if install_texmath_with_cabal(target_dir) or install_texmath_with_stack(target_dir):
         if have_working_texmath(target):
-            log(f"Formula backend ready: texmath ({target})")
+            log(f"Formula backend ready: texmath {TEXMATH_VERSION} ({target})")
             return True
-        warn("texmath build reported success but the installed binary could not be executed.")
+        warn(
+            "texmath build reported success but the installed binary could not be executed."
+        )
     return False
 
 
@@ -184,24 +210,34 @@ def ensure_mathml_to_latex(target_dir: Path, *, install_node: bool) -> bool:
         return False
 
     workspace = stage_bundled_node_workspace(target_dir)
-    if (workspace / "node_modules" / "mathml-to-latex").exists() and (workspace / "node_modules" / "katex").exists():
+    if (workspace / "node_modules" / "mathml-to-latex").exists() and (
+        workspace / "node_modules" / "katex"
+    ).exists():
         log(f"Using existing mathml-to-latex Node dependencies in {workspace}")
         return True
 
     log(f"Installing Node dependencies for mathml-to-latex fallback in {workspace}")
-    if _run_with_log("mathml-to-latex-", [npm, "install", "--omit=dev", "--silent"], cwd=workspace):
+    if _run_with_log(
+        "mathml-to-latex-", [npm, "install", "--omit=dev", "--silent"], cwd=workspace
+    ):
         log("Formula backend ready: mathml-to-latex")
         return True
     return False
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Install optional external formula backends for paper-fetch.")
+    parser = argparse.ArgumentParser(
+        description="Install optional external formula backends for paper-fetch."
+    )
     parser.add_argument(
         "--target-dir",
         help="Directory that should store formula backend assets. Defaults to the paper-fetch user data directory.",
     )
-    parser.add_argument("--no-node", action="store_true", help="Skip the Node mathml-to-latex fallback install.")
+    parser.add_argument(
+        "--no-node",
+        action="store_true",
+        help="Skip the Node mathml-to-latex fallback install.",
+    )
     return parser
 
 
@@ -209,7 +245,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
 
-    target_dir = Path(args.target_dir).expanduser() if args.target_dir else default_user_formula_tools_dir()
+    target_dir = (
+        Path(args.target_dir).expanduser()
+        if args.target_dir
+        else default_user_formula_tools_dir()
+    )
     target_dir.mkdir(parents=True, exist_ok=True)
 
     if ensure_texmath(target_dir):
@@ -219,7 +259,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     if ensure_mathml_to_latex(target_dir, install_node=not args.no_node):
         return 0
 
-    warn("No external MathML-to-LaTeX backend is available. The built-in Python renderer will be used.")
+    warn(
+        "No external MathML-to-LaTeX backend is available. The built-in Python renderer will be used."
+    )
     return 0
 
 

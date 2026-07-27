@@ -4,16 +4,21 @@ from __future__ import annotations
 
 import re
 from typing import Any
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 
+from ..markdown_render import table_format as markdown_table_format
 from ...models import normalize_markdown_text
 from ...utils import normalize_text
-from .inline import normalize_html_inline_text, render_html_inline_node, wrap_html_inline_text_fragment
+from .inline import (
+    normalize_html_inline_text,
+    render_html_inline_node,
+    wrap_html_inline_text_fragment,
+)
+from .shared import attr_text
 
 from bs4 import Tag
 
 TABLE_PLACEHOLDER_PREFIX = "PAPER_FETCH_TABLE_PLACEHOLDER_"
-TABLE_CELL_LINE_BREAK_PATTERN = re.compile(r"\s*\n+\s*")
 
 RenderInlineTextFn = Callable[[Any], str]
 CleanMarkdownFn = Callable[[str], str]
@@ -35,7 +40,9 @@ def render_table_inline_text(node: Any) -> str:
     return render_table_inline_node(node)
 
 
-def table_cell_data(cell: Tag, *, render_inline_text: RenderInlineTextFn = render_table_inline_text) -> dict[str, Any]:
+def table_cell_data(
+    cell: Tag, *, render_inline_text: RenderInlineTextFn = render_table_inline_text
+) -> dict[str, Any]:
     rowspan_text = normalize_text(str(cell.get("rowspan") or "1")) or "1"
     colspan_text = normalize_text(str(cell.get("colspan") or "1")) or "1"
     try:
@@ -46,16 +53,26 @@ def table_cell_data(cell: Tag, *, render_inline_text: RenderInlineTextFn = rende
         colspan = max(1, int(colspan_text))
     except ValueError:
         colspan = 1
-    class_values = cell.get("class") or []
+    class_values: Any = cell.get("class") or []
     if isinstance(class_values, str):
-        classes = {normalize_text(item).lower() for item in class_values.split() if normalize_text(item)}
+        classes = {
+            normalize_text(item).lower()
+            for item in class_values.split()
+            if normalize_text(item)
+        }
     else:
-        classes = {normalize_text(str(item)).lower() for item in class_values if normalize_text(str(item))}
+        classes = {
+            normalize_text(str(item)).lower()
+            for item in class_values
+            if normalize_text(str(item))
+        }
     is_header = normalize_text(cell.name or "").lower() == "th"
-    has_bold_text = cell.find(["b", "strong"]) is not None or bool(cell.select(".ltx_font_bold"))
+    has_bold_text = cell.find(["b", "strong"]) is not None or bool(
+        cell.select(".ltx_font_bold")
+    )
     is_header_candidate = (
         is_header
-        or normalize_text(str(cell.get("scope") or ""))
+        or attr_text(cell.get("scope"))
         or bool(classes & {"ltx_th", "ltx_th_column", "ltx_th_row"})
         or (has_bold_text and "ltx_border_tt" in classes)
     )
@@ -68,17 +85,30 @@ def table_cell_data(cell: Tag, *, render_inline_text: RenderInlineTextFn = rende
     }
 
 
-def table_rows(table: Tag, *, render_inline_text: RenderInlineTextFn = render_table_inline_text) -> list[list[dict[str, Any]]]:
+def table_rows(
+    table: Tag, *, render_inline_text: RenderInlineTextFn = render_table_inline_text
+) -> list[list[dict[str, Any]]]:
     rows: list[list[dict[str, Any]]] = []
     for row in table.find_all("tr"):
         if not isinstance(row, Tag):
             continue
-        cells = [cell for cell in row.find_all(["th", "td"], recursive=False) if isinstance(cell, Tag)]
+        cells = [
+            cell
+            for cell in row.find_all(["th", "td"], recursive=False)
+            if isinstance(cell, Tag)
+        ]
         if not cells:
-            cells = [cell for cell in row.find_all(["th", "td"]) if isinstance(cell, Tag)]
+            cells = [
+                cell for cell in row.find_all(["th", "td"]) if isinstance(cell, Tag)
+            ]
         if not cells:
             continue
-        rows.append([table_cell_data(cell, render_inline_text=render_inline_text) for cell in cells])
+        rows.append(
+            [
+                table_cell_data(cell, render_inline_text=render_inline_text)
+                for cell in cells
+            ]
+        )
     return rows
 
 
@@ -140,7 +170,9 @@ def leading_full_width_spanner_rows(
     return lifted, rows[index:]
 
 
-def expanded_table_matrix(rows: list[list[dict[str, Any]]]) -> list[list[dict[str, Any]]] | None:
+def expanded_table_matrix(
+    rows: list[list[dict[str, Any]]],
+) -> list[list[dict[str, Any]]] | None:
     if not rows:
         return None
     grid: dict[tuple[int, int], dict[str, Any]] = {}
@@ -171,10 +203,10 @@ def expanded_table_matrix(rows: list[list[dict[str, Any]]]) -> list[list[dict[st
     for row_index in range(len(rows)):
         expanded_row: list[dict[str, Any]] = []
         for col_index in range(max_width):
-            cell = grid.get((row_index, col_index))
-            if cell is None:
+            grid_cell = grid.get((row_index, col_index))
+            if grid_cell is None:
                 return None
-            expanded_row.append(cell)
+            expanded_row.append(grid_cell)
         expanded_rows.append(expanded_row)
     return expanded_rows
 
@@ -199,7 +231,9 @@ def flatten_table_header_rows(rows: list[list[dict[str, Any]]]) -> list[str]:
     return headers
 
 
-def normalize_table_header_rows(rows: list[list[dict[str, Any]]]) -> list[list[dict[str, Any]]]:
+def normalize_table_header_rows(
+    rows: list[list[dict[str, Any]]],
+) -> list[list[dict[str, Any]]]:
     if len(rows) <= 1:
         return rows
     first_row = rows[0]
@@ -281,37 +315,19 @@ def table_header_row_count_without_thead(rows: list[list[dict[str, Any]]]) -> in
 
 
 def normalize_table_block_text(text: str) -> str:
-    return normalize_text(TABLE_CELL_LINE_BREAK_PATTERN.sub(" ", text))
+    return markdown_table_format.normalize_table_block_text(text)
 
 
 def normalize_table_cell_markdown_text(text: str) -> str:
-    return TABLE_CELL_LINE_BREAK_PATTERN.sub("<br>", normalize_text(text))
+    return markdown_table_format.normalize_table_cell_markdown_text(text)
 
 
 def escape_markdown_table_cell(text: str) -> str:
-    return normalize_table_cell_markdown_text(text).replace("|", r"\|")
+    return markdown_table_format.escape_markdown_table_cell(text)
 
 
 def render_aligned_markdown_table(matrix: list[list[str]]) -> list[str]:
-    if not matrix:
-        return []
-
-    width = max(len(row) for row in matrix)
-    normalized_rows = [row + [""] * max(0, width - len(row)) for row in matrix]
-    escaped_rows = [[escape_markdown_table_cell(cell) for cell in row] for row in normalized_rows]
-    column_widths = [
-        max(3, max(len(row[index]) for row in escaped_rows))
-        for index in range(width)
-    ]
-
-    def format_row(row: list[str]) -> str:
-        padded = [f" {cell.ljust(column_widths[index])} " for index, cell in enumerate(row)]
-        return "|" + "|".join(padded) + "|"
-
-    header = format_row(escaped_rows[0])
-    separator = "|" + "|".join(f" {'-' * column_widths[index]} " for index in range(width)) + "|"
-    body = [format_row(row) for row in escaped_rows[1:]]
-    return [header, separator, *body]
+    return markdown_table_format.render_aligned_markdown_table(matrix)
 
 
 def render_table_markdown(
@@ -385,20 +401,27 @@ def table_placeholder(index: int) -> str:
 def inject_inline_table_blocks(
     markdown_text: str,
     *,
-    table_entries: list[Mapping[str, str]] | None,
+    table_entries: Sequence[Mapping[str, str]] | None,
     clean_markdown_fn: CleanMarkdownFn,
 ) -> str:
     if not table_entries:
         return markdown_text
     replacement_by_placeholder = {
-        normalize_text(str(entry.get("placeholder") or "")): normalize_markdown_text(str(entry.get("markdown") or ""))
+        normalize_text(str(entry.get("placeholder") or "")): normalize_markdown_text(
+            str(entry.get("markdown") or "")
+        )
         for entry in table_entries
-        if normalize_text(str(entry.get("placeholder") or "")) and normalize_text(str(entry.get("markdown") or ""))
+        if normalize_text(str(entry.get("placeholder") or ""))
+        and normalize_text(str(entry.get("markdown") or ""))
     }
     if not replacement_by_placeholder:
         return markdown_text
 
-    blocks = [normalize_markdown_text(block) for block in re.split(r"\n\s*\n", markdown_text) if normalize_text(block)]
+    blocks = [
+        normalize_markdown_text(block)
+        for block in re.split(r"\n\s*\n", markdown_text)
+        if normalize_text(block)
+    ]
     if not blocks:
         return markdown_text
 

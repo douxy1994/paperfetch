@@ -24,7 +24,9 @@ class SkillInstallerTests(unittest.TestCase):
             )
 
     def test_shared_installer_supports_only_active_skill_hosts(self) -> None:
-        common = (REPO_ROOT / "scripts" / "_skill_install_common.sh").read_text(encoding="utf-8")
+        common = (REPO_ROOT / "scripts" / "_skill_install_common.sh").read_text(
+            encoding="utf-8"
+        )
 
         for host in ("claude", "codex", "antigravity", "zcode", "hermes"):
             self.assertIn(f"{host}) printf", common)

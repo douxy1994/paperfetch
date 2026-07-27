@@ -14,7 +14,10 @@ from ...extraction.html.formula_rules import (
     looks_like_formula_image,
     mathml_element_from_html_node,
 )
-from ...extraction.markdown_render.formulas import html_formula_latex_from_node
+from ...extraction.markdown_render.formulas import (
+    html_formula_latex_from_node,
+    render_inline_latex_markdown,
+)
 from ...extraction.html.shared import (
     append_text_block as _append_text_block,
     short_text as _short_text,
@@ -34,7 +37,13 @@ def _is_non_table_paragraph_node(node: Tag) -> bool:
     name = normalize_text(node.name or "").lower()
     if name in {"p", "li"}:
         return True
-    if name == "div" and normalize_text(str((getattr(node, "attrs", None) or {}).get("role") or "")).lower() == "paragraph":
+    if (
+        name == "div"
+        and normalize_text(
+            str((getattr(node, "attrs", None) or {}).get("role") or "")
+        ).lower()
+        == "paragraph"
+    ):
         return True
     return False
 
@@ -46,7 +55,9 @@ def _mathml_element_from_node(node: Tag | None):
 def _latex_from_math_node(node: Tag, *, display_mode: bool) -> str:
     element = _mathml_element_from_node(node)
     if element is not None:
-        expression = normalize_text(render_external_mathml_expression(element, display_mode=display_mode))
+        expression = normalize_text(
+            render_external_mathml_expression(element, display_mode=display_mode)
+        )
         if expression:
             return expression
     expression = normalize_text(html_formula_latex_from_node(node))
@@ -69,7 +80,9 @@ def _formula_image_markdown(node: Tag) -> str:
 
 
 def _display_formula_nodes(container: Tag) -> list[Tag]:
-    return _dedupe_top_level_nodes([node for node in display_formula_nodes(container) if isinstance(node, Tag)])
+    return _dedupe_top_level_nodes(
+        [node for node in display_formula_nodes(container) if isinstance(node, Tag)]
+    )
 
 
 def _equation_label(node: Tag) -> str:
@@ -77,16 +90,27 @@ def _equation_label(node: Tag) -> str:
     explicit_label = normalize_text(str(attrs.get("data-equation-label") or ""))
     if explicit_label:
         return explicit_label
-    if normalize_text(str(attrs.get("data-no-equation-label") or "")).lower() in {"1", "true", "yes"}:
+    if normalize_text(str(attrs.get("data-no-equation-label") or "")).lower() in {
+        "1",
+        "true",
+        "yes",
+    }:
         return ""
 
     candidates: list[str] = []
-    for candidate in (node.select_one(".label"), node.find_previous_sibling(class_="label")):
+    for candidate in (
+        node.select_one(".label"),
+        node.find_previous_sibling(class_="label"),
+    ):
         if isinstance(candidate, Tag):
             candidates.append(_short_text(candidate))
     node_id = normalize_text(str(attrs.get("id") or ""))
     if node_id:
-        id_match = re.search(r"(?:disp|eqn?|equation)[-_]?0*([0-9]+[A-Za-z]?)$", node_id, flags=re.IGNORECASE)
+        id_match = re.search(
+            r"(?:disp|eqn?|equation)[-_]?0*([0-9]+[A-Za-z]?)$",
+            node_id,
+            flags=re.IGNORECASE,
+        )
         if id_match:
             return f"Equation {id_match.group(1)}."
         candidates.append(node_id)
@@ -130,10 +154,14 @@ def _clone_shallow_tag(node: Tag, soup: BeautifulSoup) -> Tag:
     return clone
 
 
-def _insert_split_paragraph(parent: Tag, children: list[Any], soup: BeautifulSoup) -> None:
+def _insert_split_paragraph(
+    parent: Tag, children: list[Any], soup: BeautifulSoup
+) -> None:
     segment = _clone_shallow_tag(parent, soup)
     for child in children:
-        if (NavigableString is not None and isinstance(child, NavigableString)) or isinstance(child, Tag):
+        if (
+            NavigableString is not None and isinstance(child, NavigableString)
+        ) or isinstance(child, Tag):
             segment.append(child.extract())
     if normalize_text(segment.get_text(" ", strip=True)):
         parent.insert_before(segment)
@@ -152,11 +180,11 @@ def _split_paragraph_display_formula_blocks(parent: Tag, soup: BeautifulSoup) ->
 
     pending_children: list[Any] = []
     for child in list(parent.contents):
-        formula_node = formula_nodes.get(id(child))
-        if formula_node is None:
+        matched_formula_node = formula_nodes.get(id(child))
+        if matched_formula_node is None:
             pending_children.append(child)
             continue
-        replacement = _display_formula_replacement(formula_node, soup)
+        replacement = _display_formula_replacement(matched_formula_node, soup)
         if pending_children:
             _insert_split_paragraph(parent, pending_children, soup)
             pending_children = []
@@ -197,7 +225,10 @@ def _is_display_formula_math(node: Tag) -> bool:
 
 
 def _inline_math_replacement_target(node: Tag) -> Tag:
-    for current in (node.find_parent("mjx-container"), node.find_parent("mjx-assistive-mml")):
+    for current in (
+        node.find_parent("mjx-container"),
+        node.find_parent("mjx-assistive-mml"),
+    ):
         if isinstance(current, Tag):
             return current
     return node
@@ -224,18 +255,8 @@ def _has_class_token(node: Tag, token: str) -> bool:
     return token in {normalize_text(value).lower() for value in class_values}
 
 
-def _is_delimited_inline_latex(value: str) -> bool:
-    return (
-        (value.startswith("$") and value.endswith("$") and len(value) > 2)
-        or (value.startswith(r"\(") and value.endswith(r"\)") and len(value) > 4)
-    )
-
-
 def _inline_latex_markdown(value: str) -> str:
-    latex = normalize_text(value)
-    if not latex:
-        return ""
-    return latex if _is_delimited_inline_latex(latex) else f"${latex}$"
+    return render_inline_latex_markdown(value)
 
 
 def _latex_from_tex_script_container(node: Tag) -> str:
@@ -250,11 +271,7 @@ def _latex_from_tex_script_container(node: Tag) -> str:
 
 def _normalize_iop_inline_tex_formula_nodes(container: Tag) -> None:
     nodes = _dedupe_top_level_nodes(
-        [
-            node
-            for node in container.select(".inline-eqn")
-            if isinstance(node, Tag)
-        ]
+        [node for node in container.select(".inline-eqn") if isinstance(node, Tag)]
     )
     for node in nodes:
         if not isinstance(node, Tag) or node.parent is None:
@@ -274,7 +291,7 @@ def _normalize_inline_formula_image_nodes(container: Tag) -> None:
             continue
         latex = _latex_from_nearest_formula_container(image)
         if latex:
-            image.replace_with(latex)
+            image.replace_with(_inline_latex_markdown(latex))
             continue
         image.replace_with(_formula_image_markdown(image))
 

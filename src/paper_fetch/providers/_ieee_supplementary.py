@@ -25,8 +25,10 @@ from ..extraction.html.assets.supplementary import (
 from ..extraction.html.parsing import choose_parser
 from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, RequestFailure
 from ..http.headers import header_value
+from ..models import AssetProfile
 from ..publisher_identity import normalize_doi
 from ..utils import empty_asset_results, normalize_text, strip_html_tags
+from ..runtime import RuntimeContext
 from ._ieee_metadata import IeeeLandingAttempt, _landing_metadata_has_multimedia_scope
 from ._ieee_url import (
     IEEE_BASE_URL,
@@ -37,6 +39,7 @@ from ._ieee_url import (
     _article_number_from_url,
     _is_ignored_ieee_asset_url,
 )
+from .browser_runtime.types import BrowserRuntimeConfig
 
 from bs4 import BeautifulSoup, Tag
 
@@ -48,23 +51,12 @@ IEEE_SUPPLEMENTARY_SEMANTIC_TOKENS = (
     "supplement file",
     "supplemental item",
 )
-IEEE_SUPPLEMENTARY_EXTRA_FILE_SUFFIXES = (
-    ".doc",
-    ".docx",
-    ".ps",
-    ".eps",
-    ".bmp",
-    ".mp4",
-    ".mov",
-    ".wmv",
-    ".avi",
-    ".mp3",
-    ".aiff",
-    ".ra",
-    ".wav",
-    ".tar.gz",
+IEEE_SUPPLEMENTARY_EXTRA_FILE_SUFFIXES = tuple(
+    ".doc .docx .ps .eps .bmp .mp4 .mov .wmv .avi .mp3 .aiff .ra .wav .tar.gz".split()
 )
-IEEE_ASSET_URL_ATTRS = ("href", "src", "data-src", "data-original", "data-full-src", "data-url")
+IEEE_ASSET_URL_ATTRS = tuple(
+    "href src data-src data-original data-full-src data-url".split()
+)
 
 
 def _small_html_dimension(value: Any, *, max_size: int = 32) -> bool:
@@ -102,7 +94,11 @@ def _looks_like_ieee_support_icon_node(node: Tag) -> bool:
         return False
     width_small = _small_html_dimension(attrs.get("width"))
     height_small = _small_html_dimension(attrs.get("height"))
-    return width_small or height_small or normalize_text(getattr(node, "name", "")).lower() == "img"
+    return (
+        width_small
+        or height_small
+        or normalize_text(getattr(node, "name", "")).lower() == "img"
+    )
 
 
 def _ieee_tag_has_ignored_asset_url(node: Tag) -> bool:
@@ -110,7 +106,9 @@ def _ieee_tag_has_ignored_asset_url(node: Tag) -> bool:
         return True
     for attr_name in IEEE_ASSET_URL_ATTRS:
         value = normalize_text(str(node.get(attr_name) or ""))
-        if value and _is_ignored_ieee_asset_url(_absolute_ieee_asset_url(value, IEEE_BASE_URL)):
+        if value and _is_ignored_ieee_asset_url(
+            _absolute_ieee_asset_url(value, IEEE_BASE_URL)
+        ):
             return True
     return False
 
@@ -141,7 +139,13 @@ def _supplementary_assets_from_ieee_multimedia_payload(
         if not isinstance(item, Mapping):
             continue
         url = _absolute_ieee_asset_url(
-            str(item.get("filePath") or item.get("fileUrl") or item.get("downloadUrl") or item.get("url") or ""),
+            str(
+                item.get("filePath")
+                or item.get("fileUrl")
+                or item.get("downloadUrl")
+                or item.get("url")
+                or ""
+            ),
             source_url,
         )
         if not url or _is_ignored_ieee_asset_url(url):
@@ -152,7 +156,9 @@ def _supplementary_assets_from_ieee_multimedia_payload(
         seen.add(key)
         filename = normalize_text(str(item.get("fileName") or ""))
         title = normalize_text(str(item.get("title") or ""))
-        description = normalize_text(html_lib.unescape(strip_html_tags(str(item.get("description") or "")) or ""))
+        description = normalize_text(
+            html_lib.unescape(strip_html_tags(str(item.get("description") or "")) or "")
+        )
         asset: dict[str, str] = {
             "kind": "supplementary",
             "heading": title or filename or "Supplementary Material",
@@ -180,7 +186,9 @@ def fetch_ieee_multimedia_assets(
     headers: Mapping[str, str],
     timeout: float = DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
 ) -> list[dict[str, str]]:
-    if not landing_attempt.article_number or not _landing_metadata_has_multimedia_scope(landing_attempt.landing_metadata):
+    if not landing_attempt.article_number or not _landing_metadata_has_multimedia_scope(
+        landing_attempt.landing_metadata
+    ):
         return []
     try:
         response = transport.request(
@@ -200,7 +208,9 @@ def fetch_ieee_multimedia_assets(
         return []
     if not isinstance(payload, Mapping):
         return []
-    response_url = _absolute_ieee_url(str(response.get("url") or multimedia_url), multimedia_url)
+    response_url = _absolute_ieee_url(
+        str(response.get("url") or multimedia_url), multimedia_url
+    )
     return _supplementary_assets_from_ieee_multimedia_payload(payload, response_url)
 
 
@@ -209,12 +219,17 @@ def _ieee_supplementary_token_match(text: str) -> bool:
     compact = re.sub(r"[^a-z0-9]+", "", normalized)
     for token in IEEE_SUPPLEMENTARY_SEMANTIC_TOKENS:
         normalized_token = token.lower()
-        if normalized_token in normalized or re.sub(r"[^a-z0-9]+", "", normalized_token) in compact:
+        if (
+            normalized_token in normalized
+            or re.sub(r"[^a-z0-9]+", "", normalized_token) in compact
+        ):
             return True
     return False
 
 
-def _ieee_node_identity_text(node: Tag, *, include_accessible_labels: bool = True) -> str:
+def _ieee_node_identity_text(
+    node: Tag, *, include_accessible_labels: bool = True
+) -> str:
     values: list[str] = []
     for key, value in (getattr(node, "attrs", None) or {}).items():
         normalized_key = normalize_text(str(key)).lower()
@@ -222,7 +237,13 @@ def _ieee_node_identity_text(node: Tag, *, include_accessible_labels: bool = Tru
             continue
         if normalized_key in {"title", "aria-label"} and not include_accessible_labels:
             continue
-        if normalized_key in {"id", "class", "role", "title", "aria-label"} or normalized_key.startswith("data-"):
+        if normalized_key in {
+            "id",
+            "class",
+            "role",
+            "title",
+            "aria-label",
+        } or normalized_key.startswith("data-"):
             if isinstance(value, list):
                 values.extend(normalize_text(str(item)) for item in value)
             else:
@@ -257,7 +278,8 @@ def _is_ieee_supplementary_scope_node(node: Tag) -> bool:
     if node_name not in {"section", "div", "aside", "ul", "ol"}:
         return False
     return _ieee_supplementary_token_match(_ieee_node_identity_text(node)) or any(
-        _ieee_supplementary_token_match(text) for text in _ieee_direct_heading_texts(node)
+        _ieee_supplementary_token_match(text)
+        for text in _ieee_direct_heading_texts(node)
     )
 
 
@@ -281,7 +303,9 @@ def _ieee_supplementary_scope_nodes(soup: BeautifulSoup) -> list[Tag]:
 
 
 def _is_ieee_marked_supplementary_anchor(anchor: Tag) -> bool:
-    return _ieee_supplementary_token_match(_ieee_node_identity_text(anchor, include_accessible_labels=False))
+    return _ieee_supplementary_token_match(
+        _ieee_node_identity_text(anchor, include_accessible_labels=False)
+    )
 
 
 def _ieee_anchor_semantic_text(anchor: Tag, href: str) -> str:
@@ -297,16 +321,21 @@ def _ieee_anchor_semantic_text(anchor: Tag, href: str) -> str:
     return " ".join(value for value in values if value).lower()
 
 
-def _is_ieee_supplementary_anchor(anchor: Tag, source_url: str, *, in_explicit_scope: bool) -> bool:
+def _is_ieee_supplementary_anchor(
+    anchor: Tag, source_url: str, *, in_explicit_scope: bool
+) -> bool:
     href = normalize_text(str(anchor.get("href") or ""))
     absolute_url = _absolute_ieee_asset_url(href, source_url)
     if not absolute_url or _is_ignored_ieee_asset_url(absolute_url):
         return False
     semantic_text = _ieee_anchor_semantic_text(anchor, href)
     if in_explicit_scope:
-        return _ieee_supplementary_token_match(semantic_text) or _has_ieee_supplementary_file_suffix(absolute_url)
+        return _ieee_supplementary_token_match(
+            semantic_text
+        ) or _has_ieee_supplementary_file_suffix(absolute_url)
     return _is_ieee_marked_supplementary_anchor(anchor) and (
-        _ieee_supplementary_token_match(semantic_text) or _has_ieee_supplementary_file_suffix(absolute_url)
+        _ieee_supplementary_token_match(semantic_text)
+        or _has_ieee_supplementary_file_suffix(absolute_url)
     )
 
 
@@ -316,7 +345,9 @@ def _ieee_supplementary_asset_from_anchor(
     *,
     in_explicit_scope: bool,
 ) -> dict[str, str] | None:
-    if not _is_ieee_supplementary_anchor(anchor, source_url, in_explicit_scope=in_explicit_scope):
+    if not _is_ieee_supplementary_anchor(
+        anchor, source_url, in_explicit_scope=in_explicit_scope
+    ):
         return None
     href = normalize_text(str(anchor.get("href") or ""))
     return {
@@ -332,21 +363,33 @@ def _ieee_supplementary_asset_from_anchor(
 
 
 def _supplementary_asset_key(asset: Mapping[str, Any]) -> str:
-    for field in ("full_size_url", "url", "download_url", "source_url", "preview_url", "original_url", "figure_page_url"):
+    for field in (
+        "full_size_url",
+        "url",
+        "download_url",
+        "source_url",
+        "preview_url",
+        "original_url",
+        "figure_page_url",
+    ):
         value = normalize_text(str(asset.get(field) or ""))
         if value:
             return value
     return ""
 
 
-def _extract_ieee_supplementary_assets(html_text: str, source_url: str) -> list[dict[str, str]]:
+def _extract_ieee_supplementary_assets(
+    html_text: str, source_url: str
+) -> list[dict[str, str]]:
     soup = BeautifulSoup(html_text, choose_parser())
     assets: list[dict[str, str]] = []
     seen: set[str] = set()
     scope_nodes = _ieee_supplementary_scope_nodes(soup)
 
     def add_anchor(anchor: Tag, *, in_explicit_scope: bool) -> None:
-        asset = _ieee_supplementary_asset_from_anchor(anchor, source_url, in_explicit_scope=in_explicit_scope)
+        asset = _ieee_supplementary_asset_from_anchor(
+            anchor, source_url, in_explicit_scope=in_explicit_scope
+        )
         if asset is None:
             return
         key = _supplementary_asset_key(asset)
@@ -376,31 +419,47 @@ def download_ieee_related_assets(
     *,
     user_agent: str,
     env: Mapping[str, str],
-    asset_profile: str = "all",
+    asset_profile: AssetProfile = "all",
+    browser_runtime_config: BrowserRuntimeConfig | None = None,
+    runtime_context: RuntimeContext | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     if output_dir is None or asset_profile == "none":
         return empty_asset_results()
     content = raw_payload.content
-    if normalize_text(content.route_kind if content is not None else "").lower() != "html":
+    if (
+        normalize_text(content.route_kind if content is not None else "").lower()
+        != "html"
+    ):
         return empty_asset_results()
-    extracted_assets = [dict(item) for item in (content.extracted_assets if content is not None else [])]
-    body_assets, supplementary_assets = split_body_and_supplementary_assets(extracted_assets)
+    extracted_assets = [
+        dict(item) for item in (content.extracted_assets if content is not None else [])
+    ]
+    body_assets, supplementary_assets = split_body_and_supplementary_assets(
+        extracted_assets
+    )
     body_assets = [
         dict(item)
         for item in body_assets
-        if normalize_text(str(item.get("kind") or "")).lower() in {"figure", "table", "formula"}
+        if normalize_text(str(item.get("kind") or "")).lower()
+        in {"figure", "table", "formula"}
         and normalize_text(str(item.get("section") or "")).lower() != "supplementary"
     ]
-    if not body_assets and not supplementary_assets:
-        return empty_asset_results()
-    merged_metadata = content.merged_metadata if content is not None else raw_payload.merged_metadata
+    merged_metadata = (
+        content.merged_metadata if content is not None else raw_payload.merged_metadata
+    )
     article_id = (
         normalize_doi(str((merged_metadata or {}).get("doi") or doi or ""))
         or normalize_doi(doi)
         or normalize_text(str(metadata.get("title") or ""))
         or raw_payload.source_url
     )
-    landing_or_source_url = normalize_text(str((merged_metadata or {}).get("landing_page_url") or raw_payload.source_url or ""))
+    landing_or_source_url = normalize_text(
+        str(
+            (merged_metadata or {}).get("landing_page_url")
+            or raw_payload.source_url
+            or ""
+        )
+    )
     article_number = (
         _article_number_from_metadata(merged_metadata)
         or _article_number_from_metadata(metadata)
@@ -408,10 +467,36 @@ def download_ieee_related_assets(
         or _article_number_from_url(landing_or_source_url)
     )
     canonical_landing_url = (
-        IEEE_DOCUMENT_URL_TEMPLATE.format(article_number=article_number) if article_number else landing_or_source_url
+        IEEE_DOCUMENT_URL_TEMPLATE.format(article_number=article_number)
+        if article_number
+        else landing_or_source_url
     )
     seed_urls = [canonical_landing_url] if canonical_landing_url else []
     concurrency = resolve_asset_download_concurrency(env)
+    if browser_runtime_config is not None:
+        from ._ieee_asset_recovery import download_ieee_assets_with_browser
+
+        return download_ieee_assets_with_browser(
+            transport=transport,
+            article_id=article_id,
+            output_dir=output_dir,
+            asset_profile=asset_profile,
+            body_assets=body_assets,
+            supplementary_assets=supplementary_assets,
+            merged_metadata=dict(merged_metadata or {}),
+            article_number=article_number,
+            canonical_landing_url=canonical_landing_url,
+            seed_urls=seed_urls,
+            concurrency=concurrency,
+            user_agent=user_agent,
+            content=content,
+            browser_runtime_config=browser_runtime_config,
+            runtime_context=runtime_context,
+            download_assets_fn=download_assets,
+            split_assets_fn=split_body_and_supplementary_assets,
+        )
+    if not body_assets and not supplementary_assets:
+        return empty_asset_results()
     body_result = (
         download_assets(
             FIGURE_KIND,
@@ -445,7 +530,10 @@ def download_ieee_related_assets(
         else empty_asset_results()
     )
     return {
-        "assets": [*list(body_result.get("assets") or []), *list(supplementary_result.get("assets") or [])],
+        "assets": [
+            *list(body_result.get("assets") or []),
+            *list(supplementary_result.get("assets") or []),
+        ],
         "asset_failures": [
             *list(body_result.get("asset_failures") or []),
             *list(supplementary_result.get("asset_failures") or []),
