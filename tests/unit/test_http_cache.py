@@ -5,6 +5,8 @@ import gzip
 import io
 import json
 import logging
+import socket
+import ssl
 import threading
 import unittest
 import urllib.error
@@ -85,6 +87,15 @@ def lower_header_map(headers: dict[str, str]) -> dict[str, str]:
 
 
 class HttpTransportCacheTests(unittest.TestCase):
+    def test_discarded_response_is_closed_and_returned_to_the_pool(self) -> None:
+        transport = http_module.HttpTransport()
+        response = FakeHTTPResponse(b"redirect", "https://example.test/redirect")
+
+        transport._close_response(response)
+
+        self.assertTrue(response.closed)
+        self.assertTrue(response.released)
+
     def test_runtime_metadata_cache_ttl_defaults_to_one_day_and_allows_env_override(
         self,
     ) -> None:
@@ -149,7 +160,7 @@ class HttpTransportCacheTests(unittest.TestCase):
         )
         self.assertIsNone(markdown_assets_context.transport.disk_cache_dir)
 
-    def test_disk_cache_key_redacts_crossref_mailto_query_param(self) -> None:
+    def test_sensitive_query_requests_are_not_written_to_disk_cache(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             first_transport = http_module.HttpTransport(
                 cache_ttl=30,
@@ -181,7 +192,7 @@ class HttpTransportCacheTests(unittest.TestCase):
                     query={"mailto": "alice@example.test"},
                 )
             with mock.patch.object(
-                second_transport, "_perform_request"
+                second_transport, "_perform_request", side_effect=fake_urlopen
             ) as mocked_request:
                 response = second_transport.request(
                     "GET",
@@ -191,7 +202,8 @@ class HttpTransportCacheTests(unittest.TestCase):
                 )
 
         self.assertEqual(response["body"], b'{"message":{"DOI":"10.1234/example"}}')
-        mocked_request.assert_not_called()
+        mocked_request.assert_called_once()
+        self.assertEqual(list(Path(tmpdir).rglob("*.json")), [])
 
     def test_vendor_json_and_xml_content_types_are_cacheable_textual_payloads(
         self,
@@ -372,11 +384,11 @@ class HttpTransportCacheTests(unittest.TestCase):
             _, cached_url, cached_headers = cache_key
             self.assertNotIn("springer-secret", cached_url)
             self.assertNotIn("alice@example.com", cached_url)
-            self.assertIn("api_key=%2A%2A%2A", cached_url)
-            self.assertIn("mailto=%2A%2A%2A", cached_url)
+            self.assertIn("api_key=sha256%3A", cached_url)
+            self.assertIn("mailto=sha256%3A", cached_url)
             self.assertIn(("accept", "application/json"), cached_headers)
             self.assertIn(("accept-language", "en-US"), cached_headers)
-            self.assertNotIn(("user-agent", "UnitTest/1.0"), cached_headers)
+            self.assertTrue(any(key == "user-agent" for key, _ in cached_headers))
             self.assertFalse(any(key == "x-els-reqid" for key, _ in cached_headers))
             seen_header_values.update(
                 value for key, value in cached_headers if key == "x-els-apikey"
@@ -500,7 +512,13 @@ class HttpTransportCacheTests(unittest.TestCase):
                     },
                 )
             with mock.patch.object(
-                first_reader, "_perform_request"
+                first_reader,
+                "_perform_request",
+                return_value=FakeHTTPResponse(
+                    b"fresh-first",
+                    "https://example.test/article",
+                    headers={"content-type": "text/plain"},
+                ),
             ) as mocked_first_request:
                 first = first_reader.request(
                     "GET",
@@ -511,7 +529,13 @@ class HttpTransportCacheTests(unittest.TestCase):
                     },
                 )
             with mock.patch.object(
-                second_reader, "_perform_request"
+                second_reader,
+                "_perform_request",
+                return_value=FakeHTTPResponse(
+                    b"fresh-second",
+                    "https://example.test/article",
+                    headers={"content-type": "text/plain"},
+                ),
             ) as mocked_second_request:
                 second = second_reader.request(
                     "GET",
@@ -528,11 +552,11 @@ class HttpTransportCacheTests(unittest.TestCase):
                 path.read_text(encoding="utf-8") for path in disk_files
             )
 
-        self.assertEqual(first["body"], b"payload-for-first")
-        self.assertEqual(second["body"], b"payload-for-second")
-        mocked_first_request.assert_not_called()
-        mocked_second_request.assert_not_called()
-        self.assertEqual(len(disk_files), 2)
+        self.assertEqual(first["body"], b"fresh-first")
+        self.assertEqual(second["body"], b"fresh-second")
+        mocked_first_request.assert_called_once()
+        mocked_second_request.assert_called_once()
+        self.assertEqual(len(disk_files), 0)
         self.assertNotIn("els-first-secret", rendered_paths)
         self.assertNotIn("els-second-secret", rendered_paths)
         self.assertNotIn("els-first-secret", rendered_payloads)
@@ -598,6 +622,61 @@ class HttpTransportCacheTests(unittest.TestCase):
         self.assertIn("X-Amz-Signature=%2A%2A%2A", redacted)
         self.assertIn("response-content-type=application%2Foctet-stream", redacted)
 
+    def test_url_redaction_covers_google_signed_query_parameters(self) -> None:
+        signed_url = (
+            "https://storage.googleapis.com/plos-corpus-prod/article.xml"
+            "?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+            "&X-Goog-Credential=test-credential"
+            "&X-Goog-Signature=test-signature"
+            "&generation=123"
+        )
+
+        redacted = http_module.redact_url_for_cache(signed_url)
+
+        self.assertNotIn("test-credential", redacted)
+        self.assertNotIn("test-signature", redacted)
+        self.assertIn("X-Goog-Algorithm=%2A%2A%2A", redacted)
+        self.assertIn("X-Goog-Credential=%2A%2A%2A", redacted)
+        self.assertIn("X-Goog-Signature=%2A%2A%2A", redacted)
+        self.assertIn("generation=123", redacted)
+
+    def test_signed_redirect_location_is_not_cached(self) -> None:
+        signed_location = (
+            "https://storage.googleapis.com/plos-corpus-prod/article.xml"
+            "?X-Goog-Credential=test-credential"
+            "&X-Goog-Signature=test-signature"
+        )
+        with tempfile.TemporaryDirectory() as disk_cache_dir:
+            transport = http_module.HttpTransport(
+                cache_ttl=30,
+                cache_capacity=128,
+                disk_cache_dir=disk_cache_dir,
+            )
+            with mock.patch.object(
+                transport,
+                "_perform_request",
+                return_value=FakeHTTPResponse(
+                    b"",
+                    "https://journals.plos.org/plosone/article/file?id=test",
+                    status=302,
+                    headers={
+                        "content-type": "text/html",
+                        "location": signed_location,
+                    },
+                ),
+            ):
+                response = transport.request(
+                    "GET",
+                    "https://journals.plos.org/plosone/article/file?id=test",
+                )
+
+            self.assertEqual(response["headers"]["location"], signed_location)
+            self.assertEqual(len(transport._cache), 0)
+            self.assertEqual(
+                list(Path(disk_cache_dir).rglob("*.json")),
+                [],
+            )
+
     def test_cache_key_redacts_sensitive_query_params(self) -> None:
         transport = http_module.HttpTransport(cache_ttl=30, cache_capacity=128)
 
@@ -620,8 +699,60 @@ class HttpTransportCacheTests(unittest.TestCase):
         _, cached_url, _ = cache_key
         self.assertNotIn("springer-secret", cached_url)
         self.assertNotIn("alice@example.com", cached_url)
-        self.assertIn("api_key=%2A%2A%2A", cached_url)
-        self.assertIn("mailto=%2A%2A%2A", cached_url)
+        self.assertIn("api_key=sha256%3A", cached_url)
+        self.assertIn("mailto=sha256%3A", cached_url)
+
+    def test_same_sensitive_query_scope_hits_memory_without_leaking_secret(
+        self,
+    ) -> None:
+        transport = http_module.HttpTransport(cache_ttl=30, cache_capacity=128)
+        with mock.patch.object(
+            transport,
+            "_perform_request",
+            return_value=FakeHTTPResponse(
+                b"scoped",
+                "https://example.test/article?token=alice",
+                headers={"content-type": "text/plain"},
+            ),
+        ) as request:
+            first = transport.request(
+                "GET", "https://example.test/article", query={"token": "alice"}
+            )
+            second = transport.request(
+                "GET", "https://example.test/article", query={"token": "alice"}
+            )
+
+        self.assertEqual(first["body"], b"scoped")
+        self.assertEqual(second["body"], b"scoped")
+        request.assert_called_once()
+        self.assertNotIn("alice", repr(tuple(transport._cache)))
+
+    def test_private_no_store_and_set_cookie_responses_are_not_cached(self) -> None:
+        for response_header in (
+            {"cache-control": "no-store"},
+            {"cache-control": "private, max-age=60"},
+            {"set-cookie": "session=secret"},
+            {"vary": "*"},
+        ):
+            transport = http_module.HttpTransport(cache_ttl=30, cache_capacity=128)
+            headers = {"content-type": "text/plain", **response_header}
+            with mock.patch.object(
+                transport,
+                "_perform_request",
+                side_effect=[
+                    FakeHTTPResponse(
+                        b"first", "https://example.test/article", headers=headers
+                    ),
+                    FakeHTTPResponse(
+                        b"second", "https://example.test/article", headers=headers
+                    ),
+                ],
+            ) as request:
+                first = transport.request("GET", "https://example.test/article")
+                second = transport.request("GET", "https://example.test/article")
+            self.assertEqual((first["body"], second["body"]), (b"first", b"second"))
+            self.assertEqual(request.call_count, 2)
+            self.assertEqual(len(transport._cache), 0)
 
     def test_cache_key_distinguishes_accept_language_and_authorization_presence(
         self,
@@ -872,7 +1003,7 @@ class HttpTransportCacheTests(unittest.TestCase):
         self.assertTrue(response.released)
         self.assertFalse(response.closed)
 
-    def test_oversized_pooled_response_is_closed_without_releasing_connection(
+    def test_oversized_pooled_response_is_closed_before_returning_pool_slot(
         self,
     ) -> None:
         transport = http_module.HttpTransport(
@@ -889,7 +1020,7 @@ class HttpTransportCacheTests(unittest.TestCase):
                 )
 
         self.assertTrue(response.closed)
-        self.assertFalse(response.released)
+        self.assertTrue(response.released)
 
     def test_http_error_response_releases_connection_after_request_failure(
         self,
@@ -1006,7 +1137,8 @@ class HttpTransportCacheTests(unittest.TestCase):
 
         self.assertEqual(call_count, 2)
         self.assertEqual(response["body"], b"ok")
-        mocked_sleep.assert_called_once_with(1)
+        mocked_sleep.assert_called_once()
+        self.assertAlmostEqual(mocked_sleep.call_args.args[0], 1.0, places=3)
         rate_limited_error.close.assert_called_once_with()
 
     def test_rate_limited_request_without_retry_after_uses_short_fallback_backoff(
@@ -1041,14 +1173,18 @@ class HttpTransportCacheTests(unittest.TestCase):
 
         self.assertEqual(call_count, 2)
         self.assertEqual(response["body"], b"ok")
-        mocked_sleep.assert_called_once_with(
-            http_module.DEFAULT_TRANSIENT_BACKOFF_BASE_SECONDS
+        mocked_sleep.assert_called_once()
+        self.assertAlmostEqual(
+            mocked_sleep.call_args.args[0],
+            http_module.DEFAULT_TRANSIENT_BACKOFF_BASE_SECONDS,
+            places=3,
         )
         rate_limited_error.close.assert_called_once_with()
 
     def test_transient_http_5xx_is_retried_with_exponential_backoff(self) -> None:
         transport = http_module.HttpTransport(cache_ttl=0, cache_capacity=0)
         call_count = 0
+        timings: list[tuple[str, float]] = []
 
         def fake_urlopen(request, timeout=20):
             nonlocal call_count
@@ -1061,16 +1197,24 @@ class HttpTransportCacheTests(unittest.TestCase):
 
         with mock.patch.object(transport, "_perform_request", side_effect=fake_urlopen):
             with mock.patch.object(http_module.time, "sleep") as mocked_sleep:
-                response = transport.request(
-                    "GET",
-                    "https://example.test/article",
-                    headers={"Accept": "text/plain"},
-                    retry_on_transient=True,
-                )
+                with http_module.http_timing_collector(
+                    lambda stage, seconds: timings.append((stage, seconds))
+                ):
+                    response = transport.request(
+                        "GET",
+                        "https://example.test/article",
+                        headers={"Accept": "text/plain"},
+                        retry_on_transient=True,
+                    )
 
         self.assertEqual(call_count, 3)
         self.assertEqual(response["body"], b"ok")
         self.assertEqual(mocked_sleep.call_args_list, [mock.call(0.5), mock.call(1.0)])
+        self.assertEqual(
+            [stage for stage, _seconds in timings],
+            ["retry_seconds", "retry_seconds", "http_seconds"],
+        )
+        self.assertTrue(all(seconds >= 0 for _stage, seconds in timings))
 
     def test_urllib3_read_timeout_is_retried_with_exponential_backoff(self) -> None:
         transport = http_module.HttpTransport(cache_ttl=0, cache_capacity=0)
@@ -1172,7 +1316,7 @@ class HttpTransportCacheTests(unittest.TestCase):
         self.assertEqual(response["body"], b"ok")
         self.assertEqual(mocked_sleep.call_args_list, [mock.call(0.5), mock.call(1.0)])
 
-    def test_non_timeout_urlerror_is_not_retried(self) -> None:
+    def test_connection_reset_urlerror_is_retried(self) -> None:
         transport = http_module.HttpTransport(cache_ttl=0, cache_capacity=0)
         call_count = 0
 
@@ -1191,10 +1335,10 @@ class HttpTransportCacheTests(unittest.TestCase):
                         retry_on_transient=True,
                     )
 
-        self.assertEqual(call_count, 1)
-        mocked_sleep.assert_not_called()
+        self.assertEqual(call_count, 3)
+        self.assertEqual(mocked_sleep.call_args_list, [mock.call(0.5), mock.call(1.0)])
 
-    def test_non_timeout_urllib3_error_is_not_retried(self) -> None:
+    def test_connection_reset_urllib3_error_is_retried(self) -> None:
         transport = http_module.HttpTransport(cache_ttl=0, cache_capacity=0)
         call_count = 0
 
@@ -1215,8 +1359,133 @@ class HttpTransportCacheTests(unittest.TestCase):
                         retry_on_transient=True,
                     )
 
-        self.assertEqual(call_count, 1)
-        mocked_sleep.assert_not_called()
+        self.assertEqual(call_count, 3)
+        self.assertEqual(mocked_sleep.call_args_list, [mock.call(0.5), mock.call(1.0)])
+
+    def test_temporary_dns_failure_is_retried_but_tls_failure_is_not(self) -> None:
+        retrying_transport = http_module.HttpTransport(
+            cache_ttl=0,
+            cache_capacity=0,
+        )
+        dns_calls = 0
+
+        def temporary_dns_failure(request, timeout=20):
+            del request, timeout
+            nonlocal dns_calls
+            dns_calls += 1
+            raise urllib.error.URLError(
+                socket.gaierror(
+                    socket.EAI_AGAIN, "temporary failure in name resolution"
+                )
+            )
+
+        with mock.patch.object(
+            retrying_transport,
+            "_perform_request",
+            side_effect=temporary_dns_failure,
+        ):
+            with mock.patch.object(http_module.time, "sleep") as mocked_sleep:
+                with self.assertRaises(http_module.RequestFailure) as dns_failure:
+                    retrying_transport.request(
+                        "GET",
+                        "https://example.test/article",
+                        retry_on_transient=True,
+                    )
+
+        self.assertEqual(dns_calls, 3)
+        self.assertEqual(
+            dns_failure.exception.error_category,
+            http_module.RequestErrorCategory.DNS_ERROR,
+        )
+        self.assertEqual(
+            mocked_sleep.call_args_list,
+            [mock.call(0.5), mock.call(1.0)],
+        )
+
+        tls_transport = http_module.HttpTransport(cache_ttl=0, cache_capacity=0)
+        tls_calls = 0
+
+        def tls_failure(request, timeout=20):
+            del request, timeout
+            nonlocal tls_calls
+            tls_calls += 1
+            raise urllib.error.URLError(ssl.SSLError("certificate verify failed"))
+
+        with mock.patch.object(
+            tls_transport,
+            "_perform_request",
+            side_effect=tls_failure,
+        ):
+            with mock.patch.object(http_module.time, "sleep") as tls_sleep:
+                with self.assertRaises(http_module.RequestFailure) as tls_error:
+                    tls_transport.request(
+                        "GET",
+                        "https://example.test/article",
+                        retry_on_transient=True,
+                    )
+
+        self.assertEqual(tls_calls, 1)
+        self.assertEqual(
+            tls_error.exception.error_category,
+            http_module.RequestErrorCategory.TLS_ERROR,
+        )
+        tls_sleep.assert_not_called()
+
+    def test_transient_backoff_releases_same_host_concurrency_slot(self) -> None:
+        transport = http_module.HttpTransport(
+            cache_ttl=0,
+            cache_capacity=0,
+            per_host_concurrency=1,
+        )
+        backoff_started = threading.Event()
+        second_completed = threading.Event()
+        first_calls = 0
+
+        def fake_request(request, timeout=20):
+            del timeout
+            nonlocal first_calls
+            if request.full_url.endswith("/second"):
+                second_completed.set()
+                return FakeHTTPResponse(b"second", request.full_url)
+            first_calls += 1
+            if first_calls == 1:
+                return FakeHTTPResponse(
+                    b"retry",
+                    request.full_url,
+                    status=503,
+                )
+            return FakeHTTPResponse(b"first", request.full_url)
+
+        def observe_backoff(_seconds: float) -> None:
+            backoff_started.set()
+            self.assertTrue(
+                second_completed.wait(timeout=1),
+                "same-host request could not use the slot during retry backoff",
+            )
+
+        with (
+            mock.patch.object(transport, "_perform_request", side_effect=fake_request),
+            mock.patch.object(
+                transport, "_cancellable_sleep", side_effect=observe_backoff
+            ),
+            concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor,
+        ):
+            first = executor.submit(
+                transport.request,
+                "GET",
+                "https://example.test/first",
+                retry_on_transient=True,
+            )
+            self.assertTrue(backoff_started.wait(timeout=1))
+            second = executor.submit(
+                transport.request,
+                "GET",
+                "https://example.test/second",
+            )
+            self.assertEqual(second.result(timeout=2)["body"], b"second")
+            self.assertEqual(first.result(timeout=2)["body"], b"first")
+
+        self.assertEqual(first_calls, 2)
 
     def test_http_error_wrapper_is_closed_when_request_failure_is_raised(self) -> None:
         transport = http_module.HttpTransport(cache_ttl=0, cache_capacity=0)
@@ -1365,6 +1634,87 @@ class HttpTransportCacheTests(unittest.TestCase):
         self.assertEqual(second["body"], b"cached body")
         self.assertEqual(second_transport.cache_stats_snapshot()["disk_fresh_hit"], 1)
         mocked_request.assert_not_called()
+
+    def test_disk_cache_writes_use_incremental_index_between_reconciliations(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transport = http_module.HttpTransport(
+                cache_ttl=30,
+                cache_capacity=128,
+                disk_cache_dir=Path(tmpdir),
+                disk_cache_max_entries=100,
+                disk_cache_max_bytes=0,
+                disk_cache_max_age_seconds=0,
+            )
+
+            def fake_urlopen(request, timeout=20):
+                del timeout
+                return FakeHTTPResponse(
+                    request.full_url.encode("utf-8"),
+                    request.full_url,
+                    headers={"content-type": "text/plain"},
+                )
+
+            with (
+                mock.patch.object(
+                    transport,
+                    "_perform_request",
+                    side_effect=fake_urlopen,
+                ),
+                mock.patch.object(
+                    transport,
+                    "_iter_disk_cache_entries",
+                    wraps=transport._iter_disk_cache_entries,
+                ) as full_scan,
+            ):
+                for index in range(12):
+                    transport.request(
+                        "GET",
+                        f"https://example.test/incremental/{index}",
+                    )
+
+            self.assertEqual(full_scan.call_count, 1)
+            self.assertEqual(len(transport._disk_cache_entries), 12)
+
+    def test_disk_cache_periodic_reconcile_repairs_external_index_drift(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transport = http_module.HttpTransport(
+                cache_ttl=30,
+                cache_capacity=128,
+                disk_cache_dir=Path(tmpdir),
+                disk_cache_max_entries=100,
+                disk_cache_max_bytes=0,
+                disk_cache_max_age_seconds=0,
+            )
+
+            def fake_urlopen(request, timeout=20):
+                del timeout
+                return FakeHTTPResponse(
+                    request.full_url.encode("utf-8"),
+                    request.full_url,
+                    headers={"content-type": "text/plain"},
+                )
+
+            with mock.patch.object(
+                transport,
+                "_perform_request",
+                side_effect=fake_urlopen,
+            ):
+                for suffix in ("one", "two"):
+                    transport.request("GET", f"https://example.test/{suffix}")
+
+            deleted = next(iter(transport._disk_cache_entries))
+            deleted.unlink()
+            transport._disk_cache_writes_since_reconcile = 10**9
+            transport._prune_disk_cache()
+
+            self.assertNotIn(deleted, transport._disk_cache_entries)
+            self.assertEqual(len(transport._disk_cache_entries), 1)
+            self.assertEqual(
+                transport._disk_cache_total_bytes,
+                sum(entry.size for entry in transport._disk_cache_entries.values()),
+            )
 
     def test_disk_cache_prunes_oldest_entries_by_entry_cap(self) -> None:
         now = 1000.0

@@ -20,16 +20,18 @@ from ..extraction.html.provider_rules import (
     ProviderHtmlRules,
 )
 from ..models import AssetProfile
-from ..provider_catalog import BodyTextThresholds, ProviderSpec
+from ..provider_catalog import BodyTextThresholds, ProviderRouteSpec, ProviderSpec
 from ..publisher_identity import normalize_doi
 from ..reason_codes import PDF_FALLBACK
 from ..runtime import RuntimeContext
 from ..utils import empty_asset_results, normalize_text
 from . import _iop_html, browser_workflow
 from ._registry import ProviderBundle, register_provider_bundle
-from .base import RawFulltextPayload
+from .base import (
+    ProviderFailure,
+    RawFulltextPayload,
+)
 from .browser_runtime import BrowserRuntimeFailure
-from .browser_workflow.profile import ProviderBrowserProfile
 
 
 register_provider_bundle(
@@ -57,6 +59,41 @@ register_provider_bundle(
             requires_playwright=True,
             requires_browser_runtime=True,
             body_text_thresholds=BodyTextThresholds(min_chars=1200),
+            routes=(
+                ProviderRouteSpec(
+                    name="metadata",
+                    kind="metadata",
+                    source="crossref_metadata",
+                    concurrency=2,
+                ),
+                ProviderRouteSpec(
+                    name="browser_html",
+                    kind="html",
+                    source="iop_html",
+                    browser_required=True,
+                    browser_preflight=True,
+                    auth_supported=True,
+                    requires_playwright=True,
+                    timeout_seconds=120,
+                    concurrency=1,
+                    rate_policy="selected_browser_serial",
+                    acceptance_policy="provider_html_body",
+                ),
+                ProviderRouteSpec(
+                    name="browser_pdf",
+                    kind="pdf",
+                    source="iop_pdf",
+                    browser_required=True,
+                    browser_preflight=True,
+                    auth_supported=True,
+                    requires_playwright=True,
+                    requires_pdf_conversion=True,
+                    timeout_seconds=120,
+                    concurrency=1,
+                    rate_policy="selected_browser_serial",
+                    acceptance_policy="validated_pdf",
+                ),
+            ),
         ),
         html_rules=ProviderHtmlRules(
             name="iop",
@@ -96,18 +133,10 @@ register_provider_bundle(
 )
 
 
-IOP_BROWSER_PROFILE = ProviderBrowserProfile(
-    name="iop",
+IOP_BROWSER_PROFILE = browser_workflow.make_browser_profile(
+    "iop",
     article_source_name="iop_html",
-    label="IOP Publishing",
-    hosts=("iopscience.iop.org",),
-    base_hosts=("iopscience.iop.org",),
-    html_path_templates=("/article/{doi}",),
-    pdf_path_templates=("/article/{doi}/pdf",),
-    crossref_pdf_position=0,
-    markdown_publisher="iop",
     fallback_author_extractor=_iop_html.extract_authors,
-    shared_browser_image_fetcher=True,
 )
 
 
@@ -237,13 +266,21 @@ class IopClient(browser_workflow.BrowserWorkflowClient):
                 doi=normalized_doi,
             )
             self.deps.ensure_runtime_ready(runtime)
-        except BrowserRuntimeFailure as exc:
+        except (BrowserRuntimeFailure, ProviderFailure) as exc:
+            failure_message = getattr(exc, "message", None) or str(exc)
+            failure_reason = getattr(exc, "kind", None) or getattr(
+                exc, "code", "browser_runtime_failed"
+            )
+            failure_details = dict(getattr(exc, "details", None) or {})
             runtime_failures = [
                 _supplementary_index_failure(
                     index_url,
                     "iop_supplementary_index_runtime_failed",
-                    message=exc.message,
-                    details={"runtime_reason": exc.kind, **exc.details},
+                    message=failure_message,
+                    details={
+                        "runtime_reason": failure_reason,
+                        **failure_details,
+                    },
                 )
                 for index_url in index_urls
             ]
@@ -277,6 +314,7 @@ class IopClient(browser_workflow.BrowserWorkflowClient):
             cdp_endpoint=getattr(runtime, "cdp_endpoint", None),
             profile_dir=getattr(runtime, "profile_dir", None),
             user_data_dir=getattr(runtime, "user_data_dir", None),
+            browser_config=runtime,
         )
         resolved_assets: list[dict[str, Any]] = []
         failures: list[dict[str, Any]] = []

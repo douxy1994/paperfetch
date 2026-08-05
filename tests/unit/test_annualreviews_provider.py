@@ -5,8 +5,11 @@ import tempfile
 from pathlib import Path
 from unittest import mock
 
+from bs4 import BeautifulSoup
+
 from paper_fetch.provider_catalog import PROVIDER_CATALOG, SOURCE_PROVIDER_MAP
 from paper_fetch.extraction.html.signals import HtmlExtractionFailure
+from paper_fetch.http import RequestFailure
 from paper_fetch.providers import _annualreviews_html, browser_runtime
 from paper_fetch.providers._pdf_common import pdf_fetch_result_from_bytes
 from paper_fetch.providers._registry import provider_bundle
@@ -246,6 +249,38 @@ def test_markdown_contract_table_fixture() -> None:
     assert "Article metrics loading..." not in markdown
 
 
+def test_annualreviews_table_uses_shared_span_and_header_normalization() -> None:
+    soup = BeautifulSoup(
+        """
+<div class="table-container">
+  <table class="html-fulltext-inline-table">
+    <thead>
+      <tr><th rowspan="2">Region</th><th colspan="2">Period</th></tr>
+      <tr><th>Mean</th><th>Trend</th></tr>
+    </thead>
+    <tbody>
+      <tr><td rowspan="2">Asia</td><td>10</td><td>+1</td></tr>
+      <tr><td>11</td><td>+2</td></tr>
+    </tbody>
+  </table>
+  <div class="tabFoot"><p>Source note.</p></div>
+</div>
+""",
+        "html.parser",
+    )
+    table_container = soup.select_one(".table-container")
+    table = soup.select_one("table")
+    assert table_container is not None
+    assert table is not None
+
+    markdown = _annualreviews_html._markdown_table_block(table, table_container)
+
+    assert "| Region | Period / Mean | Period / Trend |" in markdown
+    assert "| Asia" in markdown
+    assert markdown.count("| Asia") == 2
+    assert "Source note." in markdown
+
+
 def test_markdown_contract_formula_fixture() -> None:
     # markdown-review: purpose=formula doi=10.1146/annurev-neuro-062111-150343
     markdown = _render_markdown_for_fixture(FORMULA_DOI)
@@ -410,7 +445,18 @@ def test_download_related_assets_fetches_annualreviews_body_figure() -> None:
 </body></html>
 """
     image_body = png_header(640, 480)
-    client = AnnualreviewsClient(transport=AssetTransport({}), env={})
+    client = AnnualreviewsClient(
+        transport=AssetTransport(
+            {
+                ("GET", figure_url): RequestFailure(
+                    403,
+                    "Browser session required.",
+                    url=figure_url,
+                )
+            }
+        ),
+        env={},
+    )
     shared_fetcher = mock.Mock(
         return_value={
             "status_code": 200,

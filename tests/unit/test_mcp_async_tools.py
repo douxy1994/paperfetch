@@ -75,7 +75,7 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
             )
             await asyncio.sleep(0.05)
 
-        self.assertFalse(result.isError)
+        self.assertFalse(result.is_error)
         self.assertEqual(
             ctx.progress,
             [
@@ -89,6 +89,22 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(ctx.session.messages[0]["data"]["query"], "10.1000/example")
         self.assertEqual(captured["context"].artifact_mode, "markdown-assets")
         self.assertIsNone(captured["context"].transport.disk_cache_dir)
+        self.assertEqual(result.structured_content["status"], "ok")
+        self.assertEqual(
+            result.structured_content["acceptance"],
+            {
+                "overall": "degraded",
+                "identity": "resolved",
+                "fetch": "ok",
+                "content": "fulltext",
+                "asset": "not_requested",
+                "output": "complete",
+                "provenance": "partial",
+                "has_fulltext": True,
+                "has_abstract": True,
+                "token_estimate": 128,
+            },
+        )
 
     async def test_fetch_paper_tool_async_sets_cancellation_flag_for_worker_transport(
         self,
@@ -175,7 +191,7 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
             )
             await asyncio.sleep(0.05)
 
-        self.assertFalse(result.isError)
+        self.assertFalse(result.is_error)
         self.assertEqual(
             ctx.progress,
             [
@@ -198,11 +214,11 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
             mode="metadata",
         )
 
-        self.assertTrue(result.isError)
-        self.assertEqual(result.structuredContent["status"], "error")
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["status"], "error")
         self.assertIn(
             "queries must contain at most 50 entries.",
-            result.structuredContent["reason"],
+            result.structured_content["reason"],
         )
 
     async def test_batch_resolve_tool_async_reports_per_query_progress(self) -> None:
@@ -223,7 +239,7 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
             )
             await asyncio.sleep(0.05)
 
-        self.assertFalse(result.isError)
+        self.assertFalse(result.is_error)
         self.assertEqual(
             ctx.progress,
             [
@@ -265,17 +281,17 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
                 ctx=ctx,
             )
 
-        self.assertFalse(result.isError)
-        self.assertEqual(result.structuredContent["schema_version"], 1)
-        self.assertTrue(result.structuredContent["aborted"])
+        self.assertFalse(result.is_error)
+        self.assertEqual(result.structured_content["schema_version"], 2)
+        self.assertTrue(result.structured_content["aborted"])
         self.assertEqual(
-            result.structuredContent["abort_reason"]["status"], "rate_limited"
+            result.structured_content["abort_reason"]["status"], "rate_limited"
         )
         self.assertEqual(
-            result.structuredContent["abort_reason"]["code"], "rate_limited"
+            result.structured_content["abort_reason"]["code"], "rate_limited"
         )
         self.assertEqual(
-            result.structuredContent["abort_reason"]["retry_after_seconds"], 5
+            result.structured_content["abort_reason"]["retry_after_seconds"], 5
         )
         self.assertEqual(seen_queries, ["10.1000/one", "10.1000/two"])
         self.assertEqual(
@@ -287,9 +303,9 @@ class McpAsyncToolTests(unittest.IsolatedAsyncioTestCase):
             queries=[f"10.1000/{index}" for index in range(51)],
         )
 
-        self.assertTrue(result.isError)
-        self.assertEqual(result.structuredContent["status"], "error")
+        self.assertTrue(result.is_error)
+        self.assertEqual(result.structured_content["status"], "error")
         self.assertIn(
             "queries must contain at most 50 entries.",
-            result.structuredContent["reason"],
+            result.structured_content["reason"],
         )

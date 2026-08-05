@@ -1,68 +1,397 @@
 from __future__ import annotations
 
+import json
 import os
 from pathlib import Path
 import tempfile
 import unittest
+from collections import Counter
+
+import pytest
 
 from paper_fetch.http import HttpTransport
+from paper_fetch.provider_catalog import provider_has_browser_route
+from paper_fetch.publisher_identity import normalize_doi
+from paper_fetch.reason_codes import NO_ACCESS
 from paper_fetch.runtime import RuntimeContext
 from paper_fetch.service import FetchStrategy, fetch_paper
+from paper_fetch.workflow.types import PaperFetchFailure
+from paper_fetch.workflow.acceptance import (
+    AssetAcceptanceStatus,
+    ContentAcceptanceStatus,
+    FetchAcceptanceStatus,
+    IdentityAcceptanceStatus,
+    OverallAcceptanceStatus,
+    OutputAcceptanceStatus,
+    evaluate_fetch_acceptance,
+)
 from tests.live._runtime_env import (
     build_isolated_live_env,
-    require_selected_browser_or_skip,
+    preflight_selected_browser_or_skip,
 )
 from tests.provider_benchmark_samples import (
+    iter_provider_benchmark_samples,
     provider_benchmark_sample,
-    source_trail_matches,
 )
 
 
 RUN_LIVE = os.environ.get("PAPER_FETCH_RUN_LIVE") == "1"
-RUN_IEEE_BROWSER_LIVE = os.environ.get("PAPER_FETCH_RUN_IEEE_BROWSER_LIVE") == "1"
-IEEE_BROWSER_ASSET_DOI = "10.1109/ACCESS.2024.3414424"
-IEEE_BROWSER_ASSET_URL = (
-    "https://ieeexplore.ieee.org/mediastore/IEEE/content/media/"
-    "6287639/10380310/10558792/liu2-3414424-large.gif"
-)
+RUN_AIP_COLD_STABILITY = os.environ.get("PAPER_FETCH_RUN_AIP_COLD_STABILITY") == "1"
 ELSEVIER_SAMPLE = provider_benchmark_sample("elsevier")
-SPRINGER_SAMPLE = provider_benchmark_sample("springer")
-WILEY_SAMPLE = provider_benchmark_sample("wiley")
-SCIENCE_SAMPLE = provider_benchmark_sample("science")
-PNAS_SAMPLE = provider_benchmark_sample("pnas")
-IEEE_SAMPLE = provider_benchmark_sample("ieee")
-ARXIV_SAMPLE = provider_benchmark_sample("arxiv")
-AMS_SAMPLE = provider_benchmark_sample("ams")
-COPERNICUS_SAMPLE = provider_benchmark_sample("copernicus")
+AIP_SAMPLE = provider_benchmark_sample("aip")
+AIP_COLD_START_ATTEMPTS = 5
 
 
-def fetch_article(query: str, *, transport: HttpTransport, env: dict[str, str]):
-    context = RuntimeContext(env=env, transport=transport, download_dir=None)
+class _PytestSkipper:
+    @staticmethod
+    def skipTest(message: str) -> None:
+        pytest.skip(message)
+
+    @staticmethod
+    def fail(message: str) -> None:
+        pytest.fail(message)
+
+
+def _skip_legal_access_boundary(provider: str, exc: PaperFetchFailure) -> None:
+    if exc.status == NO_ACCESS:
+        pytest.skip(
+            f"{provider} live route reached a legal access boundary; "
+            f"configure entitlement/authentication before retrying ({exc.status})."
+        )
+
+
+def fetch_envelope(
+    query: str,
+    *,
+    transport: HttpTransport,
+    env: dict[str, str],
+    download_dir: Path | None = None,
+    artifact_mode: str = "none",
+    preferred_provider: str | None = None,
+    asset_profile: str | None = None,
+):
+    context = RuntimeContext(
+        env=env,
+        transport=transport,
+        download_dir=download_dir,
+        artifact_mode=artifact_mode,
+    )
     try:
         envelope = fetch_paper(
             query,
             modes={"article"},
             strategy=FetchStrategy(
-                allow_metadata_only_fallback=True,
+                allow_metadata_only_fallback=False,
+                preferred_providers=(
+                    [preferred_provider] if preferred_provider is not None else None
+                ),
+                asset_profile=asset_profile,
             ),
             context=context,
         )
     finally:
         context.close()
+    return envelope
+
+
+def fetch_article(query: str, *, transport: HttpTransport, env: dict[str, str]):
+    envelope = fetch_envelope(query, transport=transport, env=env)
     assert envelope.article is not None
     return envelope.article
 
 
+@pytest.fixture(scope="module")
+def catalog_live_env():
+    if not RUN_LIVE:
+        pytest.skip(
+            "Set PAPER_FETCH_RUN_LIVE=1 to run live publisher acceptance tests."
+        )
+    env, tempdir = build_isolated_live_env()
+    try:
+        yield env
+    finally:
+        tempdir.cleanup()
+
+
+@pytest.fixture(scope="module")
+def catalog_live_preflight_cache():
+    return {}
+
+
+@pytest.fixture(scope="module")
+def catalog_live_artifact_root() -> Path:
+    configured = os.environ.get("PAPER_FETCH_LIVE_ARTIFACT_DIR", "").strip()
+    root = (
+        Path(configured)
+        if configured
+        else Path(".paper-fetch-runs/live-publisher-acceptance")
+    )
+    root.mkdir(parents=True, exist_ok=True)
+    return root
+
+
+def _catalog_acceptance_report(
+    records: list[dict[str, object]],
+) -> dict[str, object]:
+    overall = Counter(str(record["acceptance"]["overall"]) for record in records)
+    catalog_providers = [
+        sample.provider for sample in iter_provider_benchmark_samples()
+    ]
+    recorded_providers = {str(record["provider"]) for record in records}
+    unrecorded_providers = [
+        provider for provider in catalog_providers if provider not in recorded_providers
+    ]
+    all_recorded_complete = bool(records) and set(overall) == {"complete"}
+    return {
+        "schema_version": 2,
+        "task": "catalog_body_asset_acceptance",
+        "requested_asset_profile": "body",
+        "summary": {
+            "catalog_provider_count": len(catalog_providers),
+            "recorded_provider_count": len(records),
+            "unrecorded_provider_count": len(unrecorded_providers),
+            "unrecorded_providers": unrecorded_providers,
+            "overall": dict(sorted(overall.items())),
+            "all_recorded_complete": all_recorded_complete,
+            "all_catalog_providers_complete": (
+                all_recorded_complete and not unrecorded_providers
+            ),
+        },
+        "providers": records,
+    }
+
+
+@pytest.fixture(scope="module")
+def catalog_live_report(catalog_live_artifact_root: Path):
+    records: list[dict[str, object]] = []
+    yield records
+    payload = _catalog_acceptance_report(records)
+    (catalog_live_artifact_root / "live-acceptance.json").write_text(
+        json.dumps(payload, ensure_ascii=False, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+
+@pytest.mark.parametrize(
+    "sample",
+    iter_provider_benchmark_samples(),
+    ids=lambda sample: sample.provider,
+)
+def test_catalog_provider_sample_live_body_acceptance(
+    sample,
+    catalog_live_env,
+    catalog_live_preflight_cache,
+    catalog_live_artifact_root,
+    catalog_live_report,
+    record_property,
+) -> None:
+    missing = [
+        key for key in sample.required_env if not catalog_live_env.get(key, "").strip()
+    ]
+    if missing:
+        pytest.skip(
+            "Missing required environment variables for live test: "
+            + ", ".join(missing)
+        )
+    if provider_has_browser_route(sample.provider):
+        preflight = preflight_selected_browser_or_skip(
+            _PytestSkipper(),
+            provider=sample.provider,
+            env=catalog_live_env,
+            cache=catalog_live_preflight_cache,
+            artifact_root=catalog_live_artifact_root / "preflight",
+        )
+        record_property("preflight_status", preflight.status)
+        record_property("preflight_reason_code", preflight.reason_code)
+        record_property("preflight_stage", preflight.stage or "")
+        record_property("preflight_final_url", preflight.final_url or "")
+        record_property(
+            "preflight_storage_state_path",
+            str(preflight.storage_state_path or ""),
+        )
+        diagnostic_path = str(
+            (preflight.diagnostics or {}).get("diagnostic_path") or ""
+        )
+        record_property("preflight_diagnostic_path", diagnostic_path)
+
+    try:
+        envelope = fetch_envelope(
+            sample.doi,
+            transport=HttpTransport(),
+            env=catalog_live_env,
+            download_dir=catalog_live_artifact_root / "providers" / sample.provider,
+            artifact_mode="all",
+            preferred_provider=sample.provider,
+            asset_profile="body",
+        )
+    except PaperFetchFailure as exc:
+        _skip_legal_access_boundary(sample.provider, exc)
+        raise
+    assert envelope.article is not None
+    article = envelope.article
+    acceptance = evaluate_fetch_acceptance(
+        envelope,
+        asset_profile="body",
+        requested_outputs={"article"},
+        expected_doi=sample.doi,
+    )
+    record_property("fetch_source", article.source)
+    record_property(
+        "fetch_source_trail",
+        json.dumps(article.quality.source_trail, ensure_ascii=False),
+    )
+    record_property("fetch_acceptance", acceptance.to_json())
+    preflight_payload = None
+    if provider_has_browser_route(sample.provider):
+        preflight_payload = {
+            "status": preflight.status,
+            "reason_code": preflight.reason_code,
+            "stage": preflight.stage,
+            "final_url": preflight.final_url,
+            "storage_state_path": str(preflight.storage_state_path or "") or None,
+            "diagnostic_path": str(
+                (preflight.diagnostics or {}).get("diagnostic_path") or ""
+            )
+            or None,
+        }
+    catalog_live_report.append(
+        {
+            "provider": sample.provider,
+            "doi": normalize_doi(sample.doi),
+            "preflight": preflight_payload,
+            "source": article.source,
+            "source_trail": list(article.quality.source_trail),
+            "acceptance": acceptance.model_dump(mode="json"),
+            "output_dir": str(
+                catalog_live_artifact_root / "providers" / sample.provider
+            ),
+            "asset_paths": [str(asset.path) for asset in article.assets if asset.path],
+        }
+    )
+
+    assert normalize_doi(article.doi or "") == normalize_doi(sample.doi)
+    assert article.quality.has_fulltext
+    assert article.sections
+    assert sample.accepts_live_result(
+        source=article.source,
+        source_trail=article.quality.source_trail,
+    ), article.quality.source_trail
+    assert acceptance.identity.status == IdentityAcceptanceStatus.RESOLVED
+    assert acceptance.fetch.status == FetchAcceptanceStatus.OK
+    assert acceptance.content.status == ContentAcceptanceStatus.FULLTEXT
+    assert acceptance.asset.status in {
+        AssetAcceptanceStatus.COMPLETE,
+        AssetAcceptanceStatus.NOT_APPLICABLE,
+    }
+    assert acceptance.output.status == OutputAcceptanceStatus.COMPLETE
+    assert acceptance.overall == OverallAcceptanceStatus.COMPLETE, acceptance.to_json()
+
+
+def test_aip_cold_start_stability_uses_html_for_five_fresh_profiles(
+    catalog_live_env,
+    catalog_live_preflight_cache,
+    catalog_live_artifact_root,
+) -> None:
+    if not RUN_AIP_COLD_STABILITY:
+        pytest.skip(
+            "Set PAPER_FETCH_RUN_AIP_COLD_STABILITY=1 to run repeated AIP cold starts."
+        )
+
+    preflight_selected_browser_or_skip(
+        _PytestSkipper(),
+        provider="aip",
+        env=catalog_live_env,
+        cache=catalog_live_preflight_cache,
+        artifact_root=catalog_live_artifact_root / "preflight",
+    )
+
+    artifact_tempdir: tempfile.TemporaryDirectory | None = None
+    artifact_root_value = os.environ.get("PAPER_FETCH_LIVE_ARTIFACT_DIR")
+    if artifact_root_value:
+        artifact_root = Path(artifact_root_value)
+    else:
+        artifact_tempdir = tempfile.TemporaryDirectory(
+            prefix="paper-fetch-aip-cold-live-"
+        )
+        artifact_root = Path(artifact_tempdir.name)
+    failures: list[dict[str, object]] = []
+    for attempt in range(1, AIP_COLD_START_ATTEMPTS + 1):
+        env, tempdir = build_isolated_live_env()
+        context = RuntimeContext(
+            env=env,
+            transport=HttpTransport(),
+            download_dir=artifact_root / f"attempt-{attempt}",
+            artifact_mode="all",
+        )
+        try:
+            envelope = fetch_paper(
+                AIP_SAMPLE.doi,
+                modes={"article"},
+                strategy=FetchStrategy(
+                    allow_metadata_only_fallback=False,
+                    preferred_providers=["aip"],
+                    asset_profile="none",
+                ),
+                context=context,
+            )
+            acceptance = evaluate_fetch_acceptance(
+                envelope,
+                asset_profile="none",
+                requested_outputs={"article"},
+                expected_doi=AIP_SAMPLE.doi,
+            )
+            article = envelope.article
+            source = article.source if article is not None else None
+            source_trail = list(
+                article.quality.source_trail if article is not None else []
+            )
+            if not (
+                source == "aip_html"
+                and "fulltext:aip_html_ok" in source_trail
+                and "fulltext:aip_pdf_fallback_ok" not in source_trail
+                and acceptance.overall == OverallAcceptanceStatus.COMPLETE
+                and acceptance.identity.status == IdentityAcceptanceStatus.RESOLVED
+                and acceptance.fetch.status == FetchAcceptanceStatus.OK
+                and acceptance.content.status == ContentAcceptanceStatus.FULLTEXT
+                and acceptance.output.status == OutputAcceptanceStatus.COMPLETE
+            ):
+                failures.append(
+                    {
+                        "attempt": attempt,
+                        "source": source,
+                        "source_trail": source_trail,
+                        "acceptance": acceptance.model_dump(mode="json"),
+                    }
+                )
+        except Exception as exc:  # noqa: BLE001 - collect all independent trials.
+            failures.append(
+                {
+                    "attempt": attempt,
+                    "error_type": type(exc).__name__,
+                    "error": str(exc),
+                }
+            )
+        finally:
+            context.close()
+            tempdir.cleanup()
+
+    if artifact_tempdir is not None:
+        artifact_tempdir.cleanup()
+    assert not failures, json.dumps(failures, ensure_ascii=False, indent=2)
+
+
 class LivePublisherTests(unittest.TestCase):
     runtime_env_tempdir: tempfile.TemporaryDirectory | None = None
+    preflight_cache: dict = {}
 
     @classmethod
     def setUpClass(cls) -> None:
         if not RUN_LIVE:
             raise unittest.SkipTest(
-                "Set PAPER_FETCH_RUN_LIVE=1 to run live publisher smoke tests."
+                "Set PAPER_FETCH_RUN_LIVE=1 to run live publisher acceptance tests."
             )
         cls.env, cls.runtime_env_tempdir = build_isolated_live_env()
+        cls.preflight_cache = {}
 
     @classmethod
     def tearDownClass(cls) -> None:
@@ -78,163 +407,15 @@ class LivePublisherTests(unittest.TestCase):
             )
 
     def _assert_matches_sample(self, article, sample) -> None:
-        self.assertEqual(article.source, sample.expected_source)
         self.assertTrue(article.quality.has_fulltext)
         self.assertGreater(len(article.sections), 0)
         self.assertTrue(
-            source_trail_matches(
-                article.quality.source_trail, sample.accepted_live_source_trail_groups
+            sample.accepts_live_result(
+                source=article.source,
+                source_trail=article.quality.source_trail,
             ),
             article.quality.source_trail,
         )
-
-    def test_elsevier_doi_live_fulltext(self) -> None:
-        self._require_env(*ELSEVIER_SAMPLE.required_env)
-        article = fetch_article(
-            ELSEVIER_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, ELSEVIER_SAMPLE)
-
-    def test_springer_doi_live_fulltext(self) -> None:
-        self._require_env(*SPRINGER_SAMPLE.required_env)
-        article = fetch_article(
-            SPRINGER_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, SPRINGER_SAMPLE)
-
-    def test_wiley_doi_live_fulltext(self) -> None:
-        self._require_env(*WILEY_SAMPLE.required_env)
-        require_selected_browser_or_skip(self, self.env)
-        article = fetch_article(
-            WILEY_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, WILEY_SAMPLE)
-
-    def test_science_doi_live_fulltext(self) -> None:
-        self._require_env(*SCIENCE_SAMPLE.required_env)
-        require_selected_browser_or_skip(self, self.env)
-        article = fetch_article(
-            SCIENCE_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, SCIENCE_SAMPLE)
-
-    def test_pnas_doi_live_fulltext(self) -> None:
-        self._require_env(*PNAS_SAMPLE.required_env)
-        require_selected_browser_or_skip(self, self.env)
-        article = fetch_article(
-            PNAS_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, PNAS_SAMPLE)
-
-    def test_ieee_doi_live_fulltext(self) -> None:
-        require_selected_browser_or_skip(self, self.env)
-        self._require_env(*IEEE_SAMPLE.required_env)
-        article = fetch_article(
-            IEEE_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, IEEE_SAMPLE)
-
-    def test_arxiv_doi_live_fulltext(self) -> None:
-        self._require_env(*ARXIV_SAMPLE.required_env)
-        article = fetch_article(
-            ARXIV_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, ARXIV_SAMPLE)
-
-    def test_ams_doi_live_fulltext(self) -> None:
-        self._require_env(*AMS_SAMPLE.required_env)
-        article = fetch_article(
-            AMS_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, AMS_SAMPLE)
-
-    def test_copernicus_doi_live_fulltext(self) -> None:
-        self._require_env(*COPERNICUS_SAMPLE.required_env)
-        article = fetch_article(
-            COPERNICUS_SAMPLE.doi,
-            transport=HttpTransport(),
-            env=self.env,
-        )
-
-        self._assert_matches_sample(article, COPERNICUS_SAMPLE)
-
-    def test_ieee_camoufox_recovers_known_large_gif_to_local_markdown(self) -> None:
-        if not RUN_IEEE_BROWSER_LIVE:
-            self.skipTest(
-                "Set PAPER_FETCH_RUN_IEEE_BROWSER_LIVE=1 for the protected IEEE asset case."
-            )
-        require_selected_browser_or_skip(self, self.env)
-        with tempfile.TemporaryDirectory(prefix="paper-fetch-ieee-live-") as tmpdir:
-            context = RuntimeContext(
-                env=self.env,
-                transport=HttpTransport(),
-                download_dir=Path(tmpdir),
-                artifact_mode="all",
-            )
-            try:
-                envelope = fetch_paper(
-                    IEEE_BROWSER_ASSET_DOI,
-                    modes={"article", "markdown"},
-                    strategy=FetchStrategy(
-                        allow_metadata_only_fallback=False,
-                        preferred_providers=["ieee"],
-                        asset_profile="body",
-                    ),
-                    context=context,
-                )
-            finally:
-                context.close()
-
-            self.assertIsNotNone(envelope.article)
-            self.assertTrue(envelope.has_fulltext)
-            matching_assets = [
-                asset
-                for asset in envelope.article.assets
-                if IEEE_BROWSER_ASSET_URL
-                in {
-                    asset.url,
-                    asset.download_url,
-                    asset.original_url,
-                    asset.source_url,
-                }
-            ]
-            self.assertEqual(len(matching_assets), 1, envelope.article.assets)
-            asset = matching_assets[0]
-            self.assertTrue(asset.path)
-            asset_path = Path(str(asset.path))
-            self.assertTrue(asset_path.is_file(), asset_path)
-            payload = asset_path.read_bytes()
-            self.assertTrue(payload.startswith((b"GIF87a", b"GIF89a")))
-            self.assertGreater(len(payload), 10)
-            self.assertGreater(int.from_bytes(payload[6:8], "little"), 0)
-            self.assertGreater(int.from_bytes(payload[8:10], "little"), 0)
-            self.assertIsNotNone(envelope.markdown)
-            self.assertIn(asset_path.name, envelope.markdown)
-            self.assertNotIn(IEEE_BROWSER_ASSET_URL, envelope.markdown)
 
     def test_elsevier_url_live_recovers_doi_and_uses_official_fulltext(self) -> None:
         self._require_env(*ELSEVIER_SAMPLE.required_env)

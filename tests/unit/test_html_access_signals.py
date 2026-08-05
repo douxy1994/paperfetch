@@ -9,9 +9,11 @@ from paper_fetch.extraction.html.signals import (
     MARKDOWN_ACCESS_NOISE_LABELS,
     detect_html_access_signals,
     detect_html_block,
+    detect_challenge_provider,
     html_failure_message,
     matched_access_gate_patterns,
     summarize_html,
+    summarize_visible_html,
 )
 from paper_fetch.quality.html_signals import (
     AAAS_DATALAYER_PATTERN,
@@ -51,6 +53,84 @@ class HtmlAccessSignalsTests(unittest.TestCase):
         )
 
         self.assertEqual(signals, ["redirected_to_abstract", "publisher_access_denied"])
+
+    def test_detect_html_access_signals_classifies_aws_waf_202_page_as_challenge(
+        self,
+    ) -> None:
+        text = (
+            "JavaScript is disabled. Please enable JavaScript to verify that "
+            "you're not a robot and reload the page."
+        )
+
+        self.assertEqual(
+            detect_html_access_signals(
+                "",
+                text,
+                202,
+                html_text=(
+                    "<html><script src='https://example.token.awswaf.com/"
+                    "challenge.js'></script><noscript>" + text + "</noscript></html>"
+                ),
+                response_headers={"x-amzn-waf-action": "challenge"},
+            ),
+            ["aws_waf_challenge"],
+        )
+        self.assertEqual(
+            detect_challenge_provider(
+                html_text="<script src='https://example.token.awswaf.com/challenge.js'>",
+            ),
+            "aws_waf",
+        )
+
+    def test_detect_html_block_classifies_nature_client_challenge_shell(self) -> None:
+        html = (
+            "<html><head><title>Client Challenge</title></head>"
+            "<body><div id='_fs-ch-123'>Loading...</div></body></html>"
+        )
+
+        failure = detect_html_block(
+            "Client Challenge",
+            "Loading...",
+            200,
+            html_text=html,
+        )
+
+        self.assertIsNotNone(failure)
+        assert failure is not None
+        self.assertEqual(failure.reason, "cloudflare_challenge")
+
+    def test_detect_html_block_uses_nature_challenge_runtime_marker(self) -> None:
+        failure = detect_html_block(
+            "",
+            "Loading failed. Retry later.",
+            200,
+            html_text="<html><body><div id='_fs-ch-abc'></div></body></html>",
+        )
+
+        self.assertIsNotNone(failure)
+        assert failure is not None
+        self.assertEqual(failure.reason, "cloudflare_challenge")
+
+    def test_detect_html_block_does_not_match_client_challenge_in_article_body(
+        self,
+    ) -> None:
+        self.assertIsNone(
+            detect_html_block(
+                "Therapeutic methods",
+                "The client challenge was discussed in the intervention results.",
+                200,
+            )
+        )
+
+    def test_visible_html_summary_drops_hidden_challenge_fallbacks(self) -> None:
+        html = (
+            "<html><body><article id='article'>Full IEEE text</article>"
+            "<noscript>JavaScript is disabled; verify you're not a robot.</noscript>"
+            "<script>const captcha = true;</script></body></html>"
+        )
+
+        self.assertEqual(summarize_visible_html(html), "Full IEEE text")
+        self.assertIn("not a robot", summarize_html(html))
 
     def test_detect_html_block_treats_check_access_as_paywall(self) -> None:
         failure = detect_html_block(

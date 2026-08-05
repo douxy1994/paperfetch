@@ -6,14 +6,14 @@ import asyncio
 from collections import Counter
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack, nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from pathlib import Path
 import threading
 from typing import Any, cast
 from uuid import UUID
 
-from mcp.server.fastmcp import Context
+from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult
 
 from ..artifacts import ArtifactMode
@@ -40,13 +40,8 @@ from ..models import (
     AssetProfile,
     FetchEnvelope,
 )
-from ..publisher_identity import (
-    extract_doi,
-    extract_doi_from_url,
-    infer_provider_from_doi,
-    infer_provider_from_url,
-)
 from ..runtime import RuntimeContext
+from ..reason_codes import RATE_LIMITED
 from ..workflow.batch_runner import (
     BatchCompletionEvent,
     BatchFailure,
@@ -62,7 +57,16 @@ from ..workflow.batch_lifecycle import (
     prepare_batch_run,
 )
 from ..workflow.types import effective_asset_profile
+from ..workflow.batch_routing import (
+    initial_provider_lane,
+    provider_lane_limit,
+    resolve_provider_lane,
+)
 from ._deps import MCPDeps, default_mcp_deps
+from .acceptance_payloads import (
+    compact_acceptance_payload,
+    expected_doi_from_query,
+)
 from .batch import _mcp_batch_failure, report_progress
 from .cache_index import (
     cache_scope_id,
@@ -75,6 +79,7 @@ from .cache_payloads import (
 )
 from .fetch_tool import (
     SavedMarkdownResult,
+    _call_service_resolve_paper,
     _markdown_output_dir_for_fetch_request,
     _save_markdown_result_for_fetch_request,
 )
@@ -99,17 +104,61 @@ class BatchFetchOutcome:
     envelope: FetchEnvelope | None = None
     saved_markdown: SavedMarkdownResult | None = None
     error: Exception | None = None
+    diagnostic_artifacts: tuple[dict[str, Any], ...] = ()
 
 
 def _expected_doi(query: str) -> str | None:
-    return extract_doi_from_url(query) or extract_doi(query)
+    return expected_doi_from_query(query)
 
 
 def _lane_for_query(query: str) -> str:
-    provider = infer_provider_from_url(query)
-    if provider:
-        return provider
-    return infer_provider_from_doi(_expected_doi(query)) or "generic"
+    return initial_provider_lane(query)
+
+
+def _resolve_batch_item_lane(
+    item: BatchFetchItem,
+    *,
+    context: RuntimeContext,
+    deps: MCPDeps,
+) -> BatchFetchItem:
+    try:
+        lane_key = resolve_provider_lane(
+            item.query,
+            initial_lane=item.lane_key,
+            context=context,
+            resolver=lambda query, *, context: _call_service_resolve_paper(
+                query,
+                context=context,
+                deps=deps,
+            ),
+        )
+    except Exception:
+        # The fetch attempt remains the owner of resolution errors and diagnostics.
+        return item
+    return replace(item, lane_key=lane_key)
+
+
+async def _resolve_batch_item_lanes(
+    items: Sequence[BatchFetchItem],
+    *,
+    contexts: Mapping[int, RuntimeContext],
+    concurrency: int,
+    deps: MCPDeps,
+) -> list[BatchFetchItem]:
+    """Resolve generic inputs before scheduling and retain item-local cache state."""
+
+    semaphore = asyncio.Semaphore(max(1, concurrency))
+
+    async def resolve_one(item: BatchFetchItem) -> BatchFetchItem:
+        async with semaphore:
+            return await asyncio.to_thread(
+                _resolve_batch_item_lane,
+                item,
+                context=contexts[item.index],
+                deps=deps,
+            )
+
+    return list(await asyncio.gather(*(resolve_one(item) for item in items)))
 
 
 def _download_argument(request: BatchFetchRequest) -> Path | object:
@@ -253,6 +302,25 @@ def _record_from_batch_result(
                     legacy_field=LegacyArtifactField.SAVED_MARKDOWN_PATH,
                 ),
             )
+        diagnostic_artifacts = (
+            outcome.envelope.diagnostic_artifacts
+            if outcome.envelope is not None
+            else outcome.diagnostic_artifacts
+        )
+        if diagnostic_artifacts:
+            artifacts = (
+                *artifacts,
+                *tuple(
+                    ManifestOutputArtifactSpec(
+                        path=str(item.get("path")),
+                        kind="diagnostic",
+                        route=str(item.get("route") or "") or None,
+                        failure_code=(str(item.get("failure_code") or "") or None),
+                    )
+                    for item in diagnostic_artifacts
+                    if str(item.get("path") or "").strip()
+                ),
+            )
         error_payload = (
             _error_payload_for_outcome(outcome.error)
             if outcome.error is not None
@@ -351,29 +419,43 @@ def _synthetic_aborted_record(
 
 
 def _classify_outcome(outcome: BatchFetchOutcome) -> BatchFailure | None:
-    if outcome.error is None:
+    if outcome.error is not None:
+        return _mcp_batch_failure(outcome.error)
+    envelope = outcome.envelope
+    if envelope is None:
         return None
-    return _mcp_batch_failure(outcome.error)
+    rate_limit_events = [
+        event
+        for event in envelope.trace
+        if event.code == RATE_LIMITED
+        or event.outcome == RATE_LIMITED
+        or event.http_status == 429
+    ]
+    if not rate_limit_events:
+        return None
+    retry_after_values = [
+        float(event.retry_after_seconds)
+        for event in rate_limit_events
+        if event.retry_after_seconds is not None
+    ]
+    providers = [
+        event.provider for event in rate_limit_events if event.provider is not None
+    ]
+    provider_label = providers[-1] if providers else envelope.source
+    return BatchFailure(
+        reason_code=RATE_LIMITED,
+        message=(
+            f"{provider_label} was rate limited before the item recovered via "
+            f"{envelope.source}."
+        ),
+        retry_after_seconds=(max(retry_after_values) if retry_after_values else None),
+        rate_limited=True,
+        details=tuple(rate_limit_events),
+    )
 
 
 def _compact_messages(values: Sequence[str]) -> list[str]:
     return [str(value)[:400] for value in values[:8]]
-
-
-def _compact_acceptance(record: ManifestRecord) -> dict[str, Any]:
-    acceptance = record.acceptance
-    return {
-        "overall": acceptance.overall.value,
-        "identity": acceptance.identity.status.value,
-        "fetch": acceptance.fetch.status.value,
-        "content": acceptance.content.status.value,
-        "asset": acceptance.asset.status.value,
-        "output": acceptance.output.status.value,
-        "provenance": acceptance.provenance.status.value,
-        "has_fulltext": acceptance.content.has_fulltext,
-        "has_abstract": acceptance.content.has_abstract,
-        "token_estimate": acceptance.content.token_estimate,
-    }
 
 
 def _artifact_payloads(
@@ -384,6 +466,8 @@ def _artifact_payloads(
         payload = {
             "path": artifact.path,
             "kind": artifact.kind,
+            "route": artifact.route,
+            "failure_code": artifact.failure_code,
             "size": artifact.size,
             "sha256": artifact.sha256,
             "completed_at": artifact.completed_at.isoformat(),
@@ -473,7 +557,7 @@ def _compact_run_payload(
             "source": record.source,
             "reused": record.index not in attempted_indices,
             "cache_hit": cache_hits.get(key, False),
-            "acceptance": _compact_acceptance(record),
+            "acceptance": compact_acceptance_payload(record.acceptance),
             "fallback_codes": list(record.fallback_codes),
             "warning_codes": list(record.warning_codes),
             "failure_codes": list(record.failure_codes),
@@ -634,6 +718,7 @@ async def _execute_batch_fetch(
         artifact_mode=("none" if request.no_download else request.artifact_mode),
         cancel_check=cancelled.is_set,
     )
+    item_contexts: dict[int, RuntimeContext] = {}
 
     with lock_context:
         run_started = False
@@ -677,6 +762,18 @@ async def _execute_batch_fetch(
             append_events = prepared.append_events
             reused_count = prepared.reused_count
             run_started = True
+            item_contexts = {
+                item.index: runtime_context.new_request_context(
+                    asset_profile=request.strategy.asset_profile,
+                )
+                for item in items
+            }
+            items = await _resolve_batch_item_lanes(
+                items,
+                contexts=item_contexts,
+                concurrency=request.concurrency,
+                deps=deps,
+            )
             if reused_count:
                 await report_progress(
                     ctx,
@@ -688,6 +785,7 @@ async def _execute_batch_fetch(
             def run_item(item: BatchFetchItem) -> BatchFetchOutcome:
                 started_at = manifest_deps.clock()
                 fetch_request = request.to_fetch_request(item.query)
+                item_context = item_contexts[item.index]
                 try:
                     envelope = deps.fetch_paper_envelope(
                         fetch_request,
@@ -695,7 +793,7 @@ async def _execute_batch_fetch(
                         download_dir=download_arg,
                         transport=None,
                         include_article_for_assets=True,
-                        context=runtime_context,
+                        context=item_context,
                         cancel_check=cancelled.is_set,
                         deps=deps,
                     )
@@ -704,7 +802,7 @@ async def _execute_batch_fetch(
                         fetch_request,
                         env=runtime_env,
                         download_dir=download_arg,
-                        context=runtime_context,
+                        context=item_context,
                         overwrite=request.overwrite,
                         deps=deps,
                     )
@@ -713,15 +811,21 @@ async def _execute_batch_fetch(
                         completed_at=manifest_deps.clock(),
                         envelope=envelope,
                         saved_markdown=saved,
+                        diagnostic_artifacts=tuple(
+                            dict(item) for item in item_context.diagnostic_artifacts
+                        ),
                     )
                 except Exception as error:  # every submitted item gets one record
                     return BatchFetchOutcome(
                         started_at=started_at,
                         completed_at=manifest_deps.clock(),
                         error=error,
+                        diagnostic_artifacts=tuple(
+                            dict(item) for item in item_context.diagnostic_artifacts
+                        ),
                     )
                 finally:
-                    runtime_context.close_camoufox_for_current_thread()
+                    item_context.close()
 
             def on_completion(
                 event: BatchCompletionEvent[BatchFetchItem, BatchFetchOutcome],
@@ -777,6 +881,10 @@ async def _execute_batch_fetch(
                         run_item,
                         max_workers=request.concurrency,
                         lane_key=lambda item: item.lane_key,
+                        lane_limits=lambda lane: provider_lane_limit(
+                            lane,
+                            global_limit=request.concurrency,
+                        ),
                         completion_callback=on_completion,
                         progress_callback=on_progress,
                         stop_predicate=(

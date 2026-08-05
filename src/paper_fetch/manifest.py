@@ -24,7 +24,7 @@ from pydantic import (
 )
 
 from .models import AssetProfile, FetchEnvelope
-from .tracing import TraceEvent, merge_trace, trace_from_markers
+from .tracing import TraceEvent, trace_from_markers
 from .utils import normalize_text
 from .workflow.acceptance import (
     AcceptanceOutputKind,
@@ -140,6 +140,21 @@ class ManifestTraceEvent(_ManifestModel):
     outcome: str = Field(default="info", min_length=1)
     code: str | None = None
     message: str | None = None
+    provider: str | None = None
+    route: str | None = None
+    span_id: str | None = None
+    attempt_id: str | None = None
+    parent_span_id: str | None = None
+    attempt: int | None = Field(default=None, ge=1)
+    http_status: int | None = None
+    error_category: str | None = None
+    retryable: bool | None = None
+    retry_after_seconds: int | None = None
+    target: str | None = None
+    target_sha256: str | None = None
+    started_at: float | None = None
+    finished_at: float | None = None
+    duration_ms: float | None = None
 
 
 class ManifestError(_ManifestModel):
@@ -168,6 +183,8 @@ class ManifestOutputArtifactSpec(_ManifestModel):
     path: str = Field(min_length=1)
     kind: str = Field(min_length=1)
     legacy_field: LegacyArtifactField | None = None
+    route: str | None = None
+    failure_code: str | None = None
     completed_at: AwareDatetime | None = None
 
     @field_validator("path", mode="before")
@@ -182,6 +199,8 @@ class ManifestOutputArtifact(_ManifestModel):
     path: str = Field(min_length=1)
     kind: str = Field(min_length=1)
     legacy_field: LegacyArtifactField | None = None
+    route: str | None = None
+    failure_code: str | None = None
     size: int | None = Field(default=None, ge=0)
     sha256: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     mtime: AwareDatetime | None = None
@@ -368,10 +387,7 @@ def _semantic_losses_from_acceptance(
 def _trace_from_envelope(envelope: FetchEnvelope | None) -> list[TraceEvent]:
     if envelope is None:
         return []
-    article_trace = (
-        envelope.article.quality.trace if envelope.article is not None else []
-    )
-    return merge_trace(envelope.trace, envelope.quality.trace, article_trace)
+    return list(envelope.trace)
 
 
 def _error_extra_sequence(error: ManifestError, field: str) -> Sequence[Any]:
@@ -403,21 +419,7 @@ def _trace_for_record(
     else:
         raw_trace = ()
 
-    events: list[ManifestTraceEvent] = []
-    seen: set[tuple[str, str, str, str | None, str | None]] = set()
-    for value in raw_trace:
-        event = ManifestTraceEvent.model_validate(value)
-        key = (
-            event.stage,
-            event.component,
-            event.outcome,
-            event.code,
-            event.message,
-        )
-        if key not in seen:
-            seen.add(key)
-            events.append(event)
-    return tuple(events)
+    return tuple(ManifestTraceEvent.model_validate(value) for value in raw_trace)
 
 
 def _warnings_for_record(
@@ -460,6 +462,8 @@ def _snapshot_artifact(
             path=spec.path,
             kind=spec.kind,
             legacy_field=spec.legacy_field,
+            route=spec.route,
+            failure_code=spec.failure_code,
             completed_at=artifact_completed_at,
             verification_status=ArtifactVerificationStatus.MISSING,
         )
@@ -468,6 +472,8 @@ def _snapshot_artifact(
             path=spec.path,
             kind=spec.kind,
             legacy_field=spec.legacy_field,
+            route=spec.route,
+            failure_code=spec.failure_code,
             completed_at=artifact_completed_at,
             verification_status=ArtifactVerificationStatus.UNREADABLE,
         )
@@ -481,6 +487,8 @@ def _snapshot_artifact(
             path=spec.path,
             kind=spec.kind,
             legacy_field=spec.legacy_field,
+            route=spec.route,
+            failure_code=spec.failure_code,
             size=size,
             mtime=mtime,
             completed_at=artifact_completed_at,
@@ -490,6 +498,8 @@ def _snapshot_artifact(
         path=spec.path,
         kind=spec.kind,
         legacy_field=spec.legacy_field,
+        route=spec.route,
+        failure_code=spec.failure_code,
         size=size,
         sha256=sha256,
         mtime=mtime,

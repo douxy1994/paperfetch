@@ -30,7 +30,7 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(result.isError)
+        self.assertFalse(result.is_error)
         self.assertEqual(ctx.session.resource_list_changed_calls, 1)
         resource_uris = set(server._resource_manager._resources)
         self.assertTrue(
@@ -68,7 +68,7 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(result.isError)
+        self.assertFalse(result.is_error)
         self.assertEqual(captured["context"].download_dir, default_dir)
         self.assertEqual(captured["context"].artifact_mode, "none")
 
@@ -99,7 +99,7 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(result.isError)
+        self.assertFalse(result.is_error)
         self.assertEqual(ctx.session.resource_list_changed_calls, 0)
 
     async def test_fetch_paper_server_syncs_resources_for_no_download_markdown_save(
@@ -135,13 +135,13 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(result.isError)
+        self.assertFalse(result.is_error)
         self.assertEqual(
-            result.structuredContent["saved_markdown_path"],
+            result.structured_content["saved_markdown_path"],
             str(isolated_dir / "Example_2026_Example_Article.md"),
         )
-        self.assertIsNone(result.structuredContent["markdown"])
-        self.assertIsNone(result.structuredContent["article"])
+        self.assertIsNone(result.structured_content["markdown"])
+        self.assertIsNone(result.structured_content["article"])
         self.assertEqual(ctx.session.resource_list_changed_calls, 1)
         scope_id = cache_scope_id(isolated_dir)
         resource_uris = set(server._resource_manager._resources)
@@ -158,9 +158,15 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
             default_dir = Path(tmpdir) / "default"
             isolated_dir = Path(tmpdir) / "isolated"
             ctx = FakeContext()
+            resolved_queries: list[str] = []
 
             def fake_fetch(query, **kwargs):
                 return sample_envelope(modes=kwargs["modes"], doi=query)
+
+            def fake_resolve(query, *, context=None):
+                del context
+                resolved_queries.append(query)
+                return sample_resolved_query(query)
 
             with (
                 mock.patch.object(mcp_tools, "build_runtime_env", return_value={}),
@@ -169,6 +175,9 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                 ),
                 mock.patch.object(
                     mcp_tools, "service_fetch_paper", side_effect=fake_fetch
+                ),
+                mock.patch.object(
+                    mcp_tools, "service_resolve_paper", side_effect=fake_resolve
                 ),
             ):
                 server = build_server()
@@ -186,12 +195,13 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(result.isError)
-        self.assertEqual(result.structuredContent["summary"]["saved_markdown"], 2)
+        self.assertFalse(result.is_error)
+        self.assertEqual(sorted(resolved_queries), ["10.1000/one", "10.1000/two"])
+        self.assertEqual(result.structured_content["summary"]["saved_markdown"], 2)
         scope_id = cache_scope_id(isolated_dir)
         expected_prefix = scoped_cached_resource_uri_prefix(scope_id)
         returned_uris = {
-            item["resource_uri"] for item in result.structuredContent["results"]
+            item["resource_uri"] for item in result.structured_content["results"]
         }
         self.assertTrue(all(uri.startswith(expected_prefix) for uri in returned_uris))
         resource_uris = set(server._resource_manager._resources)
@@ -236,8 +246,8 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(result.isError)
-        self.assertNotIn("saved_markdown_path", result.structuredContent)
+        self.assertFalse(result.is_error)
+        self.assertNotIn("saved_markdown_path", result.structured_content)
         self.assertEqual(ctx.session.resource_list_changed_calls, 0)
 
     async def test_fetch_paper_server_notifies_when_scoped_resources_change(
@@ -266,7 +276,7 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(result.isError)
+        self.assertFalse(result.is_error)
         self.assertEqual(ctx.session.resource_list_changed_calls, 1)
         scope_id = cache_scope_id(isolated_dir)
         resource_uris = set(server._resource_manager._resources)
@@ -308,10 +318,10 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(listed.isError)
-        self.assertFalse(cached.isError)
-        self.assertEqual(len(listed.structuredContent["entries"]), 3)
-        self.assertEqual(cached.structuredContent["status"], "hit")
+        self.assertFalse(listed.is_error)
+        self.assertFalse(cached.is_error)
+        self.assertEqual(len(listed.structured_content["entries"]), 3)
+        self.assertEqual(cached.structured_content["status"], "hit")
         self.assertEqual(ctx.session.resource_list_changed_calls, 2)
 
     async def test_fetch_paper_server_does_not_notify_when_resource_uris_are_unchanged(
@@ -344,6 +354,6 @@ class McpServerResourceTests(unittest.IsolatedAsyncioTestCase):
                     context=ctx,
                 )
 
-        self.assertFalse(first.isError)
-        self.assertFalse(second.isError)
+        self.assertFalse(first.is_error)
+        self.assertFalse(second.is_error)
         self.assertEqual(ctx.session.resource_list_changed_calls, 1)

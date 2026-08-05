@@ -6,6 +6,7 @@ from typing import Any
 from collections.abc import Callable, Mapping
 
 from ...extraction.html.assets import (
+    browser_asset_recovery_allowed,
     extract_full_size_figure_image_url,
     extract_scoped_html_assets,
     html_asset_identity_key,
@@ -49,9 +50,19 @@ def _download_asset_result_key(asset: Mapping[str, Any]) -> str:
 
 
 def _browser_workflow_asset_retry_key(asset: Mapping[str, Any]) -> tuple[Any, ...]:
+    semantic_key = "|".join(
+        value
+        for value in (
+            normalize_text(str(asset.get("kind") or asset.get("asset_type") or "")),
+            normalize_text(str(asset.get("heading") or "")),
+            normalize_text(str(asset.get("caption") or "")),
+            normalize_text(str(asset.get("section") or "")),
+        )
+        if value
+    )
     return (
         _download_asset_retry_scope(asset),
-        _download_asset_result_key(asset),
+        semantic_key or _download_asset_result_key(asset),
     )
 
 
@@ -98,6 +109,7 @@ def _download_failure_match_tokens(failure: Mapping[str, Any]) -> set[str]:
 
 
 _BROWSER_WORKFLOW_RETRYABLE_ASSET_REASON_TOKENS = (
+    "aws_waf_challenge",
     "browser_context_error",
     "cloudflare_challenge",
     "file_fetch_error",
@@ -116,12 +128,36 @@ def _browser_workflow_retryable_asset_status(status: Any) -> bool:
 
 
 def _browser_workflow_retryable_asset_failure(failure: Mapping[str, Any]) -> bool:
+    diagnostic = failure.get("diagnostic")
+    details = diagnostic if isinstance(diagnostic, Mapping) else {}
+    status_value = failure.get("status", failure.get("status_code"))
+    if status_value is None:
+        status_value = details.get("status", details.get("status_code"))
+    try:
+        status = int(status_value) if status_value is not None else None
+    except (TypeError, ValueError):
+        status = None
+    if status in {404, 410, 429}:
+        return False
+    content_type = normalize_text(
+        str(failure.get("content_type") or details.get("content_type") or "")
+    )
+    reason = normalize_text(str(failure.get("reason") or details.get("reason") or ""))
+    error_category = normalize_text(
+        str(failure.get("error_category") or details.get("error_category") or "")
+    )
+    if browser_asset_recovery_allowed(
+        status=status,
+        content_type=content_type,
+        reason=reason,
+        error_category=error_category,
+    ):
+        return True
     if is_retryable_asset_failure(failure):
         return True
-    status = failure.get("status")
     if status is not None and not _browser_workflow_retryable_asset_status(status):
         return False
-    reason = normalize_text(str(failure.get("reason") or "")).lower()
+    reason = reason.lower()
     return bool(
         reason
         and any(
@@ -190,7 +226,7 @@ def _browser_workflow_image_download_candidates(
         candidates.append(direct_full_size_url)
 
     figure_page_url = normalize_text(str(asset.get("figure_page_url") or ""))
-    if figure_page_url and figure_page_fetcher is not None:
+    if figure_page_url and not direct_full_size_url and figure_page_fetcher is not None:
         try:
             page_result = figure_page_fetcher(figure_page_url)
         except Exception:
