@@ -7,7 +7,7 @@ import re
 import urllib.parse
 from pathlib import Path
 from typing import Any
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from ..artifacts import ArtifactStore
 from ..markdown.images import render_markdown_image
@@ -24,7 +24,7 @@ from ..tracing import (
     TraceEvent,
     download_marker,
     fallback_marker,
-    merge_trace,
+    project_source_trail_trace,
     source_trail_from_trace,
     trace_from_markers,
 )
@@ -47,12 +47,11 @@ def finalize_article(
 ) -> ArticleModel:
     extend_unique(article.quality.warnings, list(warnings or []))
     if source_trail or trace:
-        article.quality.trace = merge_trace(
-            article.quality.trace,
-            trace_from_markers(list(source_trail or [])),
+        projected = project_source_trail_trace(
+            [*article.quality.source_trail, *list(source_trail or [])],
             trace,
         )
-        article.quality.source_trail = source_trail_from_trace(article.quality.trace)
+        article.quality.source_trail = source_trail_from_trace(projected)
     return article
 
 
@@ -347,6 +346,7 @@ def save_markdown_to_disk(
     markdown_filename: str | None = None,
     request_label: str = "save_markdown",
     overwrite: bool = True,
+    commit_guard: Callable[[], None] | None = None,
 ) -> Path | None:
     has_usable_fulltext = bool(
         envelope.content_kind == FULLTEXT and envelope.markdown and envelope.article
@@ -372,6 +372,7 @@ def save_markdown_to_disk(
         encoding="utf-8",
         overwrite=overwrite,
         use_lock=True,
+        commit_guard=commit_guard,
     )
     message = f"Markdown full text was saved to {target}."
     _extend_envelope_status(
@@ -387,6 +388,8 @@ def build_fetch_envelope(
     *,
     modes: set[OutputMode],
     render: RenderOptions,
+    trace: list[TraceEvent] | None = None,
+    diagnostic_artifacts: list[dict[str, Any]] | None = None,
 ) -> FetchEnvelope:
     resolved_asset_profile = effective_asset_profile(
         render.asset_profile, source_name=article.source
@@ -409,11 +412,12 @@ def build_fetch_envelope(
         has_abstract=article.quality.has_abstract,
         warnings=list(article.quality.warnings),
         source_trail=list(article.quality.source_trail),
-        trace=list(article.quality.trace),
+        trace=list(trace or trace_from_markers(article.quality.source_trail)),
         token_estimate=article.quality.token_estimate,
         token_estimate_breakdown=article.quality.token_estimate_breakdown,
         quality=article.quality,
         article=article if "article" in modes else None,
         markdown=markdown,
         metadata=metadata,
+        diagnostic_artifacts=[dict(item) for item in (diagnostic_artifacts or [])],
     )

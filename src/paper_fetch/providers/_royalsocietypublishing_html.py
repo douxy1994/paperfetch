@@ -14,6 +14,10 @@ from bs4 import BeautifulSoup, Tag
 
 from ..extraction.html._metadata import merge_html_metadata, parse_html_metadata
 from ..extraction.html.assets import extract_scoped_html_assets
+from ..extraction.html.assets.silverchair import (
+    promote_silverchair_srcset_originals,
+    silverchair_download_image_url,
+)
 from ..extraction.html.figure_links import inject_inline_figure_links
 from ..extraction.html.parsing import choose_parser
 from ..extraction.html.renderer import (
@@ -575,22 +579,18 @@ def _node_text(node: Tag | None) -> str:
     return normalize_text(node.get_text(" ", strip=True))
 
 
-def _first_figure_link(node: Tag, source_url: str) -> str:
-    fallback = ""
+def _figure_page_url(node: Tag, source_url: str) -> str:
     for anchor in node.find_all("a", href=True):
         href = normalize_text(str(anchor.get("href") or ""))
         if not href or href.startswith("#"):
             continue
         absolute = urljoin(source_url, href)
-        lowered = absolute.lower()
-        if "/view-large/figure/" in lowered:
+        if "/view-large/figure/" in absolute.lower():
             return absolute
-        if not fallback and lowered.endswith(
-            (".jpg", ".jpeg", ".png", ".gif", ".tif", ".tiff", ".webp")
-        ):
-            fallback = absolute
-    if fallback:
-        return fallback
+    return ""
+
+
+def _figure_preview_url(node: Tag, source_url: str) -> str:
     image = node.find("img")
     if isinstance(image, Tag):
         for attr in ("data-src", "src", "data-original", "data-lazy-src"):
@@ -600,8 +600,30 @@ def _first_figure_link(node: Tag, source_url: str) -> str:
     return ""
 
 
+def _royal_figure_basename(value: str) -> str:
+    basename = urlparse(value).path.rsplit("/", 1)[-1]
+    match = _ROYAL_FIGURE_BASENAME_RE.match(basename)
+    return match.group(1).lower() if match is not None else ""
+
+
+def _silverchair_download_image_url(
+    node: Tag,
+    source_url: str,
+    *,
+    expected_figure_basename: str,
+) -> str:
+    return silverchair_download_image_url(
+        node,
+        source_url,
+        expected_image_basename=expected_figure_basename,
+    )
+
+
 def _royal_society_figure_assets(
-    html_text: str, source_url: str
+    html_text: str,
+    source_url: str,
+    *,
+    include_caption: bool = True,
 ) -> list[dict[str, str]]:
     soup = BeautifulSoup(html_text, choose_parser())
     assets: list[dict[str, str]] = []
@@ -613,10 +635,10 @@ def _royal_society_figure_assets(
             continue
         label = _node_text(node.select_one(".fig-label")) or "Figure"
         label = label.rstrip(".")
-        caption = _node_text(node.select_one(".fig-caption"))
+        caption = _node_text(node.select_one(".fig-caption")) if include_caption else ""
         if caption.lower() == label.lower():
             caption = ""
-        if not caption:
+        if include_caption and not caption:
             image = node.find("img")
             if isinstance(image, Tag):
                 caption = normalize_text(str(image.get("alt") or ""))
@@ -625,18 +647,34 @@ def _royal_society_figure_assets(
                     "",
                     caption,
                 )
-        url = _first_figure_link(node, source_url)
-        if not caption and not url:
+        figure_page_url = _figure_page_url(node, source_url)
+        preview_url = _figure_preview_url(node, source_url)
+        expected_figure_basename = _royal_figure_basename(
+            figure_page_url or preview_url
+        )
+        full_size_url = _silverchair_download_image_url(
+            node,
+            source_url,
+            expected_figure_basename=expected_figure_basename,
+        )
+        primary_url = full_size_url or preview_url
+        if not caption and not (primary_url or figure_page_url):
             continue
         asset: dict[str, str] = {
             "kind": "figure",
             "heading": label or "Figure",
             "caption": caption,
             "section": "body",
+            "render_state": "inline",
         }
-        if url:
-            asset["url"] = url
-            asset["full_size_url"] = url
+        if primary_url:
+            asset["url"] = primary_url
+        if full_size_url:
+            asset["full_size_url"] = full_size_url
+        if figure_page_url:
+            asset["figure_page_url"] = figure_page_url
+        if preview_url:
+            asset["preview_url"] = preview_url
         dom_id = normalize_text(str(node.get("data-id") or node.get("id") or ""))
         if dom_id:
             asset["dom_id"] = dom_id
@@ -655,6 +693,7 @@ def _asset_external_keys(asset: Mapping[str, Any]) -> list[str]:
         "original_url",
         "preview_url",
         "download_url",
+        "figure_page_url",
     ):
         value = normalize_text(str(asset.get(field) or ""))
         if not value:
@@ -671,6 +710,7 @@ def _asset_external_keys(asset: Mapping[str, Any]) -> list[str]:
         "original_url",
         "preview_url",
         "download_url",
+        "figure_page_url",
     ):
         value = normalize_text(str(asset.get(field) or ""))
         if value:
@@ -703,6 +743,7 @@ def _merge_asset(existing: dict[str, Any], incoming: Mapping[str, Any]) -> None:
         "image_id",
         "asset_order",
         "section",
+        "render_state",
     ):
         if incoming.get(field) and not existing.get(field):
             existing[field] = incoming[field]
@@ -729,6 +770,7 @@ def _normalize_extracted_assets(assets: list[dict[str, str]]) -> list[dict[str, 
                 or asset.get("source_url")
                 or asset.get("original_url")
                 or asset.get("download_url")
+                or asset.get("figure_page_url")
                 or ""
             )
         ).lower()
@@ -765,6 +807,10 @@ def extract_markdown(
     asset_profile: AssetProfile = "body",
 ) -> RoyalSocietyHtmlExtraction:
     soup = BeautifulSoup(html_text, choose_parser())
+    raw_article_body = _first_article_body(soup)
+    raw_article_body_html = (
+        str(raw_article_body) if isinstance(raw_article_body, Tag) else ""
+    )
     html_metadata = parse_html_metadata(html_text, source_url)
     html_references = html_references_from_ref_list_soup(soup)
     merged_metadata = _merge_metadata_with_parsed_html(
@@ -794,11 +840,18 @@ def extract_markdown(
         rendered.markdown_text,
         _back_matter_section_markdown(render_html, source_url),
     )
+    raw_asset_html = promote_silverchair_srcset_originals(raw_article_body_html)
+    cleaned_asset_html = promote_silverchair_srcset_originals(cleaned_html)
     extracted_assets = _normalize_extracted_assets(
         [
-            *_royal_society_figure_assets(cleaned_html, source_url),
+            *_royal_society_figure_assets(
+                raw_asset_html,
+                source_url,
+                include_caption=False,
+            ),
+            *_royal_society_figure_assets(cleaned_asset_html, source_url),
             *extract_scoped_html_assets(
-                cleaned_html,
+                cleaned_asset_html,
                 source_url,
                 asset_profile=asset_profile,
                 supplementary_html_text=cleaned_html,

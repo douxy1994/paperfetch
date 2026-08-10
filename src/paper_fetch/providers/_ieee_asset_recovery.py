@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 import json
+import re
+import threading
+import time
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from collections.abc import Callable, Mapping
 
 from ..extraction.html import decode_html
+from ..extraction.html.signals import detect_html_block, summarize_visible_html
 from ..extraction.html.assets.figures import figure_download_candidates
 from ..http.headers import header_value
 from ..models import AssetProfile
@@ -23,8 +27,111 @@ from .browser_workflow.asset_download import (
     BrowserAssetRecoveryContext,
     download_browser_backed_related_assets,
 )
-from .browser_workflow.fetchers import _MemoizedImageDocumentFetcher
+from .browser_workflow.fetchers import (
+    _MemoizedImageDocumentFetcher,
+    _SharedBrowserPageSession,
+    _replace_runtime_shared_page_session,
+    _restore_runtime_shared_page_session,
+)
 from .browser_workflow.shared import default_browser_workflow_deps
+
+IEEE_ASSET_ARTICLE_READY_TIMEOUT_SECONDS = 15.0
+IEEE_ASSET_ARTICLE_READY_POLL_MS = 250
+_IEEE_ARTICLE_SEED_READINESS_SCRIPT = """
+articleNumber => {
+  const article = document.querySelector('#article');
+  const articleMarkup = article ? (article.outerHTML || article.textContent || '') : '';
+  let restDocumentSeen = false;
+  try {
+    restDocumentSeen = performance.getEntriesByType('resource')
+      .some(entry => entry.name.includes('/rest/document/' + articleNumber + '/'));
+  } catch (error) {
+    restDocumentSeen = false;
+  }
+  return {
+    articlePresent: Boolean(article),
+    articleMatches: Boolean(article && articleNumber && articleMarkup.includes(articleNumber)),
+    restDocumentSeen,
+  };
+}
+"""
+
+
+class _IeeePreviewWarmImageFetcher:
+    """Warm one IEEE preview before the first large-image browser recovery."""
+
+    def __init__(self, fetcher: _MemoizedImageDocumentFetcher) -> None:
+        self._fetcher = fetcher
+        self.browser_backend = fetcher.browser_backend
+        self.requires_caller_thread = fetcher.requires_caller_thread
+        self._warm_lock = threading.Lock()
+        self._preview_warm_attempted = False
+
+    def __call__(
+        self, image_url: str, asset: Mapping[str, Any]
+    ) -> dict[str, Any] | None:
+        normalized_url = normalize_text(image_url)
+        preview_url = normalize_text(
+            str(asset.get("preview_url") or asset.get("url") or "")
+        )
+        with self._warm_lock:
+            if (
+                not self._preview_warm_attempted
+                and preview_url
+                and normalized_url
+                and preview_url != normalized_url
+            ):
+                self._preview_warm_attempted = True
+                self._fetcher(preview_url, asset)
+            return self._fetcher(normalized_url or image_url, asset)
+
+    def failure_for(self, image_url: str) -> dict[str, Any] | None:
+        return self._fetcher.failure_for(image_url)
+
+    def close(self) -> None:
+        self._fetcher.close()
+
+
+def _ieee_article_seed_page_is_ready(page: Any, context: Any, seed_url: str) -> bool:
+    """Wait for IEEE's initial HTTP 202 verification to populate page state."""
+
+    article_match = re.search(r"/document/([^/?#]+)", seed_url)
+    article_number = normalize_text(article_match.group(1) if article_match else "")
+    deadline = time.monotonic() + IEEE_ASSET_ARTICLE_READY_TIMEOUT_SECONDS
+    while time.monotonic() < deadline:
+        title = ""
+        html = ""
+        try:
+            title = normalize_text(str(page.title() or ""))
+        except Exception:
+            title = ""
+        try:
+            html = str(page.content() or "")
+        except Exception:
+            html = ""
+        readiness: Mapping[str, Any] = {}
+        try:
+            evaluated = page.evaluate(
+                _IEEE_ARTICLE_SEED_READINESS_SCRIPT,
+                article_number,
+            )
+            if isinstance(evaluated, Mapping):
+                readiness = evaluated
+        except Exception:
+            readiness = {}
+        if bool(readiness.get("articleMatches")):
+            detected = detect_html_block(
+                title,
+                summarize_visible_html(html),
+                None,
+            )
+            if detected is None:
+                return True
+        try:
+            page.wait_for_timeout(IEEE_ASSET_ARTICLE_READY_POLL_MS)
+        except Exception:
+            return False
+    return False
 
 
 def download_ieee_assets_with_browser(
@@ -53,6 +160,14 @@ def download_ieee_assets_with_browser(
         default_browser_workflow_deps(),
         download_assets=download_assets_fn,
         split_body_and_supplementary_assets=split_assets_fn,
+    )
+    shared_page_session = _SharedBrowserPageSession(
+        preserve_seed_page=True,
+        seed_page_ready_waiter=_ieee_article_seed_page_is_ready,
+    )
+    previous_shared_page_session = _replace_runtime_shared_page_session(
+        runtime_context,
+        shared_page_session,
     )
     seed = dict(content.browser_context_seed if content.browser_context_seed else {})
     discovery_failures: list[dict[str, Any]] = []
@@ -85,6 +200,7 @@ def download_ieee_assets_with_browser(
                 "Origin": IEEE_BASE_URL,
                 "X-Requested-With": "XMLHttpRequest",
             },
+            runtime_context=runtime_context,
         )
         if not discovered_assets:
             discovery_fetcher = deps._build_shared_browser_file_fetcher(
@@ -140,6 +256,12 @@ def download_ieee_assets_with_browser(
                     }
                 )
         if discovered_assets:
+            supplementary.cache_ieee_multimedia_assets(
+                runtime_context,
+                article_number=article_number,
+                multimedia_url=multimedia_url,
+                assets=discovered_assets,
+            )
             existing_keys = {
                 supplementary._supplementary_asset_key(existing)
                 for existing in supplementary_assets
@@ -155,6 +277,12 @@ def download_ieee_assets_with_browser(
             ]
 
     if not body_assets and not supplementary_assets:
+        _restore_runtime_shared_page_session(
+            runtime_context,
+            shared_page_session,
+            previous_shared_page_session,
+        )
+        shared_page_session.close()
         return {"assets": [], "asset_failures": discovery_failures}
 
     plan = BrowserAssetDownloadPlan(
@@ -179,7 +307,7 @@ def download_ieee_assets_with_browser(
     def image_fetcher_factory(**request: Any):
         if not request.get("attempt_body_assets"):
             return None
-        fetcher = _MemoizedImageDocumentFetcher(
+        memoized_fetcher = _MemoizedImageDocumentFetcher(
             deps._build_shared_browser_image_fetcher(
                 browser_context_seed_getter=request["browser_context_seed_getter"],
                 seed_urls_getter=request["seed_urls_getter"],
@@ -194,8 +322,8 @@ def download_ieee_assets_with_browser(
                 browser_config=request.get("browser_config"),
             )
         )
-        fetcher.browser_backend = browser_runtime_config.backend
-        return fetcher
+        memoized_fetcher.browser_backend = browser_runtime_config.backend
+        return _IeeePreviewWarmImageFetcher(memoized_fetcher)
 
     def file_fetcher_factory(**request: Any):
         if not request.get("attempt_supplementary_assets"):
@@ -217,20 +345,26 @@ def download_ieee_assets_with_browser(
         fetcher.browser_backend = browser_runtime_config.backend
         return fetcher
 
-    recovered = download_browser_backed_related_assets(
-        plan,
-        recovery,
-        image_fetcher_factory=image_fetcher_factory,
-        file_fetcher_factory=file_fetcher_factory,
-        opener_requester={
-            "transport": transport,
-            "asset_download_concurrency": (
-                1 if browser_runtime_config.backend == "camoufox" else concurrency
-            ),
-            "serial_browser_assets": browser_runtime_config.backend == "camoufox",
-        },
-        deps=deps,
-    )
+    try:
+        recovered = download_browser_backed_related_assets(
+            plan,
+            recovery,
+            image_fetcher_factory=image_fetcher_factory,
+            file_fetcher_factory=file_fetcher_factory,
+            opener_requester={
+                "transport": transport,
+                "asset_download_concurrency": concurrency,
+                "serial_browser_assets": browser_runtime_config.backend == "camoufox",
+            },
+            deps=deps,
+        )
+    finally:
+        _restore_runtime_shared_page_session(
+            runtime_context,
+            shared_page_session,
+            previous_shared_page_session,
+        )
+        shared_page_session.close()
     recovered["asset_failures"] = [
         *list(recovered.get("asset_failures") or []),
         *discovery_failures,

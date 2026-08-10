@@ -311,6 +311,7 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
         download_url = "https://example.test/images/full-figure-from-download-url.jpg"
         full_size_url = "https://example.test/images/full-figure.jpg"
         preview_url = "https://example.test/skin/site/img/Blank.svg"
+        figure_page_fetcher = mock.Mock()
 
         candidates = (
             browser_workflow_assets._browser_workflow_image_download_candidates(
@@ -321,12 +322,58 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
                     "full_size_url": full_size_url,
                     "url": preview_url,
                     "preview_url": preview_url,
+                    "figure_page_url": "https://example.test/figures/1",
                 },
                 user_agent="test-agent",
+                figure_page_fetcher=figure_page_fetcher,
             )
         )
 
         self.assertEqual(candidates, [download_url, full_size_url, preview_url])
+        figure_page_fetcher.assert_not_called()
+
+    def test_direct_first_figure_policy_skips_viewer_when_download_url_exists(
+        self,
+    ) -> None:
+        download_url = "https://example.test/images/download-original.jpg"
+        preview_url = "https://example.test/images/preview.jpg"
+        figure_page_url = "https://example.test/figures/1"
+        discovered_url = "https://example.test/images/viewer-original.jpg"
+        figure_page_fetcher = mock.Mock(
+            return_value=(
+                f'<meta property="og:image" content="{discovered_url}">',
+                figure_page_url,
+            )
+        )
+        asset = {
+            "kind": "figure",
+            "download_url": download_url,
+            "url": preview_url,
+            "preview_url": preview_url,
+            "figure_page_url": figure_page_url,
+        }
+
+        direct_first = (
+            browser_workflow_assets._browser_workflow_image_download_candidates(
+                None,
+                asset=asset,
+                user_agent="test-agent",
+                figure_page_fetcher=figure_page_fetcher,
+                direct_original_first=True,
+            )
+        )
+
+        self.assertEqual(direct_first, [download_url, preview_url])
+        figure_page_fetcher.assert_not_called()
+
+        legacy = browser_workflow_assets._browser_workflow_image_download_candidates(
+            None,
+            asset=asset,
+            user_agent="test-agent",
+            figure_page_fetcher=figure_page_fetcher,
+        )
+        self.assertEqual(legacy, [download_url, discovered_url, preview_url])
+        figure_page_fetcher.assert_called_once_with(figure_page_url)
 
     def test_browser_image_payload_rejects_blank_placeholder_url(self) -> None:
         body = png_header(640, 480)
@@ -403,6 +450,7 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
                     "section": "supplementary",
                 }
             ],
+            fetch_policy="browser_first",
         )
         recovery = BrowserAssetRecoveryContext(
             runtime=SimpleNamespace(
@@ -870,6 +918,72 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
         )
         image_fetcher.close.assert_called_once()
 
+    def test_silverchair_figure_page_resolution_stays_on_camoufox_owner_thread(
+        self,
+    ) -> None:
+        discovered_url = "https://example.test/original.jpg"
+
+        def direct_first_candidates(*args, **kwargs):
+            return browser_workflow_assets._browser_workflow_image_download_candidates(
+                *args,
+                **kwargs,
+                direct_original_first=True,
+            )
+
+        plan = BrowserAssetDownloadPlan(
+            article_id="10.1021/example",
+            output_dir=Path("/tmp/browser-assets"),
+            asset_profile="body",
+            body_assets=[
+                {
+                    "kind": "figure",
+                    "heading": "Figure 1",
+                    "figure_page_url": "https://example.test/figure-page",
+                    "section": "body",
+                }
+            ],
+            supplementary_assets=[],
+            candidate_builder=direct_first_candidates,
+        )
+        recovery = BrowserAssetRecoveryContext(
+            runtime=SimpleNamespace(backend="camoufox", headless=True),
+            provider="acs",
+            user_agent="test-agent",
+            browser_context_seed={},
+            browser_cookies=[],
+            active_seed_urls=["https://example.test/article"],
+        )
+        calls: list[dict[str, object]] = []
+        main_thread_id = threading.get_ident()
+
+        def figure_page_fetcher(_url):
+            self.assertEqual(threading.get_ident(), main_thread_id)
+            return (
+                f'<meta property="og:image" content="{discovered_url}">',
+                "https://example.test/figure-page",
+            )
+
+        def mocked_download_assets(_kind, *_args, **kwargs):
+            calls.append(kwargs)
+            return {"assets": [], "asset_failures": []}
+
+        run_browser_asset_download_attempt(
+            plan,
+            recovery,
+            image_fetcher_factory=mock.Mock(return_value=None),
+            file_fetcher_factory=mock.Mock(return_value=None),
+            opener_requester={
+                "asset_download_concurrency": 4,
+                "figure_page_fetcher_factory": mock.Mock(
+                    return_value=figure_page_fetcher
+                ),
+            },
+            deps=browser_workflow_deps(download_assets=mocked_download_assets),
+        )
+
+        self.assertEqual(calls[0]["asset_download_concurrency"], 4)
+        self.assertEqual(calls[0]["assets"][0]["full_size_url"], discovered_url)
+
     def test_browser_workflow_asset_retry_policy_skips_deterministic_failures(
         self,
     ) -> None:
@@ -968,6 +1082,27 @@ class BrowserWorkflowAssetDownloadTests(TestCase):
                         "section": "body",
                         "status": 403,
                         "reason": "cloudflare_challenge",
+                    }
+                ],
+                retry_scope="body",
+            ),
+            [asset],
+        )
+        self.assertEqual(
+            browser_workflow_assets._assets_matching_download_failures(
+                [asset],
+                [
+                    {
+                        "kind": "figure",
+                        "heading": "Figure 1",
+                        "source_url": "https://example.test/figure.png",
+                        "section": "body",
+                        "status": 403,
+                        "content_type": "text/html",
+                        "reason": (
+                            "Asset candidate did not return image content "
+                            "(content-type: text/html)."
+                        ),
                     }
                 ],
                 retry_scope="body",

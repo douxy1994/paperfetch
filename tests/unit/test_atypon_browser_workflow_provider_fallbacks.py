@@ -1,6 +1,11 @@
 # ruff: noqa: F403,F405
 from __future__ import annotations
 
+from paper_fetch.providers.base import ProviderFailure
+from paper_fetch.providers.browser_workflow.reuse_cache import (
+    DEFAULT_BROWSER_DOI_ROUTE_HINT_CACHE,
+)
+
 from ._atypon_browser_workflow_provider_support import *
 
 
@@ -205,28 +210,22 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
         self.assertEqual(raw_payload.content.browser_context_seed, seed)
         self.assertIn("fulltext:pnas_html_ok", _payload_source_trail(raw_payload))
 
-    def test_pnas_html_retry_uses_normal_browser_fetcher(self) -> None:
+    def test_pnas_html_uses_one_normal_browser_fetcher_attempt(self) -> None:
         client = pnas_provider.PnasClient(transport=None, env={})
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "pnas", PNAS_SAMPLE.doi)
             mocked_runtime = mock.Mock(return_value=runtime)
             mocked_browser = mock.Mock(
-                side_effect=[
-                    browser_runtime.BrowserRuntimeFailure(
-                        "redirected_to_abstract",
-                        "Browser HTML path redirected to abstract.",
-                    ),
-                    browser_runtime.BrowserFetchedHtml(
-                        source_url=PNAS_SAMPLE.landing_url,
-                        final_url=PNAS_SAMPLE.landing_url,
-                        html="<html></html>",
-                        response_status=200,
-                        response_headers={"content-type": "text/html"},
-                        title=PNAS_SAMPLE.title,
-                        summary="Example summary",
-                        browser_context_seed={},
-                    ),
-                ]
+                return_value=browser_runtime.BrowserFetchedHtml(
+                    source_url=PNAS_SAMPLE.landing_url,
+                    final_url=PNAS_SAMPLE.landing_url,
+                    html="<html></html>",
+                    response_status=200,
+                    response_headers={"content-type": "text/html"},
+                    title=PNAS_SAMPLE.title,
+                    summary="Example summary",
+                    browser_context_seed={},
+                )
             )
             install_browser_workflow_deps(
                 client,
@@ -247,9 +246,13 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
             )
 
         mocked_runtime.assert_called_once()
-        self.assertEqual(mocked_browser.call_count, 2)
-        self.assertTrue(mocked_browser.call_args_list[0].kwargs["disable_media"])
-        self.assertFalse(mocked_browser.call_args_list[1].kwargs["disable_media"])
+        mocked_browser.assert_called_once()
+        self.assertFalse(mocked_browser.call_args.kwargs["disable_media"])
+        self.assertEqual(mocked_browser.call_args.kwargs["wait_seconds"], 8)
+        self.assertEqual(
+            mocked_browser.call_args.kwargs["options"].readiness_budget_seconds,
+            8.0,
+        )
         self.assertIsNotNone(raw_payload.content)
         assert raw_payload.content is not None
         self.assertEqual(raw_payload.content.fetcher, "camoufox")
@@ -700,7 +703,47 @@ class AtyponBrowserWorkflowProviderFallbackTests(AtyponBrowserWorkflowProviderTe
             "fulltext:wiley_pdf_fallback_ok", _payload_source_trail(raw_payload)
         )
 
+    def test_wiley_access_gate_remains_no_access_when_pdf_fallback_fails(
+        self,
+    ) -> None:
+        client = wiley_provider.WileyClient(transport=None, env={})
+        doi = "10.1111/gcb.70541"
+        landing_url = f"https://onlinelibrary.wiley.com/doi/full/{doi}"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime = self._runtime_config(tmpdir, "wiley", doi)
+            install_browser_workflow_deps(
+                client,
+                load_runtime_config=mock.Mock(return_value=runtime),
+                ensure_runtime_ready=mock.Mock(),
+                fetch_html_with_browser=mock.Mock(
+                    side_effect=browser_runtime.BrowserRuntimeFailure(
+                        "cloudflare_challenge",
+                        "Encountered a challenge page.",
+                    )
+                ),
+                fetch_seeded_browser_pdf_payload=mock.Mock(
+                    side_effect=browser_workflow.PdfFallbackFailure(
+                        "pdf_download_failed",
+                        "Wiley PDF fallback failed.",
+                    )
+                ),
+            )
+            with self.assertRaises(ProviderFailure) as raised:
+                client.fetch_raw_fulltext(
+                    doi,
+                    {
+                        "doi": doi,
+                        "title": "Wiley HTML First Example",
+                        "landing_page_url": landing_url,
+                    },
+                )
+
+        self.assertEqual(raised.exception.code, "no_access")
+
     def test_pnas_provider_falls_back_to_pdf_with_browser_seed(self) -> None:
+        DEFAULT_BROWSER_DOI_ROUTE_HINT_CACHE.clear()
+        self.addCleanup(DEFAULT_BROWSER_DOI_ROUTE_HINT_CACHE.clear)
         client = pnas_provider.PnasClient(transport=None, env={})
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "pnas", PNAS_SAMPLE.doi)

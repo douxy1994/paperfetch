@@ -282,6 +282,7 @@ def _detect_html_hard_negative_signals_impl(
     final_url: str | None = None,
     include_paywall_text: bool = True,
     provider_metadata: Mapping[str, Any] | None = None,
+    html_text: str = "",
 ) -> list[str]:
     redirected_to_abstract = bool(
         requested_url and looks_like_abstract_redirect(requested_url, final_url)
@@ -295,6 +296,7 @@ def _detect_html_hard_negative_signals_impl(
         explicit_no_access=bool(
             provider_metadata and provider_metadata.get("explicit_no_access")
         ),
+        html_text=html_text,
     )
 
 
@@ -1159,13 +1161,19 @@ def _dedupe_signals(values: list[str]) -> list[str]:
     return list(dict.fromkeys(value for value in values if value))
 
 
-_IOP_RESIDUAL_CHALLENGE_SIGNALS = frozenset(
-    {
-        CLOUDFLARE_CHALLENGE,
-        "iop_radware_challenge",
-        "iop_captcha_challenge",
-    }
-)
+_LOADED_BODY_RESIDUAL_CHALLENGE_SIGNALS = {
+    "iop": frozenset(
+        {
+            CLOUDFLARE_CHALLENGE,
+            "iop_radware_challenge",
+            "iop_captcha_challenge",
+        }
+    ),
+    # T&F can retain Cloudflare Insights/challenge-platform scripts after a
+    # complete article body has loaded. The structural checks below prevent a
+    # standalone challenge page from using this exception.
+    "tandf": frozenset({CLOUDFLARE_CHALLENGE}),
+}
 
 
 def _residual_challenge_signals_ignored_by_loaded_body(
@@ -1175,7 +1183,8 @@ def _residual_challenge_signals_ignored_by_loaded_body(
     body_ok: bool,
 ) -> frozenset[str]:
     normalized_provider = normalize_text(provider).lower()
-    if normalized_provider != "iop" or not body_ok:
+    residual_signals = _LOADED_BODY_RESIDUAL_CHALLENGE_SIGNALS.get(normalized_provider)
+    if not residual_signals or not body_ok:
         return frozenset()
     if not structure.explicit_body_container or not structure.post_abstract_body_run:
         return frozenset()
@@ -1184,7 +1193,7 @@ def _residual_challenge_signals_ignored_by_loaded_body(
         and structure.body_paragraph_count < 1
     ):
         return frozenset()
-    return _IOP_RESIDUAL_CHALLENGE_SIGNALS
+    return residual_signals
 
 
 def _diagnostics_content_kind(
@@ -1329,6 +1338,7 @@ def assess_html_fulltext_availability(
         final_url=final_url,
         include_paywall_text=False,
         provider_metadata=metadata_map,
+        html_text=html_text or "",
     )
     structure = StructuredBodyAnalysis()
     resolved_container_tag = container_tag

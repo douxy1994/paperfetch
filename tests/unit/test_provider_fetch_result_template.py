@@ -41,7 +41,9 @@ def _payload(
             body=body,
             markdown_text="# Template Article\n\n## Results\n\n" + ("Body text " * 80),
         ),
-        trace=trace_from_markers(list(markers or ["fulltext:template_html_ok"])),
+        trace=trace_from_markers(
+            list(["fulltext:template_html_ok"] if markers is None else markers)
+        ),
     )
 
 
@@ -94,7 +96,12 @@ class ProviderWaterfallRunnerTests(unittest.TestCase):
         )
         self.assertEqual(
             [event.marker() for event in payload.trace if event.marker()],
-            ["fulltext:template_html_fail", "fulltext:template_pdf_ok"],
+            [
+                "fulltext:template_html_fail",
+                "fulltext:template_pdf_ok",
+                "fulltext:html_fail",
+                "fulltext:pdf_ok",
+            ],
         )
 
     def test_runner_combines_failures_when_all_steps_fail(self) -> None:

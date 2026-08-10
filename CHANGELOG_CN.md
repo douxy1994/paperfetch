@@ -6,6 +6,228 @@
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 5.3.0 - 2026-08-10
+
+### 新增——浏览器复用与可观测性
+
+- 为 PNAS、AMS、MDPI、Royal Society Publishing、Annual Reviews、ACS、IOP 和 Taylor & Francis 新增有界、一次性的进程内已验收 preflight HTML 复用。缓存同时绑定 provider、规范 DOI、候选 URL 与 browser runtime 指纹；正式 fetch 仍会重新执行 metadata、Markdown/资产抽取和 acceptance，challenge、空壳、PDF fallback、失败页面及未提交 storage-state 均不会复用。PNAS 与 AMS 还会短期保留当前 DOI 最近验收通过的 provider route 提示。
+- 新增浏览器导航次数、被阻断资源类型与请求数、readiness 预算/结果、preflight 复用和候选重排 diagnostics。Catalog live 测试同步保留阶段耗时证据，并为 PNAS preflight 加正式 fetch 设置观察性的总耗时目标，不把性能波动误当成访问边界失败。
+
+### 变更——浏览器与资产性能
+
+- 将浏览器加载策略改为 provider 级配置：上述八个 opt-in provider 只阻断 image、font 与 media 请求，继续放行 document、stylesheet、JavaScript 和 API 流量。PNAS 改为按 canonical 候选顺序执行一次完整导航，并使用 8 秒正文 readiness 预算；MDPI 会在 PDF fallback 前继续尝试不完整的中间 HTML 候选，Royal Society Publishing 则直接识别当前 Silverchair 正文容器，不再固定等待。
+- ACS、Annual Reviews 与 Royal Society Publishing 优先使用 download/media link、`srcset` 和原图属性暴露的高分辨率图片 URL。仍缺少原图时，在 runtime 所有的单个 Camoufox figure page 上串行发现，单页等待 2 秒并按 URL memoize；随后 direct asset download 继续使用常规并发。
+- Taylor & Francis 同源 CSV 表格改为 4 个有界 worker 批量 hydration，共享总 deadline、保持输入顺序，并为每张失败表保留 embedded-data fallback，不再逐表串行请求。
+- 在常规 Linux 与原生 `macos-15` CI 中增加同一组非 Science 浏览器性能和资产回归 gate，并同步 macOS 适配合约、审计与维护文档。
+
+### 修复——运行时隔离与补充资产
+
+- 将 AIP Camoufox cookie 与 storage-state 限定在所属 `RuntimeContext`：cold HTML retry 仍可在单次 fetch 内复用 transient seed，但不再跨 runtime 指纹边界发布 preflight HTML、cookie 或 storage-state。
+- IEEE multimedia discovery 与 IOP supplementary index 解析现在按 request context 使用规范化、脱敏 URL memoize。签名参数轮换不再触发重复发现/下载，也不会进入 cache key；IOP 还会确定性复用成功的索引解析结果和稳定的抽取失败。
+
+## 5.2.1 - 2026-08-08
+
+### 变更——构建与发布完整性
+
+- 将固定的 `haskell-actions/setup` 构建 action 从 v2.11.0 更新到 v2.12.0，并同步 macOS 机器合约、validator、测试和文档。action 随附的 GHCup 0.2.6.2 更新仍保留 GHC 9.10.3、Cabal 3.12.1.0、texmath 0.13.2 和既有产物接口。
+- 新增独立的 `uv lock --check` quality gate；项目版本、依赖声明或 lock metadata 陈旧时，会在其余静态检查前直接令 CI 失败。
+
+## 5.2.0 - 2026-08-07
+
+### 新增——Taylor & Francis Online
+
+- 新增 Taylor & Francis Online（`tandf`）支持：通过 browser-rendered article HTML 获取正文，有界加载同源 CSV 和同页已加载的 table payload，并支持 browser-seeded PDF fallback、provider 管理的 abstract-only 降级、图片、MathML 公式、补充材料与参考文献。
+
+### 修复——Taylor & Francis 浏览器初始化
+
+- 为 `paper-fetch auth tandf` 与 `paper-fetch browser-preflight --provider tandf` 增加已验证的开放文章目标；未传 `--url` 时，默认调用不再于目标解析阶段失败。
+- 将文章范围内的 Taylor & Francis CMS 正文图 rendition 标记为可接受 preview；对超出共享宽高阈值、但内容有效的宽图不再误报资产保真度降级。
+
+## 5.1.1 - 2026-08-06
+
+### 修复——Elsevier XML 保真度
+
+- 修复仅通过 `link` locator 暴露的 Elsevier 公式：在公式原位置解析并输出最高保真
+  官方 object 图片；已下载的本地资源优先，无资产模式保留官方远程 URL，图片
+  fallback 不做 OCR，并继续明确记录降级质量状态。
+- Elsevier 与共享 JATS 路径现在按各自列模型独立解析每个 CALS `tgroup`。同一表题
+  下的多个源分组按顺序渲染，保留分组前缀与全部行；只有真正退成可读列表的分组
+  才记录降级。
+
+## 5.1.0 - 2026-08-06
+
+### 修复——批量请求 deadline
+
+- 修复 CLI 与 MCP 批量任务在预先解析身份和等待 provider lane 时提前消耗单篇论文
+  request deadline 的问题。每个 fetch worker 现在会获得完整的新请求预算，同时保留
+  item-local 解析缓存和共享 transport，避免 browser route 仅因抓取前的批量等待而
+  错误降级为 metadata-only。
+
+## 5.0.1 - 2026-08-04
+
+### 变更——依赖兼容
+
+- 将锁定的 `trafilatura` 升级到 2.2.0，并同步 Royal Society Publishing
+  表格 golden contract；统计表头中的字面量管道符现在保留为合法的 GFM
+  `\|` 转义，避免被误解析为额外列。
+- 刷新当前兼容范围内的锁定依赖：`apify-fingerprint-datapoints` 0.14.0、
+  `cachetools` 7.1.7、`cffi` 2.1.1、`coverage` 7.15.3、
+  `cryptography` 50.0.0、`filelock` 3.32.2、`isbnlib2` 3.11.21、
+  `pip` 26.2、`ruff` 0.16.1 和 `uvicorn` 0.52.1；其中
+  `cryptography` 更新修复 `CVE-2026-69247`，锁定全依赖图的漏洞审计恢复通过。
+
+## 5.0.0 - 2026-08-03
+
+### 新增
+
+- 以 `Dictation354/paper-fetch-skill` v4.1.0
+  (`fc3bd96e8d781667a2e86e90dc6e8e35a8a26fa7`) 为基线重建 macOS
+  适配合约、validator、Windows / WSL contract gate 和分层审计矩阵；旧 v1
+  合约不再照搬。新增的维护文档说明如何在最新 `upstream/main` 上重放独立适配
+  提交，并明确普通 CI 会在 Ubuntu / Windows 执行 portable gate、`/mnt/*` WSL
+  checkout 只能提供 validator-only 证据。
+- 新增 macOS 安装前的最低系统版本、manifest/checksum、标准 GIL CPython
+  ABI/解释器架构、递归 quarantine 和用户写入顺序检查；构建器还会在 staging
+  清理前拒绝路径穿越包名、危险构建根和没有 ownership marker 的非空目录；
+  临时 wheelhouse 保持在 owned staging 且不进入产物，正式 artifact 采用同目录
+  临时文件原子发布。`--user-config` 使用
+  `~/Library/Application Support/paper-fetch/.env`，safe purge 会拒绝 `/`、
+  HOME 及其祖先、尚未安装的 bundle root 或没有匹配 ownership manifest 的
+  目标；普通安装同样只允许不存在、空目录或同时带 schema 3 manifest 与
+  `runtime/python-bin` marker 的目标。合法升级保留 `offline.env` 和用户配置
+  非 managed 内容，卸载清理 managed block；Zsh 启动文件为 symlink 时保留链接。
+  checksum 清单现在必须精确覆盖 bundle 中全部 regular file，payload symlink 与
+  未列出的附加 payload 都会在用户写入前拒绝；`--purge` 也无条件拒绝 symlink
+  形式的入口。
+
+### 破坏性变更
+
+- 所有 MCP 成功/失败与 acceptance payload 从 schema v1 升级到 schema v2，并删除
+  重复的 `quality.trace`；`FetchEnvelope.trace` 成为唯一完整 trace owner，
+  metadata/asset 保留 `article_type` 与 `preview_accepted`，资产摘要用稳定 issue code
+  区分 accepted/fallback preview。仍要求 schema v1 的消费者必须先完成升级再采用
+  5.0.0；旧 v1 FetchEnvelope cache 仅保留读取迁移。
+- 删除曾对外公开但未实现的 IOP XML/TDM 占位 route；catalog/status/docs 现在只公开
+  真实可执行的 IOP HTML、PDF、metadata 与 supplementary 能力。
+
+### 变更——macOS 与离线打包
+
+- macOS CPython 3.11–3.14 arm64 离线矩阵固定到 `macos-15`，manifest 声明最低
+  macOS 15.0；四个 tarball 均运行原生安装 verifier，缺少 artifact 会令 job
+  失败。原生 texmath 会携带可迁移的非系统 dylib，使用
+  `@rpath` / `@loader_path` 并进行 ad-hoc codesign，verifier 通过
+  安全 `tarfile.data_filter` 解包、`file -b`、`lipo -archs`、canonical
+  dependency containment、LC_RPATH 和递归闭包检查；随包 Playwright Node
+  仅在闭包通过后实际执行 `--version`。递归 `xattr` 检查发生权限/I/O 错误时
+  也会 fail closed；匹配过程不使用早退管道，并加入大体积 provenance 输出
+  回归，避免 `set -o pipefail` 下的 `SIGPIPE` 漏判。
+- 同步 README、部署和文档索引，区分 Windows、WSL 与原生 Mac 证据；Windows /
+  WSL 绿灯不能替代 Mach-O、`/bin/zsh`、`xattr` 或 Gatekeeper 的原生
+  `macos-15` gate。原生 verifier 实际覆盖嵌套 quarantine、`.zshrc` symlink、
+  owned upgrade 和 user-config；`/var` ↔ `/private/var` cache alias 由原生 CI
+  精确测试。旧上游 `v4.1.0` 标签不可移动或复用，发布本 fork 适配必须提升版本
+  并创建新标签；不可变标签重跑必须先通过源码 checkout 自身的当前 Mac contract，
+  因此不能靠 overlay 把无合约的上游 `v4.1.0` 改造成适配发行版。
+- 普通 CI 的 `macos-15` job 现在显式准备固定的官方 Camoufox
+  `152.0.4-beta.28` app bundle，并串行启动临时与持久 context。原生测试只接受
+  当前用户固定的 managed cache，且在调用 Camoufox 前验证 compatibility flag、
+  active config 与 browser 目录 containment，避免把任意目录交给 package manager
+  清理。
+- browser/full extra 保持 `camoufox>=0.5.4,<0.6` 兼容范围，由 `uv.lock`
+  提供可复现的具体版本。POSIX 构建器从 lockfile 解析该版本，核验下载 wheel
+  METADATA 与 installed distribution，并把实际版本写入 offline manifest。
+  POSIX/Windows tooling ref 都必须是
+  完整 commit SHA，只复制精确 packaging-tool 路径且不复制 Python wheel source；
+  manifest 会分别记录源码 `git_revision` 和可选 `tooling_revision`。
+
+### 修复——macOS 与离线打包
+
+- 将 provenance 检查使用的 `packaging` 声明为核心运行时依赖，并让 macOS
+  contract validator 通过锁定的项目环境运行，避免干净 core 安装以及原生/离线
+  CI runner 因依赖未声明或环境不可见而失败。
+- 修复并发或续跑 CLI batch 在结果缺少标题和 DOI 时争用
+  `unknown_unknown_article.*` 的问题。主输出文件名现在回退到规范化 query 的
+  16 位 SHA-256 摘要，在不向文件名暴露完整 query URL 的同时继续保持
+  no-overwrite 安全语义。
+- 修复原生 macOS 上已预置的官方 Camoufox app bundle 无法启动的问题：默认
+  managed runtime 继续以 `download_if_missing=False` 保持普通 fetch 不联网下载，
+  但不再把 `Contents/MacOS/camoufox` 误作 custom executable 传回 Camoufox，
+  从而避免错误查找 `Contents/MacOS/properties.json`；临时 fetch/preflight 和
+  持久 auth context 均覆盖该规则，显式 binary override 仍保持透传。
+- 修复 macOS 把 `tempfile` scope 暴露为 `/var/...` 或 `/tmp/...`、而文件
+  canonical path 为 `/private/var/...` 或 `/private/tmp/...` 时 MCP cache index、fetch-envelope 和 resource
+  错误 miss 的问题；等价根路径现在共享同一安全 scope，目录内 symlink 和
+  scope 外文件仍会拒绝。
+
+### 变更——运行时与 provider 验证
+
+- 删除 GitHub Actions 的 Live publisher/MCP、provider drift 与完整 Golden corpus
+  定时/手动工作流；这些 opt-in 检查只保留文档化的本地 pytest 和脚本入口。
+- publisher live 样本改为声明 source 与 trail 的联合合法 outcome，browser provider 使用复用 storage state 的 lazy preflight，live socket 由 marker 自动放行，不再依赖全局 force-enable。Springer 成功基准替换为 OA 研究论文，历史 Nature 新闻只保留为独立 access-gate 行为样本。
+- publisher catalog live 从全文 smoke 提升为 `asset_profile=body` 硬验收门；JSON/JUnit artifact 会区分“已记录 provider 全部 complete”和“存在 skip/未记录 provider”，IEEE 受保护 GIF 恢复拆为仅授权 runner 显式启用的独立套件。
+
+### 修复——运行时与 provider
+
+- 当浏览器后续候选发生传输/导航失败，或下一候选 URL、保守重试耗尽共享 deadline
+  时，保留此前已明确识别的 challenge/paywall/access boundary，并让 provider 自有 PDF waterfall 继续输出
+  `no_access`。live 验收只接受显式 `status=no_access` 或 metadata fallback 精确的
+  `route:provider_candidate_*_access_boundary_stop` 作为合法访问边界；解析失败、空壳和
+  正文不足仍是失败。
+- IEEE preflight、浏览器 landing/全文和共享资产 seed 现在最多等待 15 秒，且只接受文章号匹配的 `#article`；持续存在的 AWS WAF HTTP 202 页面精确报告 `aws_waf_challenge` 和兼容诊断，已在窗口内恢复的文章页不再因初始响应被误拒。受保护 large 资产仍保持 direct-first、一次 preview 预热和完整的 full-size 恢复/降级 provenance。
+- 稳定 AIP 及共享 browser workflow 的冷启动 HTML 重试：fast 尝试产生的 provider-scoped 临时 cookies 会传给正常尝试，但未验收状态不会提前持久化；HTTP 200 的 head-only 页面现在报告 `empty_article_shell`，重试会优先下一个已有 provider URL 而不再重复同一空壳 landing。诊断保留两轮尝试、响应状态和 DOM readiness，PDF 继续作为终态兜底。
+- 修复 publisher live 测试误读浏览器静态能力的问题：改读嵌套的 `browser_runtime.available`，隔离各 provider 的 profile/storage state，并在 pytest 隔离期间复用 Camoufox 已准备的可执行文件与依赖 cache；显式启动复用相邻版本元数据，启动进度不再污染 MCP JSON-RPC stdout。
+- 将页面创建前的 browser 失败也保存为隐私安全诊断 JSON，把请求作用域的公式工具配置传入隐式 MathML 转换，修正 body-only 资产及 provenance 验收语义，并在不跨线程使用 Camoufox page 的前提下恢复 Silverchair 签名原图。
+- 普通 publisher/MCP live 套件与 IEEE 受保护覆盖保留为彼此独立、仅限本地显式运行的入口；共享外部状态的测试继续串行，并保留 legacy-compatible JUnit 属性和结构化 acceptance artifact。
+- 修复 IEEE 浏览器 DOM 提取把非可见脚本/模板中的 `captcha` 或访问 token 误判为 block page 的问题；可见 challenge 仍会被拒绝，验证时保持页面自身 REST 子请求正常放行。
+- 为成功的 MCP 单篇抓取响应补齐文档约定的 `status=ok` 与七分面紧凑 acceptance，并与批量抓取复用同一套统一验收及投影逻辑。
+- 将成功展开的 HTML/JATS/CALS 行列跨度改判为正常表格规范化：保留结构化 reason，但不再误发版式降级 warning；非法 span/列定义仍保守降级，并提升 extraction revision 以淘汰带旧质量语义的缓存。
+- 修复 request deadline 初始化、AIP/Science DOM readiness 与 browser preflight 分类：fast-path 本地 cap 不再耗尽后续 fallback，页面/提取失败会保留隐私安全的诊断产物。
+- Springer/Nature HTML 改为复用安全 cookie-aware requester，并对 `cookies_not_supported` 只用全新 session 重试一次；同时保留 Research Briefing article type，合法无署名 briefing 不再误报 `empty_authors`。
+- IEEE small/large 资产按 canonical logical identity 对账；direct 资产恢复并发，共享 page 的 browser recovery 仍串行；资产下载失败、保真降级、占位和 remote-only 使用互不替代的稳定分类。
+- 移除 trace 三层重复拼接和按 warning 数量降级的质量启发式；真实 retry 的同 code 仍按顺序保留，任意数量的操作通知不再自动降低内容质量。
+- 普通 unit 强制零外部 socket attempt，补齐三个 batch resolver fake seam；doctor 诊断 source checkout 未激活 `.venv` 与 MCP 版本不兼容，成功和终态失败 manifest 都保留诊断文件。
+- 新增独立 browser/DOM/HTTP/retry/asset/render 计时及 provider-route-stage nearest-rank 性能摘要：单样本只显示 observed，多样本显示 p50/p95。
+
+### 限制
+
+- 离线 runtime 包含 Camoufox / Playwright Python 包，但不包含 Camoufox 浏览器
+  binary，普通 fetch 不会自动下载。进入受限网络或离线环境前需联网用离线
+  runtime 执行 `python -m camoufox fetch`，再运行
+  `paper-fetch browser-preflight` 验证；预置后真正断网的 Camoufox launch
+  仍是开放审计项，因此不宣称完整离线浏览器支持。
+
+## 4.1.0 - 2026-07-29
+
+### 新增
+
+- 新增逐 route 的 provider 契约与治理：runtime catalog 统一记录 route 顺序、可用状态、browser 要求、超时、并发、限流策略、验收规则和资产范围；通过自动生成的 route/catalog 快照、按 route family 统计的 golden replay、带到期日的证据 waiver，以及定时 corpus/provider drift 检查，持续校验代码、manifest、fixture 与文档一致性。
+- 新增共享的类型化失败诊断、route attempt 耗时摘要、远端 JSON 根/schema 校验、fail-closed 公网 URL 校验和可配置 PDF 传输上限，使 provider、HTTP、workflow、CLI、manifest 与 MCP 各层保留同一组机器可读失败事实。
+
+### 变更
+
+- MCP Python SDK 硬依赖由 1.x 升级到 `mcp>=2,<3`，server 与协议模型访问迁移到 v2 `MCPServer` API，自定义 stdio pump 替换为官方 transport；继续兼容 2025 握手协议客户端，并新增 2026-07-28 现代协议与 resource subscription 支持。
+- FetchEnvelope cache 改为按 DOI + request fingerprint 保存多版本，并加入单向 credential capability scope；public、token 与 browser-state 请求可以并存且不会互相覆盖或泄漏，compact cache 投影仍保留确定性的请求与验收证据。
+- 将 publisher identity、route discovery、batch lane 并发、browser capability 与 source ownership 集中到 runtime provider catalog；PLOS 使用版本化 journal route，Springer 显式区分 site family，Frontiers canonical route 改为 direct-first，并用结构化 diagnostics 取代分散的隐式启发式判断。
+- 加固共享 HTTP/cache runtime：cache identity 纳入 credential scope，敏感/private 响应禁止落盘，redirect diagnostics 全程脱敏，磁盘 cache 使用增量索引做 reconcile/prune；瞬态重试类别受控，host/provider cooldown 等待会先释放并发槽。
+- 扩展 Frontiers、Oxford Academic、IEEE、IOP、PLOS、Springer 与 Wiley 的正文提取和资产处理，包括更严格的 JATS identity/body 校验、direct-first 资产下载、显式未归档 supplementary 记录、selected-browser 状态透传和逐 route PDF recovery。
+
+### 修复
+
+- 防止 browser/PDF fallback 接受 challenge 或非 PDF 响应、突破共享 deadline/传输上限、跨 origin 或 credential 边界复用状态，以及在取消或下载失败后遗留半成品。
+- 修正 JATS 公式、表格、图片、参考文献与 supplementary 渲染；provider identity 不一致时 fail closed，语义损失保持可见，正文或资产证据不足时不再误升为 complete acceptance。
+- 修复丢弃 HTTP 重定向或异常响应时仅关闭连接却未归还阻塞式连接池的问题，避免 Springer 并发图片发现耗尽连接槽并令 fetch 与离线发布 smoke 无限等待。
+
+## 4.0.2 - 2026-07-28
+
+### 修复
+
+- 统一 HTML、JATS 与 Elsevier/CALS 表格的 provider-neutral cell/grid 规范化：扁平化多层表头，支持 CALS named spans，保留整表宽度分组，语义展开可安全处理的 rowspan/colspan，并将不规则网格保留为可读列表和准确的 fallback/布局诊断，避免误报语义丢失。
+- 修正 Royal Society Publishing 的 Silverchair 图片提取：保留 `DownloadImage.aspx` 中的签名 CDN 原图，将 `/view-large/figure/` 如实建模为 HTML 原图发现页，拒绝分组 slide 跨图串接，并在降级 preview 前使用选择器驱动的 viewer 兜底。
+- 受控跟随 PLOS manuscript endpoint 到临时签名 Google Cloud Storage XML 的重定向，同时脱敏全部 `X-Goog-*` 查询值，并禁止含凭证 Location 的重定向响应进入 HTTP cache。
+- 恢复 AMS 共享 Camoufox HTML 与 browser-seeded PDF 工作流，将 AWS WAF HTTP 202 验证页识别为 challenge；无保存状态仍可直接尝试抓取，同时恢复可选的 `paper-fetch auth ams` 与 `PAPER_FETCH_AMS_STORAGE_STATE_JSON` 状态复用。
+- 将 ACS 提取迁移到当前 Silverchair 页面结构：保留完整 `.article-body`、表格、图片、MathML 公式、结构化 references 和稳定 article-supplement 链接，同时隔离嵌入 Figshare viewer 与 figure UI chrome；全面刷新 3 份 ACS golden fixture，让 fixture PDF 抓取复用所选浏览器 runtime，并停止在 full-size 图页上等待文章正文 readiness。
+- IEEE 受保护的 full-size 图片、表格、multimedia 与 supplementary 资产改为复用同一篇已就绪论文页的 browser context/page，持续携带最新 cookie 与论文页 Referer，且不再把共享 page 导航到资产 URL；同时让 HTTP 403/HTML challenge 的重试选择与既有 browser recovery policy 保持一致。
+
 ## 4.0.1 - 2026-07-27
 
 ### 修复

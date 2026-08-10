@@ -28,7 +28,7 @@ def test_fake_drift_report_marks_matching_source_ok() -> None:
     sample = {
         "purpose": "structure",
         "doi": "10.3390/membranes15030093",
-        "expected_source": "mdpi_html",
+        "accepted_sources": ["mdpi_html"],
     }
 
     result = drift.evaluate_sample(
@@ -53,7 +53,7 @@ def test_fake_drift_report_marks_pdf_fallback_source_mismatch() -> None:
     sample = {
         "purpose": "structure",
         "doi": "10.3390/membranes15030093",
-        "expected_source": "mdpi_html",
+        "accepted_sources": ["mdpi_html"],
     }
 
     result = drift.evaluate_sample(
@@ -69,11 +69,29 @@ def test_fake_drift_report_marks_pdf_fallback_source_mismatch() -> None:
     assert "repair provider route-source" in result["operator_action"]
 
 
+def test_declared_pdf_fallback_source_is_not_reported_as_drift() -> None:
+    manifest = _load_mdpi_manifest()
+    sample = {
+        "purpose": "structure",
+        "doi": "10.3390/membranes15030093",
+        "accepted_sources": ["mdpi_html", "mdpi_pdf"],
+    }
+
+    result = drift.evaluate_sample(
+        provider="mdpi",
+        manifest=manifest,
+        sample=sample,
+        runner=drift.fake_runner(source="mdpi_pdf", markdown="PDF text"),
+    )
+
+    assert result["source_mismatch"] is False
+    assert result["pdf_fallback_silent_degradation"] is False
+
+
 def test_browser_risk_selection_uses_manifest_probe_flags() -> None:
     providers = set(drift.browser_risk_providers())
 
-    assert {"mdpi", "wiley", "science", "pnas"} <= providers
-    assert "ams" not in providers
+    assert {"ams", "mdpi", "wiley", "science", "pnas"} <= providers
     assert "elsevier" not in providers
 
 

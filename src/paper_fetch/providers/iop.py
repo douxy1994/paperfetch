@@ -20,16 +20,19 @@ from ..extraction.html.provider_rules import (
     ProviderHtmlRules,
 )
 from ..models import AssetProfile
-from ..provider_catalog import BodyTextThresholds, ProviderSpec
+from ..provider_catalog import BodyTextThresholds, ProviderRouteSpec, ProviderSpec
 from ..publisher_identity import normalize_doi
 from ..reason_codes import PDF_FALLBACK
 from ..runtime import RuntimeContext
 from ..utils import empty_asset_results, normalize_text
 from . import _iop_html, browser_workflow
 from ._registry import ProviderBundle, register_provider_bundle
-from .base import RawFulltextPayload
+from .base import (
+    ProviderFailure,
+    RawFulltextPayload,
+)
 from .browser_runtime import BrowserRuntimeFailure
-from .browser_workflow.profile import ProviderBrowserProfile
+from .browser_workflow.reuse_cache import normalize_browser_cache_url
 
 
 register_provider_bundle(
@@ -57,6 +60,41 @@ register_provider_bundle(
             requires_playwright=True,
             requires_browser_runtime=True,
             body_text_thresholds=BodyTextThresholds(min_chars=1200),
+            routes=(
+                ProviderRouteSpec(
+                    name="metadata",
+                    kind="metadata",
+                    source="crossref_metadata",
+                    concurrency=2,
+                ),
+                ProviderRouteSpec(
+                    name="browser_html",
+                    kind="html",
+                    source="iop_html",
+                    browser_required=True,
+                    browser_preflight=True,
+                    auth_supported=True,
+                    requires_playwright=True,
+                    timeout_seconds=120,
+                    concurrency=1,
+                    rate_policy="selected_browser_serial",
+                    acceptance_policy="provider_html_body",
+                ),
+                ProviderRouteSpec(
+                    name="browser_pdf",
+                    kind="pdf",
+                    source="iop_pdf",
+                    browser_required=True,
+                    browser_preflight=True,
+                    auth_supported=True,
+                    requires_playwright=True,
+                    requires_pdf_conversion=True,
+                    timeout_seconds=120,
+                    concurrency=1,
+                    rate_policy="selected_browser_serial",
+                    acceptance_policy="validated_pdf",
+                ),
+            ),
         ),
         html_rules=ProviderHtmlRules(
             name="iop",
@@ -96,18 +134,14 @@ register_provider_bundle(
 )
 
 
-IOP_BROWSER_PROFILE = ProviderBrowserProfile(
-    name="iop",
+IOP_BROWSER_PROFILE = browser_workflow.make_browser_profile(
+    "iop",
     article_source_name="iop_html",
-    label="IOP Publishing",
-    hosts=("iopscience.iop.org",),
-    base_hosts=("iopscience.iop.org",),
-    html_path_templates=("/article/{doi}",),
-    pdf_path_templates=("/article/{doi}/pdf",),
-    crossref_pdf_position=0,
-    markdown_publisher="iop",
     fallback_author_extractor=_iop_html.extract_authors,
-    shared_browser_image_fetcher=True,
+    policy=browser_workflow.BrowserWorkflowPolicy(
+        blocked_resource_types=("image", "font", "media"),
+        preflight_html_reuse=True,
+    ),
 )
 
 
@@ -164,6 +198,26 @@ def _redact_iop_supplementary_urls(
                     item[key] = redact_url_for_cache(value)
         redacted.append(item)
     return redacted
+
+
+def _canonical_iop_index_url(value: str) -> str:
+    """Normalize an index URL without retaining signed query values in keys."""
+
+    normalized = normalize_browser_cache_url(value)
+    return redact_url_for_cache(normalized)
+
+
+def _dedupe_iop_index_urls(values: Sequence[str]) -> list[tuple[str, str]]:
+    deduplicated: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for value in values:
+        raw = normalize_text(value)
+        canonical = _canonical_iop_index_url(raw)
+        if not raw or not canonical or canonical in seen:
+            continue
+        seen.add(canonical)
+        deduplicated.append((raw, canonical))
+    return deduplicated
 
 
 class IopClient(browser_workflow.BrowserWorkflowClient):
@@ -228,8 +282,50 @@ class IopClient(browser_workflow.BrowserWorkflowClient):
         *,
         context: RuntimeContext,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
-        if not index_urls:
+        normalized_indexes = _dedupe_iop_index_urls(index_urls)
+        if not normalized_indexes:
             return [], []
+        resolved_assets: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
+        pending_indexes: list[tuple[str, str]] = []
+        for index_url, canonical_url in normalized_indexes:
+            cache_key = (
+                "iop",
+                "supplementary_index",
+                normalized_doi,
+                canonical_url,
+            )
+            cached = context.get_session_cache(cache_key, copy_value=True)
+            if not isinstance(cached, Mapping):
+                pending_indexes.append((index_url, canonical_url))
+                continue
+            state = normalize_text(str(cached.get("state") or "")).lower()
+            if state == "success":
+                resolved_assets.extend(
+                    dict(asset)
+                    for asset in list(cached.get("assets") or [])
+                    if isinstance(asset, Mapping)
+                )
+                continue
+            if state == "deterministic_failure":
+                failures.append(
+                    _supplementary_index_failure(
+                        index_url,
+                        normalize_text(str(cached.get("reason") or ""))
+                        or "iop_supplementary_index_fetch_failed",
+                        message=normalize_text(str(cached.get("message") or "")),
+                        details=(
+                            cached.get("details")
+                            if isinstance(cached.get("details"), Mapping)
+                            else None
+                        ),
+                    )
+                )
+                continue
+            pending_indexes.append((index_url, canonical_url))
+
+        if not pending_indexes:
+            return self._deduplicate_supplementary_assets(resolved_assets), failures
         try:
             runtime = self.deps.load_runtime_config(
                 self.env,
@@ -237,17 +333,28 @@ class IopClient(browser_workflow.BrowserWorkflowClient):
                 doi=normalized_doi,
             )
             self.deps.ensure_runtime_ready(runtime)
-        except BrowserRuntimeFailure as exc:
+        except (BrowserRuntimeFailure, ProviderFailure) as exc:
+            failure_message = getattr(exc, "message", None) or str(exc)
+            failure_reason = getattr(exc, "kind", None) or getattr(
+                exc, "code", "browser_runtime_failed"
+            )
+            failure_details = dict(getattr(exc, "details", None) or {})
             runtime_failures = [
                 _supplementary_index_failure(
                     index_url,
                     "iop_supplementary_index_runtime_failed",
-                    message=exc.message,
-                    details={"runtime_reason": exc.kind, **exc.details},
+                    message=failure_message,
+                    details={
+                        "runtime_reason": failure_reason,
+                        **failure_details,
+                    },
                 )
-                for index_url in index_urls
+                for index_url, _canonical_url in pending_indexes
             ]
-            return [], runtime_failures
+            return self._deduplicate_supplementary_assets(resolved_assets), [
+                *failures,
+                *runtime_failures,
+            ]
 
         content = raw_payload.content
         browser_context_seed = (
@@ -277,11 +384,16 @@ class IopClient(browser_workflow.BrowserWorkflowClient):
             cdp_endpoint=getattr(runtime, "cdp_endpoint", None),
             profile_dir=getattr(runtime, "profile_dir", None),
             user_data_dir=getattr(runtime, "user_data_dir", None),
+            browser_config=runtime,
         )
-        resolved_assets: list[dict[str, Any]] = []
-        failures: list[dict[str, Any]] = []
         try:
-            for index_url in index_urls:
+            for index_url, canonical_url in pending_indexes:
+                cache_key = (
+                    "iop",
+                    "supplementary_index",
+                    normalized_doi,
+                    canonical_url,
+                )
                 try:
                     response = index_fetcher(
                         index_url,
@@ -337,25 +449,44 @@ class IopClient(browser_workflow.BrowserWorkflowClient):
                 )
                 html_text = decode_html(bytes(body), content_type=content_type)
                 try:
-                    resolved_assets.extend(
-                        _iop_html.extract_supplementary_data_assets(
-                            html_text,
-                            final_url,
-                            expected_doi=normalized_doi,
-                        )
+                    parsed_assets = _iop_html.extract_supplementary_data_assets(
+                        html_text,
+                        final_url,
+                        expected_doi=normalized_doi,
                     )
                 except HtmlExtractionFailure as exc:
+                    deterministic_details = {
+                        "status": response.get("status_code"),
+                        "content_type": content_type,
+                        "final_url": final_url,
+                    }
                     failures.append(
                         _supplementary_index_failure(
                             index_url,
                             exc.reason,
                             message=exc.message,
-                            details={
-                                "status": response.get("status_code"),
-                                "content_type": content_type,
-                                "final_url": final_url,
-                            },
+                            details=deterministic_details,
                         )
+                    )
+                    context.set_session_cache(
+                        cache_key,
+                        {
+                            "state": "deterministic_failure",
+                            "reason": exc.reason,
+                            "message": exc.message,
+                            "details": deterministic_details,
+                        },
+                        copy_value=True,
+                    )
+                else:
+                    resolved_assets.extend(parsed_assets)
+                    context.set_session_cache(
+                        cache_key,
+                        {
+                            "state": "success",
+                            "assets": [dict(asset) for asset in parsed_assets],
+                        },
+                        copy_value=True,
                     )
         finally:
             close = getattr(index_fetcher, "close", None)
@@ -363,18 +494,24 @@ class IopClient(browser_workflow.BrowserWorkflowClient):
                 with contextlib.suppress(Exception):
                     close()
 
+        return self._deduplicate_supplementary_assets(resolved_assets), failures
+
+    @staticmethod
+    def _deduplicate_supplementary_assets(
+        resolved_assets: Sequence[Mapping[str, Any]],
+    ) -> list[dict[str, Any]]:
         deduplicated_assets: list[dict[str, Any]] = []
         seen: set[tuple[str, str]] = set()
         for asset in resolved_assets:
             key = (
                 normalize_text(str(asset.get("source_ref") or "")).lower(),
-                normalize_text(str(asset.get("url") or "")),
+                redact_url_for_cache(normalize_text(str(asset.get("url") or ""))),
             )
             if key in seen:
                 continue
             seen.add(key)
-            deduplicated_assets.append(asset)
-        return deduplicated_assets, failures
+            deduplicated_assets.append(dict(asset))
+        return deduplicated_assets
 
     def download_related_assets(
         self,

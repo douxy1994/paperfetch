@@ -44,8 +44,8 @@ def _copy_host_skills(skill_dir: Path, home: Path) -> None:
 def _create_install(
     root: Path,
     *,
-    manifest_version: str = "4.0.1",
-    runtime_version: str = "4.0.1",
+    manifest_version: str = "5.3.0",
+    runtime_version: str = "5.3.0",
     target_platform: str = "linux",
 ) -> tuple[Path, Path]:
     install_root = root / "install"
@@ -107,10 +107,11 @@ def _context(
     root: Path,
     home: Path,
     *,
-    distribution_version: str = "4.0.1",
-    cli_version: str = "4.0.1",
+    distribution_version: str = "5.3.0",
+    cli_version: str = "5.3.0",
     cli_path: Path | None = None,
     source_root: Path | None = None,
+    sys_prefix: Path | None = None,
 ) -> ProvenanceContext:
     distribution_root = root / "executing-environment" / "site-packages"
     metadata_path = (
@@ -127,6 +128,12 @@ def _context(
         / "paper_fetch"
         / "provenance.py",
         executable=root / "executing-environment" / "bin" / "python",
+        sys_prefix=sys_prefix
+        or (
+            source_root / ".venv"
+            if source_root is not None
+            else root / "executing-environment"
+        ),
         argv0=str(effective_cli_path),
         home=home,
         env={},
@@ -171,7 +178,7 @@ def test_consistent_posix_and_windows_install_provenance_is_ready(
 
     assert report["status"] == "ready"
     assert report["consistency"] == {
-        "expected_version": "4.0.1",
+        "expected_version": "5.3.0",
         "version_status": "ready",
         "version_drift": [],
         "issue_count": 0,
@@ -202,7 +209,7 @@ def test_runtime_old_version_reports_exact_metadata_path(tmp_path: Path) -> None
         for item in report["consistency"]["version_drift"]
         if item["component"] == "installed_runtime"
     ]
-    assert drift["expected"] == "4.0.1"
+    assert drift["expected"] == "5.3.0"
     assert drift["actual"] == "3.0.0"
     assert drift["path"].endswith("paper_fetch_skill-3.0.0.dist-info/METADATA")
 
@@ -221,7 +228,7 @@ def test_old_manifest_version_is_distinguished_from_current_runtime(
     assert report["status"] == "drift"
     assert {
         (item["component"], item["expected"], item["actual"]) for item in drift
-    } == {("offline_manifest", "4.0.1", "3.0.0")}
+    } == {("offline_manifest", "5.3.0", "3.0.0")}
     assert drift[0]["path"] == str(install_root / "offline-manifest.json")
 
 
@@ -253,7 +260,7 @@ def test_source_development_without_manifest_is_not_applicable(tmp_path: Path) -
     source_root = tmp_path / "source"
     _write(
         source_root / "pyproject.toml",
-        '[project]\nname = "paper-fetch-skill"\nversion = "4.0.1"\n',
+        '[project]\nname = "paper-fetch-skill"\nversion = "5.3.0"\n',
     )
     cli_path = source_root / ".venv" / "bin" / "paper-fetch"
     _write(cli_path)
@@ -282,7 +289,7 @@ def test_source_distribution_and_path_cli_drift_include_all_paths(
     source_root = tmp_path / "source"
     _write(
         source_root / "pyproject.toml",
-        '[project]\nname = "paper-fetch-skill"\nversion = "4.0.1"\n',
+        '[project]\nname = "paper-fetch-skill"\nversion = "5.3.0"\n',
     )
     home = tmp_path / "home"
     home.mkdir()
@@ -309,11 +316,93 @@ def test_source_distribution_and_path_cli_drift_include_all_paths(
     )
     assert drifts["active_cli"] == {
         "component": "active_cli",
-        "expected": "4.0.1",
+        "expected": "5.3.0",
         "actual": "2.8.0",
         "path": str(old_cli),
     }
     assert report["offline_manifest"]["status"] == "not_applicable"
+
+
+def test_source_checkout_reports_inactive_project_venv(tmp_path: Path) -> None:
+    source_root = tmp_path / "source"
+    _write(
+        source_root / "pyproject.toml",
+        (
+            '[project]\nname = "paper-fetch-skill"\nversion = "5.3.0"\n'
+            'dependencies = ["mcp>=2,<3"]\n'
+        ),
+    )
+    _write(source_root / ".venv" / "bin" / "activate")
+    home = tmp_path / "home"
+    home.mkdir()
+
+    report = install_provenance_payload(
+        context=_context(
+            tmp_path,
+            home,
+            source_root=source_root,
+            sys_prefix=tmp_path / "system-python",
+        )
+    )
+
+    environment = report["source_project_environment"]
+    assert report["status"] == "drift"
+    assert environment["status"] == "degraded"
+    assert environment["project_venv_active"] is False
+    assert environment["activation_command"] == (
+        f"source {source_root / '.venv' / 'bin' / 'activate'}"
+    )
+    assert "source_checkout_project_venv_not_active" in {
+        issue["reason_code"] for issue in report["issues"]
+    }
+
+
+def test_source_checkout_reports_incompatible_mcp_dependency(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    source_root = tmp_path / "source"
+    _write(
+        source_root / "pyproject.toml",
+        (
+            '[project]\nname = "paper-fetch-skill"\nversion = "5.3.0"\n'
+            'dependencies = ["mcp>=2,<3"]\n'
+        ),
+    )
+    _write(source_root / ".venv" / "bin" / "activate")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(
+        "paper_fetch.provenance.importlib.metadata.version", lambda _: "1.28.1"
+    )
+
+    report = install_provenance_payload(
+        context=_context(tmp_path, home, source_root=source_root)
+    )
+
+    assert report["status"] == "drift"
+    assert report["source_project_environment"]["mcp"] == {
+        "status": "incompatible",
+        "reason_code": "project_dependency_incompatible",
+        "requirement": "mcp<3,>=2",
+        "installed_version": "1.28.1",
+        "pyproject_path": str(source_root / "pyproject.toml"),
+    }
+
+
+def test_offline_runtime_does_not_require_source_project_venv(
+    tmp_path: Path,
+) -> None:
+    install_root, home = _create_install(tmp_path)
+
+    report = install_provenance_payload(
+        install_root=install_root,
+        context=_context(tmp_path, home),
+    )
+
+    assert report["status"] == "ready"
+    assert report["source_project_environment"]["status"] == "not_applicable"
+    assert report["source_project_environment"]["issues"] == []
 
 
 def test_skill_integrity_rejects_extra_files_and_symlinks(tmp_path: Path) -> None:
@@ -443,12 +532,12 @@ def test_release_version_sources_are_synchronized() -> None:
         encoding="utf-8"
     )
 
-    assert version == "4.0.1"
+    assert version == "5.3.0"
     assert DEFAULT_USER_AGENT == f"paper-fetch-skill/{version}"
     assert f'#define AppVersion "{version}"' in inno
-    assert f"## {version} - 2026-07-27" in (REPO_ROOT / "CHANGELOG.md").read_text(
+    assert f"## {version} - 2026-08-10" in (REPO_ROOT / "CHANGELOG.md").read_text(
         encoding="utf-8"
     )
-    assert f"## {version} - 2026-07-27" in (REPO_ROOT / "CHANGELOG_CN.md").read_text(
+    assert f"## {version} - 2026-08-10" in (REPO_ROOT / "CHANGELOG_CN.md").read_text(
         encoding="utf-8"
     )

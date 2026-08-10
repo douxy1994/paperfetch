@@ -86,6 +86,18 @@ def _render_elsevier_golden_markdown(
     )
 
 
+def _build_elsevier_golden_structure(doi: str):
+    xml_body = _load_elsevier_golden_xml(doi)
+    slug = doi.replace("/", "_")
+    return elsevier_document.build_article_structure(
+        provider="elsevier",
+        metadata={"doi": doi, "title": f"Elsevier Golden Fixture {doi}"},
+        xml_body=xml_body,
+        xml_path=Path(f"{slug}.xml"),
+        assets=elsevier_provider.extract_elsevier_asset_references(xml_body),
+    )
+
+
 def _assert_markdown_table_row(
     test_case: unittest.TestCase,
     markdown: str,
@@ -491,7 +503,329 @@ class ElsevierMarkdownTests(unittest.TestCase):
         """rule: rule-elsevier-formula-rendering"""
         self._assert_formula_placeholder_is_visible_and_counted_when_conversion_fails()
 
-    def test_elsevier_complex_table_spans_are_semantically_expanded(self) -> None:
+    def test_elsevier_formula_locator_uses_highest_priority_official_objects(
+        self,
+    ) -> None:
+        xml_body = b"""
+<full-text-retrieval-response
+    xmlns:ce="http://www.elsevier.com/xml/common/dtd"
+    xmlns:xlink="http://www.w3.org/1999/xlink"
+    xmlns:xocs="http://www.elsevier.com/xml/xocs/dtd">
+  <ce:object ref="fx1_sml.jpg" type="IMAGE-DOWNSAMPLED" mimetype="image/jpeg">https://example.test/fx1-small.jpg</ce:object>
+  <ce:object ref="fx1_lrg.jpg" type="IMAGE-HIGH-RES" mimetype="image/jpeg">https://example.test/fx1-large.jpg</ce:object>
+  <ce:object ref="fx2_lrg.jpg" type="IMAGE-HIGH-RES" mimetype="image/jpeg">https://example.test/fx2-large.jpg</ce:object>
+  <originalText><xocs:doc><xocs:serial-item><article><body>
+    <ce:sections><ce:section><ce:section-title>Methods</ce:section-title>
+      <ce:formula><ce:label>(1)</ce:label><ce:link locator="fx1"/></ce:formula>
+      <ce:formula><ce:label>(2)</ce:label><ce:link xlink:href="objects/fx2_lrg.jpg"/></ce:formula>
+    </ce:section></ce:sections>
+  </body></article></xocs:serial-item></xocs:doc></originalText>
+</full-text-retrieval-response>
+"""
+
+        references = elsevier_provider.extract_elsevier_asset_references(xml_body)
+        structure = elsevier_document.build_article_structure(
+            provider="elsevier",
+            metadata={"doi": "10.1016/formula-images", "title": "Formula images"},
+            xml_body=xml_body,
+            xml_path=Path("10.1016_formula-images.xml"),
+            assets=references,
+        )
+
+        assert structure is not None
+        markdown = "\n".join(structure.body_lines)
+        self.assertIn("![Formula](https://example.test/fx1-large.jpg)", markdown)
+        self.assertIn("![Formula](https://example.test/fx2-large.jpg)", markdown)
+        self.assertNotIn("fx1-small.jpg", markdown)
+        self.assertNotIn("[Formula unavailable", markdown)
+        self.assertEqual(structure.semantic_losses.formula_fallback_count, 2)
+        self.assertEqual(structure.semantic_losses.formula_missing_count, 0)
+        self.assertEqual(structure.figure_entries, [])
+        self.assertEqual(
+            {reference["asset_type"] for reference in references},
+            {"image"},
+        )
+
+    def test_elsevier_formula_locator_without_object_keeps_missing_placeholder(
+        self,
+    ) -> None:
+        xml_body = b"""
+<full-text-retrieval-response
+    xmlns:ce="http://www.elsevier.com/xml/common/dtd"
+    xmlns:xocs="http://www.elsevier.com/xml/xocs/dtd">
+  <originalText><xocs:doc><xocs:serial-item><article><body>
+    <ce:sections><ce:section><ce:section-title>Methods</ce:section-title>
+      <ce:formula><ce:label>(9)</ce:label><ce:link locator="fx9"/></ce:formula>
+    </ce:section></ce:sections>
+  </body></article></xocs:serial-item></xocs:doc></originalText>
+</full-text-retrieval-response>
+"""
+
+        structure = elsevier_document.build_article_structure(
+            provider="elsevier",
+            metadata={"doi": "10.1016/formula-missing-object", "title": "Missing"},
+            xml_body=xml_body,
+            xml_path=Path("10.1016_formula-missing-object.xml"),
+            assets=[],
+        )
+
+        assert structure is not None
+        self.assertIn("[Formula unavailable: (9)]", "\n".join(structure.body_lines))
+        self.assertEqual(structure.semantic_losses.formula_fallback_count, 0)
+        self.assertEqual(structure.semantic_losses.formula_missing_count, 1)
+
+    def test_elsevier_formula_classification_leaves_ordinary_appendix_fx_unchanged(
+        self,
+    ) -> None:
+        xml_body = b"""
+<full-text-retrieval-response
+    xmlns:ce="http://www.elsevier.com/xml/common/dtd"
+    xmlns:xocs="http://www.elsevier.com/xml/xocs/dtd">
+  <ce:object ref="fx1_lrg.jpg" type="IMAGE-HIGH-RES" mimetype="image/jpeg">https://example.test/fx1-large.jpg</ce:object>
+  <originalText><xocs:doc><xocs:serial-item><article><body>
+    <ce:appendices><ce:appendix>
+      <ce:figure><ce:label>Figure A.1</ce:label><ce:link locator="fx1"/></ce:figure>
+    </ce:appendix></ce:appendices>
+  </body></article></xocs:serial-item></xocs:doc></originalText>
+</full-text-retrieval-response>
+"""
+
+        references = elsevier_provider.extract_elsevier_asset_references(xml_body)
+
+        self.assertEqual(len(references), 1)
+        self.assertEqual(references[0]["asset_type"], "appendix_image")
+
+    def test_elsevier_formula_locator_prefers_downloaded_local_asset(self) -> None:
+        xml_body = b"""
+<full-text-retrieval-response
+    xmlns:ce="http://www.elsevier.com/xml/common/dtd"
+    xmlns:xocs="http://www.elsevier.com/xml/xocs/dtd">
+  <ce:object ref="fx1_lrg.jpg" type="IMAGE-HIGH-RES" mimetype="image/jpeg">https://example.test/fx1-large.jpg</ce:object>
+  <originalText><xocs:doc><xocs:serial-item><article><body>
+    <ce:sections><ce:section><ce:section-title>Methods</ce:section-title>
+      <ce:formula><ce:label>(1)</ce:label><ce:link locator="fx1"/></ce:formula>
+    </ce:section></ce:sections>
+  </body></article></xocs:serial-item></xocs:doc></originalText>
+</full-text-retrieval-response>
+"""
+
+        markdown = build_elsevier_markdown(
+            xml_body,
+            assets=[
+                {
+                    "asset_type": "image",
+                    "source_ref": "fx1_lrg.jpg",
+                    "source_url": "https://example.test/fx1-large.jpg",
+                    "path": "formula-1.jpg",
+                }
+            ],
+        )
+
+        self.assertIn("![Formula](formula-1.jpg)", markdown)
+        self.assertNotIn("![Formula](https://example.test/fx1-large.jpg)", markdown)
+        self.assertNotIn("## Figures", markdown)
+
+    def test_elsevier_multi_tgroup_mixed_results_count_only_failed_group(
+        self,
+    ) -> None:
+        xml_body = b"""
+<full-text-retrieval-response
+    xmlns:ce="http://www.elsevier.com/xml/common/dtd"
+    xmlns:xocs="http://www.elsevier.com/xml/xocs/dtd">
+  <originalText><xocs:doc><xocs:serial-item><article><body>
+    <ce:sections><ce:section><ce:section-title>Results</ce:section-title>
+      <ce:table id="tbl1">
+        <ce:label>Table 1</ce:label>
+        <ce:caption><ce:simple-para>Grouped risks.</ce:simple-para></ce:caption>
+        <tgroup cols="2">
+          <colspec colname="a1"/><colspec colname="a2"/>
+          <thead>
+            <row><entry namest="a1" nameend="a2">(a) WBGT</entry></row>
+            <row><entry colname="a1">Day</entry><entry colname="a2">Risk</entry></row>
+          </thead>
+          <tbody><row><entry colname="a1">1</entry><entry colname="a2">Low</entry></row></tbody>
+        </tgroup>
+        <tgroup cols="2">
+          <colspec colname="b1"/><colspec colname="b2"/>
+          <thead><row><entry colname="b1">Day</entry><entry colname="b1">T</entry></row></thead>
+          <tbody><row><entry colname="b1">2</entry><entry colname="b2">30</entry></row></tbody>
+        </tgroup>
+        <tgroup cols="3">
+          <colspec colname="c1"/><colspec colname="c2"/><colspec colname="c3"/>
+          <thead>
+            <row><entry namest="c1" nameend="c3">(c) AT</entry></row>
+            <row><entry colname="c1">Day</entry><entry colname="c2">Min</entry><entry colname="c3">Max</entry></row>
+          </thead>
+          <tbody><row><entry colname="c1">3</entry><entry colname="c2">29</entry><entry colname="c3">32</entry></row></tbody>
+        </tgroup>
+      </ce:table>
+    </ce:section></ce:sections>
+  </body></article></xocs:serial-item></xocs:doc></originalText>
+</full-text-retrieval-response>
+"""
+
+        structure = elsevier_document.build_article_structure(
+            provider="elsevier",
+            metadata={"doi": "10.1016/grouped-table", "title": "Grouped table"},
+            xml_body=xml_body,
+            xml_path=Path("10.1016_grouped-table.xml"),
+            assets=[],
+        )
+
+        assert structure is not None
+        markdown = "\n".join(structure.body_lines)
+        self.assertEqual(markdown.count("Table 1"), 1)
+        self.assertEqual(markdown.count("Grouped risks."), 1)
+        self.assertLess(markdown.index("(a) WBGT"), markdown.index("| Day"))
+        self.assertLess(markdown.index("- Day: 2; T: 30"), markdown.index("(c) AT"))
+        self.assertLess(markdown.index("(c) AT"), markdown.rindex("| Day"))
+        self.assertEqual(structure.semantic_losses.table_fallback_count, 1)
+        self.assertEqual(structure.semantic_losses.table_layout_degraded_count, 1)
+
+    def test_elsevier_regression_32_preserves_independent_table_groups(self) -> None:
+        """rule: rule-xml-table-groups"""
+        doi = "10.1016/j.apgeog.2012.04.006"
+        structure = _build_elsevier_golden_structure(doi)
+
+        assert structure is not None
+        table = next(
+            entry for entry in structure.table_entries if entry["heading"] == "Table 1"
+        )
+        groups = table["_table_groups"]
+        rendered = "\n".join(elsevier_document.render_table_block(table))
+
+        self.assertEqual([len(group["headers"]) for group in groups], [3, 5])
+        self.assertEqual([len(group["rows"]) for group in groups], [5, 19])
+        self.assertEqual(len(re.findall(r"(?m)^\| -+(?:\s+\|.*)$", rendered)), 2)
+        self.assertEqual(rendered.count("Table 1"), 1)
+        self.assertEqual(
+            structure.semantic_losses.table_fallback_count,
+            0,
+        )
+        self.assertEqual(
+            structure.semantic_losses.table_layout_degraded_count,
+            0,
+        )
+
+        root = ET.fromstring(_load_elsevier_golden_xml(doi))
+        source_table = next(
+            node
+            for node in root.iter()
+            if isinstance(node.tag, str)
+            and elsevier_document.xml_local_name(node.tag) == "table"
+            and any(
+                elsevier_document.xml_local_name(child.tag) == "label"
+                and elsevier_document.normalize_text("".join(child.itertext()))
+                == "Table 1"
+                for child in list(node)
+                if isinstance(child.tag, str)
+            )
+        )
+        self.assertEqual(
+            [
+                sum(
+                    1
+                    for row in group.iter()
+                    if isinstance(row.tag, str)
+                    and elsevier_document.xml_local_name(row.tag) in {"row", "tr"}
+                )
+                for group in source_table.iter()
+                if isinstance(group.tag, str)
+                and elsevier_document.xml_local_name(group.tag) == "tgroup"
+            ],
+            [6, 21],
+        )
+
+    def test_elsevier_regression_97_renders_wbgt_t_at_groups_in_order(self) -> None:
+        """rule: rule-xml-table-groups"""
+        doi = "10.1016/j.envres.2018.12.059"
+        structure = _build_elsevier_golden_structure(doi)
+
+        assert structure is not None
+        table = next(
+            entry for entry in structure.table_entries if entry["heading"] == "Table 2"
+        )
+        groups = table["_table_groups"]
+        rendered = "\n".join(elsevier_document.render_table_block(table))
+
+        self.assertEqual(
+            [group.get("_table_prefix_rows") for group in groups],
+            [["(a) WBGT"], ["(b) T"], ["(c) AT"]],
+        )
+        self.assertEqual([len(group["rows"]) for group in groups], [18, 18, 18])
+        self.assertEqual(len(re.findall(r"(?m)^\| -+(?:\s+\|.*)$", rendered)), 3)
+        self.assertLess(rendered.index("(a) WBGT"), rendered.index("(b) T"))
+        self.assertLess(rendered.index("(b) T"), rendered.index("(c) AT"))
+        self.assertEqual(structure.semantic_losses.table_fallback_count, 0)
+        self.assertEqual(structure.semantic_losses.table_layout_degraded_count, 0)
+
+        root = ET.fromstring(_load_elsevier_golden_xml(doi))
+        source_table = next(
+            node
+            for node in root.iter()
+            if isinstance(node.tag, str)
+            and elsevier_document.xml_local_name(node.tag) == "table"
+            and any(
+                elsevier_document.xml_local_name(child.tag) == "label"
+                and elsevier_document.normalize_text("".join(child.itertext()))
+                == "Table 2"
+                for child in list(node)
+                if isinstance(child.tag, str)
+            )
+        )
+        self.assertEqual(
+            [
+                sum(
+                    1
+                    for row in group.iter()
+                    if isinstance(row.tag, str)
+                    and elsevier_document.xml_local_name(row.tag) in {"row", "tr"}
+                )
+                for group in source_table.iter()
+                if isinstance(group.tag, str)
+                and elsevier_document.xml_local_name(group.tag) == "tgroup"
+            ],
+            [21, 21, 21],
+        )
+
+    def test_elsevier_regression_42_uses_two_official_formula_images(self) -> None:
+        """rule: rule-elsevier-formula-rendering"""
+        doi = "10.1016/j.uclim.2019.100528"
+        structure = _build_elsevier_golden_structure(doi)
+
+        assert structure is not None
+        formula_lines = [
+            line for line in structure.body_lines if line.startswith("![Formula](")
+        ]
+        self.assertEqual(len(formula_lines), 2)
+        self.assertTrue(any("fx1_lrg.jpg" in line for line in formula_lines))
+        self.assertTrue(any("fx2_lrg.jpg" in line for line in formula_lines))
+        self.assertEqual(structure.semantic_losses.formula_fallback_count, 2)
+        self.assertEqual(structure.semantic_losses.formula_missing_count, 0)
+        self.assertFalse(
+            any("[Formula unavailable" in line for line in structure.body_lines)
+        )
+
+        article = article_from_structure(
+            source="elsevier_xml",
+            metadata={"doi": doi, "title": "Formula image regression"},
+            doi=doi,
+            abstract_lines=structure.abstract_lines,
+            body_lines=structure.body_lines,
+            figure_entries=structure.figure_entries,
+            table_entries=structure.table_entries,
+            supplement_entries=structure.supplement_entries,
+            conversion_notes=structure.conversion_notes,
+            semantic_losses=structure.semantic_losses,
+            inline_figure_keys=sorted(structure.used_figure_keys),
+            inline_table_keys=sorted(structure.used_table_keys),
+        )
+        self.assertEqual(article.quality.confidence, "medium")
+        self.assertIn("formula_fallback_present", article.quality.flags)
+
+    def test_elsevier_complex_table_spans_are_normalized_without_quality_loss(
+        self,
+    ) -> None:
         """rule: rule-elsevier-complex-table-span-degradation"""
         xml_body = _load_elsevier_scenario_xml("elsevier_complex_table_span")
 
@@ -502,9 +836,76 @@ class ElsevierMarkdownTests(unittest.TestCase):
         )
         _assert_markdown_table_row(self, markdown, ["Hydrometric", "Station A", "10"])
         _assert_markdown_table_row(self, markdown, ["Hydrometric", "Station B", "20"])
-        self.assertIn("Merged table spans were semantically expanded", markdown)
+        self.assertNotIn("Merged table spans were semantically expanded", markdown)
 
-    def test_elsevier_real_complex_table_records_layout_degradation_quality(
+    def test_elsevier_real_multilevel_header_is_flattened_without_body_header_row(
+        self,
+    ) -> None:
+        markdown = _render_elsevier_golden_markdown("10.1016/j.rse.2024.114346")
+
+        _assert_markdown_table_row(
+            self,
+            markdown,
+            [
+                "Region",
+                "Freeze-up date / Mean value (DOY)",
+                "Freeze-up date / Trend (days per decade)",
+                "Break-up date / Mean value (DOY)",
+                "Break-up date / Trend (days per decade)",
+                "Ice duration / Mean value (days)",
+                "Ice duration / Trend (days per decade)",
+            ],
+        )
+        self.assertNotRegex(
+            markdown,
+            r"(?m)^\|\s*Region\s*\|\s*Mean value \(DOY\)\s*\|\s*Trend",
+        )
+
+    def test_elsevier_overlapping_cals_columns_use_readable_list_fallback(
+        self,
+    ) -> None:
+        xml_body = b"""
+<full-text-retrieval-response xmlns:ce="http://www.elsevier.com/xml/common/dtd">
+  <coredata><dc:title xmlns:dc="http://purl.org/dc/elements/1.1/">Table fallback</dc:title></coredata>
+  <originalText>
+    <xocs:doc xmlns:xocs="http://www.elsevier.com/xml/xocs/dtd">
+      <xocs:serial-item><article><body><ce:sections><ce:section>
+        <ce:section-title>Results</ce:section-title>
+        <ce:table id="tbl1">
+          <ce:label>Table 1</ce:label>
+          <ce:caption><ce:simple-para>Overlapping columns.</ce:simple-para></ce:caption>
+          <tgroup cols="2">
+            <colspec colname="c1"/><colspec colname="c2"/>
+            <thead><row><entry colname="c1">A</entry><entry colname="c1">B</entry></row></thead>
+            <tbody><row><entry colname="c1">1</entry><entry colname="c2">2</entry></row></tbody>
+          </tgroup>
+        </ce:table>
+      </ce:section></ce:sections></body></article></xocs:serial-item>
+    </xocs:doc>
+  </originalText>
+</full-text-retrieval-response>
+"""
+
+        markdown = build_elsevier_markdown(xml_body)
+
+        self.assertIn("- A: 1; B: 2", markdown)
+        self.assertIn(
+            "cell text was retained as a readable list",
+            markdown,
+        )
+        structure = elsevier_document.build_article_structure(
+            provider="elsevier",
+            metadata={"doi": "10.1016/test", "title": "Table fallback"},
+            xml_body=xml_body,
+            xml_path=Path("10.1016_test.xml"),
+            assets=[],
+        )
+        assert structure is not None
+        self.assertEqual(structure.semantic_losses.table_fallback_count, 1)
+        self.assertEqual(structure.semantic_losses.table_layout_degraded_count, 1)
+        self.assertEqual(structure.semantic_losses.table_semantic_loss_count, 0)
+
+    def test_elsevier_real_complex_table_records_successful_normalization(
         self,
     ) -> None:
         """rule: rule-elsevier-complex-table-span-degradation"""
@@ -532,13 +933,10 @@ class ElsevierMarkdownTests(unittest.TestCase):
             inline_figure_keys=sorted(structure.used_figure_keys),
             inline_table_keys=sorted(structure.used_table_keys),
         )
-        self.assertGreater(
-            article.quality.semantic_losses.table_layout_degraded_count, 0
-        )
-        self.assertIn("table_layout_degraded", article.quality.flags)
-        self.assertIn(
-            "- Table 1: Merged table spans were semantically expanded into rectangular Markdown cells; rowspan/colspan layout fidelity was reduced.",
-            structure.conversion_notes,
+        self.assertEqual(article.quality.semantic_losses.table_layout_degraded_count, 0)
+        self.assertNotIn("table_layout_degraded", article.quality.flags)
+        self.assertFalse(
+            any(note.startswith("- Table 1:") for note in structure.conversion_notes)
         )
 
     def test_elsevier_inline_boundary_newlines_are_normalized(self) -> None:
@@ -878,7 +1276,7 @@ refers to the tie.</ce:para>
         self.assertLess(caption_idx, header_idx)
         self.assertLess(header_idx - reference_idx, 500)
 
-    def _assert_real_elsevier_complex_body_table_prefers_lossy_markdown_over_image_fallback(
+    def _assert_real_elsevier_complex_body_table_prefers_normalized_markdown_over_image_fallback(
         self,
     ) -> None:
         markdown = self._render_real_elsevier_body_table_markdown()
@@ -898,11 +1296,7 @@ refers to the tie.</ce:para>
             ],
             allow_more_cells=True,
         )
-        self.assertIn("## Conversion Notes", markdown)
-        self.assertIn(
-            "- Table 1: Merged table spans were semantically expanded into rectangular Markdown cells; rowspan/colspan layout fidelity was reduced.",
-            markdown,
-        )
+        self.assertNotIn("Merged table spans were semantically expanded", markdown)
         self.assertNotIn("- Table 1: None", markdown)
         self.assertNotIn("![Table 1]", markdown)
 
@@ -941,11 +1335,9 @@ refers to the tie.</ce:para>
                 for asset in article.assets
             )
         )
-        self.assertGreater(
-            article.quality.semantic_losses.table_layout_degraded_count, 0
-        )
+        self.assertEqual(article.quality.semantic_losses.table_layout_degraded_count, 0)
         self.assertEqual(article.quality.semantic_losses.table_lossy_count, 0)
-        self.assertIn("table_layout_degraded", article.quality.flags)
+        self.assertNotIn("table_layout_degraded", article.quality.flags)
         self.assertNotIn("table_semantic_loss", article.quality.flags)
         self.assertNotIn("## Additional Tables", rendered)
         self.assertEqual(rendered.count("Study area and data used in this study."), 1)
@@ -1019,8 +1411,8 @@ refers to the tie.</ce:para>
                 self._assert_real_elsevier_body_table_is_inserted_near_reference,
             ),
             (
-                "real_complex_body_table_prefers_lossy_markdown",
-                self._assert_real_elsevier_complex_body_table_prefers_lossy_markdown_over_image_fallback,
+                "real_complex_body_table_prefers_normalized_markdown",
+                self._assert_real_elsevier_complex_body_table_prefers_normalized_markdown_over_image_fallback,
             ),
             (
                 "real_consumed_table_not_appended_by_article_model",

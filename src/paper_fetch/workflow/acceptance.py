@@ -26,11 +26,11 @@ from ..reason_codes import (
     PDF_FALLBACK,
     RATE_LIMITED,
 )
-from ..tracing import TraceEvent, merge_trace
+from ..tracing import TraceEvent
 from ..utils import normalize_text
 
-FETCH_ACCEPTANCE_SCHEMA_VERSION = 1
-FETCH_ACCEPTANCE_MIN_READER_VERSION = 1
+FETCH_ACCEPTANCE_SCHEMA_VERSION = 2
+FETCH_ACCEPTANCE_MIN_READER_VERSION = 2
 
 
 class OverallAcceptanceStatus(StrEnum):
@@ -68,6 +68,8 @@ class AssetAcceptanceStatus(StrEnum):
     DEGRADED = "degraded"
     FAILED = "failed"
     UNAVAILABLE = "unavailable"
+    UNKNOWN = "unknown"
+    NOT_APPLICABLE = "not_applicable"
     NOT_REQUESTED = "not_requested"
 
 
@@ -156,16 +158,40 @@ class AssetAcceptanceSummary(_AcceptanceModel):
 
     requested: bool
     profile: AcceptanceAssetProfile = "unknown"
+    audited: bool = False
+    expected: int | None = Field(default=None, ge=0)
+    discovered: int = Field(default=0, ge=0)
+    attempted: int = Field(default=0, ge=0)
     total: int = Field(default=0, ge=0)
     local: int = Field(default=0, ge=0)
     full_size: int = Field(default=0, ge=0)
     preview: int = Field(default=0, ge=0)
+    accepted_preview: int = Field(default=0, ge=0)
+    fallback_preview: int = Field(default=0, ge=0)
     failed: int = Field(default=0, ge=0)
     placeholder_suspected: int = Field(default=0, ge=0)
     not_archived: int = Field(default=0, ge=0)
     remote_link_count: int = Field(default=0, ge=0)
     remote_only_count: int = Field(default=0, ge=0)
     failure_codes: tuple[str, ...] = ()
+    issue_codes: tuple[str, ...] = ()
+
+    @model_validator(mode="before")
+    @classmethod
+    def migrate_legacy_preview_counts(cls, value: Any) -> Any:
+        if not isinstance(value, Mapping):
+            return value
+        payload = dict(value)
+        if "accepted_preview" not in payload and "fallback_preview" not in payload:
+            payload["accepted_preview"] = 0
+            payload["fallback_preview"] = max(int(payload.get("preview") or 0), 0)
+        return payload
+
+    @model_validator(mode="after")
+    def validate_preview_counts(self) -> AssetAcceptanceSummary:
+        if self.preview != self.accepted_preview + self.fallback_preview:
+            raise ValueError("preview must equal accepted_preview + fallback_preview")
+        return self
 
 
 class AssetAcceptanceFacet(AssetAcceptanceSummary):
@@ -180,6 +206,10 @@ class AssetAcceptanceFacet(AssetAcceptanceSummary):
             raise ValueError("requested assets cannot use not_requested status")
         if self.profile == "none" and self.requested:
             raise ValueError("asset profile none cannot be requested")
+        if self.discovered != self.total:
+            raise ValueError("discovered must match total")
+        if self.attempted > self.discovered:
+            raise ValueError("attempted cannot exceed discovered")
         return self
 
 
@@ -203,8 +233,8 @@ class ProvenanceAcceptanceFacet(_AcceptanceModel):
 class FetchAcceptanceReport(_AcceptanceModel):
     """Canonical acceptance report shared by all external adapters."""
 
-    schema_version: Literal[1]
-    minimum_reader_schema_version: Literal[1]
+    schema_version: Literal[2]
+    minimum_reader_schema_version: Literal[2]
     overall: OverallAcceptanceStatus
     identity: IdentityAcceptanceFacet
     fetch: FetchAcceptanceFacet
@@ -223,7 +253,9 @@ class FetchAcceptanceReport(_AcceptanceModel):
 _ACTION_REQUIRED_CODES = frozenset(
     {"ambiguous", NO_ACCESS, NOT_CONFIGURED, RATE_LIMITED}
 )
-_TRACE_FAILURE_OUTCOMES = frozenset({"fail", "unavailable", "not_usable"})
+_TRACE_FAILURE_OUTCOMES = frozenset(
+    {"fail", "unavailable", "not_usable", RATE_LIMITED, NOT_CONFIGURED}
+)
 _TRACE_WARNING_OUTCOMES = frozenset(
     {"partial", "unavailable", "not_usable", "abstract_only"}
 )
@@ -260,6 +292,16 @@ def _trace_fact_code(event: TraceEvent) -> str:
     )
 
 
+def _trace_is_failure(event: TraceEvent) -> bool:
+    outcome = normalize_text(event.outcome).lower()
+    code = normalize_text(event.code).lower()
+    return (
+        outcome in _TRACE_FAILURE_OUTCOMES
+        or code in {RATE_LIMITED, NOT_CONFIGURED}
+        or event.http_status == 429
+    )
+
+
 def _quality_for(envelope: FetchEnvelope | None) -> Quality:
     if envelope is None:
         return Quality()
@@ -267,12 +309,10 @@ def _quality_for(envelope: FetchEnvelope | None) -> Quality:
 
 
 def _trace_for(envelope: FetchEnvelope | None, quality: Quality) -> list[TraceEvent]:
+    del quality
     if envelope is None:
         return []
-    article_trace = (
-        envelope.article.quality.trace if envelope.article is not None else []
-    )
-    return merge_trace(envelope.trace, quality.trace, article_trace)
+    return list(envelope.trace)
 
 
 def _title_for(
@@ -427,19 +467,49 @@ def _audited_asset_summary(
             return summary.get(field, default)
         return getattr(summary, field, default)
 
+    preview = max(int(value("preview") or 0), 0)
+    accepted_preview = max(int(value("accepted_preview") or 0), 0)
+    fallback_preview = max(int(value("fallback_preview") or 0), 0)
+    if accepted_preview + fallback_preview != preview:
+        accepted_preview = 0
+        fallback_preview = preview
     return AssetAcceptanceSummary(
         requested=bool(value("requested", profile != "none")),
         profile=profile,
+        audited=audited,
+        expected=(
+            max(int(value("expected")), 0)
+            if value("expected", None) is not None
+            else None
+        ),
+        discovered=max(int(value("discovered", value("total")) or 0), 0),
+        attempted=max(
+            int(
+                value(
+                    "attempted",
+                    (
+                        int(value("local") or 0)
+                        + int(value("failed") or 0)
+                        + int(value("not_archived") or 0)
+                    ),
+                )
+                or 0
+            ),
+            0,
+        ),
         total=max(int(value("total") or 0), 0),
         local=max(int(value("local") or 0), 0),
         full_size=max(int(value("full_size") or 0), 0),
-        preview=max(int(value("preview") or 0), 0),
+        preview=preview,
+        accepted_preview=accepted_preview,
+        fallback_preview=fallback_preview,
         failed=max(int(value("failed") or 0), 0),
         placeholder_suspected=max(int(value("placeholder_suspected") or 0), 0),
         not_archived=max(int(value("not_archived") or 0), 0),
         remote_link_count=max(int(value("remote_link_count") or 0), 0),
         remote_only_count=max(int(value("remote_only_count") or 0), 0),
         failure_codes=_normalized_codes(value("failure_codes", ())),
+        issue_codes=_normalized_codes(value("issue_codes", ())),
     )
 
 
@@ -457,56 +527,108 @@ def _asset_summary_from_envelope(
     remote_link_count = sum(item[0] for item in remote_counts)
     remote_only_count = sum(item[1] for item in remote_counts)
     local = sum(bool(normalize_text(asset.path)) for asset in assets)
-    preview = (
+    from ..quality.assets import preview_asset_is_accepted
+
+    preview_assets = (
+        [
+            asset
+            for asset in assets
+            if normalize_text(asset.download_tier).lower() == "preview"
+        ]
+        if requested
+        else []
+    )
+    accepted_preview = sum(preview_asset_is_accepted(asset) for asset in preview_assets)
+    fallback_preview = len(preview_assets) - accepted_preview
+    preview = accepted_preview + fallback_preview
+    failures = list(quality.asset_failures) if requested else []
+    discovered = len(assets) + len(failures)
+    attempted = (
         sum(
-            normalize_text(asset.download_tier).lower() == "preview" for asset in assets
+            bool(normalize_text(asset.path)) or _asset_remote_counts(asset)[0] > 0
+            for asset in assets
         )
+        + len(failures)
         if requested
         else 0
     )
-    failures = list(quality.asset_failures) if requested else []
     not_archived = remote_only_count if requested else 0
+    failure_codes = _normalized_codes(
+        [_asset_failure_code(failure) for failure in failures]
+    )
+    issue_codes: list[str] = []
+    if failures:
+        issue_codes.append("asset_download_failure")
+    if fallback_preview:
+        issue_codes.append("asset_fidelity_degraded")
+    if requested and remote_only_count:
+        issue_codes.append("asset_remote_only")
     return AssetAcceptanceSummary(
         requested=requested,
         profile=profile,
-        total=len(assets),
+        audited=False,
+        expected=None,
+        discovered=discovered,
+        attempted=attempted,
+        total=discovered,
         local=local,
         full_size=max(local - preview, 0),
         preview=preview,
+        accepted_preview=accepted_preview,
+        fallback_preview=fallback_preview,
         failed=len(failures),
         not_archived=not_archived,
         remote_link_count=remote_link_count,
         remote_only_count=remote_only_count,
-        failure_codes=_normalized_codes(
-            [_asset_failure_code(failure) for failure in failures]
-        ),
+        failure_codes=failure_codes,
+        issue_codes=tuple(issue_codes),
     )
 
 
 def _asset_facet(
     summary: AssetAcceptanceSummary, *, fetch_completed: bool
 ) -> AssetAcceptanceFacet:
-    if not summary.requested:
+    discovered = summary.discovered or summary.total
+    attempted = summary.attempted or min(
+        discovered,
+        summary.local + summary.failed + summary.not_archived,
+    )
+    issue_codes = list(summary.issue_codes)
+    if not issue_codes:
+        if summary.failed:
+            issue_codes.append("asset_download_failure")
+        if summary.fallback_preview:
+            issue_codes.append("asset_fidelity_degraded")
+        if summary.placeholder_suspected:
+            issue_codes.append("asset_placeholder_suspected")
+        if summary.remote_only_count and not summary.audited:
+            issue_codes.append("asset_remote_only")
+    normalized_summary = summary.model_copy(
+        update={
+            "discovered": discovered,
+            "attempted": attempted,
+            "total": discovered,
+            "issue_codes": tuple(dict.fromkeys(issue_codes)),
+        }
+    )
+    if not normalized_summary.requested:
         status = AssetAcceptanceStatus.NOT_REQUESTED
     elif not fetch_completed:
         status = AssetAcceptanceStatus.UNAVAILABLE
-    elif summary.failed and summary.local == 0:
+    elif normalized_summary.audited and normalized_summary.expected == 0:
+        status = AssetAcceptanceStatus.NOT_APPLICABLE
+    elif normalized_summary.discovered == 0:
+        status = AssetAcceptanceStatus.UNKNOWN
+    elif normalized_summary.failed and normalized_summary.local == 0:
         status = AssetAcceptanceStatus.FAILED
-    elif any(
-        (
-            summary.failed,
-            summary.preview,
-            summary.placeholder_suspected,
-            summary.not_archived,
-        )
-    ):
+    elif normalized_summary.issue_codes:
         status = AssetAcceptanceStatus.DEGRADED
     else:
         status = AssetAcceptanceStatus.COMPLETE
     return AssetAcceptanceFacet(
-        **summary.model_dump(),
+        **normalized_summary.model_dump(),
         status=status,
-        remote_links_preserved=summary.remote_only_count > 0,
+        remote_links_preserved=normalized_summary.remote_only_count > 0,
     )
 
 
@@ -584,13 +706,7 @@ def _structured_warning_codes(
     if losses.formula_missing_count:
         codes.append("formula_missing")
     if asset.requested:
-        codes.extend(asset.failure_codes)
-        if asset.preview:
-            codes.append("asset_preview")
-        if asset.placeholder_suspected:
-            codes.append("asset_placeholder_suspected")
-        if asset.not_archived:
-            codes.append("asset_not_archived")
+        codes.extend(asset.issue_codes)
     return codes
 
 
@@ -604,7 +720,25 @@ def _provenance_facet(
     failure_code: str | None,
 ) -> ProvenanceAcceptanceFacet:
     normalized_source = normalize_text(source) or None
-    if normalized_source and trace:
+    has_resolve = any(
+        normalize_text(event.stage).lower() == "resolve" for event in trace
+    )
+    has_provider_selection = any(
+        normalize_text(event.stage).lower() in {"metadata", "fulltext"}
+        and (normalize_text(event.provider) or normalize_text(event.component))
+        for event in trace
+    )
+    has_terminal_route = any(
+        normalize_text(event.stage).lower() in {"fulltext", "fallback"}
+        and normalize_text(event.outcome).lower() not in {"attempt", "selected"}
+        for event in trace
+    )
+    if (
+        normalized_source
+        and has_resolve
+        and has_provider_selection
+        and has_terminal_route
+    ):
         status = ProvenanceAcceptanceStatus.COMPLETE
     elif normalized_source or trace:
         status = ProvenanceAcceptanceStatus.PARTIAL
@@ -614,7 +748,11 @@ def _provenance_facet(
     trace_failures = [
         event
         for event in trace
-        if normalize_text(event.outcome).lower() in _TRACE_FAILURE_OUTCOMES
+        if _trace_is_failure(event)
+        and not (
+            content.status == ContentAcceptanceStatus.FULLTEXT
+            and normalize_text(event.stage).lower() in {"resolve", "metadata"}
+        )
     ]
     fallback_events = [
         event
@@ -624,7 +762,7 @@ def _provenance_facet(
         or (
             content.status != ContentAcceptanceStatus.UNAVAILABLE
             and normalize_text(event.stage).lower() == "fulltext"
-            and normalize_text(event.outcome).lower() in _TRACE_FAILURE_OUTCOMES
+            and _trace_is_failure(event)
         )
     ]
     trace_warnings = [
@@ -687,7 +825,13 @@ def _overall_status(
     }:
         return OverallAcceptanceStatus.LIMITED
     if (
-        asset.status in {AssetAcceptanceStatus.DEGRADED, AssetAcceptanceStatus.FAILED}
+        asset.status
+        in {
+            AssetAcceptanceStatus.DEGRADED,
+            AssetAcceptanceStatus.FAILED,
+            AssetAcceptanceStatus.UNKNOWN,
+            AssetAcceptanceStatus.UNAVAILABLE,
+        }
         or provenance.status != ProvenanceAcceptanceStatus.COMPLETE
         or provenance.fallback_codes
         or provenance.warning_codes
@@ -744,10 +888,13 @@ def evaluate_fetch_acceptance(
         if not requested:
             updates.update(
                 preview=0,
+                accepted_preview=0,
+                fallback_preview=0,
                 failed=0,
                 placeholder_suspected=0,
                 not_archived=0,
                 failure_codes=(),
+                issue_codes=(),
             )
         summary = asset_summary.model_copy(update=updates)
 
@@ -796,9 +943,9 @@ def evaluate_fetch_acceptance(
 def parse_fetch_acceptance_report(
     payload: Mapping[str, Any],
 ) -> FetchAcceptanceReport:
-    """Load schema v1; additive unknown fields are ignored by compatibility rule."""
+    """Load the public v2 acceptance contract."""
 
-    return FetchAcceptanceReport.model_validate(payload)
+    return FetchAcceptanceReport.model_validate(dict(payload))
 
 
 def fetch_acceptance_json_schema() -> dict[str, Any]:

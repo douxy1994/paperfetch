@@ -29,6 +29,8 @@ GENERIC_SUPPLEMENTARY_FILE_SUFFIXES = (
     ".csv",
     ".xlsx",
     ".xls",
+    ".docx",
+    ".doc",
     ".zip",
     ".txt",
     ".json",
@@ -83,6 +85,8 @@ def _supplementary_anchor_is_supported(
     ):
         return True
     lowered_href = href.lower()
+    if "/article-supplement/" in lowered_href:
+        return True
     return has_supplementary_file_suffix(lowered_href)
 
 

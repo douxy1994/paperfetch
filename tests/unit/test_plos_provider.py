@@ -4,9 +4,15 @@ from dataclasses import replace
 from pathlib import Path
 import re
 
+import pytest
 import yaml
 
-from paper_fetch.providers.plos import PlosClient
+from paper_fetch.providers.base import ProviderFailure
+from paper_fetch.providers.plos import (
+    PLOS_JOURNAL_PATHS,
+    PlosClient,
+    _fetch_plos_redirected_response,
+)
 from paper_fetch.reason_codes import PDF_FALLBACK
 from tests.golden_corpus import (
     build_article_from_fixture,
@@ -70,6 +76,226 @@ def test_plos_runtime_xml_route_fetches_and_converts_jats_fixture() -> None:
     assert article.source == "plos_xml"
     assert article.quality.content_kind == "fulltext"
     assert "fulltext:plos_xml_ok" in article.quality.source_trail
+
+
+def test_unknown_plos_journal_code_uses_canonical_metadata_route() -> None:
+    doi = "10.1371/journal.pnew.0000001"
+    client = PlosClient(FixtureHtmlTransport({}), {})
+
+    journal_path, reason = client._resolve_journal_path(
+        doi,
+        {
+            "doi": doi,
+            "landing_page_url": (f"https://journals.plos.org/plosnew/article?id={doi}"),
+        },
+    )
+
+    assert journal_path == "plosnew"
+    assert reason == "metadata_landing"
+
+
+def test_unknown_plos_journal_code_uses_doi_resolver_without_persisting_rule() -> None:
+    doi = "10.1371/journal.pnew.0000002"
+    resolver_url = f"https://doi.org/{doi}"
+    canonical_url = f"https://journals.plos.org/plosnew/article?id={doi}"
+    resolver_response = http_response(resolver_url, b"", "text/html")
+    resolver_response["url"] = canonical_url
+    client = PlosClient(
+        FixtureHtmlTransport({resolver_url: resolver_response}),
+        {},
+    )
+
+    journal_path, reason = client._resolve_journal_path(doi, {"doi": doi})
+
+    assert journal_path == "plosnew"
+    assert reason == "doi_resolver"
+    assert "pnew" not in PLOS_JOURNAL_PATHS
+
+
+def test_unknown_plos_journal_code_rejects_non_plos_resolver_target() -> None:
+    doi = "10.1371/journal.pwrong.0000001"
+    resolver_url = f"https://doi.org/{doi}"
+    resolver_response = http_response(resolver_url, b"", "text/html")
+    resolver_response["url"] = "https://example.org/article"
+    client = PlosClient(
+        FixtureHtmlTransport({resolver_url: resolver_response}),
+        {},
+    )
+
+    with pytest.raises(ProviderFailure, match="safe journal route"):
+        client._resolve_journal_path(doi, {"doi": doi})
+
+
+def test_plos_runtime_xml_route_follows_relative_and_signed_redirects() -> None:
+    fixture = golden_corpus_fixture_for_doi(STRUCTURE_DOI)
+    encoded_candidate = (
+        "https://journals.plos.org/plosone/article/file"
+        "?id=10.1371%2Fjournal.pone.0263725&type=manuscript"
+    )
+    signed_url = (
+        "https://storage.googleapis.com/plos-corpus-prod/"
+        "10.1371/journal.pone.0263725/1/pone.0263725.xml"
+        "?X-Goog-Algorithm=GOOG4-RSA-SHA256"
+        "&X-Goog-Credential=temporary-credential"
+        "&X-Goog-Signature=temporary-signature"
+    )
+    transport = FixtureHtmlTransport(
+        {
+            STRUCTURE_XML_URL: http_response(
+                STRUCTURE_XML_URL,
+                b"",
+                "text/html",
+                status_code=302,
+                headers={
+                    "location": (
+                        "/plosone/article/file"
+                        "?id=10.1371%2Fjournal.pone.0263725&type=manuscript"
+                    )
+                },
+            ),
+            encoded_candidate: http_response(
+                encoded_candidate,
+                b"",
+                "text/html",
+                status_code=302,
+                headers={"location": signed_url},
+            ),
+            signed_url: http_response(
+                signed_url, fixture.raw_path.read_bytes(), "application/xml"
+            ),
+        }
+    )
+    client = PlosClient(transport, {})
+
+    raw_payload = client.fetch_raw_fulltext(STRUCTURE_DOI, {"doi": STRUCTURE_DOI})
+    article = client.to_article_model({"doi": STRUCTURE_DOI}, raw_payload)
+
+    assert raw_payload.content is not None
+    assert raw_payload.content.route_kind == "xml"
+    assert article.source == "plos_xml"
+    assert "fulltext:plos_xml_ok" in article.quality.source_trail
+    assert "fulltext:plos_xml_fail" not in article.quality.source_trail
+    assert "temporary-credential" not in raw_payload.source_url
+    assert "temporary-signature" not in raw_payload.source_url
+    assert "X-Goog-Credential=%2A%2A%2A" in raw_payload.source_url
+    assert "X-Goog-Signature=%2A%2A%2A" in raw_payload.source_url
+
+
+def test_plos_redirect_helper_rejects_invalid_redirect_chains() -> None:
+    start_url = "https://journals.plos.org/plosone/article/file?id=test"
+    loop_url = "https://journals.plos.org/plosone/article/file?id=loop"
+    loop_transport = FixtureHtmlTransport(
+        {
+            start_url: http_response(
+                start_url,
+                b"",
+                "text/html",
+                status_code=302,
+                headers={"location": loop_url},
+            ),
+            loop_url: http_response(
+                loop_url,
+                b"",
+                "text/html",
+                status_code=302,
+                headers={"location": start_url},
+            ),
+        }
+    )
+    missing_location_transport = FixtureHtmlTransport(
+        {
+            start_url: http_response(
+                start_url,
+                b"",
+                "text/html",
+                status_code=302,
+            )
+        }
+    )
+    invalid_scheme_transport = FixtureHtmlTransport(
+        {
+            start_url: http_response(
+                start_url,
+                b"",
+                "text/html",
+                status_code=302,
+                headers={"location": "file:///tmp/plos.xml"},
+            )
+        }
+    )
+    redirect_urls = [
+        f"https://journals.plos.org/plosone/article/file?id=hop-{index}"
+        for index in range(5)
+    ]
+    redirect_limit_transport = FixtureHtmlTransport(
+        {
+            redirect_urls[index]: http_response(
+                redirect_urls[index],
+                b"",
+                "text/html",
+                status_code=302,
+                headers={
+                    "location": (
+                        redirect_urls[index + 1]
+                        if index + 1 < len(redirect_urls)
+                        else f"{redirect_urls[index]}-next"
+                    )
+                },
+            )
+            for index in range(len(redirect_urls))
+        }
+    )
+
+    assert (
+        _fetch_plos_redirected_response(loop_transport, start_url, headers={}) is None
+    )
+    assert (
+        _fetch_plos_redirected_response(
+            missing_location_transport, start_url, headers={}
+        )
+        is None
+    )
+    assert (
+        _fetch_plos_redirected_response(invalid_scheme_transport, start_url, headers={})
+        is None
+    )
+    assert (
+        _fetch_plos_redirected_response(
+            redirect_limit_transport, redirect_urls[0], headers={}
+        )
+        is None
+    )
+
+
+def test_plos_xml_redirect_failure_continues_to_pdf_fallback() -> None:
+    fixture = golden_corpus_fixture_for_doi(PDF_FALLBACK_DOI)
+    transport = FixtureHtmlTransport(
+        {
+            PDF_FALLBACK_XML_URL: http_response(
+                PDF_FALLBACK_XML_URL,
+                b"",
+                "text/html",
+                status_code=302,
+            ),
+            PDF_FALLBACK_URL: http_response(
+                PDF_FALLBACK_URL, fixture.raw_path.read_bytes(), "application/pdf"
+            ),
+        }
+    )
+    client = PlosClient(transport, {})
+
+    raw_payload = client.fetch_raw_fulltext(PDF_FALLBACK_DOI, {"doi": PDF_FALLBACK_DOI})
+    article = client.to_article_model({"doi": PDF_FALLBACK_DOI}, raw_payload)
+
+    assert raw_payload.content is not None
+    assert raw_payload.content.route_kind == PDF_FALLBACK
+    assert article.source == "plos_pdf"
+    assert "fulltext:plos_xml_fail" in article.quality.source_trail
+    assert "fulltext:plos_pdf_fallback_ok" in article.quality.source_trail
+    assert any(
+        "PLOS XML redirect chain was not usable" in warning
+        for warning in article.quality.warnings
+    )
 
 
 def test_plos_pdf_fallback_route_uses_pdf_magic_and_rejects_html_wrapper() -> None:

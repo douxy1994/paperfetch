@@ -433,9 +433,21 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertEqual(mocked_fetch.call_count, 2)
         self.assertEqual(mocked_fetch.call_args_list[0].kwargs["wait_seconds"], 0)
         self.assertEqual(mocked_fetch.call_args_list[0].kwargs["warm_wait_seconds"], 0)
+        self.assertLessEqual(
+            mocked_fetch.call_args_list[0].kwargs["max_timeout_ms"],
+            15000,
+        )
         self.assertIs(mocked_fetch.call_args_list[0].kwargs["disable_media"], True)
         self.assertEqual(mocked_fetch.call_args_list[1].kwargs["wait_seconds"], 8)
         self.assertEqual(mocked_fetch.call_args_list[1].kwargs["warm_wait_seconds"], 1)
+        self.assertGreater(
+            mocked_fetch.call_args_list[1].kwargs["max_timeout_ms"],
+            100000,
+        )
+        self.assertLessEqual(
+            mocked_fetch.call_args_list[1].kwargs["max_timeout_ms"],
+            runtime.timeout_ms,
+        )
         self.assertIs(mocked_fetch.call_args_list[1].kwargs["disable_media"], False)
         self.assertIsNotNone(payload.content)
         assert payload.content is not None
@@ -443,6 +455,69 @@ class ProviderRequestOptionsTests(unittest.TestCase):
         self.assertIn(
             "fulltext:wiley_html_ok",
             [event.marker() for event in payload.trace if event.marker()],
+        )
+
+    def test_browser_workflow_preserves_fast_access_gate_when_retry_times_out(
+        self,
+    ) -> None:
+        doi = "10.1002/ece3.9361"
+        landing_url = f"https://onlinelibrary.wiley.com/doi/full/{doi}"
+        runtime = browser_runtime.BrowserRuntimeConfig(
+            provider="wiley",
+            doi=doi,
+            artifact_dir=Path("/tmp/artifacts"),
+            headless=True,
+            user_agent="paper-fetch-test/1",
+            backend="camoufox",
+        )
+        fast_failure = browser_runtime.BrowserRuntimeFailure(
+            "cloudflare_challenge",
+            "Encountered a challenge page.",
+            browser_context_seed={"browser_final_url": landing_url},
+            details={"diagnostic_path": "/tmp/fast-challenge.json"},
+        )
+        retry_failure = browser_runtime.BrowserRuntimeFailure(
+            "browser_connect_timeout",
+            "Browser retry exhausted the shared request deadline.",
+            browser_context_seed={"browser_user_agent": "retry-agent"},
+        )
+        mocked_fetch = mock.Mock(side_effect=[fast_failure, retry_failure])
+        client = WileyClient(transport=None, env={})
+        context = RuntimeContext(env={})
+        try:
+            with self.assertRaises(browser_runtime.BrowserRuntimeFailure) as raised:
+                browser_workflow._fetch_browser_html_payload_with_fast_path(
+                    client,
+                    [landing_url],
+                    runtime=runtime,
+                    metadata={
+                        "doi": doi,
+                        "title": "Example Wiley Article",
+                        "landing_page_url": landing_url,
+                    },
+                    context=context,
+                    html_fetcher=mocked_fetch,
+                )
+        finally:
+            context.close()
+
+        self.assertIs(raised.exception, fast_failure)
+        self.assertEqual(raised.exception.kind, "cloudflare_challenge")
+        self.assertEqual(
+            raised.exception.details["diagnostic_path"],
+            "/tmp/fast-challenge.json",
+        )
+        self.assertEqual(
+            raised.exception.details["retry_failure"]["failure_code"],
+            "browser_connect_timeout",
+        )
+        self.assertEqual(
+            [item["attempt"] for item in raised.exception.details["html_attempts"]],
+            [1, 2],
+        )
+        self.assertEqual(
+            raised.exception.browser_context_seed["browser_user_agent"],
+            "retry-agent",
         )
 
     def test_browser_workflow_fast_path_falls_back_after_insufficient_body(
@@ -821,7 +896,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                     return {
                         "status_code": 200,
                         "headers": {"content-type": "image/png"},
-                        "body": f"payload:{url}".encode(),
+                        "body": b"\x89PNG\r\n\x1a\n" + f"payload:{url}".encode(),
                         "url": url,
                     }
                 finally:
@@ -1995,7 +2070,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                 call.kwargs["asset_download_concurrency"]
                 for call in mocked_download_assets.call_args_list
             ],
-            [1, 1],
+            [6, 6],
         )
         self.assertEqual(
             [call.args[0] for call in mocked_download_assets.call_args_list],
@@ -2075,7 +2150,7 @@ class ProviderRequestOptionsTests(unittest.TestCase):
                 call.kwargs["asset_download_concurrency"]
                 for call in mocked_download_assets.call_args_list
             ],
-            [1, 1],
+            [6, 6],
         )
         self.assertEqual(
             [call.args[0] for call in mocked_download_assets.call_args_list],

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 import json
 from pathlib import Path
 import tempfile
@@ -22,6 +22,7 @@ from paper_fetch.publisher_identity import normalize_doi
 from paper_fetch.providers import (
     _acs_html,
     _aip_html,
+    _tandf_html,
     _pnas_html,
     _science_html,
     _ams_html,
@@ -37,9 +38,11 @@ from paper_fetch.providers import (
     _wiley_html,
     copernicus as copernicus_provider,
     elsevier as elsevier_provider,
+    frontiers as frontiers_provider,
     arxiv as arxiv_provider,
     acs as acs_provider,
     aip as aip_provider,
+    tandf as tandf_provider,
     pnas as pnas_provider,
     science as science_provider,
     ams as ams_provider,
@@ -263,6 +266,7 @@ def _build_browser_workflow_article(fixture: GoldenCorpusFixture):
     client_map = {
         "acs": acs_provider.AcsClient,
         "aip": aip_provider.AipClient,
+        "tandf": tandf_provider.TandfClient,
         "ams": ams_provider.AmsClient,
         "annualreviews": annualreviews_provider.AnnualreviewsClient,
         "iop": iop_provider.IopClient,
@@ -837,6 +841,81 @@ def _build_plos_article(fixture: GoldenCorpusFixture):
     )
 
 
+def _build_frontiers_article(fixture: GoldenCorpusFixture):
+    metadata = _base_metadata(fixture)
+    body = fixture.raw_path.read_bytes()
+    if fixture.route_kind == "pdf_fallback":
+        pdf_result = pdf_fetch_result_from_bytes(
+            artifact_dir=None,
+            source_url=fixture.source_url,
+            final_url=fixture.source_url,
+            pdf_bytes=body,
+        )
+        return article_from_markdown(
+            source="frontiers_pdf",
+            metadata=metadata,
+            doi=fixture.doi,
+            markdown_text=pdf_result.markdown_text,
+            trace=trace_from_markers(
+                [
+                    "fulltext:frontiers_xml_fail",
+                    "fulltext:frontiers_pdf_fallback_ok",
+                ]
+            ),
+            warnings=[
+                "Full text was extracted from Frontiers PDF fallback after the XML route was not used.",
+            ],
+        )
+
+    extraction = parse_jats_xml(
+        body,
+        source_url=fixture.source_url,
+        base_metadata=metadata,
+    )
+    if extraction is None:
+        raise ValueError(f"Frontiers fixture is not parseable JATS XML: {fixture.doi}")
+    article_metadata = dict(extraction.metadata)
+    article_metadata.setdefault("landing_page_url", fixture.landing_url)
+    normalized_assets, replacements = (
+        frontiers_provider._normalize_frontiers_extracted_assets(
+            extraction.assets,
+            doi=fixture.doi,
+            landing_url=fixture.landing_url,
+        )
+    )
+    raw_payload = RawFulltextPayload(
+        provider="frontiers",
+        source_url=fixture.source_url,
+        content_type=fixture.content_type or "text/xml",
+        body=body,
+        content=ProviderContent(
+            route_kind="xml",
+            source_url=fixture.source_url,
+            content_type=fixture.content_type or "text/xml",
+            body=body,
+            markdown_text=frontiers_provider._replace_markdown_urls(
+                extraction.markdown_text,
+                replacements,
+            ),
+            merged_metadata=article_metadata,
+            diagnostics={
+                "extraction": {
+                    "abstract_sections": extraction.abstract_sections,
+                    "references": extraction.references,
+                    "semantic_losses": asdict(extraction.semantic_losses),
+                }
+            },
+            extracted_assets=normalized_assets,
+        ),
+        trace=trace_from_markers(["fulltext:frontiers_xml_ok"]),
+        merged_metadata=article_metadata,
+    )
+    return frontiers_provider.FrontiersClient(HttpTransport(), {}).to_article_model(
+        article_metadata,
+        raw_payload,
+    )
+
+
 def _downloaded_plos_body_assets(
     fixture: GoldenCorpusFixture,
     extracted_assets: list[dict[str, Any]],
@@ -1044,6 +1123,10 @@ def _lightweight_atypon_browser_workflow_summary(
             _aip_html.extract_authors,
             lambda _html_text: (),
         ),
+        "tandf": (
+            _tandf_html.extract_authors,
+            lambda _html_text: (),
+        ),
         "science": (
             _science_html.extract_authors,
             _science_html.blocking_fallback_signals,
@@ -1195,6 +1278,10 @@ def _lightweight_plos_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
     return _article_model_positive_summary(_build_plos_article(fixture), fixture)
 
 
+def _lightweight_frontiers_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
+    return _article_model_positive_summary(_build_frontiers_article(fixture), fixture)
+
+
 def _lightweight_oxfordacademic_summary(fixture: GoldenCorpusFixture) -> dict[str, Any]:
     return _article_model_positive_summary(
         _build_oxfordacademic_article(fixture), fixture
@@ -1303,6 +1390,33 @@ def _register_golden_corpus_adapters() -> None:
                 ),
             },
             representative_doi="10.1146/annurev-control-030123-013355",
+            representative_count_fields=(
+                "sections",
+                "abstract_sections",
+                "body_sections",
+            ),
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="tandf",
+            build_article=_build_browser_workflow_article,
+            lightweight_summary=_lightweight_atypon_browser_workflow_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="html",
+                content_prefix="text/html",
+                source="tandf_html",
+                primary_marker="fulltext:tandf_html_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="tandf_pdf",
+                    primary_marker="fulltext:tandf_pdf_fallback_ok",
+                ),
+            },
+            representative_doi="10.1080/15481603.2026.2667034",
             representative_count_fields=(
                 "sections",
                 "abstract_sections",
@@ -1571,6 +1685,34 @@ def _register_golden_corpus_adapters() -> None:
                 "sections",
                 "abstract_sections",
                 "body_sections",
+            ),
+        )
+    )
+    register_golden_corpus_adapter(
+        GoldenCorpusAdapter(
+            provider="frontiers",
+            build_article=_build_frontiers_article,
+            lightweight_summary=_lightweight_frontiers_summary,
+            primary_contract=ProviderGoldenContract(
+                route_kind="xml",
+                content_prefix=("application/xml", "text/xml"),
+                source="frontiers_xml",
+                primary_marker="fulltext:frontiers_xml_ok",
+            ),
+            fallback_contracts={
+                "pdf_fallback": ProviderGoldenContract(
+                    route_kind="pdf_fallback",
+                    content_prefix="application/pdf",
+                    source="frontiers_pdf",
+                    primary_marker="fulltext:frontiers_pdf_fallback_ok",
+                ),
+            },
+            representative_doi="10.3389/fmars.2023.1101972",
+            representative_count_fields=(
+                "sections",
+                "abstract_sections",
+                "body_sections",
+                "references",
             ),
         )
     )

@@ -123,6 +123,84 @@ class MarkdownRenderIrTests(unittest.TestCase):
             ],
         )
 
+    def test_table_block_renders_irregular_rows_as_readable_list(self) -> None:
+        rendered = render_table_block(
+            {
+                "kind": "structured",
+                "table_render_kind": "structured_list",
+                "heading": "Table 5",
+                "caption": "Irregular values.",
+                "headers": ["Name", "Value"],
+                "rows": [["A", "1"], ["B"]],
+                "_table_prefix_rows": ["Group A"],
+                "fallback_message": "Grid layout was reduced.",
+                "footnotes": ["Source note."],
+            }
+        )
+
+        self.assertEqual(
+            rendered,
+            [
+                "Table 5",
+                "",
+                "Irregular values.",
+                "",
+                "Group A",
+                "",
+                "- Name: A; Value: 1",
+                "- Name: B",
+                "",
+                "Grid layout was reduced.",
+                "",
+                "Source note.",
+                "",
+            ],
+        )
+
+    def test_table_block_renders_ordered_groups_with_shared_metadata_once(self) -> None:
+        rendered = render_table_block(
+            {
+                "kind": "structured",
+                "table_render_kind": "grouped",
+                "heading": "Table 6",
+                "caption": "Three heat indicators.",
+                "footnotes": ["Source note."],
+                "link": "table-6.png",
+                "_table_groups": [
+                    {
+                        "table_render_kind": "structured",
+                        "headers": ["Day", "WBGT"],
+                        "rows": [["1", "28"]],
+                        "_table_prefix_rows": ["(a) WBGT"],
+                    },
+                    {
+                        "table_render_kind": "structured_list",
+                        "headers": ["Day", "T"],
+                        "rows": [["2", "30"], ["3"]],
+                        "_table_prefix_rows": ["(b) T"],
+                    },
+                    {
+                        "table_render_kind": "structured",
+                        "headers": ["Day", "Low", "High"],
+                        "rows": [["4", "29", "32"]],
+                    },
+                ],
+            }
+        )
+        markdown = "\n".join(rendered)
+
+        self.assertEqual(rendered.count("Table 6"), 1)
+        self.assertEqual(markdown.count("Three heat indicators."), 1)
+        self.assertEqual(markdown.count("Source note."), 1)
+        self.assertEqual(markdown.count("![Table 6](table-6.png)"), 1)
+        self.assertLess(markdown.index("(a) WBGT"), markdown.index("| Day"))
+        self.assertLess(markdown.index("(b) T"), markdown.index("- Day: 2; T: 30"))
+        self.assertLess(
+            markdown.index("- Day: 3"),
+            markdown.rindex("| Day"),
+        )
+        self.assertNotIn("Group 3", markdown)
+
     def test_figure_ir_round_trips_and_renders(self) -> None:
         figure = MarkdownFigure(
             label="Figure 1",

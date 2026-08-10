@@ -29,7 +29,7 @@ def _fixture_id(fixture: GoldenCorpusFixture) -> str:
 
 
 def test_golden_corpus_is_balanced_across_publishers() -> None:
-    assert len(GOLDEN_CORPUS_FIXTURES) == 132
+    assert len(GOLDEN_CORPUS_FIXTURES) == 140
     assert Counter(fixture.provider for fixture in GOLDEN_CORPUS_FIXTURES) == Counter(
         {
             "acs": 3,
@@ -38,7 +38,8 @@ def test_golden_corpus_is_balanced_across_publishers() -> None:
             "annualreviews": 4,
             "arxiv": 4,
             "copernicus": 12,
-            "elsevier": 11,
+            "elsevier": 14,
+            "frontiers": 1,
             "ieee": 8,
             "iop": 3,
             "mdpi": 9,
@@ -48,6 +49,7 @@ def test_golden_corpus_is_balanced_across_publishers() -> None:
             "royalsocietypublishing": 7,
             "science": 12,
             "springer": 13,
+            "tandf": 4,
             "wiley": 11,
         }
     )
@@ -85,7 +87,7 @@ def test_golden_corpus_lightweight_contracts_hold_across_full_corpus(
 def test_golden_corpus_representative_fixtures_cover_primary_fulltext_paths_by_provider() -> (
     None
 ):
-    assert len(REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES) == 17
+    assert len(REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES) == 19
     assert Counter(
         fixture.provider for fixture in REPRESENTATIVE_GOLDEN_CORPUS_FIXTURES
     ) == Counter(
@@ -97,6 +99,7 @@ def test_golden_corpus_representative_fixtures_cover_primary_fulltext_paths_by_p
             "arxiv": 1,
             "copernicus": 1,
             "elsevier": 1,
+            "frontiers": 1,
             "ieee": 1,
             "iop": 1,
             "mdpi": 1,
@@ -106,6 +109,7 @@ def test_golden_corpus_representative_fixtures_cover_primary_fulltext_paths_by_p
             "royalsocietypublishing": 1,
             "science": 1,
             "springer": 1,
+            "tandf": 1,
             "wiley": 1,
         }
     )
@@ -147,7 +151,7 @@ def test_golden_corpus_representative_fixture_matches_primary_fulltext_path(
 
 @pytest.mark.skipif(
     os.environ.get(FULL_GOLDEN_ENV) != "1",
-    reason=f"Set {FULL_GOLDEN_ENV}=1 to run full 132-fixture golden corpus regression.",
+    reason=f"Set {FULL_GOLDEN_ENV}=1 to run full 133-fixture golden corpus regression.",
 )
 @pytest.mark.parametrize("fixture", GOLDEN_CORPUS_FIXTURES, ids=_fixture_id)
 def test_golden_corpus_expected_summary_matches_current_extractor(

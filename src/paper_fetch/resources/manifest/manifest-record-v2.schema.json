@@ -21,6 +21,42 @@
     },
     "AssetAcceptanceFacet": {
       "properties": {
+        "accepted_preview": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Accepted Preview",
+          "type": "integer"
+        },
+        "attempted": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Attempted",
+          "type": "integer"
+        },
+        "audited": {
+          "default": false,
+          "title": "Audited",
+          "type": "boolean"
+        },
+        "discovered": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Discovered",
+          "type": "integer"
+        },
+        "expected": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected"
+        },
         "failed": {
           "default": 0,
           "minimum": 0,
@@ -35,11 +71,25 @@
           "title": "Failure Codes",
           "type": "array"
         },
+        "fallback_preview": {
+          "default": 0,
+          "minimum": 0,
+          "title": "Fallback Preview",
+          "type": "integer"
+        },
         "full_size": {
           "default": 0,
           "minimum": 0,
           "title": "Full Size",
           "type": "integer"
+        },
+        "issue_codes": {
+          "default": [],
+          "items": {
+            "type": "string"
+          },
+          "title": "Issue Codes",
+          "type": "array"
         },
         "local": {
           "default": 0,
@@ -120,6 +170,8 @@
         "degraded",
         "failed",
         "unavailable",
+        "unknown",
+        "not_applicable",
         "not_requested"
       ],
       "title": "AssetAcceptanceStatus",
@@ -234,7 +286,7 @@
           "$ref": "#/$defs/IdentityAcceptanceFacet"
         },
         "minimum_reader_schema_version": {
-          "const": 1,
+          "const": 2,
           "title": "Minimum Reader Schema Version",
           "type": "integer"
         },
@@ -248,7 +300,7 @@
           "$ref": "#/$defs/ProvenanceAcceptanceFacet"
         },
         "schema_version": {
-          "const": 1,
+          "const": 2,
           "title": "Schema Version",
           "type": "integer"
         }
@@ -406,6 +458,18 @@
           "title": "Completed At",
           "type": "string"
         },
+        "failure_code": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Failure Code"
+        },
         "kind": {
           "minLength": 1,
           "title": "Kind",
@@ -439,6 +503,18 @@
           "minLength": 1,
           "title": "Path",
           "type": "string"
+        },
+        "route": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Route"
         },
         "sha256": {
           "anyOf": [
@@ -556,6 +632,31 @@
     "ManifestTraceEvent": {
       "description": "Pydantic wire representation of the canonical TraceEvent.",
       "properties": {
+        "attempt": {
+          "anyOf": [
+            {
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt"
+        },
+        "attempt_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Attempt Id"
+        },
         "code": {
           "anyOf": [
             {
@@ -572,6 +673,54 @@
           "minLength": 1,
           "title": "Component",
           "type": "string"
+        },
+        "duration_ms": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Duration Ms"
+        },
+        "error_category": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Error Category"
+        },
+        "finished_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Finished At"
+        },
+        "http_status": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Http Status"
         },
         "message": {
           "anyOf": [
@@ -591,10 +740,118 @@
           "title": "Outcome",
           "type": "string"
         },
+        "parent_span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Parent Span Id"
+        },
+        "provider": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Provider"
+        },
+        "retry_after_seconds": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retry After Seconds"
+        },
+        "retryable": {
+          "anyOf": [
+            {
+              "type": "boolean"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Retryable"
+        },
+        "route": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Route"
+        },
+        "span_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Span Id"
+        },
         "stage": {
           "minLength": 1,
           "title": "Stage",
           "type": "string"
+        },
+        "started_at": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Started At"
+        },
+        "target": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target"
+        },
+        "target_sha256": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Target Sha256"
         }
       },
       "required": [

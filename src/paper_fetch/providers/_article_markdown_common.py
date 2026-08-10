@@ -17,6 +17,7 @@ from ._article_markdown_xml import (
     normalize_compact_text,
     xml_local_name,
 )
+from ..extraction.table_grid import TableConversionStatus
 from ..extraction.markdown_render.figures import add_figure_once, render_figure_block
 from ..extraction.markdown_render.tables import (
     add_table_once,
@@ -57,6 +58,8 @@ __all__ = [
     "render_inline_text",
     "render_structured_table_block",
     "render_table_block",
+    "table_conversion_note",
+    "table_entry_semantic_count",
     "xml_local_name",
 ]
 
@@ -110,15 +113,20 @@ def normalize_inline_markup_text(value: str | None) -> str:
 
 
 def render_inline_text(
-    element: ET.Element | None, *, skip_local_names: set[str] | None = None
+    element: ET.Element | None,
+    *,
+    skip_local_names: set[str] | None = None,
+    formula_renders: list[Any] | None = None,
+    source_url: str = "",
 ) -> str:
     if element is None:
         return ""
 
     from ._article_markdown_math import (
-        render_external_mathml_expression,
-        render_inline_formula,
-        render_tex_math,
+        formula_inline_markdown,
+        render_inline_formula_result,
+        render_mathml_formula_result,
+        render_tex_formula_result,
     )
 
     skip_names = skip_local_names or set()
@@ -140,34 +148,55 @@ def render_inline_text(
                     parts.append(child.tail)
                 continue
             if local_name == "math":
-                expression = render_external_mathml_expression(
-                    child, display_mode=False
+                formula_result = render_mathml_formula_result(
+                    child,
+                    display_mode=False,
                 )
-                if expression:
-                    parts.append(f"${expression}$")
+                if formula_renders is not None:
+                    formula_renders.append(formula_result)
+                rendered_formula = formula_inline_markdown(formula_result)
+                if rendered_formula:
+                    parts.append(rendered_formula)
             elif local_name == "inline-formula":
-                expression = render_inline_formula(child)
-                if expression:
-                    parts.append(f"${expression}$")
+                formula_result = render_inline_formula_result(
+                    child,
+                    source_url=source_url,
+                )
+                if formula_renders is not None:
+                    formula_renders.append(formula_result)
+                rendered_formula = formula_inline_markdown(formula_result)
+                if rendered_formula:
+                    parts.append(rendered_formula)
             elif local_name == "tex-math":
-                expression = render_tex_math(child)
-                if expression:
-                    parts.append(f"${expression}$")
+                formula_result = render_tex_formula_result(child)
+                if formula_renders is not None:
+                    formula_renders.append(formula_result)
+                rendered_formula = formula_inline_markdown(formula_result)
+                if rendered_formula:
+                    parts.append(rendered_formula)
             if local_name == "sup":
                 parts.append(
-                    f"<sup>{render_inline_text(child, skip_local_names=skip_names)}</sup>"
+                    "<sup>"
+                    f"{render_inline_text(child, skip_local_names=skip_names, formula_renders=formula_renders, source_url=source_url)}"
+                    "</sup>"
                 )
             elif local_name == "sub":
                 parts.append(
-                    f"<sub>{render_inline_text(child, skip_local_names=skip_names)}</sub>"
+                    "<sub>"
+                    f"{render_inline_text(child, skip_local_names=skip_names, formula_renders=formula_renders, source_url=source_url)}"
+                    "</sub>"
                 )
             elif local_name in {"bold"}:
                 parts.append(
-                    f"**{render_inline_text(child, skip_local_names=skip_names)}**"
+                    "**"
+                    f"{render_inline_text(child, skip_local_names=skip_names, formula_renders=formula_renders, source_url=source_url)}"
+                    "**"
                 )
             elif local_name in {"italic"}:
                 parts.append(
-                    f"*{render_inline_text(child, skip_local_names=skip_names)}*"
+                    "*"
+                    f"{render_inline_text(child, skip_local_names=skip_names, formula_renders=formula_renders, source_url=source_url)}"
+                    "*"
                 )
             elif local_name in {"break", "br"}:
                 parts.append("\n")
@@ -207,6 +236,41 @@ def fallback_table_heading(raw_value: str | None) -> str:
     if match:
         return f"Table {match.group(1)}"
     return normalized
+
+
+def table_conversion_note(status: TableConversionStatus) -> str | None:
+    """Return a user-facing note only when table conversion really degraded."""
+
+    if status == TableConversionStatus.LAYOUT_DEGRADED:
+        return (
+            "Source table span or column metadata was invalid or inconsistent and "
+            "was repaired during Markdown conversion; cell text was retained, but "
+            "the source layout could not be verified exactly."
+        )
+    if status == TableConversionStatus.FALLBACK:
+        return (
+            "Irregular table structure could not be represented as a reliable "
+            "Markdown grid; cell text was retained as a readable list."
+        )
+    if status == TableConversionStatus.SEMANTIC_LOSS:
+        return "Some table content could not be preserved during Markdown conversion."
+    return None
+
+
+def table_entry_semantic_count(
+    entry: Mapping[str, Any],
+    field: str,
+    *,
+    fallback: bool = False,
+) -> int:
+    """Read a non-negative internal table quality count with legacy fallback."""
+
+    value = entry.get(field)
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, int):
+        return max(value, 0)
+    return int(fallback)
 
 
 def normalize_lines(lines: list[str]) -> str:

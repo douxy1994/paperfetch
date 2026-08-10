@@ -15,12 +15,14 @@ from ..extraction.html._metadata import merge_html_metadata, parse_html_metadata
 from ..extraction.html.assets import (
     extract_scoped_html_assets as extract_provider_neutral_scoped_assets,
 )
+from ..extraction.html.assets.silverchair import promote_silverchair_srcset_originals
 from ..extraction.html.figure_links import inject_inline_figure_links
 from ..extraction.html.parsing import choose_parser
 from ..extraction.html.renderer import clean_rendered_markdown, render_html_markdown
 from ..extraction.html.semantics import collect_html_section_hints
 from ..extraction.html.shared import short_text
 from ..extraction.html.signals import HtmlExtractionFailure
+from ..extraction.html.tables import render_table_markdown
 from ..extraction.markdown_render.figures import (
     INLINE_FIGURE_ALT_ATTR,
     INLINE_FIGURE_SRC_ATTR,
@@ -453,34 +455,6 @@ def _table_cell_text(cell: Tag) -> str:
     )
 
 
-def _table_rows(table: Tag) -> list[list[str]]:
-    rows: list[list[str]] = []
-    for row in table.find_all("tr"):
-        if not isinstance(row, Tag):
-            continue
-        cells = [
-            cell
-            for cell in row.find_all(["th", "td"], recursive=False)
-            if isinstance(cell, Tag)
-        ]
-        if not cells:
-            continue
-        values: list[str] = []
-        for cell in cells:
-            values.append(_table_cell_text(cell))
-            try:
-                colspan = max(int(normalize_text(str(cell.get("colspan") or "1"))), 1)
-            except ValueError:
-                colspan = 1
-            values.extend("" for _ in range(colspan - 1))
-        if any(values):
-            rows.append(values)
-    if not rows:
-        return []
-    width = max(len(row) for row in rows)
-    return [row + [""] * (width - len(row)) for row in rows]
-
-
 def _table_footnotes(table_container: Tag) -> list[str]:
     footnotes: list[str] = []
     for node in table_container.select(".tabFoot p"):
@@ -493,15 +467,15 @@ def _table_footnotes(table_container: Tag) -> list[str]:
 
 
 def _markdown_table_block(table: Tag, table_container: Tag) -> str:
-    rows = _table_rows(table)
-    if not rows:
+    markdown = render_table_markdown(
+        table,
+        label="",
+        caption="",
+        render_inline_text=_table_cell_text,
+    )
+    if not markdown:
         return ""
-    lines = [
-        "| " + " | ".join(rows[0]) + " |",
-        "| " + " | ".join(["---"] * len(rows[0])) + " |",
-    ]
-    for row in rows[1:]:
-        lines.append("| " + " | ".join(row) + " |")
+    lines = [markdown]
     footnotes = _table_footnotes(table_container)
     if footnotes:
         lines.append("")
@@ -797,6 +771,7 @@ def extract_scoped_html_assets(
     asset_profile: AssetProfile,
 ) -> list[dict[str, str]]:
     body_html, supplementary_html = extract_asset_html_scopes(html_text, source_url)
+    body_html = promote_silverchair_srcset_originals(body_html)
     assets = extract_provider_neutral_scoped_assets(
         body_html,
         source_url,

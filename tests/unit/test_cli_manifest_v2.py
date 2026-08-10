@@ -7,12 +7,14 @@ import hashlib
 import io
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 from uuid import UUID
 
 import pytest
 
 from paper_fetch import cli
+from paper_fetch import runtime as runtime_module
 from paper_fetch.manifest import (
     ManifestBuilderDependencies,
     ManifestRecordStatus,
@@ -59,6 +61,34 @@ def _fixed_deps(
     return ManifestBuilderDependencies(
         clock=lambda: COMPLETED_AT,
         uuid_factory=lambda: next(uuids),
+    )
+
+
+def _build_record(
+    tmp_path: Path,
+    *,
+    args: argparse.Namespace | None = None,
+    result: cli.SingleFetchResult | None = None,
+    error: Exception | None = None,
+):
+    deps = _fixed_deps()
+    return cli._build_cli_manifest_record(
+        cli.CliManifestBuildContext(
+            args=args or _args(),
+            output_dir=tmp_path,
+            artifact_mode="none",
+            run_id=RUN_ID,
+            tool_version="3.1.0",
+            deps=deps,
+        ),
+        cli.CliManifestAttempt(
+            index=1,
+            query="10.1000/acceptance",
+            started_at=STARTED_AT,
+            completed_at=COMPLETED_AT,
+        ),
+        result=result,
+        error=error,
     )
 
 
@@ -120,7 +150,7 @@ def test_single_manifest_is_explicit_atomic_and_hashes_final_output(
     assert record.request.parameters["format"] == "markdown"
     assert record.status == "ok"
     assert record.acceptance.overall == OverallAcceptanceStatus.COMPLETE
-    assert record.trace[0].stage == "fulltext"
+    assert [event.stage for event in record.trace[:2]] == ["resolve", "fulltext"]
     assert record.fallback_codes == ()
     assert record.output_path == str(output_path)
     assert primary.size == len(body)
@@ -301,19 +331,7 @@ def test_failed_manifest_preserves_managed_chrome_stage_code_and_summary(
         ],
     )
 
-    record = cli._build_cli_manifest_record(
-        _args(),
-        index=1,
-        query="10.1000/acceptance",
-        output_dir=tmp_path,
-        artifact_mode="none",
-        run_id=RUN_ID,
-        tool_version="3.1.0",
-        started_at=STARTED_AT,
-        completed_at=COMPLETED_AT,
-        error=error,
-        deps=_fixed_deps(),
-    )
+    record = _build_record(tmp_path, error=error)
 
     assert record.record_status == ManifestRecordStatus.FAILED
     assert record.error is not None
@@ -340,18 +358,9 @@ def test_successful_pdf_fallback_keeps_html_browser_failure_degraded(
         ]
     )
 
-    record = cli._build_cli_manifest_record(
-        _args(),
-        index=1,
-        query="10.1000/acceptance",
-        output_dir=tmp_path,
-        artifact_mode="none",
-        run_id=RUN_ID,
-        tool_version="3.1.0",
-        started_at=STARTED_AT,
-        completed_at=COMPLETED_AT,
+    record = _build_record(
+        tmp_path,
         result=cli.SingleFetchResult(envelope),
-        deps=_fixed_deps(),
     )
 
     assert record.status == "ok"
@@ -406,18 +415,10 @@ def test_cli_adapter_exposes_fulltext_limited_and_asset_acceptance(
     asset_status: AssetAcceptanceStatus,
 ) -> None:
     args = _args(asset_profile=asset_profile)
-    record = cli._build_cli_manifest_record(
-        args,
-        index=1,
-        query="10.1000/acceptance",
-        output_dir=tmp_path,
-        artifact_mode="none",
-        run_id=RUN_ID,
-        tool_version="3.1.0",
-        started_at=STARTED_AT,
-        completed_at=COMPLETED_AT,
+    record = _build_record(
+        tmp_path,
+        args=args,
         result=cli.SingleFetchResult(envelope),
-        deps=_fixed_deps(),
     )
 
     assert record.status == "ok"
@@ -434,18 +435,9 @@ def test_cli_adapter_publishes_semantic_losses(tmp_path: Path) -> None:
             formula_missing_count=3,
         )
     )
-    record = cli._build_cli_manifest_record(
-        _args(),
-        index=1,
-        query="10.1000/acceptance",
-        output_dir=tmp_path,
-        artifact_mode="none",
-        run_id=RUN_ID,
-        tool_version="3.1.0",
-        started_at=STARTED_AT,
-        completed_at=COMPLETED_AT,
+    record = _build_record(
+        tmp_path,
         result=cli.SingleFetchResult(envelope),
-        deps=_fixed_deps(),
     )
 
     assert record.semantic_losses.table_fallback_count == 2
@@ -614,6 +606,68 @@ def test_batch_generic_exception_is_failed_and_does_not_drop_later_input(
     assert records[0].record_status == ManifestRecordStatus.FAILED
     assert records[0].error is not None
     assert records[0].error.reason == "worker exploded"
+
+
+def test_batch_resolution_and_queue_time_do_not_consume_fetch_deadline(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    results_path = tmp_path / "results.jsonl"
+    args = _args(batch_results=str(results_path))
+    clock = [300.0]
+    observed: list[dict[str, object]] = []
+
+    def resolve(query: str, *, context):
+        context.request_started_at = 100.0
+        return SimpleNamespace(
+            query=query,
+            provider_hint="test-provider",
+            landing_url=None,
+            doi="10.1000/resolved",
+        )
+
+    def run_single(_args, *, query, context, **_kwargs):
+        observed.append(
+            {
+                "query": query,
+                "request_started_at": context.request_started_at,
+                "deadline": context.initialize_deadline(120.0),
+                "remaining": context.remaining_seconds(),
+                "session_cache": dict(context.session_cache),
+            }
+        )
+        clock[0] += 200.0
+        return cli.SingleFetchResult(_envelope())
+
+    monkeypatch.setattr(runtime_module.time, "monotonic", lambda: clock[0])
+    with (
+        mock.patch.object(cli, "resolve_paper", side_effect=resolve),
+        mock.patch.object(cli, "run_single_fetch", side_effect=run_single),
+        mock.patch.object(
+            cli, "build_http_transport_for_context", return_value=object()
+        ),
+    ):
+        exit_code = cli.run_batch_fetch(
+            args,
+            queries=["First generic paper title", "Second generic paper title"],
+            output_dir=tmp_path,
+            runtime_env={},
+            artifact_mode="none",
+            manifest_deps=_fixed_deps(
+                record_ids=(
+                    RECORD_ID,
+                    UUID("20000000-0000-4000-8000-000000000003"),
+                )
+            ),
+            run_id=RUN_ID,
+            tool_version="3.1.0",
+        )
+
+    assert exit_code == 0
+    assert [item["request_started_at"] for item in observed] == [300.0, 500.0]
+    assert [item["deadline"] for item in observed] == [420.0, 620.0]
+    assert [item["remaining"] for item in observed] == [120.0, 120.0]
+    assert all(item["session_cache"] for item in observed)
 
 
 def test_metadata_only_batch_status_ok_remains_zero_exit(tmp_path: Path) -> None:

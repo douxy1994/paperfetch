@@ -5,8 +5,12 @@ from __future__ import annotations
 import time as time
 from .context import (
     _BaseBrowserDocumentFetcher,
+    _SharedBrowserPageSession,
     _choose_browser_seed_url,
     _normalized_response_headers,
+    _replace_runtime_shared_page_session,
+    _restore_runtime_shared_page_session,
+    _runtime_figure_page_session,
 )
 from .diagnostics import (
     BROWSER_CONTEXT_ERROR,
@@ -44,6 +48,7 @@ __all__ = [
     "_MemoizedImageDocumentFetcher",
     "_SharedBrowserFileDocumentFetcher",
     "_SharedBrowserImageDocumentFetcher",
+    "_SharedBrowserPageSession",
     "_ThreadLocalSharedBrowserFileDocumentFetcher",
     "_ThreadLocalSharedBrowserImageDocumentFetcher",
     "_browser_image_document_payload",
@@ -53,6 +58,9 @@ __all__ = [
     "_choose_browser_seed_url",
     "_compact_failure_diagnostic",
     "_normalized_response_headers",
+    "_replace_runtime_shared_page_session",
+    "_restore_runtime_shared_page_session",
+    "_runtime_figure_page_session",
     "atypon_body_ready_selectors",
     "fetch_image_document_with_browser",
     "wait_for_atypon_body_dom_ready",
