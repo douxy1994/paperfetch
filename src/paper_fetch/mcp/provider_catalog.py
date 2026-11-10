@@ -19,6 +19,16 @@ def _route_payload(route: Any) -> dict[str, Any]:
     return json.loads(json.dumps(asdict(route)))
 
 
+def _compiled_route_payload(provider: str, route: Any) -> dict[str, Any]:
+    payload = _route_payload(route)
+    payload["execution_policy"] = json.loads(
+        json.dumps(
+            asdict(runtime_catalog.compile_route_execution_policy(provider, route.name))
+        )
+    )
+    return payload
+
+
 def runtime_tool_version() -> str:
     prefix = "paper-fetch-skill/"
     return (
@@ -39,7 +49,9 @@ def provider_catalog_resource_payload() -> dict[str, Any]:
             "official": spec.official,
             "sources": sorted(grouped_sources.get(spec.name, ())),
             "asset_default": spec.asset_default,
-            "routes": [_route_payload(route) for route in spec.routes],
+            "routes": [
+                _compiled_route_payload(spec.name, route) for route in spec.routes
+            ],
             "capabilities": {
                 "html": spec.html_capable,
                 "metadata_probe": spec.probe_capability or None,
@@ -53,14 +65,18 @@ def provider_catalog_resource_payload() -> dict[str, Any]:
                         else "direct"
                     )
                 ),
-                "requires_browser_runtime": spec.requires_browser_runtime,
+                "browser_available": runtime_catalog.provider_has_browser_route(
+                    spec.name
+                ),
                 "browser_required": runtime_catalog.provider_requires_browser(
                     spec.name
                 ),
-                "browser_optional": any(
-                    route.browser_optional for route in spec.routes
+                "browser_optional": (
+                    runtime_catalog.provider_has_optional_browser_route(spec.name)
                 ),
-                "requires_playwright": spec.requires_playwright,
+                "requires_playwright": (
+                    runtime_catalog.provider_requires_playwright(spec.name)
+                ),
                 "supports_static_status": True,
                 "supports_browser_preflight": (
                     runtime_catalog.provider_supports_browser_preflight(spec.name)

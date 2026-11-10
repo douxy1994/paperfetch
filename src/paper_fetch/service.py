@@ -2,14 +2,16 @@
 
 from __future__ import annotations
 
-import time
-
-from .formula.convert import formula_runtime_env, formula_timing_collector
-from .http import http_timing_collector
+from .formula.convert import formula_runtime_env
+from .formula.validation import formula_validation_session, capture_formula_diagnostics
 from .models import FetchEnvelope, OutputMode, RenderOptions
+from .models.quality import (
+    QUALITY_FLAG_FORMULA_FALLBACK_PRESENT,
+    _semantic_loss_warning_messages,
+)
 from .providers.base import ProviderFailure
 from .providers.registry import build_clients
-from .resolve.query import ResolvedQuery
+from .resolve.query import ResolvedQuery, StructuredResolveRequest
 from .runtime import RuntimeContext
 from .workflow.fulltext import fetch_article
 from .workflow.metadata import (
@@ -17,7 +19,7 @@ from .workflow.metadata import (
     merge_primary_secondary_metadata,
 )
 from .workflow.rendering import build_fetch_envelope
-from .workflow.resolution import resolve_paper
+from .workflow.resolution import resolve_paper as workflow_resolve_paper
 from .workflow.routing import (
     probe_has_fulltext as workflow_probe_has_fulltext,
 )
@@ -41,6 +43,20 @@ __all__ = [
 ]
 
 
+def resolve_paper(
+    query: str | StructuredResolveRequest,
+    *,
+    context: RuntimeContext | None = None,
+) -> ResolvedQuery:
+    owns_runtime = context is None
+    runtime = context or RuntimeContext()
+    try:
+        return workflow_resolve_paper(query, context=runtime)
+    finally:
+        if owns_runtime:
+            runtime.close()
+
+
 def probe_has_fulltext(
     query: str,
     *,
@@ -62,54 +78,77 @@ def probe_has_fulltext(
 def fetch_paper(
     query: str,
     *,
+    target: str = "paper",
     modes: set[OutputMode] | None = None,
     strategy: FetchStrategy | None = None,
     render: RenderOptions | None = None,
     context: RuntimeContext | None = None,
 ) -> FetchEnvelope:
+    if target not in {"paper", "supplementary"}:
+        raise ValueError("target must be paper or supplementary")
     owns_runtime = context is None
     runtime = context or RuntimeContext()
     try:
-        requested_modes = set(modes or DEFAULT_OUTPUT_MODES)
-        active_strategy = strategy or FetchStrategy()
-        active_render = render or RenderOptions()
-        resolved_render = RenderOptions(
-            include_refs=active_render.include_refs,
-            asset_profile=(
-                active_render.asset_profile
-                if active_render.asset_profile is not None
-                else active_strategy.asset_profile
-            ),
-            max_tokens=active_render.max_tokens,
-        )
+        with runtime.fetch_browser_preparation():
+            if target == "supplementary":
+                from .workflow.supplementary import fetch_supplementary
 
-        def record_formula_timing(seconds: float) -> None:
-            runtime.accumulate_stage_timing("formula_seconds", elapsed=seconds)
-
-        def record_http_timing(stage: str, seconds: float) -> None:
-            runtime.accumulate_stage_timing(stage, elapsed=seconds)
-
-        with (
-            http_timing_collector(record_http_timing),
-            formula_timing_collector(record_formula_timing),
-            formula_runtime_env(runtime.env or {}),
-        ):
-            article = fetch_article(
-                query,
-                strategy=active_strategy,
-                context=runtime,
-                resolve_paper_fn=resolve_paper,
+                return fetch_supplementary(
+                    query,
+                    strategy=strategy or FetchStrategy(),
+                    context=runtime,
+                    modes=set(modes or DEFAULT_OUTPUT_MODES),
+                    resolve_paper_fn=resolve_paper,
+                )
+            requested_modes = set(modes or DEFAULT_OUTPUT_MODES)
+            active_strategy = strategy or FetchStrategy()
+            active_render = render or RenderOptions()
+            resolved_render = RenderOptions(
+                include_refs=active_render.include_refs,
+                asset_profile=(
+                    active_render.asset_profile
+                    if active_render.asset_profile is not None
+                    else active_strategy.asset_profile
+                ),
+                max_tokens=active_render.max_tokens,
             )
-            render_started_at = time.monotonic()
-            envelope = build_fetch_envelope(
-                article,
-                modes=requested_modes,
-                render=resolved_render,
-                trace=list(runtime.fetch_trace),
-                diagnostic_artifacts=list(runtime.diagnostic_artifacts),
-            )
-            runtime.record_stage_timing("render_seconds", render_started_at)
-        return envelope
+
+            with formula_runtime_env(runtime.env or {}), formula_validation_session():
+                article = fetch_article(
+                    query,
+                    strategy=active_strategy,
+                    context=runtime,
+                    resolve_paper_fn=resolve_paper,
+                )
+                runtime.raise_if_cancelled()
+                if not article.source.endswith("_pdf") and not (
+                    article.acquisition and article.acquisition.representation == "pdf"
+                ):
+                    losses = article.quality.semantic_losses
+                    count_before = losses.formula_fallback_count
+                    capture_formula_diagnostics(losses, count_fallbacks=True)
+                    if losses.formula_fallback_count > count_before:
+                        if (
+                            QUALITY_FLAG_FORMULA_FALLBACK_PRESENT
+                            not in article.quality.flags
+                        ):
+                            article.quality.flags.append(
+                                QUALITY_FLAG_FORMULA_FALLBACK_PRESENT
+                            )
+                        for warning in _semantic_loss_warning_messages(losses):
+                            if warning not in article.quality.warnings:
+                                article.quality.warnings.append(warning)
+                        if article.quality.confidence == "high":
+                            article.quality.confidence = "medium"
+                runtime.report_progress("stage", stage="validating")
+                envelope = build_fetch_envelope(
+                    article,
+                    modes=requested_modes,
+                    render=resolved_render,
+                    trace=list(runtime.fetch_trace),
+                    diagnostic_artifacts=list(runtime.diagnostic_artifacts),
+                )
+            return envelope
     finally:
         if owns_runtime:
             runtime.close()

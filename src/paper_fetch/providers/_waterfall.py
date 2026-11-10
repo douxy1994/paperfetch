@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from ..quality.access_boundary import propagate_paywall
+
+from dataclasses import dataclass, field, replace
 import time
 from typing import Any
 from collections.abc import Callable, Mapping
@@ -57,9 +59,6 @@ class ProviderWaterfallState:
     def last_failure(self) -> ProviderFailure | None:
         return self.failures[-1][1] if self.failures else None
 
-    def source_markers(self) -> list[str]:
-        return self.source_trail
-
 
 WarningFactory = Callable[[ProviderFailure, ProviderWaterfallState], str | None]
 StepRunner = Callable[..., RawFulltextPayload]
@@ -67,7 +66,7 @@ FinalFailureFactory = Callable[[ProviderWaterfallState], ProviderFailure]
 StepCondition = Callable[[ProviderWaterfallState], bool]
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, kw_only=True)
 class WaterfallStep:
     label: str
     run: StepRunner
@@ -78,6 +77,7 @@ class WaterfallStep:
     success_warning: str | None = None
     include_failure_trail_on_success: bool = True
     condition: StepCondition | None = None
+    route_name: str | None = None
 
 
 ProviderWaterfallStep = WaterfallStep
@@ -223,6 +223,7 @@ def run_provider_waterfall(
         provider_name = str(getattr(client, "name", "") or "") or None
         attempt_id = f"{provider_name or 'provider'}:{step.label}:{attempt_index}"
         span_id = attempt_id
+        route_name = step.route_name or step.label
         try:
             payload = _run_step(
                 step,
@@ -238,9 +239,10 @@ def run_provider_waterfall(
                     doi, metadata or {}, payload
                 )
         except ProviderFailure as exc:
+            propagate_paywall(exc)
             failure = exc.with_updates(
                 provider=exc.provider or provider_name,
-                route=exc.route or step.label,
+                route=exc.route or route_name,
                 stage=exc.stage or "fulltext",
                 trace=merge_trace(
                     exc.trace,
@@ -255,7 +257,7 @@ def run_provider_waterfall(
                             message=exc.message,
                             context=TraceContext(
                                 provider=provider_name,
-                                route=step.label,
+                                route=route_name,
                                 span_id=span_id,
                                 attempt_id=attempt_id,
                                 attempt=attempt_index,
@@ -289,6 +291,13 @@ def run_provider_waterfall(
         if step.success_warning:
             _append_unique_text(payload_warnings, [step.success_warning])
         payload.warnings = payload_warnings
+        if payload.content is not None and not payload.content.route_name:
+            payload.content = replace(payload.content, route_name=route_name)
+        successful_route_name = (
+            payload.content.route_name
+            if payload.content is not None and payload.content.route_name
+            else route_name
+        )
 
         source_trail: list[str] = []
         if step.success_markers:
@@ -319,7 +328,7 @@ def run_provider_waterfall(
                     "ok",
                     context=TraceContext(
                         provider=provider_name,
-                        route=step.label,
+                        route=successful_route_name,
                         span_id=span_id,
                         attempt_id=attempt_id,
                         attempt=attempt_index,

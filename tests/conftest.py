@@ -10,14 +10,10 @@ from __future__ import annotations
 import os
 from pathlib import Path
 import shutil
-import socket
-import subprocess
-import sys
 import tempfile
 from typing import Any
-from collections.abc import Iterator
 
-from platformdirs import user_data_path
+from platformdirs import user_cache_path, user_data_path
 import pytest
 
 from tests._environment import (
@@ -25,6 +21,9 @@ from tests._environment import (
     PRESERVED_CAMOUFOX_EXECUTABLE_ENV_VAR,
     PRESERVED_FORMULA_TOOLS_DIR_ENV_VAR,
 )
+
+
+pytest_plugins = ["tests.support.test_evidence"]
 
 
 _REAL_USER_DATA_DIR = Path(user_data_path("paper-fetch", appauthor=False))
@@ -37,17 +36,6 @@ _ISOLATED_ENV_VARS = (
     "PAPER_FETCH_BROWSER_USER_DATA_DIR",
     "PAPER_FETCH_FORMULA_TOOLS_DIR",
     "PAPER_FETCH_IMAGE_TOOLS_DIR",
-)
-_SAFE_SUBPROCESS_NAMES = frozenset(
-    {
-        Path(sys.executable).name,
-        "bash",
-        "git",
-        "python",
-        "python3",
-        "sh",
-        "zsh",
-    }
 )
 
 
@@ -88,12 +76,19 @@ def _preserve_installed_camoufox_executable() -> None:
         return
     try:
         from camoufox import pkgman
+        from paper_fetch.providers.browser_runtime.preparation import (
+            probe_camoufox_managed_runtime,
+        )
 
         if preserved_executable:
             executable = Path(preserved_executable)
         else:
-            runtime_path = pkgman.camoufox_path(download_if_missing=False)
-            executable = Path(pkgman.launch_path(runtime_path))
+            # Upstream path resolution can update the active config after a
+            # package upgrade. Preserve user caches through the read-only probe.
+            probe = probe_camoufox_managed_runtime()
+            if not probe.valid or probe.executable_path is None:
+                return
+            executable = probe.executable_path
     except Exception:
         return
     if executable.is_file() and (os.name == "nt" or os.access(executable, os.X_OK)):
@@ -129,20 +124,30 @@ def pytest_configure(config: pytest.Config) -> None:
         "markers",
         "allow_subprocess: test intentionally launches non-allowlisted executables",
     )
-    config.addinivalue_line(
-        "markers",
-        "socket_adapter: test intentionally exercises a socket adapter boundary",
-    )
+    from tests.support import layer_policy
 
+    layer_policy.install()
     worker = _worker_id(config)
-    _preserve_installed_camoufox_executable()
+    if os.environ.get("PAPER_FETCH_RUN_LIVE") == "1":
+        os.environ.setdefault(
+            "PAPER_FETCH_BROWSER_COMPONENT_CACHE",
+            str(
+                Path(user_cache_path("paper-fetch", appauthor=False))
+                / "live-components/byparr"
+            ),
+        )
     _preserve_explicit_formula_tools_dir()
     isolated_root = Path(tempfile.mkdtemp(prefix=f"paper-fetch-tests-{worker}-"))
     config._paper_fetch_isolated_root = isolated_root
     for name in _ISOLATED_ENV_VARS:
         value = isolated_root / name.lower().replace("_", "-")
-        value.mkdir(parents=True, exist_ok=True)
-        os.environ[name] = str(value)
+        value.mkdir(mode=0o700, parents=True, exist_ok=True)
+        if name != "XDG_CACHE_HOME":
+            os.environ[name] = str(value)
+    # Probe after isolating application paths, while upstream still sees the
+    # original dependency cache. Importing the probe initializes config defaults.
+    _preserve_installed_camoufox_executable()
+    os.environ["XDG_CACHE_HOME"] = str(isolated_root / "xdg-cache-home")
     os.environ["TEXMATH_BIN"] = str(isolated_root / "unavailable-texmath")
     os.environ["MATHML_TO_LATEX_NODE_BIN"] = str(isolated_root / "unavailable-node")
     os.environ["PAPER_FETCH_GHOSTSCRIPT_BIN"] = str(
@@ -159,105 +164,79 @@ def pytest_configure(config: pytest.Config) -> None:
 def pytest_collection_modifyitems(items: list[pytest.Item]) -> None:
     for item in items:
         path = Path(str(item.path))
+        if "unit" in path.parts:
+            for marker in ("browser", "live", "allow_subprocess"):
+                if item.get_closest_marker(marker):
+                    raise pytest.UsageError(
+                        f"unit boundary: {item.nodeid}: forbidden marker {marker}"
+                    )
         if "live" in path.parts:
             item.add_marker(pytest.mark.live)
         if item.get_closest_marker("live") or item.get_closest_marker("browser"):
             item.add_marker(pytest.mark.enable_socket)
 
 
+@pytest.hookimpl(wrapper=True)
+def pytest_make_collect_report(collector):
+    from tests.support import layer_policy
+
+    previous = layer_policy.UNIT_NODE
+    if "unit" in Path(str(collector.path)).parts:
+        layer_policy.UNIT_NODE = str(collector.nodeid)
+    try:
+        return (yield)
+    finally:
+        layer_policy.UNIT_NODE = previous
+
+
 @pytest.fixture(autouse=True)
-def _paper_fetch_test_safety(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """Block unsafe process launches for ordinary unit tests."""
+def _mock_fetch_browser_preparation(request, monkeypatch):
+    """Offline fetch tests mock updates independently of browser launch.
 
-    if request.node.get_closest_marker("live") or request.node.get_closest_marker(
-        "browser"
-    ):
+    Dedicated preparation contracts restore this method or exercise the managed
+    preparer directly with isolated version discovery and download stubs.
+    """
+    if request.node.get_closest_marker("live"):
         return
-
-    if "unit" not in Path(str(request.node.path)).parts:
-        return
-
-    if request.node.get_closest_marker("allow_subprocess"):
-        return
-
-    from paper_fetch.providers import _playwright_browser
-
-    def blocked_browser_context(*args: Any, **kwargs: Any) -> None:
-        del args, kwargs
-        raise AssertionError(
-            f"{request.node.nodeid} attempted a real browser runtime. "
-            "Mock open_browser_context or mark the test browser."
-        )
-
-    monkeypatch.setattr(
-        _playwright_browser,
-        "open_browser_context",
-        blocked_browser_context,
+    from paper_fetch.providers.browser_runtime.preparation import (
+        FetchBrowserPreparation,
     )
 
-    real_popen = subprocess.Popen
+    def prepare(self, env, cancel_check):
+        cancel_check()
 
-    def guarded_popen(*args: Any, **kwargs: Any) -> subprocess.Popen[Any]:
-        command = kwargs.get("args", args[0] if args else None)
-        executable: object | None
-        if isinstance(command, (list, tuple)) and command:
-            executable = command[0]
-        else:
-            executable = command
-        name = Path(os.fspath(executable)).name if executable is not None else ""
-        if name not in _SAFE_SUBPROCESS_NAMES:
-            raise AssertionError(
-                f"{request.node.nodeid} attempted non-allowlisted subprocess: {name!r}. "
-                "Mock the process boundary or mark the test allow_subprocess."
-            )
-        return real_popen(*args, **kwargs)
-
-    monkeypatch.setattr(subprocess, "Popen", guarded_popen)
+    monkeypatch.setattr(FetchBrowserPreparation, "prepare", prepare)
 
 
 @pytest.fixture(autouse=True)
-def _unit_socket_attempt_guard(
-    request: pytest.FixtureRequest,
-    monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[None]:
-    """Fail unit tests that swallow pytest-socket connection failures."""
+def _paper_fetch_test_safety(request, monkeypatch):
+    """Unit tests cannot opt out of process, replay, or conversion boundaries."""
+    from tests.support import layer_policy
 
-    if (
-        request.node.get_closest_marker("live")
-        or request.node.get_closest_marker("browser")
-        or request.node.get_closest_marker("socket_adapter")
-        or "unit" not in Path(str(request.node.path)).parts
-    ):
+    if "unit" not in Path(str(request.node.path)).parts:
         yield
         return
+    layer_policy.UNIT_NODE = request.node.nodeid
+    from paper_fetch.providers import _playwright_browser, _pdf_common
 
-    attempts: list[tuple[str, object]] = []
-    current_connect = socket.socket.connect
+    def blocked(*args: Any, **kwargs: Any) -> None:
+        layer_policy.reject("real browser runtime")
 
-    def tracked_connect(instance: socket.socket, address: object) -> None:
-        attempts.append(("connect", address))
-        return current_connect(instance, address)
+    monkeypatch.setattr(_playwright_browser, "open_browser_context", blocked)
+    original = _pdf_common._call_pdf_renderer_with_tessdata_retry
 
-    def tracked_connect_ex(instance: socket.socket, address: object) -> int:
-        attempts.append(("connect_ex", address))
-        try:
-            current_connect(instance, address)
-        except OSError as error:
-            return int(error.errno or 1)
-        return 0
+    def guarded_renderer(renderer, *args, **kwargs):
+        if str(getattr(renderer, "__module__", "")).startswith("pymupdf"):
+            layer_policy.reject("real PDF conversion")
+        return original(renderer, *args, **kwargs)
 
-    monkeypatch.setattr(socket.socket, "connect", tracked_connect)
-    monkeypatch.setattr(socket.socket, "connect_ex", tracked_connect_ex)
-    yield
-    if attempts:
-        attempted_methods = ", ".join(method for method, _address in attempts)
-        pytest.fail(
-            f"{request.node.nodeid} attempted socket connection(s): "
-            f"{attempted_methods}. Mock the boundary or mark a socket-adapter test."
-        )
+    monkeypatch.setattr(
+        _pdf_common, "_call_pdf_renderer_with_tessdata_retry", guarded_renderer
+    )
+    try:
+        yield
+    finally:
+        layer_policy.UNIT_NODE = None
 
 
 def pytest_sessionfinish(

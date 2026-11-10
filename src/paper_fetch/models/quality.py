@@ -8,7 +8,7 @@ from typing import Any, cast
 from collections.abc import Mapping
 
 from ..utils import normalize_text
-from ..quality.reason_codes import (
+from ..reason_codes import (
     ABSTRACT_ONLY,
     ACCESS_PAGE_URL,
     CITATION_ABSTRACT_HTML_URL,
@@ -34,7 +34,6 @@ from .schema import (
     BodyQualityMetrics,
     ContentKind,
     EXTRACTION_REVISION,
-    Quality,
     QualityConfidence,
     Section,
     SemanticLosses,
@@ -48,7 +47,7 @@ from .sections import (
     first_abstract_text,
     renderable_body_sections,
 )
-from .tokens import build_token_estimate_breakdown, coerce_token_estimate_breakdown
+from .tokens import build_token_estimate_breakdown
 
 QUALITY_FLAG_ACCESS_GATE_DETECTED = "access_gate_detected"
 
@@ -60,9 +59,6 @@ QUALITY_FLAG_WEAK_BODY_STRUCTURE = "weak_body_structure"
 
 
 QUALITY_FLAG_TABLE_FALLBACK_PRESENT = "table_fallback_present"
-
-
-QUALITY_FLAG_TABLE_LOSSY_PRESENT = "table_lossy_present"
 
 
 QUALITY_FLAG_TABLE_LAYOUT_DEGRADED = "table_layout_degraded"
@@ -174,25 +170,26 @@ def coerce_semantic_losses(
     if isinstance(value, SemanticLosses):
         return SemanticLosses(
             table_fallback_count=int(value.table_fallback_count or 0),
-            table_lossy_count=int(value.table_lossy_count or 0),
             table_layout_degraded_count=int(value.table_layout_degraded_count or 0),
             table_semantic_loss_count=int(value.table_semantic_loss_count or 0),
             formula_fallback_count=int(value.formula_fallback_count or 0),
             formula_missing_count=int(value.formula_missing_count or 0),
+            formula_diagnostics=[dict(item) for item in value.formula_diagnostics],
         )
     if isinstance(value, Mapping):
-        legacy_lossy_count = int(value.get("table_lossy_count") or 0)
+        if "table_lossy_count" in value:
+            raise ValueError("table_lossy_count is not part of the current schema")
         return SemanticLosses(
             table_fallback_count=int(value.get("table_fallback_count") or 0),
-            table_lossy_count=legacy_lossy_count,
             table_layout_degraded_count=int(
                 value.get("table_layout_degraded_count") or 0
             ),
-            table_semantic_loss_count=int(
-                value.get("table_semantic_loss_count") or legacy_lossy_count or 0
-            ),
+            table_semantic_loss_count=int(value.get("table_semantic_loss_count") or 0),
             formula_fallback_count=int(value.get("formula_fallback_count") or 0),
             formula_missing_count=int(value.get("formula_missing_count") or 0),
+            formula_diagnostics=[
+                dict(item) for item in value.get("formula_diagnostics", [])
+            ],
         )
     return SemanticLosses()
 
@@ -239,6 +236,38 @@ def coerce_asset_provenance(value: Any) -> list[str]:
     if not isinstance(value, Sequence) or isinstance(value, (str, bytes, bytearray)):
         return []
     return _dedupe_strings([str(item) for item in value])
+
+
+_ASSET_TIMING_FIELDS = (
+    "queue_ms",
+    "candidate_resolution_ms",
+    "dns_policy_validation_ms",
+    "connect_to_headers_ttfb_ms",
+    "body_stream_ms",
+    "browser_recovery_ms",
+    "retry_wait_ms",
+    "conversion_ms",
+    "save_ms",
+    "total_ms",
+)
+
+
+def coerce_asset_timing(value: Any) -> dict[str, Any]:
+    """Keep only bounded aggregate timing fields and the terminal status."""
+
+    if not isinstance(value, Mapping):
+        return {}
+    result: dict[str, Any] = {}
+    for field_name in _ASSET_TIMING_FIELDS:
+        try:
+            elapsed = max(float(value.get(field_name) or 0.0), 0.0)
+            result[field_name] = round(elapsed, 3)
+        except (TypeError, ValueError):
+            result[field_name] = 0.0
+    status = normalize_text(str(value.get("status") or "")).lower()
+    if status:
+        result["status"] = status[:64]
+    return result
 
 
 def _coerce_diagnostic_value(value: Any) -> Any:
@@ -326,12 +355,10 @@ def _coerce_asset_kind_summary(value: Any) -> AssetKindSummary:
     elif isinstance(value, Mapping):
         payload = value
     else:
-        payload = {}
+        raise ValueError("Asset kind summary must use the current schema")
     accepted_preview = _nonnegative_int(payload.get("accepted_preview"))
     fallback_preview = _nonnegative_int(payload.get("fallback_preview"))
     preview = _nonnegative_int(payload.get("preview"))
-    if "accepted_preview" not in payload and "fallback_preview" not in payload:
-        fallback_preview = preview
     preview = accepted_preview + fallback_preview
     return AssetKindSummary(
         total=_nonnegative_int(payload.get("total")),
@@ -388,7 +415,7 @@ def _coerce_asset_diagnostic(value: Any) -> AssetDiagnostic | None:
 
 
 def coerce_asset_quality_summary(value: Any) -> AssetQualitySummary:
-    """Load additive asset summary fields while accepting legacy missing payloads."""
+    """Load an asset summary encoded with the current schema."""
 
     if isinstance(value, AssetQualitySummary):
         payload: Mapping[str, Any] = {
@@ -416,9 +443,11 @@ def coerce_asset_quality_summary(value: Any) -> AssetQualitySummary:
             "diagnostics": value.diagnostics,
         }
     elif isinstance(value, Mapping):
+        if not value:
+            raise ValueError("Asset quality summary must use the current schema")
         payload = value
     else:
-        payload = {}
+        raise ValueError("Asset quality summary must use the current schema")
     raw_by_kind = payload.get("by_kind")
     by_kind = {
         kind: _coerce_asset_kind_summary(
@@ -440,8 +469,6 @@ def coerce_asset_quality_summary(value: Any) -> AssetQualitySummary:
     accepted_preview = _nonnegative_int(payload.get("accepted_preview"))
     fallback_preview = _nonnegative_int(payload.get("fallback_preview"))
     preview = _nonnegative_int(payload.get("preview"))
-    if "accepted_preview" not in payload and "fallback_preview" not in payload:
-        fallback_preview = preview
     preview = accepted_preview + fallback_preview
     return AssetQualitySummary(
         audited=bool(payload.get("audited")),
@@ -452,17 +479,8 @@ def coerce_asset_quality_summary(value: Any) -> AssetQualitySummary:
             if payload.get("expected") is not None
             else None
         ),
-        discovered=_nonnegative_int(payload.get("discovered", payload.get("total"))),
-        attempted=_nonnegative_int(
-            payload.get(
-                "attempted",
-                (
-                    _nonnegative_int(payload.get("local"))
-                    + _nonnegative_int(payload.get("failed"))
-                    + _nonnegative_int(payload.get("not_archived"))
-                ),
-            )
-        ),
+        discovered=_nonnegative_int(payload.get("discovered")),
+        attempted=_nonnegative_int(payload.get("attempted")),
         total=_nonnegative_int(payload.get("total")),
         local=_nonnegative_int(payload.get("local")),
         full_size=_nonnegative_int(payload.get("full_size")),
@@ -640,27 +658,6 @@ def _diagnostics_require_downgrade(
     return False
 
 
-def _clone_quality(quality: Quality) -> Quality:
-    return Quality(
-        has_fulltext=quality.has_fulltext,
-        token_estimate=quality.token_estimate,
-        content_kind=quality.content_kind,
-        has_abstract=quality.has_abstract,
-        warnings=list(quality.warnings),
-        source_trail=list(quality.source_trail),
-        token_estimate_breakdown=coerce_token_estimate_breakdown(
-            quality.token_estimate_breakdown
-        ),
-        confidence=quality.confidence,
-        flags=list(quality.flags),
-        body_metrics=coerce_body_quality_metrics(quality.body_metrics),
-        semantic_losses=coerce_semantic_losses(quality.semantic_losses),
-        asset_failures=coerce_asset_failure_diagnostics(quality.asset_failures),
-        asset_summary=coerce_asset_quality_summary(quality.asset_summary),
-        extraction_revision=quality.extraction_revision,
-    )
-
-
 def _refresh_article_quality(
     article: ArticleModel,
     *,
@@ -727,7 +724,7 @@ def _semantic_loss_warning_messages(losses: SemanticLosses) -> list[str]:
         warnings.append(
             "Some tables could only be retained as original-resource fallbacks; structured table data may be incomplete."
         )
-    if losses.table_semantic_loss_count or losses.table_lossy_count:
+    if losses.table_semantic_loss_count:
         warnings.append("Some tables lost semantic content during Markdown conversion.")
     if losses.table_layout_degraded_count:
         warnings.append(
@@ -769,7 +766,6 @@ def _resolve_quality_confidence(
         QUALITY_FLAG_WEAK_BODY_STRUCTURE in normalized_flags
         or semantic_losses.table_fallback_count > 0
         or semantic_losses.table_semantic_loss_count > 0
-        or semantic_losses.table_lossy_count > 0
         or semantic_losses.formula_fallback_count > 0
         or semantic_losses.formula_missing_count > 0
     ):
@@ -810,10 +806,8 @@ def apply_quality_assessment(
         flags.append(QUALITY_FLAG_TABLE_FALLBACK_PRESENT)
     if losses.table_layout_degraded_count > 0:
         flags.append(QUALITY_FLAG_TABLE_LAYOUT_DEGRADED)
-    if losses.table_semantic_loss_count > 0 or losses.table_lossy_count > 0:
+    if losses.table_semantic_loss_count > 0:
         flags.append(QUALITY_FLAG_TABLE_SEMANTIC_LOSS)
-    if losses.table_lossy_count > 0:
-        flags.append(QUALITY_FLAG_TABLE_LOSSY_PRESENT)
     if losses.formula_fallback_count > 0:
         flags.append(QUALITY_FLAG_FORMULA_FALLBACK_PRESENT)
     if losses.formula_missing_count > 0:
@@ -870,7 +864,6 @@ __all__ = [
     "QUALITY_FLAG_INSUFFICIENT_BODY",
     "QUALITY_FLAG_TABLE_FALLBACK_PRESENT",
     "QUALITY_FLAG_TABLE_LAYOUT_DEGRADED",
-    "QUALITY_FLAG_TABLE_LOSSY_PRESENT",
     "QUALITY_FLAG_TABLE_SEMANTIC_LOSS",
     "QUALITY_FLAG_WEAK_BODY_STRUCTURE",
     "_QUALITY_ACCESS_SIGNAL_TOKENS",
@@ -882,6 +875,7 @@ __all__ = [
     "coerce_asset_failure_diagnostics",
     "coerce_asset_provenance",
     "coerce_asset_quality_summary",
+    "coerce_asset_timing",
     "coerce_body_quality_metrics",
     "coerce_semantic_losses",
     "combine_abstract_text",

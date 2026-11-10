@@ -1,10 +1,18 @@
-# ruff: noqa: F403,F405
 from __future__ import annotations
-
+from dataclasses import replace
+from pathlib import Path
 import pytest
 from pydantic import ValidationError
-
-from ._mcp_support import *
+from paper_fetch.browser_preflight import (
+    BrowserPreflightResult,
+    classify_browser_preflight_failure,
+)
+from paper_fetch.mcp.browser_preflight import (
+    browser_preflight_payload,
+)
+from tests.support._mcp_support import (
+    mcp_test_deps,
+)
 
 
 def _preflight_result(
@@ -70,7 +78,7 @@ def test_browser_preflight_payload_passes_scoped_live_and_storage_options(
         return [result]
 
     progress: list[tuple[str, int, int]] = []
-    payload = mcp_tools.browser_preflight_payload(
+    payload = browser_preflight_payload(
         provider=" WILEY ",
         test_url="https://onlinelibrary.wiley.com/doi/full/10.1111/example",
         timeout_ms=45000,
@@ -79,7 +87,10 @@ def test_browser_preflight_payload_passes_scoped_live_and_storage_options(
         on_result=lambda result, completed, total: progress.append(
             (result.provider, completed, total)
         ),
-        deps=mcp_test_deps(run_browser_provider_preflight=fake_preflight),
+        deps=mcp_test_deps(
+            build_runtime_env=lambda env=None: dict(env or {}),
+            run_browser_provider_preflight=fake_preflight,
+        ),
     )
 
     assert state_path.is_file()
@@ -90,6 +101,7 @@ def test_browser_preflight_payload_passes_scoped_live_and_storage_options(
     assert captured["storage_state_path"] == state_path
     assert captured["save_storage_state"] is True
     assert captured["cancel_as_result"] is True
+    assert captured["runtime_options"].env == {}
     assert progress == [("wiley", 1, 1)]
     assert payload["status"] == "ready"
     assert payload["pdf_fallback_attempted"] is False
@@ -114,7 +126,6 @@ def test_browser_preflight_payload_keeps_per_provider_action_states() -> None:
             ),
             diagnostics={
                 "challenge_provider": "aws_waf",
-                "legacy_reason_code": "cloudflare_challenge",
             },
         ),
         _preflight_result(
@@ -126,13 +137,13 @@ def test_browser_preflight_payload_keeps_per_provider_action_states() -> None:
         _preflight_result(
             "pnas",
             ok=False,
-            reason="cdp_connect_failed",
-            message="CDP connection failed after Chrome startup.",
+            reason="browser_runtime_prepare_failed",
+            message="Camoufox runtime preparation failed.",
         ),
         _preflight_result("mdpi", ok=True),
     ]
 
-    payload = mcp_tools.browser_preflight_payload(
+    payload = browser_preflight_payload(
         detail="full",
         deps=mcp_test_deps(run_browser_provider_preflight=lambda **_kwargs: results),
     )
@@ -151,15 +162,11 @@ def test_browser_preflight_payload_keeps_per_provider_action_states() -> None:
     assert payload["results"][0]["next_action"] == "paper-fetch auth ieee"
     assert payload["results"][0]["reason_code"] == "aws_waf_challenge"
     assert payload["results"][0]["diagnostics"]["challenge_provider"] == "aws_waf"
-    assert (
-        payload["results"][0]["diagnostics"]["legacy_reason_code"]
-        == "cloudflare_challenge"
-    )
     assert payload["results"][3]["next_action"] == "run the requested fetch"
 
 
 def test_browser_preflight_compact_has_only_routing_fields() -> None:
-    payload = mcp_tools.browser_preflight_payload(
+    payload = browser_preflight_payload(
         provider="wiley",
         detail="compact",
         save_storage_state=False,
@@ -202,73 +209,7 @@ def test_browser_preflight_invalid_scoped_input_never_invokes_shared_core(
         raise AssertionError("invalid browser_preflight input reached the shared core")
 
     with pytest.raises(ValidationError):
-        mcp_tools.browser_preflight_payload(
+        browser_preflight_payload(
             **arguments,
             deps=mcp_test_deps(run_browser_provider_preflight=should_not_run),
         )
-
-
-class McpBrowserPreflightAsyncTests(unittest.IsolatedAsyncioTestCase):
-    async def test_tool_reports_start_per_provider_and_completion_progress(
-        self,
-    ) -> None:
-        ctx = FakeContext()
-
-        def fake_preflight(**kwargs):
-            results = [_preflight_result("wiley", ok=True)]
-            for index, result in enumerate(results, start=1):
-                kwargs["on_result"](result, index, len(results))
-            return results
-
-        result = await mcp_tools.browser_preflight_tool_async(
-            provider="wiley",
-            detail="compact",
-            ctx=ctx,
-            deps=mcp_test_deps(run_browser_provider_preflight=fake_preflight),
-        )
-
-        self.assertFalse(result.is_error)
-        self.assertEqual(
-            ctx.progress[0],
-            (0, 1, "Starting live browser_preflight"),
-        )
-        self.assertEqual(ctx.progress[1], (1, 1, "Preflight wiley: ready"))
-        self.assertEqual(
-            ctx.progress[-1],
-            (1, 1, "browser_preflight complete"),
-        )
-
-    async def test_tool_cancellation_reaches_active_shared_preflight(self) -> None:
-        started = threading.Event()
-        cancelled_seen = threading.Event()
-
-        def fake_preflight(**kwargs):
-            started.set()
-            deadline = time.monotonic() + 1.0
-            while time.monotonic() < deadline:
-                if kwargs["cancel_check"]():
-                    cancelled_seen.set()
-                    return [
-                        _preflight_result(
-                            "wiley",
-                            ok=False,
-                            reason="request_cancelled",
-                            message="Cancelled.",
-                        )
-                    ]
-                time.sleep(0.01)
-            return [_preflight_result("wiley", ok=True)]
-
-        task = asyncio.create_task(
-            mcp_tools.browser_preflight_tool_async(
-                provider="wiley",
-                deps=mcp_test_deps(run_browser_provider_preflight=fake_preflight),
-            )
-        )
-        await wait_for_threading_event(started, 1.0)
-        task.cancel()
-        with self.assertRaises(asyncio.CancelledError):
-            await task
-        await wait_for_threading_event(cancelled_seen, 1.0)
-
-        self.assertTrue(cancelled_seen.is_set())

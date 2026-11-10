@@ -7,9 +7,7 @@ from collections.abc import Callable
 from paper_fetch.providers import _playwright_browser
 
 
-PNG_BYTES = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/p9sAAAAASUVORK5CYII="
-)
+PNG_BYTES = b"\x89PNG\r\n\x1a\nunit"
 
 
 class _FakeResponse:
@@ -20,16 +18,22 @@ class _FakeResponse:
         status: int = 200,
         headers: dict[str, str] | None = None,
         body: bytes = b"",
+        body_error: Exception | None = None,
     ) -> None:
         self.url = url
         self.status = status
         self.headers = dict(headers or {})
         self._body = body
+        self._body_error = body_error
+        self.body_calls = 0
 
     def all_headers(self) -> dict[str, str]:
         return dict(self.headers)
 
     def body(self) -> bytes:
+        self.body_calls += 1
+        if self._body_error is not None:
+            raise self._body_error
         return self._body
 
 
@@ -45,12 +49,18 @@ class _FakeExpectedResponse:
 
 
 class _FakeImageElement:
-    def __init__(self, *, width: int = 1, height: int = 1) -> None:
+    def __init__(self, *, width: int = 1, height: int = 1, url: str = "") -> None:
         self.width = width
         self.height = height
+        self.url = url
 
     def evaluate(self, _script: str) -> dict[str, object]:
-        return {"complete": True, "width": self.width, "height": self.height}
+        return {
+            "complete": True,
+            "width": self.width,
+            "height": self.height,
+            "url": self.url,
+        }
 
 
 class _FakePage:
@@ -62,13 +72,16 @@ class _FakePage:
         title: str = "",
         image_element: _FakeImageElement | None = None,
         canvas_result: dict[str, object] | None = None,
+        evaluate_results: list[dict[str, object] | None] | None = None,
     ) -> None:
         self._response = response
         self._html = html
         self._title = title
         self._image_element = image_element
         self._canvas_result = canvas_result
+        self._evaluate_results = list(evaluate_results or [])
         self.expect_response_timeout: int | None = None
+        self.evaluate_calls = 0
 
     def expect_response(
         self,
@@ -85,6 +98,9 @@ class _FakePage:
         return self._image_element
 
     def evaluate(self, _script: str, _args: list[object]) -> dict[str, object] | None:
+        self.evaluate_calls += 1
+        if self._evaluate_results:
+            return self._evaluate_results.pop(0)
         return self._canvas_result
 
     def content(self) -> str:
@@ -115,6 +131,8 @@ def test_capture_image_payload_returns_png_for_image_response() -> None:
     assert base64.b64decode(payload["bodyB64"]) == PNG_BYTES
     assert payload["url"] == image_url
     assert payload["status"] == 200
+    assert page._response.body_calls == 1
+    assert page.evaluate_calls == 0
 
 
 def test_capture_image_payload_uses_canvas_when_response_is_challenge() -> None:
@@ -129,15 +147,22 @@ def test_capture_image_payload_uses_canvas_when_response_is_challenge() -> None:
         ),
         html="<html><body><img src='/figure.png'></body></html>",
         title="Just a moment...",
-        image_element=_FakeImageElement(width=320, height=240),
-        canvas_result={
-            "ok": True,
-            "status": 200,
-            "dataURL": "data:image/png;base64,"
-            + base64.b64encode(PNG_BYTES).decode("ascii"),
-            "width": 320,
-            "height": 240,
-        },
+        image_element=_FakeImageElement(
+            width=320,
+            height=240,
+            url=image_url,
+        ),
+        evaluate_results=[
+            {"ok": False, "reason": "browser_array_buffer_failed"},
+            {
+                "ok": True,
+                "status": 200,
+                "contentType": "image/png",
+                "bodyB64": base64.b64encode(PNG_BYTES).decode("ascii"),
+                "width": 320,
+                "height": 240,
+            },
+        ],
     )
 
     payload = _playwright_browser._capture_image_payload(
@@ -147,11 +172,11 @@ def test_capture_image_payload_uses_canvas_when_response_is_challenge() -> None:
     )
 
     assert payload is not None
-    assert payload["contentType"] == "image/png"
     assert base64.b64decode(payload["bodyB64"]) == PNG_BYTES
-    assert payload["url"] == final_url
     assert payload["width"] == 320
     assert payload["height"] == 240
+    assert page._response.body_calls == 0
+    assert page.evaluate_calls == 2
 
 
 def test_capture_image_payload_preserves_svg() -> None:
@@ -174,6 +199,40 @@ def test_capture_image_payload_preserves_svg() -> None:
     assert payload is not None
     assert payload["contentType"] == "image/svg+xml"
     assert base64.b64decode(payload["bodyB64"]) == svg_body
+    assert page._response.body_calls == 1
+
+
+def test_capture_image_payload_uses_page_array_buffer_when_response_body_fails() -> (
+    None
+):
+    image_url = "https://example.test/figure.png"
+    page = _FakePage(
+        response=_FakeResponse(
+            url=image_url,
+            headers={"content-type": "image/png"},
+            body_error=RuntimeError("body unavailable"),
+        ),
+        evaluate_results=[
+            {
+                "ok": True,
+                "status": 200,
+                "url": image_url,
+                "contentType": "image/png",
+                "bodyB64": base64.b64encode(PNG_BYTES).decode("ascii"),
+            }
+        ],
+    )
+
+    payload = _playwright_browser._capture_image_payload(
+        page,
+        request_url=image_url,
+        final_url=image_url,
+    )
+
+    assert payload is not None
+    assert base64.b64decode(payload["bodyB64"]) == PNG_BYTES
+    assert page._response.body_calls == 1
+    assert page.evaluate_calls == 1
 
 
 def test_capture_image_payload_rejects_html_only() -> None:

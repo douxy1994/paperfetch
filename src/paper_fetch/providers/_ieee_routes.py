@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-from ..provider_catalog import ProviderRouteSpec
+from ..provider_contracts import ProviderRouteSpec
 
 
 IEEE_ROUTES = (
     ProviderRouteSpec(name="metadata", kind="metadata"),
-    ProviderRouteSpec(name="rest_html", kind="html"),
+    ProviderRouteSpec(name="rest_html", kind="html", transport="api"),
     ProviderRouteSpec(
         name="browser_html",
         kind="html",
@@ -30,7 +30,33 @@ IEEE_ROUTES = (
         concurrency=1,
         timeout_seconds=120,
     ),
+    ProviderRouteSpec(name="direct_landing", kind="html", transport="http"),
+    ProviderRouteSpec(
+        name="browser_landing",
+        kind="html",
+        browser_optional=True,
+        browser_preflight=True,
+        concurrency=1,
+        timeout_seconds=120,
+    ),
+    ProviderRouteSpec(
+        name="assets",
+        kind="assets",
+        browser_optional=True,
+        requires_playwright=True,
+        timeout_seconds=20,
+        concurrency=2,
+        transient_retries=0,
+    ),
 )
 
 
-__all__ = ["IEEE_ROUTES"]
+def landing_route_name(acquisition_source: str) -> str:
+    return (
+        "browser_landing"
+        if acquisition_source.endswith("_browser")
+        else "direct_landing"
+    )
+
+
+__all__ = ["IEEE_ROUTES", "landing_route_name"]

@@ -3,7 +3,7 @@ from __future__ import annotations
 import importlib.machinery
 from typing import Any
 
-from paper_fetch.provider_catalog import ProviderSpec
+from paper_fetch.provider_catalog import ProviderRouteSpec, ProviderSpec
 from paper_fetch.providers._registry import ProviderBundle
 from paper_fetch.providers.base import ProviderClient
 from paper_fetch.providers.browser_runtime.backends import camoufox as camoufox_backend
@@ -27,16 +27,31 @@ def _catalog(
         asset_default="none",
         probe_capability="routing_signal",
         provider_managed_abstract_only=False,
-        client_factory_path="",
         status_order=999,
         env_requirements=env_requirements,
-        requires_playwright=requires_playwright,
-        requires_browser_runtime=requires_browser_runtime,
+        routes=(
+            ProviderRouteSpec(
+                name="browser_html",
+                kind="html",
+                browser_required=True,
+                requires_playwright=requires_playwright,
+            ),
+        )
+        if requires_browser_runtime or requires_playwright
+        else (ProviderRouteSpec(name="metadata", kind="metadata"),),
     )
 
 
 def _install_catalog(monkeypatch: Any, catalog: ProviderSpec) -> None:
-    bundle = ProviderBundle(catalog=catalog, sources=(catalog.name,))
+    def client_factory(transport: Any, env: Any) -> ProviderClient:
+        del transport, env
+        return ProviderClient()
+
+    bundle = ProviderBundle(
+        catalog=catalog,
+        client_factory=client_factory,
+        sources=(catalog.name,),
+    )
 
     def fake_provider_bundle(name: str) -> ProviderBundle:
         assert name == catalog.name
@@ -58,10 +73,7 @@ def test_default_probe_status_without_requirements_is_ready(monkeypatch: Any) ->
     catalog = _catalog("s10_plain")
     _install_catalog(monkeypatch, catalog)
 
-    result = _client(
-        catalog,
-        env={"PAPER_FETCH_BROWSER_BACKEND": "camoufox"},
-    ).probe_status()
+    result = _client(catalog).probe_status()
 
     assert result.status == READY
     assert result.available is True
@@ -75,10 +87,7 @@ def test_default_probe_status_reports_missing_env(monkeypatch: Any) -> None:
     catalog = _catalog("s10_env_missing", env_requirements=("S10_REQUIRED_TOKEN",))
     _install_catalog(monkeypatch, catalog)
 
-    result = _client(
-        catalog,
-        env={"PAPER_FETCH_BROWSER_BACKEND": "camoufox"},
-    ).probe_status()
+    result = _client(catalog).probe_status()
 
     assert result.status == NOT_CONFIGURED
     assert result.available is False
@@ -128,10 +137,7 @@ def test_default_probe_status_checks_playwright_requirement(monkeypatch: Any) ->
             "download_required": False,
         },
     )
-    result = _client(
-        catalog,
-        env={"PAPER_FETCH_BROWSER_BACKEND": "camoufox"},
-    ).probe_status()
+    result = _client(catalog).probe_status()
 
     checks = {check.name: check for check in result.checks}
     assert result.status == READY
@@ -159,10 +165,7 @@ def test_default_probe_status_checks_browser_runtime_without_launch(
         },
     )
 
-    result = _client(
-        catalog,
-        env={"PAPER_FETCH_BROWSER_BACKEND": "camoufox"},
-    ).probe_status()
+    result = _client(catalog).probe_status()
 
     checks = {check.name: check for check in result.checks}
     assert result.status == READY

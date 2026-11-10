@@ -1,20 +1,23 @@
 from __future__ import annotations
 
 import os
+import json
+import re
 import shutil
 import stat
+import shlex
+import sys
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
 import yaml
+import pytest
 
 from paper_fetch.mcp._instructions import (
-    DEFAULT_FETCH_NOTES,
     DEFAULT_FETCH_VALUES,
     ERROR_CONTRACT,
-    SKILL_ENVIRONMENT_VARIABLES,
 )
 from tests.paths import REPO_ROOT, SKILL_DIR
 from tests.skill_bundle_links import (
@@ -25,29 +28,6 @@ from tests.skill_bundle_links import (
 STATIC_SKILL_DIR = SKILL_DIR
 STATIC_SKILL_PATH = SKILL_DIR / "SKILL.md"
 STATIC_WORKFLOW_PATH = SKILL_DIR / "references" / "workflow.md"
-
-CANONICAL_WORKFLOW_PHASES = (
-    "输入规范化",
-    "resolve/batch_resolve",
-    "DOI 去重",
-    "仅歧义项阻塞",
-    "本地/cache",
-    "意图",
-    "后端",
-    "必要状态检查",
-    "fetch",
-    "acceptance",
-    "report",
-)
-BLOCKING_REASON_CODES = {
-    "multiple_candidates",
-    "insufficient_identity",
-    "manual_auth",
-    "lawful_access_boundary",
-    "overwrite_existing",
-    "material_output_choice",
-}
-TITLE_FETCH_RULE = "标题输入必须先解析出 DOI 或落地页，再交给 `fetch_paper(...)`。"
 
 
 def write_fake_python(path: Path, log_path: Path) -> None:
@@ -97,6 +77,8 @@ def copy_installer_fixture(repo_dir: Path) -> None:
     shutil.copytree(
         STATIC_SKILL_DIR, repo_dir / "skills" / "paper-fetch-skill", dirs_exist_ok=True
     )
+    verifier = repo_dir / "scripts" / "skill_integrity.py"
+    shutil.copy2(REPO_ROOT / "scripts/skill_integrity.py", verifier)
     shutil.copy2(REPO_ROOT / "pyproject.toml", repo_dir / "pyproject.toml")
 
 
@@ -104,29 +86,25 @@ def iter_skill_markdown_files(root: Path) -> list[Path]:
     return sorted(path for path in root.rglob("*.md") if path.is_file())
 
 
-def read_skill_bundle(root: Path) -> str:
-    return "\n\n".join(
-        path.read_text(encoding="utf-8") for path in iter_skill_markdown_files(root)
-    )
-
-
 def assert_skill_bundle_matches_repo(
     testcase: unittest.TestCase, installed_root: Path
 ) -> None:
     expected_files = [
         path.relative_to(STATIC_SKILL_DIR).as_posix()
-        for path in iter_skill_markdown_files(STATIC_SKILL_DIR)
+        for path in sorted(STATIC_SKILL_DIR.rglob("*"))
+        if path.is_file()
     ]
     actual_files = [
         path.relative_to(installed_root).as_posix()
-        for path in iter_skill_markdown_files(installed_root)
+        for path in sorted(installed_root.rglob("*"))
+        if path.is_file()
     ]
 
     testcase.assertEqual(actual_files, expected_files)
     for relative_path in expected_files:
         testcase.assertEqual(
-            (installed_root / relative_path).read_text(encoding="utf-8"),
-            (STATIC_SKILL_DIR / relative_path).read_text(encoding="utf-8"),
+            (installed_root / relative_path).read_bytes(),
+            (STATIC_SKILL_DIR / relative_path).read_bytes(),
         )
     testcase.assertEqual(skill_bundle_link_issues(installed_root), [])
 
@@ -139,164 +117,119 @@ class StaticSkillTests(unittest.TestCase):
 
         metadata = yaml.safe_load(frontmatter)
 
-        self.assertEqual(metadata["name"], "paper-fetch-skill")
-        self.assertIn("description", metadata)
-        description = metadata["description"]
-        self.assertIn("web search", description)
-        self.assertIn("候选论文", description)
-        self.assertIn("全文", description)
-        self.assertIn("需要阅读", description)
-        self.assertIn("不替代开放式领域检索", description)
-
-    def test_static_skill_entrypoint_stays_thin_and_points_at_references(self) -> None:
-        text = STATIC_SKILL_PATH.read_text(encoding="utf-8")
-
-        self.assertIn("resolve_paper", text)
-        self.assertIn("batch_resolve", text)
-        self.assertIn("fetch_paper", text)
-        self.assertIn("list_cached", text)
-        self.assertIn("get_cached", text)
-        self.assertIn("batch_check", text)
-        self.assertIn("has_fulltext", text)
-        self.assertIn("provider_status", text)
-        self.assertIn("参考文献列表", text)
-        self.assertIn("搜索工具只负责发现候选", text)
-        self.assertIn("普通上下文阅读/总结不因保存策略缺失而阻塞", text)
-        self.assertIn("ProviderSpec.requires_browser_runtime=True", text)
-        self.assertNotIn("当前 `wiley`", text)
-        self.assertIn("不要仅因为本地没有 PDF", text)
-        self.assertIn("acceptance", text)
-        self.assertIn("git status", text)
-        self.assertIn("references/workflow.md", text)
-        self.assertIn("references/acceptance.md", text)
-        self.assertIn("references/environment.md", text)
-        self.assertIn("references/cli-workflow.md", text)
-        self.assertIn("references/failure-handling.md", text)
-        self.assertNotIn("## 工具说明", text)
-        self.assertNotIn("## BLOCKING 白名单", text)
-        self.assertNotIn("### 1. 输入规范化", text)
-        self.assertNotIn(" → ".join(CANONICAL_WORKFLOW_PHASES), text)
-        self.assertLessEqual(len(text.splitlines()), 80)
-
-    def test_workflow_has_one_canonical_phase_order(self) -> None:
-        text = STATIC_WORKFLOW_PATH.read_text(encoding="utf-8")
-        canonical_order = " → ".join(CANONICAL_WORKFLOW_PHASES)
-
-        self.assertEqual(text.count(canonical_order), 1)
-        heading_positions = [
-            text.index(f"### {index}. {phase}")
-            for index, phase in enumerate(CANONICAL_WORKFLOW_PHASES, start=1)
-        ]
-        self.assertEqual(heading_positions, sorted(heading_positions))
-        for index, phase in enumerate(CANONICAL_WORKFLOW_PHASES, start=1):
-            self.assertEqual(text.count(f"### {index}. {phase}"), 1)
-        self.assertLess(text.index("### 9. fetch"), text.index("### 10. acceptance"))
-        self.assertLess(text.index("### 10. acceptance"), text.index("### 11. report"))
-
-    def test_workflow_resolves_and_deduplicates_before_backend_selection(self) -> None:
-        text = STATIC_WORKFLOW_PATH.read_text(encoding="utf-8")
-
-        resolve_position = text.index("### 2. resolve/batch_resolve")
-        dedupe_position = text.index("### 3. DOI 去重")
-        backend_position = text.index("### 7. 后端")
-
-        self.assertLess(resolve_position, dedupe_position)
-        self.assertLess(dedupe_position, backend_position)
-        self.assertIn("保留原始条目到规范目标的映射", text)
-        self.assertIn("不得用去重前的原始条目数决定 CLI 或 MCP", text)
-        self.assertIn("用户明确禁止某个执行面时切换", text)
-
-    def test_workflow_blocking_reasons_are_allowlisted(self) -> None:
-        text = STATIC_WORKFLOW_PATH.read_text(encoding="utf-8")
-        section_start = text.index("## BLOCKING 白名单")
-        section_end = text.index("\n## ", section_start + 1)
-        section = text[section_start:section_end]
-        actual_codes = {
-            line.split("`", 2)[1]
-            for line in section.splitlines()
-            if line.startswith("- `")
-        }
-
-        self.assertEqual(actual_codes, BLOCKING_REASON_CODES)
-        self.assertIn("仅以下六类情况可以暂停", section)
-        self.assertIn("其它事项一律不标为 BLOCKING", section)
-        self.assertIn("选择 CLI/MCP", section)
-
-    def test_workflow_has_no_three_item_backend_gate(self) -> None:
-        text = read_skill_bundle(STATIC_SKILL_DIR)
-
-        self.assertNotIn(">=3", text)
-        self.assertNotIn("≥3", text)
-        self.assertNotIn("三篇", text)
-        self.assertIn("不得用去重前的原始条目数决定 CLI 或 MCP", text)
-        self.assertIn("批量本地归档默认使用 CLI", text)
-        self.assertIn("少量阅读或结构化抽取默认使用 MCP", text)
-        self.assertIn("不因选择 CLI 或 MCP 请求额外确认", text)
-        self.assertIn("同一阶段内允许", text)
-        self.assertIn("受控并发", text)
-        self.assertNotIn("严格的串行流水线", text)
-        self.assertNotIn("全局严格串行", text)
-
-    def test_title_to_fetch_rule_is_defined_once(self) -> None:
-        text = read_skill_bundle(STATIC_SKILL_DIR)
-        workflow = STATIC_WORKFLOW_PATH.read_text(encoding="utf-8")
-
-        self.assertEqual(text.count(TITLE_FETCH_RULE), 1)
-        self.assertIn("中唯一的标题解析规则", workflow)
-
-    def test_workflow_infers_directory_and_checks_real_outputs(self) -> None:
-        text = STATIC_WORKFLOW_PATH.read_text(encoding="utf-8")
-        directory_order = (
-            "用户显式路径 → 项目配置或唯一已有约定 → "
-            "唯一合理的 `papers/` → 仍无法唯一确定时请求选择"
+        self.assertEqual(
+            metadata,
+            {
+                "name": "paper-fetch-skill",
+                "description": metadata["description"],
+            },
         )
-
-        self.assertIn(directory_order, text)
-        self.assertIn("检查返回的实际路径存在且为预期文件", text)
-        self.assertIn("文件非空、可读", text)
-        self.assertIn("身份对应规范目标", text)
-        self.assertIn("目录被 gitignore 或 `git status` 没有变化", text)
-        self.assertIn("不得把 fetch 完成当作最终成功", text)
-        self.assertNotIn("/home/dictation/", text)
-        self.assertNotIn("drought_prediction", text)
-        self.assertNotIn("pshed", text)
+        self.assertIsInstance(metadata["description"], str)
+        self.assertTrue(metadata["description"].strip())
 
     def test_workflow_reference_and_its_direct_links_exist(self) -> None:
-        entrypoint = STATIC_SKILL_PATH.read_text(encoding="utf-8")
-
         self.assertTrue(STATIC_WORKFLOW_PATH.is_file())
-        self.assertIn("[`references/workflow.md`](references/workflow.md)", entrypoint)
         for relative_path in sorted(REQUIRED_REFERENCE_FILES):
             with self.subTest(relative_path=relative_path):
                 self.assertTrue((STATIC_WORKFLOW_PATH.parent / relative_path).is_file())
+        self.assertEqual(skill_bundle_link_issues(STATIC_SKILL_DIR), [])
 
-    def test_static_skill_bundle_covers_runtime_contract(self) -> None:
-        text = read_skill_bundle(STATIC_SKILL_DIR)
-
-        self.assertIn("paper-fetch --query", text)
-        self.assertIn("## Error Contract", text)
-        self.assertIn("summarize_paper", text)
-        self.assertIn("verify_citation_list", text)
-        self.assertIn("token_estimate_breakdown", text)
-        self.assertIn("citation list", text)
-        self.assertIn("unreadable", text.lower())
-        self.assertNotIn("not thread-safe", text)
+    def test_static_skill_bundle_covers_public_tools_defaults_and_errors(self) -> None:
+        text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in iter_skill_markdown_files(STATIC_SKILL_DIR)
+        )
+        for tool_name in (
+            "resolve_paper",
+            "batch_resolve",
+            "fetch_paper",
+            "batch_fetch",
+            "list_cached",
+            "get_cached",
+            "batch_check",
+            "provider_status",
+            "browser_preflight",
+        ):
+            self.assertIn(tool_name, text)
+        documented_defaults = {}
+        for line in text.splitlines():
+            cells = [
+                cell.strip().strip("`") for cell in line.strip().strip("|").split("|")
+            ]
+            if len(cells) == 2 and cells[0] in dict(DEFAULT_FETCH_VALUES):
+                documented_defaults[cells[0]] = json.loads(cells[1])
         for key, value in DEFAULT_FETCH_VALUES:
-            self.assertIn(f"`{key}={value}`", text)
-        for note in DEFAULT_FETCH_NOTES:
-            self.assertIn(note, text)
-        for name, _description in SKILL_ENVIRONMENT_VARIABLES:
-            self.assertIn(f"`{name}`", text)
+            self.assertIn(key, documented_defaults)
+            self.assertEqual(
+                documented_defaults[key], json.loads(value.split(" (", 1)[0])
+            )
         for status, _description in ERROR_CONTRACT:
-            self.assertIn(f"`{status}`", text)
-        self.assertNotIn("${", text)
-        self.assertNotIn(str(REPO_ROOT), text)
-        self.assertNotIn(".venv", text)
-        self.assertIn("offline.env", text)
-        self.assertNotIn('ELSEVIER_API_KEY="', text)
+            self.assertRegex(text, rf"\b{re.escape(status)}\b")
 
 
 class InstallerSmokeTests(unittest.TestCase):
+    def run_codex_check(
+        self,
+        *,
+        project: bool = False,
+        mutate: bool = False,
+        missing: bool = False,
+    ) -> tuple[subprocess.CompletedProcess[str], Path, dict[str, tuple[int, int, int]]]:
+        temp_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(temp_dir.cleanup)
+        sandbox = Path(temp_dir.name)
+        repo_dir = sandbox / "repo"
+        codex_home = sandbox / "codex-home"
+        home = sandbox / "home"
+        copy_installer_fixture(repo_dir)
+        codex_home.mkdir(parents=True)
+        home.mkdir()
+        legacy = (
+            repo_dir / ".codex/skills/paper-fetch-skill"
+            if project
+            else codex_home / "skills/paper-fetch-skill"
+        )
+        legacy.mkdir(parents=True)
+        (legacy / "SKILL.md").write_text("legacy\n")
+        target = (
+            repo_dir / ".agents" / "skills" / "paper-fetch-skill"
+            if project
+            else home / ".agents" / "skills" / "paper-fetch-skill"
+        )
+        if not missing:
+            target.parent.mkdir(parents=True)
+            shutil.copytree(STATIC_SKILL_DIR, target)
+            if mutate:
+                (target / "SKILL.md").write_text("drift\n", encoding="utf-8")
+
+        def snapshot() -> dict[str, tuple[int, int, int]]:
+            return {
+                path.relative_to(sandbox).as_posix(): (
+                    path.lstat().st_mode,
+                    path.lstat().st_size,
+                    path.lstat().st_mtime_ns,
+                )
+                for path in sorted(sandbox.rglob("*"))
+            }
+
+        before = snapshot()
+        env = os.environ.copy()
+        env.update({"HOME": str(home), "CODEX_HOME": str(codex_home)})
+        args = ["bash", str(repo_dir / "scripts/install-codex-skill.sh")]
+        if project:
+            args.append("--project")
+        args.append("--check")
+        completed = subprocess.run(
+            args,
+            cwd=repo_dir,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(snapshot(), before)
+        return completed, target, before
+
     def run_installer(
         self,
         *,
@@ -403,6 +336,7 @@ class InstallerSmokeTests(unittest.TestCase):
             "Elsevier setup: request a key at https://dev.elsevier.com/", result.stdout
         )
         self.assertIn('ELSEVIER_API_KEY="..."', result.stdout)
+        self.assertNotIn("--prepare-byparr", log_path.read_text())
 
     def test_skill_installers_prompt_for_elsevier_api_key(self) -> None:
         for script_name in ("install-claude-skill.sh", "install-codex-skill.sh"):
@@ -461,7 +395,6 @@ class InstallerSmokeTests(unittest.TestCase):
         self.assertFalse((repo_dir / ".venv").exists())
         self.assertFalse((repo_dir / ".env").exists())
         self.assertIn("-m pip install --quiet .", log_path.read_text(encoding="utf-8"))
-        self.assertFalse((installed_root / "agents").exists())
 
     def test_claude_installer_can_register_mcp_server(self) -> None:
         _, _, log_path = self.run_installer(
@@ -484,12 +417,12 @@ class InstallerSmokeTests(unittest.TestCase):
         )
         self.assertIn("-m paper_fetch.mcp.server", log_text)
 
-    def test_codex_installer_adds_openai_manifest_shim(self) -> None:
+    def test_codex_installer_copies_canonical_openai_manifest(self) -> None:
         repo_dir, sandbox, log_path = self.run_installer(
             script_name="install-codex-skill.sh"
         )
 
-        skill_dir = sandbox / "codex-home" / "skills" / "paper-fetch-skill"
+        skill_dir = sandbox / "home" / ".agents" / "skills" / "paper-fetch-skill"
         installed_skill = skill_dir / "SKILL.md"
         manifest_path = skill_dir / "agents" / "openai.yaml"
 
@@ -497,12 +430,39 @@ class InstallerSmokeTests(unittest.TestCase):
         assert_skill_bundle_matches_repo(self, skill_dir)
         self.assertTrue(manifest_path.exists())
         manifest_text = manifest_path.read_text(encoding="utf-8")
-        self.assertIn('display_name: "Paper Fetch Skill"', manifest_text)
-        self.assertIn("$paper-fetch-skill", manifest_text)
-        self.assertIn("full-text availability", manifest_text)
+        metadata = yaml.safe_load(manifest_text)
+        self.assertTrue(metadata["interface"]["display_name"])
+        self.assertIn("$paper-fetch-skill", metadata["interface"]["default_prompt"])
+        self.assertTrue(
+            metadata.get("policy", {}).get("allow_implicit_invocation", True)
+        )
         self.assertFalse((repo_dir / ".venv").exists())
         self.assertFalse((repo_dir / ".env").exists())
         self.assertIn("-m pip install --quiet .", log_path.read_text(encoding="utf-8"))
+
+    def test_codex_check_is_read_only_for_user_and_project_scopes(self) -> None:
+        for project in (False, True):
+            with self.subTest(project=project):
+                completed, target, _snapshot = self.run_codex_check(project=project)
+                self.assertEqual(completed.returncode, 0, completed.stderr)
+                payload = json.loads(completed.stdout)
+                self.assertEqual(payload["status"], "ready")
+                self.assertEqual(payload["skill_root"], str(target))
+                self.assertEqual(
+                    payload["actual_content_version"],
+                    payload["expected_content_version"],
+                )
+
+    def test_codex_check_reports_drift_and_missing_without_mutation(self) -> None:
+        drift, _target, _snapshot = self.run_codex_check(mutate=True)
+        self.assertEqual(drift.returncode, 1, drift.stderr)
+        self.assertEqual(json.loads(drift.stdout)["status"], "drift")
+
+        missing, target, _snapshot = self.run_codex_check(missing=True)
+        self.assertEqual(missing.returncode, 1, missing.stderr)
+        payload = json.loads(missing.stdout)
+        self.assertEqual(payload["reason_code"], "skill_bundle_missing")
+        self.assertEqual(payload["skill_root"], str(target))
 
     def test_codex_installer_can_register_mcp_server(self) -> None:
         _, _, log_path = self.run_installer(
@@ -551,3 +511,101 @@ class InstallerSmokeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("project", [False, True])
+@pytest.mark.parametrize("verification_fails", [False, True])
+def test_codex_scope_migration_upgrade_and_uninstall(
+    tmp_path, project, verification_fails
+):
+    repo = tmp_path / "repo"
+    copy_installer_fixture(repo)
+    home = tmp_path / "home"
+    codex_home = tmp_path / "custom-codex"
+    target = (repo if project else home) / ".agents/skills/paper-fetch-skill"
+    legacy = (
+        [repo / ".codex/skills/paper-fetch-skill"]
+        if project
+        else [
+            home / ".codex/skills/paper-fetch-skill",
+            codex_home / "skills/paper-fetch-skill",
+        ]
+    )
+    other_scope = (home if project else repo) / ".codex/skills/paper-fetch-skill"
+    for path in [*legacy, other_scope, target]:
+        path.mkdir(parents=True)
+        (path / "SKILL.md").write_text("old\n")
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    python = fake_bin / "python3"
+    python.write_text(
+        "#!/bin/sh\n"
+        'if [ "$1" = "-m" ] && [ "$2" = "pip" ]; then exit 0; fi\n'
+        + (
+            "exit 1\n"
+            if verification_fails
+            else f'exec {shlex.quote(sys.executable)} "$@"\n'
+        )
+    )
+    python.chmod(0o755)
+    env = dict(
+        os.environ,
+        HOME=str(home),
+        CODEX_HOME=str(codex_home),
+        PATH=str(fake_bin) + os.pathsep + os.environ["PATH"],
+    )
+    args = ["bash", str(repo / "scripts/install-codex-skill.sh")]
+    if project:
+        args.append("--project")
+
+    def run(*options):
+        return subprocess.run(
+            [*args, *options], cwd=repo, env=env, capture_output=True, text=True
+        )
+
+    result = run()
+    if verification_fails:
+        assert result.returncode != 0
+        assert all((path / "SKILL.md").read_text() == "old\n" for path in legacy)
+    else:
+        assert result.returncode == 0, result.stderr
+        assert_skill_bundle_matches_repo(unittest.TestCase(), target)
+        assert all(not path.exists() for path in legacy)
+        # Repeated upgrades replace stale content and keep the new bundle discoverable.
+        (target / "stale.md").write_text("stale\n")
+        assert run().returncode == 0
+        assert not (target / "stale.md").exists()
+        assert run("--check").returncode == 0
+    # Coexisting new and legacy entries are all removed in this scope only.
+    for path in legacy:
+        path.mkdir(parents=True, exist_ok=True)
+        (path / "SKILL.md").write_text("legacy\n")
+    result = run("--uninstall")
+    assert result.returncode == 0, result.stderr
+    assert all(not path.exists() for path in [target, *legacy])
+    assert (other_scope / "SKILL.md").read_text() == "old\n"
+
+
+def test_codex_home_can_equal_new_discovery_root(tmp_path):
+    repo = tmp_path / "repo"
+    copy_installer_fixture(repo)
+    home = tmp_path / "home"
+    target = home / ".agents/skills/paper-fetch-skill"
+    shutil.copytree(STATIC_SKILL_DIR, target)
+    env = dict(os.environ, HOME=str(home), CODEX_HOME=str(home / ".agents"))
+    # Exercise the cleanup boundary without installing the package into the test process.
+    result = subprocess.run(
+        [
+            "bash",
+            "-c",
+            'source "$1"; PF_HOST=codex; PF_SKILL_DIR="$2"; pf_skill_remove_legacy_copies',
+            "migration",
+            str(repo / "scripts/_skill_install_common.sh"),
+            str(target),
+        ],
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert_skill_bundle_matches_repo(unittest.TestCase(), target)

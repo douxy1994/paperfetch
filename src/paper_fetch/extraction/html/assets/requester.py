@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Mapping
 import http.cookiejar
 import http.client
+import time
+from typing import Any, cast
 import urllib.error
 import urllib.parse
 import urllib.request
-from typing import Any, cast
-from collections.abc import Callable, Mapping
 
 from ....http import (
     DEFAULT_SAFE_REMOTE_URL_POLICY,
@@ -173,47 +174,82 @@ def _read_bounded(
 def cookie_header_for_url(
     browser_cookies: list[dict[str, Any]] | None, url: str
 ) -> str | None:
-    parsed_url = urllib.parse.urlparse(normalize_text(url))
-    host = normalize_text(parsed_url.hostname).lower()
-    path = normalize_text(parsed_url.path) or "/"
-    scheme = normalize_text(parsed_url.scheme).lower()
-    if not host:
+    request = urllib.request.Request(normalize_text(url))
+    cookie_jar = browser_cookie_jar(browser_cookies)
+    cookie_jar.add_cookie_header(request)
+    return request.get_header("Cookie")
+
+
+def _browser_cookie(
+    payload: Mapping[str, Any],
+) -> http.cookiejar.Cookie | None:
+    name = normalize_text(str(payload.get("name") or ""))
+    if not name:
         return None
+    raw_domain = normalize_text(str(payload.get("domain") or "")).lower()
+    cookie_url = normalize_text(str(payload.get("url") or ""))
+    fallback_host = normalize_text(urllib.parse.urlsplit(cookie_url).hostname).lower()
+    domain = raw_domain or fallback_host
+    if not domain:
+        return None
+    domain_initial_dot = raw_domain.startswith(".")
+    # Playwright represents host-only cookies without a leading dot.  Feeding
+    # those to CookieJar as domain cookies would incorrectly widen them to
+    # subdomains.
+    domain_specified = bool(raw_domain and domain_initial_dot)
+    path = normalize_text(str(payload.get("path") or "")) or "/"
+    expires_value = payload.get("expires")
+    try:
+        parsed_expires = float(expires_value) if expires_value is not None else 0.0
+        expires = int(parsed_expires) if parsed_expires > 0 else None
+    except (TypeError, ValueError):
+        expires = None
+    rest: dict[str, str] = {}
+    if payload.get("httpOnly"):
+        rest["HttpOnly"] = ""
+    same_site = normalize_text(str(payload.get("sameSite") or ""))
+    if same_site:
+        rest["SameSite"] = same_site
+    return http.cookiejar.Cookie(
+        version=0,
+        name=name,
+        value=str(payload.get("value") or ""),
+        port=None,
+        port_specified=False,
+        domain=domain,
+        domain_specified=domain_specified,
+        domain_initial_dot=domain_initial_dot,
+        path=path,
+        path_specified=True,
+        secure=bool(payload.get("secure")),
+        expires=expires,
+        discard=expires is None,
+        comment=None,
+        comment_url=None,
+        rest=rest,
+        rfc2109=False,
+    )
 
-    matched_pairs: list[str] = []
-    for cookie in browser_cookies or []:
-        if not isinstance(cookie, dict):
-            continue
-        name = normalize_text(str(cookie.get("name") or ""))
-        value = str(cookie.get("value") or "")
-        if not name:
-            continue
 
-        cookie_domain = (
-            normalize_text(str(cookie.get("domain") or "")).lower().lstrip(".")
+def browser_cookie_jar(
+    browser_cookies: list[dict[str, Any]] | None,
+) -> http.cookiejar.CookieJar:
+    """Convert Playwright cookies without widening their RFC 6265 scope."""
+
+    cookie_jar = http.cookiejar.CookieJar(
+        policy=http.cookiejar.DefaultCookiePolicy(
+            strict_ns_domain=http.cookiejar.DefaultCookiePolicy.DomainStrictNonDomain
         )
-        if not cookie_domain:
-            cookie_url = normalize_text(str(cookie.get("url") or ""))
-            cookie_domain = normalize_text(
-                urllib.parse.urlparse(cookie_url).hostname
-            ).lower()
-        if (
-            cookie_domain
-            and host != cookie_domain
-            and not host.endswith(f".{cookie_domain}")
-        ):
+    )
+    now = int(time.time())
+    for payload in browser_cookies or []:
+        if not isinstance(payload, Mapping):
             continue
-
-        cookie_path = normalize_text(str(cookie.get("path") or "")) or "/"
-        if not path.startswith(cookie_path):
+        cookie = _browser_cookie(payload)
+        if cookie is None or (cookie.expires is not None and cookie.expires <= now):
             continue
-
-        if bool(cookie.get("secure")) and scheme != "https":
-            continue
-
-        matched_pairs.append(f"{name}={value}")
-
-    return "; ".join(matched_pairs) if matched_pairs else None
+        cookie_jar.set_cookie(cookie)
+    return cookie_jar
 
 
 def build_cookie_seeded_opener(
@@ -238,8 +274,9 @@ def build_cookie_seeded_opener(
         return None
 
     policy = remote_url_policy or DEFAULT_SAFE_REMOTE_URL_POLICY
+    cookie_jar = browser_cookie_jar(browser_cookies)
     opener = urllib.request.build_opener(
-        urllib.request.HTTPCookieProcessor(http.cookiejar.CookieJar()),
+        urllib.request.HTTPCookieProcessor(cookie_jar),
         _SafeRedirectHandler(policy),
     )
     cast(Any, opener)._paper_fetch_remote_url_policy = policy
@@ -262,9 +299,6 @@ def build_cookie_seeded_opener(
             resolve_dns=True,
         )
         request_headers = dict(seed_headers)
-        cookie_header = cookie_header_for_url(browser_cookies, seed_url)
-        if cookie_header:
-            request_headers["Cookie"] = cookie_header
         request = urllib.request.Request(seed_url, headers=request_headers)
         try:
             active_timeout = (
@@ -362,6 +396,7 @@ def request_with_opener(
 
 __all__ = [
     "DEFAULT_PDF_MAX_RESPONSE_BYTES",
+    "browser_cookie_jar",
     "build_cookie_seeded_opener",
     "cookie_header_for_url",
     "request_with_opener",

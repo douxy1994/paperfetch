@@ -1,10 +1,7 @@
 from __future__ import annotations
-
-import sys
-import threading
-import types
+import base64
+import pytest
 from unittest import mock
-
 from paper_fetch.providers import browser_workflow
 from paper_fetch.providers.browser_workflow.fetchers import context as fetcher_context
 from paper_fetch.providers.browser_workflow.fetchers import file as file_fetchers
@@ -14,7 +11,29 @@ from paper_fetch.providers.browser_workflow.fetchers.memo import (
 )
 from paper_fetch.runtime import RuntimeContext
 
+
 TEST_CDP_ENDPOINT = "ws://127.0.0.1:9222/devtools/browser/test"
+
+
+class _BrowserResponse:
+    def __init__(
+        self,
+        url: str,
+        body: bytes,
+        content_type: str,
+        *,
+        status: int = 200,
+    ) -> None:
+        self.url = url
+        self.status = status
+        self.headers = {"content-type": content_type}
+        self._body = body
+
+    def all_headers(self) -> dict[str, str]:
+        return dict(self.headers)
+
+    def body(self) -> bytes:
+        return self._body
 
 
 def test_figure_page_memo_uses_canonical_http_url_and_caches_failures() -> None:
@@ -31,153 +50,74 @@ def test_figure_page_memo_uses_canonical_http_url_and_caches_failures() -> None:
     )
 
 
-class _FakePage:
-    def __init__(self) -> None:
-        self.closed = False
-        self.closed_by: str | None = None
-
-    def close(self) -> None:
-        self.closed = True
-        self.closed_by = threading.current_thread().name
-
-    def goto(self, *_args, **_kwargs) -> None:
-        return None
-
-
-class _FakeRequestClient:
-    def get(
-        self, *_args, **_kwargs
-    ):  # pragma: no cover - request path is stubbed in tests
-        raise AssertionError("unexpected request.get() call")
-
-
-class _FakeContext:
-    def __init__(self) -> None:
-        self.closed = False
-        self.closed_by: str | None = None
-        self.cookies: list[dict[str, str]] = []
-        self.pages: list[_FakePage] = []
-        self.request = _FakeRequestClient()
-
-    def add_cookies(self, cookies) -> None:
-        self.cookies.extend(list(cookies))
-
-    def new_page(self) -> _FakePage:
-        page = _FakePage()
-        self.pages.append(page)
-        return page
-
-    def close(self) -> None:
-        self.closed = True
-        self.closed_by = threading.current_thread().name
-
-
-class _FakeBrowser:
-    def __init__(self) -> None:
-        self.closed = False
-        self.closed_by: str | None = None
-        self.contexts: list[_FakeContext] = []
-
-    def new_context(self, **_kwargs) -> _FakeContext:
-        context = _FakeContext()
-        self.contexts.append(context)
-        return context
-
-    def close(self) -> None:
-        self.closed = True
-        self.closed_by = threading.current_thread().name
-
-
-def _fake_playwright_cdp_modules(
-    browsers: list[_FakeBrowser],
-) -> dict[str, types.ModuleType]:
-    playwright_module = types.ModuleType("playwright")
-    sync_api_module = types.ModuleType("playwright.sync_api")
-
-    class _FakeChromium:
-        def connect_over_cdp(self, _endpoint: str) -> _FakeBrowser:
-            browser = _FakeBrowser()
-            browsers.append(browser)
-            return browser
-
-    class _FakePlaywright:
-        def __init__(self) -> None:
-            self.chromium = _FakeChromium()
-
-        def stop(self) -> None:
-            return None
-
-    class _FakeSyncPlaywright:
-        def start(self) -> _FakePlaywright:
-            return _FakePlaywright()
-
-    def sync_playwright() -> _FakeSyncPlaywright:
-        return _FakeSyncPlaywright()
-
-    sync_api_module.sync_playwright = sync_playwright
-    playwright_module.sync_api = sync_api_module
-    return {"playwright": playwright_module, "playwright.sync_api": sync_api_module}
-
-
-def _runtime_context_with_cdp_and_forbidden_shared_browser() -> RuntimeContext:
-    context = RuntimeContext(env={})
-    context.new_browser_context = mock.Mock(
-        side_effect=AssertionError("shared runtime browser should not be used")
-    )
-    return context
-
-
-def test_threaded_image_fetcher_uses_thread_private_browser_when_runtime_context_exists() -> (
+def test_credentialed_browser_asset_cross_origin_uses_native_context_without_route() -> (
     None
 ):
-    runtime_context = _runtime_context_with_cdp_and_forbidden_shared_browser()
-    browsers: list[_FakeBrowser] = []
-    fetcher = browser_workflow._build_shared_browser_image_fetcher(
+    article_url = "https://publisher.example.test/article"
+    asset_url = "https://assets.other.test/supplement.pdf"
+    page = mock.Mock()
+    context = mock.Mock()
+    context.new_page.return_value = page
+    context.cookies.return_value = []
+    context.request.get.return_value = _BrowserResponse(
+        asset_url,
+        b"%PDF-1.7 browser-owned",
+        "application/pdf",
+    )
+    fetcher = file_fetchers._SharedBrowserFileDocumentFetcher(
         browser_context_seed_getter=lambda: {
+            "browser_final_url": article_url,
             "browser_cookies": [
                 {
-                    "name": "cf_clearance",
-                    "value": "seed",
-                    "domain": ".example.test",
+                    "name": "session",
+                    "value": "secret",
+                    "domain": "publisher.example.test",
                     "path": "/",
                 }
             ],
-            "browser_user_agent": "UnitTestAgent/1.0",
         },
-        seed_urls_getter=lambda: [],
-        browser_user_agent="UnitTestAgent/1.0",
-        runtime_context=runtime_context,
-        use_runtime_shared_browser=False,
-        cdp_endpoint=TEST_CDP_ENDPOINT,
+        seed_urls_getter=lambda: [article_url],
     )
-    inner_fetcher = fetcher._get_fetcher()
-    inner_fetcher._fetch_with_page = mock.Mock(
-        return_value={
-            "status_code": 200,
-            "headers": {"content-type": "image/png"},
-            "body": b"\x89PNG\r\n\x1a\nthread-private-image",
-            "url": "https://example.test/figure.png",
-            "dimensions": {"width": 640, "height": 480},
-        }
-    )
+    with mock.patch.object(
+        fetcher_context,
+        "_new_browser_context",
+        return_value=(None, None, context),
+    ):
+        result = fetcher(asset_url, {"kind": "supplementary"})
 
-    try:
-        with mock.patch.dict(sys.modules, _fake_playwright_cdp_modules(browsers)):
-            result = fetcher("https://example.test/figure.png", {"kind": "figure"})
-    finally:
-        fetcher.close()
-        fetcher.close()
-
-    assert fetcher.requires_caller_thread is False
     assert result is not None
-    runtime_context.new_browser_context.assert_not_called()
-    assert len(browsers) == 1
-    browser = browsers[0]
-    assert browser.closed is True
-    assert len(browser.contexts) == 1
-    assert browser.contexts[0].closed is True
-    assert len(browser.contexts[0].pages) == 1
-    assert browser.contexts[0].pages[0].closed is True
+    assert result["body"] == b"%PDF-1.7 browser-owned"
+    assert result["url"] == asset_url
+    context.route.assert_not_called()
+    page.goto.assert_called_once_with(
+        article_url,
+        wait_until="domcontentloaded",
+        timeout=30000,
+    )
+    context.request.get.assert_called_once()
+
+
+def test_browser_file_fetcher_returns_browser_owned_bytes() -> None:
+    first_url = "https://publisher.example.test/supplement"
+
+    request_client = mock.Mock()
+    request_client.get.return_value = _BrowserResponse(
+        first_url,
+        b"%PDF-1.7 browser-owned",
+        "application/pdf",
+    )
+    fetcher = file_fetchers._SharedBrowserFileDocumentFetcher(
+        browser_context_seed_getter=lambda: {},
+        seed_urls_getter=lambda: [first_url],
+    )
+    fetcher._context = mock.Mock(request=request_client)
+
+    result = fetcher._fetch_with_context_request(first_url, {})
+
+    assert result is not None
+    assert result["url"] == first_url
+    assert result["body"] == b"%PDF-1.7 browser-owned"
+    request_client.get.assert_called_once()
 
 
 def test_threaded_image_fetcher_records_browser_context_exception_diagnostic() -> None:
@@ -207,7 +147,7 @@ def test_threaded_image_fetcher_records_browser_context_exception_diagnostic() -
     assert failure["error_message"] == "browser context already active"
 
 
-def test_browser_image_fetcher_applies_per_image_budget_to_browser_steps() -> None:
+def test_browser_image_fetcher_applies_budget_to_navigation_only() -> None:
     image_url = "https://example.test/figure.png"
     seed_urls = ["https://example.test/article", "https://example.test/extra"]
 
@@ -221,25 +161,25 @@ def test_browser_image_fetcher_applies_per_image_budget_to_browser_steps() -> No
         def loop_deadline(self, _max_seconds: float) -> float:
             return image_fetchers.time.monotonic()
 
-    class Response:
-        status = 200
-        url = image_url
-        headers = {"content-type": "text/html"}
-
-        def body(self) -> bytes:
-            return b"<html><title>Not an image</title></html>"
-
     class RequestClient:
         def __init__(self) -> None:
             self.calls: list[dict[str, object]] = []
 
         def get(self, url: str, **kwargs):
             self.calls.append({"url": url, **kwargs})
-            return Response()
+            return _BrowserResponse(
+                url,
+                b"\x89PNG\r\n\x1a\nbudget-image",
+                "image/png",
+            )
 
     class Context:
         def __init__(self) -> None:
             self.request = RequestClient()
+
+        def route(self, pattern: str, handler) -> None:
+            assert pattern == "**/*"
+            self.route_handler = handler
 
         def add_cookies(self, _cookies) -> None:
             return None
@@ -253,13 +193,11 @@ def test_browser_image_fetcher_applies_per_image_budget_to_browser_steps() -> No
         def goto(self, url: str, **kwargs):
             self.url = url
             self.goto_calls.append({"url": url, **kwargs})
-            return Response()
+            return None
 
         def evaluate(self, script, args):
-            if "fetch(imageSrc" in str(script):
-                self.fetch_timeouts.append(int(args[1]))
-                return {"ok": False, "error": "AbortError", "timedOut": True}
-            raise AssertionError("wait loops should be skipped by the fake budget")
+            del script, args
+            raise RuntimeError("article page has no matching image")
 
     page = Page()
     context = Context()
@@ -273,107 +211,14 @@ def test_browser_image_fetcher_applies_per_image_budget_to_browser_steps() -> No
     with mock.patch.object(image_fetchers, "_ImageFetchBudget", return_value=Budget()):
         result = fetcher(image_url, {"kind": "figure"})
 
-    assert result is None
-    assert [call["url"] for call in page.goto_calls] == [
-        seed_urls[0],
-        image_url,
-        seed_urls[0],
-        image_url,
-    ]
+    assert result is not None
+    assert result["url"] == image_url
+    assert result["body"] == b"\x89PNG\r\n\x1a\nbudget-image"
+    assert [call["url"] for call in page.goto_calls] == [seed_urls[0]]
     assert all(call["timeout"] == 1234 for call in page.goto_calls)
-    assert page.fetch_timeouts == [1234, 1234]
-    assert [call["timeout"] for call in context.request.calls] == [1234, 1234]
-
-
-def test_image_fetcher_passes_cdp_endpoint_to_context_factory() -> None:
-    image_url = "https://example.test/figure.png"
-    fake_context = _FakeContext()
-    fake_manager = mock.Mock()
-    context_calls: list[dict[str, object]] = []
-
-    def new_browser_context(**kwargs):
-        context_calls.append(dict(kwargs))
-        return fake_manager, None, fake_context
-
-    fetcher = browser_workflow._SharedBrowserImageDocumentFetcher(
-        browser_context_seed_getter=lambda: {"browser_user_agent": "UnitTestAgent/1.0"},
-        seed_urls_getter=lambda: [],
-        browser_user_agent="UnitTestAgent/1.0",
-        use_runtime_shared_browser=False,
-        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
-    )
-    fetcher._fetch_with_page = mock.Mock(
-        return_value={
-            "status_code": 200,
-            "headers": {"content-type": "image/png"},
-            "body": b"\x89PNG\r\n\x1a\ncdp-image",
-            "url": image_url,
-            "dimensions": {"width": 640, "height": 480},
-        }
-    )
-
-    try:
-        with mock.patch.object(
-            fetcher_context, "_new_browser_context", side_effect=new_browser_context
-        ):
-            result = fetcher(image_url, {"kind": "figure"})
-    finally:
-        fetcher.close()
-
-    assert result is not None
-    assert context_calls == [
-        {
-            "runtime_context": None,
-            "headless": True,
-            "user_agent": "UnitTestAgent/1.0",
-            "use_runtime_shared_browser": False,
-            "binary_path": None,
-            "cdp_endpoint": "ws://127.0.0.1:9222/devtools/browser/test",
-            "profile_dir": None,
-            "user_data_dir": None,
-        }
-    ]
-    fake_manager.close.assert_called_once()
-
-
-def test_image_fetcher_uses_runtime_keyed_context_when_shared_browser_enabled() -> None:
-    image_url = "https://example.test/figure.png"
-    fake_context = _FakeContext()
-    runtime_context = RuntimeContext(env={})
-    runtime_context.new_browser_context_for_config = mock.Mock(
-        return_value=fake_context
-    )
-    fetcher = browser_workflow._SharedBrowserImageDocumentFetcher(
-        browser_context_seed_getter=lambda: {"browser_user_agent": "UnitTestAgent/1.0"},
-        seed_urls_getter=lambda: [],
-        browser_user_agent="UnitTestAgent/1.0",
-        runtime_context=runtime_context,
-        use_runtime_shared_browser=True,
-        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
-    )
-    fetcher._fetch_with_page = mock.Mock(
-        return_value={
-            "status_code": 200,
-            "headers": {"content-type": "image/png"},
-            "body": b"\x89PNG\r\n\x1a\nshared-runtime-image",
-            "url": image_url,
-            "dimensions": {"width": 640, "height": 480},
-        }
-    )
-
-    try:
-        result = fetcher(image_url, {"kind": "figure"})
-    finally:
-        fetcher.close()
-        runtime_context.close()
-
-    assert result is not None
-    assert fetcher.requires_caller_thread is True
-    runtime_context.new_browser_context_for_config.assert_called_once()
-    call_kwargs = runtime_context.new_browser_context_for_config.call_args.kwargs
-    assert call_kwargs["cdp_endpoint"] == "ws://127.0.0.1:9222/devtools/browser/test"
-    assert call_kwargs["user_agent"] == "UnitTestAgent/1.0"
-    assert fake_context.closed is True
+    assert page.fetch_timeouts == []
+    assert [call["url"] for call in context.request.calls] == [image_url]
+    assert context.request.calls[0]["timeout"] == 1234
 
 
 def test_serial_image_and_file_fetchers_share_ready_article_page_until_owner_closes() -> (
@@ -382,16 +227,6 @@ def test_serial_image_and_file_fetchers_share_ready_article_page_until_owner_clo
     article_url = "https://example.test/article"
     image_url = "https://example.test/figure-large.gif"
     file_url = "https://example.test/supplement.pdf"
-    gif_payload = b"GIF89a\x01\x00\x01\x00"
-    pdf_payload = b"%PDF-1.7 supplement"
-
-    class Response:
-        status = 200
-        url = file_url
-        headers = {"content-type": "application/pdf"}
-
-        def body(self) -> bytes:
-            return pdf_payload
 
     class RequestClient:
         def __init__(self) -> None:
@@ -399,7 +234,11 @@ def test_serial_image_and_file_fetchers_share_ready_article_page_until_owner_clo
 
         def get(self, url: str, **kwargs):
             self.calls.append({"url": url, **kwargs})
-            return Response()
+            return _BrowserResponse(
+                url,
+                b"%PDF-1.7 shared-browser-file",
+                "application/pdf",
+            )
 
     class Page:
         def __init__(self) -> None:
@@ -422,6 +261,11 @@ def test_serial_image_and_file_fetchers_share_ready_article_page_until_owner_clo
             self.new_page_calls = 0
             self.close_calls = 0
             self.added_cookies: list[dict[str, str]] = []
+            self.route_handler = None
+
+        def route(self, pattern: str, handler) -> None:
+            assert pattern == "**/*"
+            self.route_handler = handler
 
         def add_cookies(self, cookies) -> None:
             self.added_cookies.extend(list(cookies))
@@ -467,7 +311,7 @@ def test_serial_image_and_file_fetchers_share_ready_article_page_until_owner_clo
         return_value={
             "status_code": 200,
             "headers": {"content-type": "image/gif"},
-            "body": gif_payload,
+            "body": b"GIF89a-browser-owned",
             "url": image_url,
             "dimensions": {"width": 1, "height": 1},
         }
@@ -484,7 +328,10 @@ def test_serial_image_and_file_fetchers_share_ready_article_page_until_owner_clo
         return_value=(manager, None, context),
     ) as new_context:
         image_result = image_fetcher(image_url, {"kind": "figure"})
-        file_result = file_fetcher(file_url, {"kind": "supplementary"})
+        file_result = file_fetcher(
+            file_url,
+            {"kind": "supplementary", "referer_url": article_url},
+        )
         image_fetcher.close()
         file_fetcher.close()
 
@@ -495,7 +342,9 @@ def test_serial_image_and_file_fetchers_share_ready_article_page_until_owner_clo
     assert context.page.goto_calls == [article_url]
     assert ready_calls == [(context.page, context, article_url)]
     assert context.added_cookies == seed["browser_cookies"]
+    assert [call["url"] for call in context.request.calls] == [file_url]
     assert context.request.calls[0]["headers"]["Referer"] == article_url
+    assert file_result["body"] == b"%PDF-1.7 shared-browser-file"
     assert context.page.close_calls == 0
     assert context.close_calls == 0
     manager.close.assert_not_called()
@@ -509,7 +358,7 @@ def test_serial_image_and_file_fetchers_share_ready_article_page_until_owner_clo
     shared_session.close()
     runtime_context.close()
     assert context.page.close_calls == 1
-    assert context.close_calls == 1
+    assert context.close_calls == 0
     manager.close.assert_called_once()
 
 
@@ -580,7 +429,7 @@ def test_shared_page_session_closes_partial_context_when_page_creation_fails() -
         result = fetcher(image_url, {"kind": "figure"})
 
     assert result is None
-    context.close.assert_called_once()
+    context.close.assert_not_called()
     manager.close.assert_called_once()
     fetcher_context._restore_runtime_shared_page_session(
         runtime_context,
@@ -600,120 +449,15 @@ def test_memoized_image_fetcher_preserves_caller_thread_requirement() -> None:
     assert fetcher.requires_caller_thread is True
 
 
-def test_threaded_file_fetcher_uses_thread_private_browser_when_runtime_context_exists() -> (
-    None
-):
-    runtime_context = _runtime_context_with_cdp_and_forbidden_shared_browser()
-    browsers: list[_FakeBrowser] = []
-    fetcher = browser_workflow._build_shared_browser_file_fetcher(
-        browser_context_seed_getter=lambda: {
-            "browser_cookies": [
-                {
-                    "name": "cf_clearance",
-                    "value": "seed",
-                    "domain": ".example.test",
-                    "path": "/",
-                }
-            ],
-            "browser_user_agent": "UnitTestAgent/1.0",
-        },
-        seed_urls_getter=lambda: [],
-        browser_user_agent="UnitTestAgent/1.0",
-        runtime_context=runtime_context,
-        use_runtime_shared_browser=False,
-        cdp_endpoint=TEST_CDP_ENDPOINT,
-        thread_local=True,
-    )
-    inner_fetcher = fetcher._get_fetcher()
-    inner_fetcher._fetch_with_context_request = mock.Mock(
-        return_value={
-            "status_code": 200,
-            "headers": {"content-type": "application/pdf"},
-            "body": b"%PDF-1.7 thread-private-file",
-            "url": "https://example.test/supplement.pdf",
-        }
-    )
-
-    try:
-        with mock.patch.dict(sys.modules, _fake_playwright_cdp_modules(browsers)):
-            result = fetcher(
-                "https://example.test/supplement.pdf", {"kind": "supplementary"}
-            )
-    finally:
-        fetcher.close()
-        fetcher.close()
-
-    assert result is not None
-    runtime_context.new_browser_context.assert_not_called()
-    assert len(browsers) == 1
-    browser = browsers[0]
-    assert browser.closed is True
-    assert len(browser.contexts) == 1
-    assert browser.contexts[0].closed is True
-    assert len(browser.contexts[0].pages) == 1
-    assert browser.contexts[0].pages[0].closed is True
-
-
-def test_file_fetcher_passes_cdp_endpoint_to_context_factory() -> None:
-    file_url = "https://example.test/supplement.pdf"
-    fake_context = _FakeContext()
-    fake_manager = mock.Mock()
-    context_calls: list[dict[str, object]] = []
-
-    def new_browser_context(**kwargs):
-        context_calls.append(dict(kwargs))
-        return fake_manager, None, fake_context
-
-    fetcher = browser_workflow._SharedBrowserFileDocumentFetcher(
-        browser_context_seed_getter=lambda: {"browser_user_agent": "UnitTestAgent/1.0"},
-        seed_urls_getter=lambda: [],
-        browser_user_agent="UnitTestAgent/1.0",
-        use_runtime_shared_browser=False,
-        cdp_endpoint="ws://127.0.0.1:9222/devtools/browser/test",
-    )
-    fetcher._fetch_with_context_request = mock.Mock(
-        return_value={
-            "status_code": 200,
-            "headers": {"content-type": "application/pdf"},
-            "body": b"%PDF-1.7 cdp-file",
-            "url": file_url,
-        }
-    )
-
-    try:
-        with mock.patch.object(
-            fetcher_context, "_new_browser_context", side_effect=new_browser_context
-        ):
-            result = fetcher(file_url, {"kind": "supplementary"})
-    finally:
-        fetcher.close()
-
-    assert result is not None
-    assert context_calls == [
-        {
-            "runtime_context": None,
-            "headless": True,
-            "user_agent": "UnitTestAgent/1.0",
-            "use_runtime_shared_browser": False,
-            "binary_path": None,
-            "cdp_endpoint": "ws://127.0.0.1:9222/devtools/browser/test",
-            "profile_dir": None,
-            "user_data_dir": None,
-        }
-    ]
-    fake_manager.close.assert_called_once()
-
-
 def test_file_fetcher_forwards_explicit_asset_referer() -> None:
     file_url = "https://assets.example.test/supplement.docx"
     referer_url = "https://publisher.example.test/article/10.1000/example/data"
-    response = mock.Mock(status=200, url=file_url)
-    response.all_headers.return_value = {
-        "content-type": "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-    }
-    response.body.return_value = b"PK\x03\x04example-docx"
     request_client = mock.Mock()
-    request_client.get.return_value = response
+    request_client.get.return_value = _BrowserResponse(
+        file_url,
+        b"PK\x03\x04browser-owned-docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    )
     fetcher = browser_workflow._SharedBrowserFileDocumentFetcher(
         browser_context_seed_getter=lambda: {},
         seed_urls_getter=lambda: [],
@@ -726,161 +470,537 @@ def test_file_fetcher_forwards_explicit_asset_referer() -> None:
     )
 
     assert result is not None
+    assert result["url"] == file_url
+    assert result["body"] == b"PK\x03\x04browser-owned-docx"
     request_client.get.assert_called_once_with(
         file_url,
-        headers={"Accept": "*/*", "Referer": referer_url},
+        headers={
+            "Accept": "*/*",
+            "Referer": referer_url,
+        },
         timeout=60000,
     )
 
 
-def test_threaded_image_fetcher_closes_thread_private_browser_on_worker_thread() -> (
-    None
-):
-    runtime_context = _runtime_context_with_cdp_and_forbidden_shared_browser()
-    browsers: list[_FakeBrowser] = []
-    fetcher = browser_workflow._build_shared_browser_image_fetcher(
-        browser_context_seed_getter=lambda: {"browser_user_agent": "UnitTestAgent/1.0"},
-        seed_urls_getter=lambda: [],
-        browser_user_agent="UnitTestAgent/1.0",
-        runtime_context=runtime_context,
-        use_runtime_shared_browser=False,
-        cdp_endpoint=TEST_CDP_ENDPOINT,
+@pytest.mark.parametrize("provider", ["wiley", "pnas", "science", None])
+@pytest.mark.parametrize("size", [(22, 15), (11, 17), (519, 112)])
+def test_wiley_formula_policy_is_per_call(provider, size, tmp_path) -> None:
+    from paper_fetch.providers.browser_runtime.types import BrowserRuntimeConfig
+
+    config = (
+        BrowserRuntimeConfig(provider, "10.1029/test", tmp_path, True, None)
+        if provider
+        else None
     )
-    errors: list[BaseException] = []
-    result_holder: dict[str, object] = {}
+    fetcher = image_fetchers._SharedBrowserImageDocumentFetcher(
+        browser_context_seed_getter=lambda: {},
+        seed_urls_getter=lambda: [],
+        browser_options=fetcher_context.BrowserDocumentFetcherOptions(
+            runtime_config=config
+        ),
+    )
+    page = mock.Mock()
+    url = "https://example.test/image.png"
+    calls = []
 
-    def run_fetch() -> None:
-        try:
-            result_holder["result"] = fetcher(
-                "https://example.test/figure.png", {"kind": "figure"}
-            )
-        except (
-            BaseException
-        ) as exc:  # pragma: no cover - assertion reports the captured exception
-            errors.append(exc)
+    def evaluate(script, args):
+        calls.append(args)
+        width, height = size
+        accepted = args[3] or (width >= args[1] and height >= args[2])
+        return {
+            "found": True,
+            "ok": accepted,
+            "reason": "target_image_not_loaded",
+            "url": url,
+            "contentType": "image/png",
+            "bodyB64": base64.b64encode(b"\x89PNG\r\n\x1a\nimage").decode(),
+            "width": width,
+            "height": height,
+        }
 
+    page.goto.return_value = None
+    page.evaluate.side_effect = evaluate
+    # End unsuccessful polling without spending the real download budget.
+    page.wait_for_timeout.side_effect = RuntimeError("stop test polling")
+    fetcher._page = page
     with (
-        mock.patch.dict(sys.modules, _fake_playwright_cdp_modules(browsers)),
+        mock.patch.object(fetcher, "_ensure_page", return_value=page),
+        mock.patch.object(fetcher, "_sync_context_cookies"),
+        mock.patch.object(fetcher, "_warm_seed_urls"),
+        mock.patch.object(fetcher, "_payload_from_page_fetch_url", return_value=None),
+        mock.patch.object(fetcher, "_payload_from_context_request", return_value=None),
+        mock.patch.object(fetcher, "_wait_for_primary_image", return_value=None),
+    ):
+        for asset in ({"kind": "formula"}, {"kind": "figure"}, {}):
+            calls.clear()
+            page.wait_for_timeout.reset_mock()
+            result = fetcher(url, asset)
+            small = provider == "wiley" and asset.get("kind") == "formula"
+            target_match = provider == "pnas" or (
+                provider == "wiley" and asset.get("kind") == "figure"
+            )
+            assert all(args == [url, 80, 80, small, target_match] for args in calls)
+            assert (result is not None) == (small or size == (519, 112))
+            if result is not None:
+                assert result["dimensions"] == {"width": size[0], "height": size[1]}
+                page.wait_for_timeout.assert_not_called()
+            assert (fetcher._min_width, fetcher._min_height) == (80, 80)
+
+
+@pytest.mark.parametrize("size", [(22, 15), (11, 17), (519, 112)])
+def test_small_formula_policy_reaches_readiness_and_canvas(size) -> None:
+    fetcher = image_fetchers._SharedBrowserImageDocumentFetcher(
+        browser_context_seed_getter=lambda: {},
+        seed_urls_getter=lambda: [],
+    )
+    page = mock.Mock()
+    fetcher._page = page
+    url = "https://example.test/formula.png"
+    width, height = size
+    info = {"ready": True, "src": url, "width": width, "height": height}
+    page.evaluate.side_effect = [
+        info,
+        {
+            "ok": True,
+            "url": url,
+            "width": width,
+            "height": height,
+            "bodyB64": base64.b64encode(b"\x89PNG\r\n\x1a\nformula").decode(),
+        },
+    ]
+    with (
         mock.patch.object(
-            browser_workflow._SharedBrowserImageDocumentFetcher,
-            "_fetch_with_page",
-            return_value={
-                "status_code": 200,
-                "headers": {"content-type": "image/png"},
-                "body": b"\x89PNG\r\n\x1a\nthread-private-image",
-                "url": "https://example.test/figure.png",
-                "dimensions": {"width": 640, "height": 480},
-            },
+            fetcher, "_payload_from_warmed_article_image", return_value=None
+        ) as warm,
+        mock.patch.object(fetcher, "_payload_from_page_fetch_url", return_value=None),
+        mock.patch.object(fetcher, "_payload_from_context_request", return_value=None),
+        mock.patch.object(
+            fetcher, "_payload_from_navigation_response", return_value=None
         ),
     ):
-        worker = threading.Thread(target=run_fetch, name="asset-worker")
-        worker.start()
-        worker.join()
-        fetcher.close()
-
-    assert errors == []
-    assert result_holder["result"] is not None
-    runtime_context.new_browser_context.assert_not_called()
-    assert len(browsers) == 1
-    browser = browsers[0]
-    assert browser.closed is True
-    assert browser.closed_by == "asset-worker"
-    assert browser.contexts[0].closed_by == "asset-worker"
-    assert browser.contexts[0].pages[0].closed_by == "asset-worker"
+        result = fetcher._fetch_with_page(url, allow_small_formula=True)
+    assert result["dimensions"] == {"width": width, "height": height}
+    assert page.goto.call_args.kwargs["wait_until"] == "commit"
+    assert warm.call_args.kwargs["allow_small_formula"] is True
+    assert page.evaluate.call_args_list[0].args[1] == [80, 80, url, True, False]
+    assert page.evaluate.call_args_list[1].args[1] == [url, 80, 80, True, False]
+    page.wait_for_timeout.assert_not_called()
 
 
-def test_threaded_file_fetcher_closes_thread_private_browser_on_worker_thread() -> None:
-    runtime_context = _runtime_context_with_cdp_and_forbidden_shared_browser()
-    browsers: list[_FakeBrowser] = []
-    fetcher = browser_workflow._build_shared_browser_file_fetcher(
-        browser_context_seed_getter=lambda: {"browser_user_agent": "UnitTestAgent/1.0"},
+@pytest.mark.parametrize("path", ["article", "canvas"])
+@pytest.mark.parametrize("invalid", ["placeholder", "non_image"])
+@pytest.mark.parametrize(
+    "policy", [{"allow_small_formula": True}, {"require_target_match": True}]
+)
+def test_small_formula_keeps_payload_validation(path, invalid, policy) -> None:
+    fetcher = image_fetchers._SharedBrowserImageDocumentFetcher(
+        browser_context_seed_getter=lambda: {},
         seed_urls_getter=lambda: [],
-        browser_user_agent="UnitTestAgent/1.0",
-        runtime_context=runtime_context,
-        use_runtime_shared_browser=False,
-        cdp_endpoint=TEST_CDP_ENDPOINT,
-        thread_local=True,
     )
-    errors: list[BaseException] = []
-    result_holder: dict[str, object] = {}
+    url = "https://example.test/formula.png"
+    page = mock.Mock()
+    page.evaluate.return_value = {
+        "ok": True,
+        "found": True,
+        "url": "https://example.test/blank.gif" if invalid == "placeholder" else url,
+        "contentType": "image/png",
+        "width": 22,
+        "height": 15,
+        "bodyB64": base64.b64encode(
+            b"<html>Access denied</html>"
+            if invalid == "non_image"
+            else b"\x89PNG\r\n\x1a\nimage"
+        ).decode(),
+    }
+    if path == "article":
+        result = fetcher._payload_from_warmed_article_image(page, url, **policy)
+    else:
+        result = fetcher._payload_from_loaded_image(page, {"src": url}, **policy)
+    assert result is None
 
-    def run_fetch() -> None:
-        try:
-            result_holder["result"] = fetcher(
-                "https://example.test/supplement.pdf", {"kind": "supplementary"}
+
+@pytest.mark.parametrize("path", ["article", "canvas", "readiness"])
+@pytest.mark.parametrize(
+    "reason,found,width,height",
+    [
+        ("target_image_not_loaded", True, 22, 15),
+        ("target_image_not_loaded", True, 0, 15),
+        ("target_image_not_loaded", True, 22, 0),
+        ("target_image_not_found", False, 640, 480),
+    ],
+)
+def test_small_formula_rejects_unready_or_missing_target(
+    path, reason, found, width, height
+) -> None:
+    fetcher = image_fetchers._SharedBrowserImageDocumentFetcher(
+        browser_context_seed_getter=lambda: {},
+        seed_urls_getter=lambda: [],
+    )
+    url = "https://example.test/formula.png"
+    page = mock.Mock()
+    page.url = "https://example.test/article"
+    page.evaluate.return_value = {
+        "ok": False,
+        "ready": False,
+        "found": found,
+        "reason": reason,
+        "width": width,
+        "height": height,
+        "url": url,
+        "imageCount": 2,
+    }
+    page.wait_for_timeout.side_effect = RuntimeError("stop test polling")
+    with mock.patch.object(fetcher, "_payload_from_page_fetch_url", return_value=None):
+        if path == "article":
+            result = fetcher._payload_from_warmed_article_image(
+                page, url, allow_small_formula=True
             )
-        except (
-            BaseException
-        ) as exc:  # pragma: no cover - assertion reports the captured exception
-            errors.append(exc)
-
-    with (
-        mock.patch.dict(sys.modules, _fake_playwright_cdp_modules(browsers)),
-        mock.patch.object(
-            browser_workflow._SharedBrowserFileDocumentFetcher,
-            "_fetch_with_context_request",
-            return_value={
-                "status_code": 200,
-                "headers": {"content-type": "application/pdf"},
-                "body": b"%PDF-1.7 thread-private-file",
-                "url": "https://example.test/supplement.pdf",
-            },
-        ),
-    ):
-        worker = threading.Thread(target=run_fetch, name="asset-worker")
-        worker.start()
-        worker.join()
-        fetcher.close()
-
-    assert errors == []
-    assert result_holder["result"] is not None
-    runtime_context.new_browser_context.assert_not_called()
-    assert len(browsers) == 1
-    browser = browsers[0]
-    assert browser.closed is True
-    assert browser.closed_by == "asset-worker"
-    assert browser.contexts[0].closed_by == "asset-worker"
-    assert browser.contexts[0].pages[0].closed_by == "asset-worker"
+        elif path == "canvas":
+            result = fetcher._payload_from_loaded_image(
+                page, {"src": url}, allow_small_formula=True
+            )
+        else:
+            result = fetcher._wait_for_primary_image(
+                page, url, allow_small_formula=True
+            )
+    assert result is None
+    if path == "article" and not found:
+        page.wait_for_timeout.assert_not_called()
 
 
-def test_threaded_file_fetcher_close_releases_all_thread_private_browser_resources() -> (
-    None
-):
-    runtime_context = _runtime_context_with_cdp_and_forbidden_shared_browser()
-    browsers: list[_FakeBrowser] = []
-    fetcher = browser_workflow._build_shared_browser_file_fetcher(
-        browser_context_seed_getter=lambda: {"browser_user_agent": "UnitTestAgent/1.0"},
-        seed_urls_getter=lambda: [],
-        browser_user_agent="UnitTestAgent/1.0",
-        runtime_context=runtime_context,
-        use_runtime_shared_browser=False,
-        cdp_endpoint=TEST_CDP_ENDPOINT,
-        thread_local=True,
+@pytest.mark.parametrize("provider", ["wiley", "pnas", "science", None])
+def test_formula_navigation_policy_is_per_call(provider, tmp_path) -> None:
+    from paper_fetch.providers.browser_runtime.types import BrowserRuntimeConfig
+
+    config = (
+        BrowserRuntimeConfig(provider, "10.1029/test", tmp_path, True, None)
+        if provider
+        else None
     )
+    fetcher = image_fetchers._SharedBrowserImageDocumentFetcher(
+        browser_context_seed_getter=lambda: {},
+        seed_urls_getter=lambda: [],
+        browser_options=fetcher_context.BrowserDocumentFetcherOptions(
+            runtime_config=config
+        ),
+    )
+    url = "https://example.test/formula.png"
+    page = mock.Mock()
+    fetcher._page = page
+    body = b"\x89PNG\r\n\x1a\nformula"
+    response = _BrowserResponse(url, body, "image/png")
+    page.goto.return_value = response
+    with (
+        mock.patch.object(fetcher, "_ensure_page", return_value=page),
+        mock.patch.object(fetcher, "_sync_context_cookies"),
+        mock.patch.object(fetcher, "_warm_seed_urls"),
+        mock.patch.object(
+            fetcher, "_payload_from_warmed_article_image", return_value=None
+        ),
+        mock.patch.object(fetcher, "_payload_from_page_fetch_url", return_value=None),
+        mock.patch.object(fetcher, "_payload_from_context_request", return_value=None),
+        mock.patch.object(
+            fetcher,
+            "_wait_for_primary_image",
+            return_value={"ready": True, "src": url, "width": 22, "height": 15},
+        ) as readiness,
+        mock.patch.object(response, "body", wraps=response.body) as response_body,
+    ):
+        order = mock.Mock()
+        order.attach_mock(page.goto, "goto")
+        order.attach_mock(readiness, "readiness")
+        order.attach_mock(response_body, "body")
+        for asset in ({"kind": "formula"}, {"kind": "figure"}, {}, {"kind": "formula"}):
+            order.reset_mock()
+            result = fetcher(url, asset)
+            small = provider == "wiley" and asset.get("kind") == "formula"
+            assert result["body"] == body
+            figure = provider == "wiley" and asset.get("kind") == "figure"
+            assert page.goto.call_args.kwargs["wait_until"] == (
+                "commit" if small or figure else "domcontentloaded"
+            )
+            assert 0 < page.goto.call_args.kwargs["timeout"] <= 10000
+            assert [call[0] for call in order.mock_calls] == (
+                ["goto", "readiness", "body"] if small or figure else ["goto", "body"]
+            )
+            if small:
+                assert readiness.call_args.kwargs["allow_small_formula"] is True
+            if figure:
+                assert readiness.call_args.kwargs["allow_small_formula"] is False
+                assert readiness.call_args.kwargs["require_target_match"] is True
+                assert (fetcher._min_width, fetcher._min_height) == (80, 80)
+            assert fetcher._active_image_fetch_budget is None
 
-    created_fetchers = []
 
-    def build_fetcher() -> None:
-        inner_fetcher = fetcher._get_fetcher()
-        created_fetchers.append(inner_fetcher)
-        inner_fetcher._ensure_context()
+@pytest.mark.parametrize("ready", [False, True])
+@pytest.mark.parametrize("navigation", ["image", "non_image", "placeholder"])
+@pytest.mark.parametrize("figure", [False, True])
+def test_formula_navigation_requires_readiness_and_valid_response(
+    ready, navigation, figure
+) -> None:
+    fetcher = image_fetchers._SharedBrowserImageDocumentFetcher(
+        browser_context_seed_getter=lambda: {},
+        seed_urls_getter=lambda: [],
+    )
+    if figure:
+        from types import SimpleNamespace
 
-    try:
-        with mock.patch.dict(sys.modules, _fake_playwright_cdp_modules(browsers)):
-            build_fetcher()
-            worker = threading.Thread(target=build_fetcher, name="asset-worker")
-            worker.start()
-            worker.join()
-    finally:
-        fetcher.close()
-        fetcher.close()
+        fetcher._browser_config = SimpleNamespace(provider="wiley")
+    url = "https://example.test/formula.png"
+    page = mock.Mock()
+    fetcher._page = page
+    response = _BrowserResponse(
+        "https://example.test/blank.gif" if navigation == "placeholder" else url,
+        b"<html>Access denied</html>"
+        if navigation == "non_image"
+        else b"\x89PNG\r\n\x1a\nformula",
+        "text/html" if navigation == "non_image" else "image/png",
+    )
+    page.goto.return_value = response
+    page.evaluate.return_value = {
+        "ready": ready,
+        "src": url,
+        "width": 1200 if figure else 22,
+        "height": 900 if figure else 15,
+    }
+    page.wait_for_timeout.side_effect = RuntimeError("stop test polling")
+    with (
+        mock.patch.object(
+            fetcher, "_payload_from_warmed_article_image", return_value=None
+        ),
+        mock.patch.object(fetcher, "_payload_from_page_fetch_url", return_value=None),
+        mock.patch.object(fetcher, "_payload_from_context_request", return_value=None),
+        mock.patch.object(
+            fetcher, "_payload_from_page_fetch", return_value=None
+        ) as export,
+        mock.patch.object(response, "body", wraps=response.body) as response_body,
+    ):
+        result = fetcher._fetch_with_page(
+            url,
+            allow_small_formula=not figure,
+            require_target_match=figure,
+        )
+    assert (result is not None) == (ready and navigation == "image")
+    if not ready:
+        response_body.assert_not_called()
+        export.assert_not_called()
+    else:
+        response_body.assert_called_once()
+        assert export.call_count == (navigation != "image")
 
-    runtime_context.new_browser_context.assert_not_called()
-    assert len(created_fetchers) == 2
-    assert len(browsers) == 2
-    for browser in browsers:
-        assert browser.closed is True
-        assert len(browser.contexts) == 1
-        assert browser.contexts[0].closed is True
-        assert len(browser.contexts[0].pages) == 1
-        assert browser.contexts[0].pages[0].closed is True
+
+@pytest.mark.parametrize(
+    "recovery", ["article", "fetch", "request", "navigation", "canvas"]
+)
+def test_wiley_figure_target_match_recovery_order(recovery) -> None:
+    url = "https://example.test/full.png"
+    body = b"\x89PNG\r\n\x1a\nfull"
+    fetcher = image_fetchers._SharedBrowserImageDocumentFetcher(
+        browser_context_seed_getter=lambda: {}, seed_urls_getter=lambda: []
+    )
+    page = mock.Mock()
+    fetcher._page = page
+    rendered = {
+        "ok": True,
+        "found": True,
+        "url": url,
+        "contentType": "image/png",
+        "bodyB64": base64.b64encode(body).decode(),
+        "width": 1200,
+        "height": 900,
+    }
+    info = {"ready": True, "src": url, "width": 1200, "height": 900}
+    page.evaluate.side_effect = [
+        rendered if recovery == "article" else {"found": False},
+        info,
+        rendered,
+    ]
+    payload = {"body": body, "url": url}
+    page.goto.return_value = (
+        _BrowserResponse("https://example.test/redirected-full.png", body, "image/png")
+        if recovery == "navigation"
+        else None
+    )
+    with (
+        mock.patch.object(
+            fetcher,
+            "_payload_from_page_fetch_url",
+            return_value=payload if recovery == "fetch" else None,
+        ) as fetch,
+        mock.patch.object(
+            fetcher,
+            "_payload_from_context_request",
+            return_value=payload if recovery == "request" else None,
+        ) as request,
+    ):
+        result = fetcher._fetch_with_page(url, require_target_match=True)
+    assert result["body"] == body
+    assert fetch.call_count == (
+        0 if recovery == "article" else 2 if recovery == "canvas" else 1
+    )
+    assert request.call_count == (recovery not in {"article", "fetch"})
+    assert page.goto.call_count == (recovery in {"navigation", "canvas"})
+    assert page.evaluate.call_args_list[0].args[1] == [url, 80, 80, False, True]
+    if recovery == "canvas":
+        assert page.evaluate.call_args_list[1].args[1] == [80, 80, url, False, True]
+        assert page.evaluate.call_args_list[2].args[1] == [url, 80, 80, False, True]
+    if recovery == "navigation":
+        assert result["url"] == "https://example.test/redirected-full.png"
+    page.wait_for_timeout.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", ["wiley", "science", "iop", "ieee"])
+def test_file_download_mode_is_explicit_and_isolated_from_discovery(provider):
+    from types import SimpleNamespace
+
+    for mode in ("context_request", "page_click"):
+        fetcher = file_fetchers._SharedBrowserFileDocumentFetcher(
+            browser_context_seed_getter=lambda: {},
+            seed_urls_getter=lambda: [],
+            browser_options=fetcher_context.BrowserDocumentFetcherOptions(
+                runtime_config=SimpleNamespace(provider=provider),
+                file_fetch_mode=mode,
+            ),
+        )
+        fetcher._context = mock.Mock()
+        fetcher._page = mock.Mock()
+        with (
+            mock.patch.object(
+                file_fetchers, "fetch_file_with_page_click", return_value=None
+            ) as click,
+            mock.patch.object(
+                fetcher, "_fetch_with_context_request", return_value=None
+            ) as request,
+        ):
+            assert fetcher("https://example.test/file", {}) is None
+        assert click.call_count == int(mode == "page_click")
+        assert request.call_count == int(mode == "context_request")
+
+
+def test_click_failure_keeps_original_target_and_never_requests_directly():
+    from types import SimpleNamespace
+
+    fetcher = file_fetchers._SharedBrowserFileDocumentFetcher(
+        browser_context_seed_getter=lambda: {
+            "browser_final_url": "https://example.test/article"
+        },
+        seed_urls_getter=lambda: [],
+        browser_options=fetcher_context.BrowserDocumentFetcherOptions(
+            runtime_config=SimpleNamespace(provider="science"),
+            file_fetch_mode="page_click",
+        ),
+    )
+    fetcher._context = mock.Mock()
+    fetcher._page = mock.Mock(url="https://example.test/article")
+    fetcher._page.locator.return_value.evaluate_all.return_value = None
+    fetcher._page.wait_for_timeout.side_effect = TimeoutError("link missing")
+    url = "https://example.test/si.pdf"
+    assert fetcher(url, {"source_href": "/si.pdf"}) is None
+    diagnostic = fetcher.failure_for(url)
+    assert diagnostic["reason"] == "supplement_click_link_missing"
+    assert diagnostic["click_page_url"] == "https://example.test/article"
+    assert diagnostic["original_href"] == "/si.pdf"
+    fetcher._context.request.get.assert_not_called()
+
+
+def test_wiley_panel_re_resolves_control_after_redraw():
+    from types import SimpleNamespace
+    from paper_fetch.providers.browser_workflow.fetchers import click
+
+    page = mock.Mock()
+    link = page.locator.return_value.first.locator.return_value.first
+    link.is_visible.return_value = False
+    link.wait_for.side_effect = [None, TimeoutError("redraw"), None]
+    control = link.locator.return_value.locator.return_value.first
+    control.get_attribute.return_value = "false"
+    with mock.patch.object(
+        click,
+        "wait_for_atypon_body_dom_ready",
+        return_value=SimpleNamespace(ready=True),
+    ):
+        assert (
+            click._wiley_link(
+                page, ["https://example.test/si.zip"], lambda: 2000, lambda _: None
+            )
+            is link
+        )
+    assert control.click.call_count == 2
+    assert all(call.kwargs["timeout"] <= 2000 for call in control.click.call_args_list)
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        image_fetchers._SharedBrowserImageDocumentFetcher,
+        image_fetchers._ThreadLocalSharedBrowserImageDocumentFetcher,
+    ],
+)
+def test_image_fetcher_memo_preserves_actual_camoufox_backend(factory):
+    fetcher = factory(
+        browser_context_seed_getter=lambda: {}, seed_urls_getter=lambda: []
+    )
+    memo = browser_workflow._MemoizedImageDocumentFetcher(fetcher)
+    assert memo.browser_backend == "camoufox"
+    memo.close()
+
+
+@pytest.mark.parametrize(
+    "recovery", ["context", "article", "fetch", "navigation", "failed"]
+)
+def test_pnas_requests_original_bytes_before_page_image_recovery(tmp_path, recovery):
+    from paper_fetch.providers.browser_runtime import BrowserRuntimeConfig
+
+    url = "https://www.pnas.org/cms/asset/full.png"
+    referer = "https://www.pnas.org/doi/full/10.1073/test"
+    body = b"\x89PNG\r\n\x1a\noriginal"
+    payload = {"body": body, "url": url}
+    fetcher = image_fetchers._SharedBrowserImageDocumentFetcher(
+        browser_context_seed_getter=lambda: {"browser_final_url": referer},
+        seed_urls_getter=lambda: [referer],
+        browser_options=fetcher_context.BrowserDocumentFetcherOptions(
+            runtime_config=BrowserRuntimeConfig(
+                "pnas", "10.1073/test", tmp_path, True, None
+            )
+        ),
+    )
+    page = mock.Mock(url=referer)
+    context = mock.Mock()
+    context.request.get.return_value = _BrowserResponse(
+        url,
+        body if recovery == "context" else b"<html>Denied</html>",
+        "image/png" if recovery == "context" else "text/html",
+        status=200 if recovery == "context" else 403,
+    )
+    fetcher._context = context
+    fetcher._page = page
+    with (
+        mock.patch.object(
+            fetcher,
+            "_payload_from_warmed_article_image",
+            return_value=payload if recovery == "article" else None,
+        ) as warmed,
+        mock.patch.object(
+            fetcher,
+            "_payload_from_page_fetch_url",
+            return_value=payload if recovery == "fetch" else None,
+        ) as fetched,
+        mock.patch.object(
+            fetcher, "_wait_for_primary_image", return_value=None
+        ) as poll,
+    ):
+        page.goto.return_value = (
+            _BrowserResponse(url, body, "image/png")
+            if recovery == "navigation"
+            else None
+        )
+        result = fetcher._fetch_with_page(url, require_target_match=True)
+    assert (result is not None) == (recovery != "failed")
+    if result:
+        assert result["body"] == body
+    context.request.get.assert_called_once()
+    assert context.request.get.call_args.kwargs["headers"]["Referer"] == referer
+    assert 0 < context.request.get.call_args.kwargs["timeout"] <= 10000
+    assert warmed.call_count == int(recovery != "context")
+    assert fetched.call_count == int(recovery not in {"context", "article"})
+    assert poll.call_count == int(recovery == "failed")
+    assert page.goto.call_count == int(recovery in {"navigation", "failed"})

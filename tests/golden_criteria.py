@@ -34,6 +34,16 @@ def golden_criteria_dir_for_doi(doi: str) -> Path:
 
 
 def golden_criteria_asset(doi: str, filename: str) -> Path:
+    # The manifest selects the canonical entity even when a historical file
+    # with the same logical name remains beside it.
+    for sample in golden_criteria_manifest()["samples"].values():
+        if (
+            sample.get("fixture_family") == "golden"
+            and str(sample["doi"]).casefold() == doi.casefold()
+        ):
+            target = sample["assets"].get(filename)
+            if target:
+                return REPO_ROOT / target
     return golden_criteria_dir_for_doi(doi) / filename
 
 
@@ -92,3 +102,12 @@ def iter_manifest_samples(
     return tuple(
         sample for sample in samples if sample.get("fixture_family") == fixture_family
     )
+
+
+def source_selections() -> list[dict[str, Any]]:
+    """Current capture selection and identity scope, owned by the manifest."""
+    return [
+        sample["source_selection"]
+        for sample in golden_criteria_manifest()["samples"].values()
+        if "source_selection" in sample
+    ]

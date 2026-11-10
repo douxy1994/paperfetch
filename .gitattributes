@@ -12,10 +12,20 @@
 
 # Golden corpus PDFs are immutable binary replay inputs.
 *.pdf binary
+*.dll binary
+
+# Preserve the byte-for-byte upstream release license covered by its pin.
+installer/vendor/uninsis/LICENSE binary
 
 # Native Windows launchers use Windows line endings.
 *.bat text eol=crlf
 *.cmd text eol=crlf
 *.ps1 text eol=crlf
 
-tests/fixtures/golden_criteria/*/original.html whitespace=-blank-at-eol
+# Captured source bytes (including publisher whitespace) are hash-verified.
+tests/fixtures/**/*.html -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/**/*.xml -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+tests/fixtures/**/acquisition/** -text whitespace=-blank-at-eol,-blank-at-eof,-space-before-tab
+
+# Historical test output retains the original warning whitespace and line endings.
+docs/test-layer-results/*.log -text whitespace=-blank-at-eol,-blank-at-eof

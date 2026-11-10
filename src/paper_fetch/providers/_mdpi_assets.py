@@ -19,7 +19,8 @@ from ..models.markdown import (
     image_references_match,
     iter_markdown_images,
 )
-from ..utils import normalize_text
+from ..mdpi_url import is_mdpi_url
+from ..utils import extend_unique, normalize_text
 from ._mdpi_dom import (
     MDPI_NOISE_PROFILE,
     MDPI_SUPPLEMENTARY_TEXT_TOKENS,
@@ -32,12 +33,6 @@ _SUPPLEMENTARY_SELECTORS = (
     "div[id*='supplement']",
     "section[id^='app']",
 )
-
-
-def _append_unique(values: list[str], candidate: str | None) -> None:
-    normalized = normalize_text(candidate)
-    if normalized and normalized not in values:
-        values.append(normalized)
 
 
 def mark_inline_assets(markdown_text: str, assets: list[Any], source: str) -> None:
@@ -90,7 +85,7 @@ def extract_pdf_urls(html_text: str, source_url: str | None = None) -> list[str]
         for node in soup.select(selector):
             value = normalize_text(str(node.get(attr) or ""))
             if value:
-                _append_unique(urls, urllib.parse.urljoin(source_url or "", value))
+                extend_unique(urls, [urllib.parse.urljoin(source_url or "", value)])
     return urls
 
 
@@ -99,8 +94,7 @@ def mdpi_pdf_url_from_landing_url(url: str | None) -> str | None:
     if not candidate:
         return None
     parsed = urllib.parse.urlparse(candidate)
-    host = normalize_text(parsed.hostname or "").lower()
-    if host not in {"www.mdpi.com", "mdpi.com"}:
+    if not is_mdpi_url(candidate):
         return None
     path = parsed.path.rstrip("/")
     if not path:
@@ -161,11 +155,70 @@ def extract_scoped_html_assets(
         supplementary_html_text=supplementary_html,
         noise_profile=MDPI_NOISE_PROFILE,
     )
+    _bind_explicit_cdn_download_urls(html_text, assets)
     if asset_profile == "all":
         assets.extend(
             _extract_mdpi_supplementary_assets(supplementary_html, source_url)
         )
-    return _dedupe_assets(assets)
+    assets = _dedupe_assets(assets)
+    if asset_profile == "all":
+        _bind_supplementary_modal_links(html_text, source_url, assets)
+    return assets
+
+
+def _bind_supplementary_modal_links(
+    html_text: str, source_url: str, assets: list[dict[str, str]]
+) -> None:
+    """Retain the explicit versioned modal link for a DOI-form attachment."""
+    soup = BeautifulSoup(html_text, choose_parser())
+    article = urllib.parse.urlsplit(source_url)
+    for asset in assets:
+        if asset.get("kind") != "supplementary":
+            continue
+        target = urllib.parse.urlsplit(asset.get("url") or "")
+        suffix = target.path.rsplit("/", 1)[-1]
+        if not re.fullmatch(r"s[0-9]+", suffix):
+            continue
+        candidates = []
+        for anchor in soup.select("#supplementaryModal a[href]"):
+            href = str(anchor.get("href") or "")
+            candidate = urllib.parse.urlsplit(urllib.parse.urljoin(source_url, href))
+            if (
+                candidate.netloc == article.netloc
+                and candidate.path == article.path.rstrip("/") + "/" + suffix
+            ):
+                candidates.append(href)
+        if len(set(candidates)) == 1:
+            asset["source_href"] = candidates[0]
+            asset["source_page_url"] = source_url
+
+
+def _bind_explicit_cdn_download_urls(
+    html_text: str, assets: list[dict[str, str]]
+) -> None:
+    """Bind relative body images to same-path CDN links in the figure gallery.
+
+    Keep the body URL for inline matching. Only URLs actually present in this
+    article are candidates; do not invent a CDN host or strip its query string.
+    """
+    soup = BeautifulSoup(html_text, choose_parser())
+    by_path: dict[str, str] = {}
+    for node in soup.select("a[href], img[src]"):
+        value = normalize_text(str(node.get("href") or node.get("src") or ""))
+        parsed = urllib.parse.urlparse(value)
+        if (
+            parsed.scheme == "https"
+            and parsed.hostname == "pub.mdpi-res.com"
+            and "/article_deploy/html/images/" in parsed.path
+        ):
+            by_path.setdefault(parsed.path, value)
+    for asset in assets:
+        original = asset.get("full_size_url") or asset.get("url") or ""
+        if not is_mdpi_url(original):
+            continue
+        candidate = by_path.get(urllib.parse.urlparse(original).path)
+        if candidate:
+            asset.setdefault("download_url", candidate)
 
 
 def _extract_mdpi_supplementary_assets(
@@ -196,6 +249,8 @@ def _extract_mdpi_supplementary_assets(
                 "caption": context,
                 "section": "supplementary",
                 "url": urllib.parse.urljoin(source_url, href),
+                "source_href": href,
+                "source_page_url": source_url,
             }
         )
     return assets

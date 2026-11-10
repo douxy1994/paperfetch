@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ...browser_runtime.navigation import context_get
+
 from typing import Any
 from collections.abc import Callable, Mapping
 
@@ -11,9 +13,10 @@ from ....extraction.html.shared import (
     html_title_snippet as _html_title_snippet,
 )
 from ....runtime import RuntimeContext
-from ...browser_runtime.types import BrowserRuntimeConfig
 from ....utils import normalize_text
+from .click import fetch_file_with_page_click
 from .context import (
+    BrowserDocumentFetcherOptions,
     _BaseBrowserDocumentFetcher,
     _ThreadLocalSharedDocumentFetcher,
     _browser_response_headers,
@@ -31,12 +34,11 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
         headless: bool = True,
         runtime_context: RuntimeContext | None = None,
         use_runtime_shared_browser: bool = True,
-        binary_path: str | None = None,
-        cdp_endpoint: str | None = None,
-        profile_dir: Any = None,
-        user_data_dir: Any = None,
-        browser_config: BrowserRuntimeConfig | None = None,
+        browser_options: BrowserDocumentFetcherOptions | None = None,
     ) -> None:
+        self._file_fetch_mode = (
+            browser_options or BrowserDocumentFetcherOptions()
+        ).file_fetch_mode
         super().__init__(
             browser_context_seed_getter=browser_context_seed_getter,
             seed_urls_getter=seed_urls_getter,
@@ -44,11 +46,7 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
             headless=headless,
             runtime_context=runtime_context,
             use_runtime_shared_browser=use_runtime_shared_browser,
-            binary_path=binary_path,
-            cdp_endpoint=cdp_endpoint,
-            profile_dir=profile_dir,
-            user_data_dir=user_data_dir,
-            browser_config=browser_config,
+            browser_options=browser_options,
         )
 
     def __call__(
@@ -61,17 +59,10 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
             return None
 
         self._sync_context_cookies()
+        if self._file_fetch_mode == "page_click":
+            return fetch_file_with_page_click(self, normalized_url, asset)
         self._warm_seed_urls(force=False)
-        for attempt in range(3):
-            result = self._fetch_with_context_request(normalized_url, asset)
-            if result is not None:
-                return result
-            if attempt == 0:
-                self._sync_context_cookies()
-                self._warm_seed_urls(force=True)
-                continue
-            break
-        return None
+        return self._fetch_with_context_request(normalized_url, asset)
 
     def _record_response_failure(
         self,
@@ -111,7 +102,8 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
         if referer_url:
             request_headers["Referer"] = referer_url
         try:
-            response = self._context.request.get(
+            response = context_get(
+                self._context,
                 file_url,
                 headers=request_headers,
                 timeout=60000,
@@ -125,7 +117,7 @@ class _SharedBrowserFileDocumentFetcher(_BaseBrowserDocumentFetcher):
 
         headers = _browser_response_headers(response)
         content_type = headers.get("content-type", "")
-        final_url = normalize_text(getattr(response, "url", "") or "") or file_url
+        final_url = normalize_text(str(getattr(response, "url", "") or "")) or file_url
         status = _browser_response_status(response)
         try:
             body = response.body()
@@ -169,15 +161,9 @@ class _ThreadLocalSharedBrowserFileDocumentFetcher(_ThreadLocalSharedDocumentFet
         headless: bool = True,
         runtime_context: RuntimeContext | None = None,
         use_runtime_shared_browser: bool = True,
-        binary_path: str | None = None,
-        cdp_endpoint: str | None = None,
-        profile_dir: Any = None,
-        user_data_dir: Any = None,
-        browser_config: BrowserRuntimeConfig | None = None,
+        browser_options: BrowserDocumentFetcherOptions | None = None,
     ) -> None:
-        requires_caller_thread = (
-            runtime_context is not None and use_runtime_shared_browser
-        )
+        requires_caller_thread = True
         super().__init__(
             log_event="browser_workflow_file_fetcher_thread_created",
             requires_caller_thread=requires_caller_thread,
@@ -189,11 +175,7 @@ class _ThreadLocalSharedBrowserFileDocumentFetcher(_ThreadLocalSharedDocumentFet
                 headless=headless,
                 runtime_context=runtime_context,
                 use_runtime_shared_browser=use_runtime_shared_browser,
-                binary_path=binary_path,
-                cdp_endpoint=cdp_endpoint,
-                profile_dir=profile_dir,
-                user_data_dir=user_data_dir,
-                browser_config=browser_config,
+                browser_options=browser_options,
             ),
         )
 
@@ -206,12 +188,8 @@ def _build_shared_browser_file_fetcher(
     headless: bool = True,
     runtime_context: RuntimeContext | None = None,
     use_runtime_shared_browser: bool = True,
-    binary_path: str | None = None,
-    cdp_endpoint: str | None = None,
-    profile_dir: Any = None,
-    user_data_dir: Any = None,
     thread_local: bool = False,
-    browser_config: BrowserRuntimeConfig | None = None,
+    browser_options: BrowserDocumentFetcherOptions | None = None,
 ) -> _ThreadLocalSharedBrowserFileDocumentFetcher | _SharedBrowserFileDocumentFetcher:
     fetcher_cls: (
         type[_ThreadLocalSharedBrowserFileDocumentFetcher]
@@ -229,9 +207,5 @@ def _build_shared_browser_file_fetcher(
         headless=headless,
         runtime_context=runtime_context,
         use_runtime_shared_browser=use_runtime_shared_browser,
-        binary_path=binary_path,
-        cdp_endpoint=cdp_endpoint,
-        profile_dir=profile_dir,
-        user_data_dir=user_data_dir,
-        browser_config=browser_config,
+        browser_options=browser_options,
     )

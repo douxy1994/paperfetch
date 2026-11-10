@@ -1,7 +1,6 @@
-# ruff: noqa: F403,F405
 from __future__ import annotations
-
-from ._service_support import *
+from tests.support._service_support import *
+# ruff: noqa: F403,F405
 
 
 class ServiceOfficialPipelineTests(unittest.TestCase):
@@ -22,7 +21,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
             article = fetch_paper_model(
                 "10.1016/test",
                 clients={
-                    "elsevier": StubProvider(
+                    "elsevier": FixtureProvider(
                         metadata={
                             "provider": "elsevier",
                             "official_provider": True,
@@ -37,13 +36,10 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                             source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                             content_type="text/xml",
                             body=b"<xml/>",
-                            metadata={
-                                "reason": "Downloaded full text from the official Elsevier API."
-                            },
                         ),
                         article=official_article,
                     ),
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -86,7 +82,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
             fetch_paper_model(
                 "10.1016/test",
                 clients={
-                    "elsevier": StubProvider(
+                    "elsevier": FixtureProvider(
                         metadata={
                             "provider": "elsevier",
                             "official_provider": True,
@@ -101,13 +97,10 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                             source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                             content_type="text/xml",
                             body=b"<xml/>",
-                            metadata={
-                                "reason": "Downloaded full text from the official Elsevier API."
-                            },
                         ),
                         article=official_article,
                     ),
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -175,7 +168,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
             article = fetch_paper_model(
                 resolved.query,
                 clients={
-                    "elsevier": StubProvider(
+                    "elsevier": FixtureProvider(
                         metadata={
                             "provider": "elsevier",
                             "official_provider": True,
@@ -190,13 +183,10 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                             source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                             content_type="text/xml",
                             body=b"<xml/>",
-                            metadata={
-                                "reason": "Downloaded full text from the official Elsevier API."
-                            },
                         ),
                         article=official_article,
                     ),
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -230,7 +220,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
             provider_identifiers={"pii": "S0959378017300134"},
         )
 
-        class PiiAwareProvider(StubProvider):
+        class PiiAwareProvider(FixtureProvider):
             def __init__(self):
                 super().__init__(
                     raw_payload=RawFulltextPayload(
@@ -238,9 +228,6 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                         source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                         content_type="text/xml",
                         body=b"<xml/>",
-                        metadata={
-                            "reason": "Downloaded full text from the official Elsevier API."
-                        },
                     ),
                     article=sample_article(),
                 )
@@ -326,7 +313,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                     asset_profile="all",
                     output_dir=Path(tmpdir),
                     clients={
-                        "elsevier": StubProvider(
+                        "elsevier": FixtureProvider(
                             metadata={
                                 "provider": "elsevier",
                                 "official_provider": True,
@@ -340,7 +327,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                             article=official_article,
                             related_asset_factory=write_related_assets,
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -400,7 +387,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                     asset_profile="all",
                     output_dir=Path(tmpdir),
                     clients={
-                        "elsevier": StubProvider(
+                        "elsevier": FixtureProvider(
                             metadata={
                                 "provider": "elsevier",
                                 "official_provider": True,
@@ -415,14 +402,11 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                                 source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                                 content_type="text/xml",
                                 body=b"<xml/>",
-                                metadata={
-                                    "reason": "Downloaded full text from the official Elsevier API."
-                                },
                             ),
                             article=official_article,
                             related_asset_factory=write_related_assets,
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -470,7 +454,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                     asset_profile="none",
                     output_dir=Path(tmpdir),
                     clients={
-                        "elsevier": StubProvider(
+                        "elsevier": FixtureProvider(
                             metadata={
                                 "provider": "elsevier",
                                 "official_provider": True,
@@ -485,14 +469,11 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                                 source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                                 content_type="text/xml",
                                 body=b"<xml/>",
-                                metadata={
-                                    "reason": "Downloaded full text from the official Elsevier API."
-                                },
                             ),
                             article=official_article,
                             related_asset_factory=write_related_assets,
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -534,7 +515,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                     asset_profile="all",
                     output_dir=Path(tmpdir),
                     clients={
-                        "elsevier": StubProvider(
+                        "elsevier": FixtureProvider(
                             metadata={
                                 "provider": "elsevier",
                                 "official_provider": True,
@@ -549,16 +530,13 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                                 source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                                 content_type="text/xml",
                                 body=b"<xml/>",
-                                metadata={
-                                    "reason": "Downloaded full text from the official Elsevier API."
-                                },
                             ),
                             article=sample_article(),
                             related_asset_error=RequestFailure(
                                 503, "HTTP 503 for https://example.test/asset"
                             ),
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -601,7 +579,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                     asset_profile="all",
                     output_dir=Path(tmpdir),
                     clients={
-                        "elsevier": StubProvider(
+                        "elsevier": FixtureProvider(
                             metadata={
                                 "provider": "elsevier",
                                 "official_provider": True,
@@ -616,14 +594,11 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                                 source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                                 content_type="text/xml",
                                 body=b"<xml/>",
-                                metadata={
-                                    "reason": "Downloaded full text from the official Elsevier API."
-                                },
                             ),
                             article=sample_article(),
                             related_asset_error=OSError("disk full"),
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -667,7 +642,7 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                         asset_profile="all",
                         output_dir=Path(tmpdir),
                         clients={
-                            "elsevier": StubProvider(
+                            "elsevier": FixtureProvider(
                                 metadata={
                                     "provider": "elsevier",
                                     "official_provider": True,
@@ -682,16 +657,13 @@ class ServiceOfficialPipelineTests(unittest.TestCase):
                                     source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
                                     content_type="text/xml",
                                     body=b"<xml/>",
-                                    metadata={
-                                        "reason": "Downloaded full text from the official Elsevier API."
-                                    },
                                 ),
                                 article=sample_article(),
                                 related_asset_error=AttributeError(
                                     "buggy asset pipeline"
                                 ),
                             ),
-                            "crossref": StubProvider(
+                            "crossref": FixtureProvider(
                                 metadata={
                                     "provider": "crossref",
                                     "official_provider": False,

@@ -9,9 +9,17 @@ from urllib.parse import quote, unquote, urljoin, urlparse
 
 from bs4 import BeautifulSoup, Tag
 
-from ..extraction.html._metadata import parse_html_metadata
+from ..extraction.html._metadata import parse_html_metadata, raw_html_meta_values
+from ..extraction.html.asset_fields import MARKDOWN_ASSET_REFERENCE_FIELDS
 from ..extraction.html.assets import extract_figure_assets
-from ..extraction.html.formula_rules import is_tex_formula_script_node
+from ..extraction.html.formula_rules import (
+    is_display_formula_node,
+    is_tex_formula_script_node,
+)
+from ..extraction.markdown_render.formulas import (
+    html_formula_latex_from_node,
+    render_inline_latex_markdown,
+)
 from ..extraction.html.parsing import choose_parser
 from ..extraction.html.provider_rules import COMMON_ACCESS_BLOCK_TOKENS
 from ..extraction.html.signals import HtmlExtractionFailure
@@ -20,9 +28,10 @@ from ..models.markdown import (
     image_references_match,
     iter_markdown_images,
 )
+from ..provider_catalog import host_matches_domain
 from ..publisher_identity import normalize_doi
 from ..quality.html_signals import TextMarkerRule, TextMarkerSignalSet
-from ..utils import normalize_text
+from ..utils import extend_unique, normalize_text
 from ._html_references import (
     extract_numbered_references_from_soup,
 )
@@ -100,15 +109,17 @@ IOP_EXTRACTION_CLEANUP_SELECTORS = (
     ".access-widget",
     ".iopscience-nav",
     ".js-article-toolbar",
+    ".fig-dwnld-std-img",
+    ".fig-dwnld-hi-img",
 )
-IOP_FORMULA_CONTAINER_TOKENS = ("display-eqn", "inline-eqn", "tex")
-IOP_DISPLAY_FORMULA_SELECTORS = (".display-eqn",)
+# inline-eqn / display-eqn and the display selector are shared defaults.
+IOP_FORMULA_CONTAINER_TOKENS = ("tex",)
 IOP_ACCEPTED_FIGURE_PREVIEW_URL_TOKENS = ("_online.",)
 IOP_HIGH_RESOLUTION_FIGURE_URL_PATTERN = re.compile(
     r"(?P<stem>.+)_(?:lr|online)(?P<suffix>\.(?:jpe?g|png|gif|webp))(?:[?#].*)?$",
     re.IGNORECASE,
 )
-IOP_SUPPLEMENTARY_ATTACHMENT_ID_PATTERN = re.compile(r"^SM\d+$", re.IGNORECASE)
+IOP_SUPPLEMENTARY_ATTACHMENT_ID_PATTERN = re.compile(r"^(?:SM|supp)\d+$", re.IGNORECASE)
 # SITE_UI_COPY_REGRESSION_MARKER: IOPScience article action labels; keep tied to provider cleanup tests.
 # STRUCTURAL_UI_COPY_HOOK: provider cleanup policy removes these only from IOP article chrome.
 IOP_MARKDOWN_PROMO_TOKENS = (
@@ -190,9 +201,8 @@ IOP_HOSTS = {"iopscience.iop.org"}
 
 
 def is_iop_url(value: str | None) -> bool:
-    parsed = urlparse(normalize_text(value))
-    host = normalize_text(parsed.hostname or "").lower()
-    return host in IOP_HOSTS or any(host.endswith(f".{known}") for known in IOP_HOSTS)
+    hostname = urlparse(normalize_text(value)).hostname
+    return any(host_matches_domain(hostname, known) for known in IOP_HOSTS)
 
 
 def direct_article_url(doi: str) -> str:
@@ -213,28 +223,6 @@ def iop_pdf_url_from_article_url(url: str | None) -> str | None:
     if not path.startswith("/article/") or path.endswith("/pdf"):
         return None
     return f"{parsed.scheme or 'https'}://{parsed.netloc}{path.rstrip('/')}/pdf"
-
-
-def _raw_meta_values(metadata: Mapping[str, Any], key: str) -> list[str]:
-    raw_meta = metadata.get("raw_meta")
-    if not isinstance(raw_meta, Mapping):
-        return []
-    values = raw_meta.get(key) or raw_meta.get(key.lower()) or []
-    if isinstance(values, str):
-        values = [values]
-    if not isinstance(values, list):
-        return []
-    return [
-        normalize_text(str(item or ""))
-        for item in values
-        if normalize_text(str(item or ""))
-    ]
-
-
-def _append_unique(values: list[str], candidate: str | None) -> None:
-    normalized = normalize_text(candidate)
-    if normalized and normalized not in values:
-        values.append(normalized)
 
 
 def extract_pdf_candidate_urls_from_html(
@@ -263,7 +251,7 @@ def _extract_pdf_candidate_urls_from_soup(
                 continue
             if selector.startswith("a") and "pdf" not in value.lower():
                 continue
-            _append_unique(candidates, urljoin(source_url, value))
+            extend_unique(candidates, [urljoin(source_url, value)])
     return candidates
 
 
@@ -278,9 +266,9 @@ def pdf_candidate_urls(
     base_url = normalize_text(source_url) or normalize_text(
         str(metadata.get("landing_page_url") or "")
     )
-    for value in _raw_meta_values(metadata, "citation_pdf_url"):
-        _append_unique(
-            candidates, urljoin(base_url or direct_article_url(doi or ""), value)
+    for value in raw_html_meta_values(metadata, "citation_pdf_url"):
+        extend_unique(
+            candidates, [urljoin(base_url or direct_article_url(doi or ""), value)]
         )
     for item in metadata.get("fulltext_links") or ():
         if not isinstance(item, Mapping):
@@ -288,15 +276,20 @@ def pdf_candidate_urls(
         url = normalize_text(str(item.get("url") or ""))
         content_type = normalize_text(str(item.get("content_type") or "")).lower()
         if url and ("pdf" in content_type or url.rstrip("/").endswith("/pdf")):
-            _append_unique(candidates, urljoin(base_url, url))
-    _append_unique(candidates, normalize_text(str(metadata.get("pdf_url") or "")))
-    _append_unique(candidates, iop_pdf_url_from_article_url(base_url))
+            extend_unique(candidates, [urljoin(base_url, url)])
+    metadata_pdf_url = normalize_text(str(metadata.get("pdf_url") or ""))
+    if metadata_pdf_url:
+        extend_unique(candidates, [metadata_pdf_url])
+    article_pdf_url = iop_pdf_url_from_article_url(base_url)
+    if article_pdf_url:
+        extend_unique(candidates, [article_pdf_url])
     if html_text:
-        for candidate in extract_pdf_candidate_urls_from_html(html_text, base_url):
-            _append_unique(candidates, candidate)
+        extend_unique(
+            candidates, extract_pdf_candidate_urls_from_html(html_text, base_url)
+        )
     normalized_doi = normalize_doi(str(doi or metadata.get("doi") or ""))
     if normalized_doi:
-        _append_unique(candidates, direct_pdf_url(normalized_doi))
+        extend_unique(candidates, [direct_pdf_url(normalized_doi)])
     return candidates
 
 
@@ -355,7 +348,15 @@ def _extract_references_from_soup(soup: BeautifulSoup) -> list[dict[str, str | N
     if parsed:
         return parsed
 
-    return []
+    # Generic HTML metadata drops empty values. Keep publisher slots here so
+    # an empty citation_reference does not shift subsequent numbered callouts.
+    values = [
+        str(node.get("content") or "")
+        for node in soup.select("meta[name='citation_reference']")
+    ]
+    return _extract_references_from_metadata(
+        {"raw_meta": {"citation_reference": values}}
+    )
 
 
 def _extract_references_from_metadata(
@@ -368,13 +369,13 @@ def _extract_references_from_metadata(
     if isinstance(raw_meta, Mapping):
         raw_values = raw_meta.get("citation_reference") or []
         values = raw_values if isinstance(raw_values, list) else [raw_values]
-    for value in values:
+    for index, value in enumerate(values, 1):
         reference = _parse_citation_reference_meta(value)
         raw = normalize_text(reference.get("raw"))
         if not raw or raw in seen:
             continue
         seen.add(raw)
-        reference["label"] = f"{len(parsed) + 1}."
+        reference["label"] = f"{index}."
         parsed.append(reference)
     return parsed
 
@@ -393,6 +394,11 @@ def _parse_citation_reference_meta(value: Any) -> dict[str, str | None]:
     authors = fields.get("citation_author") or []
     title = normalize_text((fields.get("citation_title") or [""])[0])
     journal = normalize_text((fields.get("citation_journal_title") or [""])[0])
+    publisher = normalize_text((fields.get("citation_publisher") or [""])[0])
+    conference = normalize_text((fields.get("citation_conference_title") or [""])[0])
+    institution = normalize_text(
+        (fields.get("citation_dissertation_institution") or [""])[0]
+    )
     year = normalize_text((fields.get("citation_publication_date") or [""])[0])
     volume = normalize_text((fields.get("citation_volume") or [""])[0])
     first_page = normalize_text((fields.get("citation_firstpage") or [""])[0])
@@ -404,6 +410,9 @@ def _parse_citation_reference_meta(value: Any) -> dict[str, str | None]:
         year,
         title,
         journal,
+        publisher,
+        conference,
+        institution,
         volume,
         pages,
         f"doi:{doi}" if doi else "",
@@ -416,12 +425,8 @@ def _parse_citation_reference_meta(value: Any) -> dict[str, str | None]:
     }
 
 
-def extract_figure_captions(html_text: str) -> list[str]:
-    soup = BeautifulSoup(html_text, choose_parser())
-    return _extract_figure_captions_from_soup(soup)
-
-
 def _extract_figure_captions_from_soup(soup: BeautifulSoup) -> list[str]:
+    _remove_iop_figure_download_controls(soup)
     captions: list[str] = []
     for node in soup.select(
         "figure figcaption, .figure .caption, .article-figure .caption"
@@ -488,18 +493,7 @@ def _markdown_contains_asset_image(
     if not inline_candidates:
         return False
     asset_candidates: set[str] = set()
-    for field in (
-        "path",
-        "url",
-        "original_url",
-        "download_url",
-        "source_url",
-        "source_path",
-        "source_href",
-        "preview_url",
-        "full_size_url",
-        "link",
-    ):
+    for field in MARKDOWN_ASSET_REFERENCE_FIELDS:
         asset_candidates |= image_reference_candidates(str(asset.get(field) or ""))
     return bool(
         asset_candidates
@@ -518,7 +512,16 @@ def _append_missing_figure_captions(
     missing = [
         caption
         for caption in captions
-        if caption and not _markdown_contains_caption(markdown_text, caption)
+        if caption
+        and not _markdown_contains_caption(markdown_text, caption)
+        and not (
+            (label := re.match(r"^(?:Figure|Fig\.?)\s+(\d+[a-z]?)", caption, re.I))
+            and re.search(
+                r"\*\*(?:Figure|Fig\.?)\s+" + re.escape(label[1]) + r"[.\s]",
+                markdown_text,
+                re.I,
+            )
+        )
     ]
     if not missing:
         return markdown_text
@@ -638,8 +641,9 @@ def extract_markdown(
         finalized["references"] = references
         markdown_text = _append_references_markdown(markdown_text, references)
     pdf_candidates = pdf_candidate_urls(metadata or {}, source_url=source_url)
-    for candidate in _extract_pdf_candidate_urls_from_soup(soup, source_url):
-        _append_unique(pdf_candidates, candidate)
+    extend_unique(
+        pdf_candidates, _extract_pdf_candidate_urls_from_soup(soup, source_url)
+    )
     if pdf_candidates:
         finalized["pdf_candidates"] = pdf_candidates
     return markdown_text, finalized
@@ -675,7 +679,10 @@ def _node_class_tokens(node: Any) -> set[str]:
 def _is_iop_latex_formula_container(node: Any) -> bool:
     if not isinstance(node, Tag):
         return False
-    if not (_node_class_tokens(node) & set(IOP_FORMULA_CONTAINER_TOKENS)):
+    if not (
+        _node_class_tokens(node)
+        & {"display-eqn", "inline-eqn", *IOP_FORMULA_CONTAINER_TOKENS}
+    ):
         return False
     return node.find(_is_iop_formula_script) is not None
 
@@ -859,7 +866,7 @@ def extract_supplementary_data_assets(
     *,
     expected_doi: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Extract real `SM####` attachments from an IOP supplementary data page."""
+    """Extract real `SM####` / `supp####` attachments from an IOP supplementary data page."""
 
     soup = BeautifulSoup(html_text, choose_parser())
     scope = soup.select_one("#supplementarydata")
@@ -927,6 +934,7 @@ def extract_supplementary_data_assets(
             "section": "supplementary",
             "url": attachment_url,
             "source_ref": source_ref,
+            "source_href": href,
             "source_kind": "iop_supplementary_data_page",
             "source_page_url": source_url,
             "referer_url": source_url,
@@ -939,7 +947,7 @@ def extract_supplementary_data_assets(
     if not assets:
         raise HtmlExtractionFailure(
             "iop_supplementary_index_empty",
-            "IOP supplementary data index declared no SM-numbered attachments.",
+            "IOP supplementary data index declared no SM- or supp-numbered attachments.",
         )
     return assets
 
@@ -1015,9 +1023,25 @@ def refine_selected_container(node: Tag, **_kwargs: Any) -> Tag:
     return _complete_iop_article_container(body) or body
 
 
+def _remove_iop_figure_download_controls(container: Tag) -> None:
+    for caption in container.select(
+        "figure figcaption, .figure .caption, .article-figure .caption"
+    ):
+        for node in list(caption.select(".print-hide")):
+            if node.parent is None:
+                continue
+            if (
+                normalize_text(node.get_text(" ", strip=True)).casefold()
+                == "download figure:"
+                or node.select_one(".fig-dwnld-std-img, .fig-dwnld-hi-img") is not None
+            ):
+                node.decompose()
+
+
 def _remove_iop_article_chrome(container: Any) -> None:
     if not isinstance(container, Tag):
         return
+    _remove_iop_figure_download_controls(container)
     for selector in IOP_EXTRACTION_CLEANUP_SELECTORS:
         try:
             nodes = list(container.select(selector))
@@ -1032,6 +1056,30 @@ def _remove_iop_article_chrome(container: Any) -> None:
 
 def _is_iop_formula_script(node: Any) -> bool:
     return is_tex_formula_script_node(node)
+
+
+def iop_before_inline_formula_normalization(container: Tag) -> None:
+    from .atypon_browser_workflow.profile import _dedupe_top_level_nodes
+    from .atypon_browser_workflow.formulas import _raw_markdown_node
+
+    nodes = _dedupe_top_level_nodes(
+        [node for node in container.select(".inline-eqn") if isinstance(node, Tag)]
+    )
+    for node in nodes:
+        if not isinstance(node, Tag) or node.parent is None:
+            continue
+        if is_display_formula_node(node) or "display-eqn" in _node_class_tokens(node):
+            continue
+        latex = ""
+        for script in node.find_all("script"):
+            if not isinstance(script, Tag) or not is_tex_formula_script_node(script):
+                continue
+            latex = html_formula_latex_from_node(script)
+            if latex:
+                break
+        markdown = render_inline_latex_markdown(latex)
+        if markdown:
+            node.replace_with(_raw_markdown_node(node, markdown))
 
 
 def iop_body_container(container: Any) -> None:
@@ -1049,7 +1097,6 @@ def iop_asset_figure_extraction(container: Any) -> None:
 
 __all__ = [
     "IOP_ACCESS_BLOCK_TEXT_TOKENS",
-    "IOP_DISPLAY_FORMULA_SELECTORS",
     "IOP_EXTRACTION_CLEANUP_SELECTORS",
     "IOP_FORMULA_CONTAINER_TOKENS",
     "IOP_FRONT_MATTER_CONTAINS_TOKENS",
@@ -1064,7 +1111,6 @@ __all__ = [
     "direct_article_url",
     "direct_pdf_url",
     "extract_authors",
-    "extract_figure_captions",
     "extract_markdown",
     "extract_pdf_candidate_urls_from_html",
     "extract_references",

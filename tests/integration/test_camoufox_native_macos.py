@@ -3,14 +3,13 @@ from __future__ import annotations
 import json
 import os
 import platform
+import time
 from pathlib import Path
 
 import pytest
-from browserforge.fingerprints import Screen
 
 from paper_fetch.providers.browser_runtime.camoufox_manager import (
     CamoufoxBrowserManager,
-    CamoufoxPersistentContextManager,
 )
 
 
@@ -21,7 +20,7 @@ def _prepared_managed_install() -> tuple[Path, Path]:
     install_dir = Path.home() / "Library" / "Caches" / "camoufox"
     assert install_dir.is_absolute()
     assert not install_dir.is_symlink()
-    assert install_dir.is_dir(), "run `python -m camoufox fetch` first"
+    assert install_dir.is_dir(), "prepare managed Camoufox and fpgen model first"
 
     compat_flag = install_dir / ".0.5_FLAG"
     config_file = install_dir / "config.json"
@@ -31,6 +30,7 @@ def _prepared_managed_install() -> tuple[Path, Path]:
     assert browsers_dir.is_dir()
 
     config = json.loads(config_file.read_text(encoding="utf-8"))
+    assert config.get("channel") == "official/prerelease"
     active_version = config.get("active_version")
     assert isinstance(active_version, str) and active_version
     active_path = (install_dir / active_version).resolve(strict=True)
@@ -46,14 +46,15 @@ def test_prepared_official_camoufox_bundle_launches_both_context_modes(
 ) -> None:
     if os.environ.get(NATIVE_CAMOUFOX_TEST_ENV) != "1":
         pytest.skip(
-            f"set {NATIVE_CAMOUFOX_TEST_ENV}=1 after `python -m camoufox fetch`"
+            f"set {NATIVE_CAMOUFOX_TEST_ENV}=1 after preparing managed Camoufox and fpgen"
         )
     if platform.system() != "Darwin" or platform.machine() != "arm64":
         pytest.skip("native Camoufox bundle evidence requires Darwin arm64")
 
-    import camoufox.addons as camoufox_addons
+    import camoufox.fpgen_model as camoufox_fpgen_model
     import camoufox.sync_api as camoufox_sync_api
     from camoufox import DefaultAddons, multiversion, pkgman
+    from camoufox.fingerprints import Screen
 
     install_dir, expected_runtime_path = _prepared_managed_install()
     # Global pytest policy isolates XDG_CACHE_HOME. Point only this opt-in
@@ -68,6 +69,27 @@ def test_prepared_official_camoufox_bundle_launches_both_context_modes(
     )
     monkeypatch.setattr(multiversion, "COMPAT_FLAG", install_dir / ".0.5_FLAG")
 
+    # This gate proves the explicitly staged bundle, independent of new releases.
+    # Launch-time preparation still runs, with discovery limited to this asset.
+    version_data = json.loads((expected_runtime_path / "version.json").read_text())
+    assert pkgman.Version.from_path(expected_runtime_path).is_supported()
+    staged_version = pkgman.AvailableVersion(
+        version=pkgman.Version.from_path(expected_runtime_path),
+        url="https://example.invalid/staged-camoufox.zip",
+        is_prerelease=version_data.get("prerelease", False),
+        sha256=version_data.get("sha256"),
+    )
+    monkeypatch.setattr(
+        pkgman, "list_available_versions", lambda *_args, **_kwargs: [staged_version]
+    )
+    monkeypatch.setattr(
+        multiversion,
+        "install_versioned",
+        lambda *_args, **_kwargs: pytest.fail(
+            "native bundle test must reuse the staged runtime"
+        ),
+    )
+
     original_launch_options = camoufox_sync_api.launch_options
     test_screen = Screen(max_width=1920, max_height=1080)
 
@@ -78,18 +100,17 @@ def test_prepared_official_camoufox_bundle_launches_both_context_modes(
             **kwargs,
         )
 
-    def reject_addon_download(*_args, **_kwargs) -> None:
-        pytest.fail("native bundle test must not download Camoufox default addons")
-
     monkeypatch.setattr(
         camoufox_sync_api,
         "launch_options",
         offline_launch_options,
     )
     monkeypatch.setattr(
-        camoufox_addons,
-        "download_and_extract",
-        reject_addon_download,
+        camoufox_fpgen_model,
+        "_install",
+        lambda *_args, **_kwargs: pytest.fail(
+            "native bundle test must reuse the prepared fingerprint model"
+        ),
     )
 
     runtime_path = Path(pkgman.camoufox_path(download_if_missing=False))
@@ -112,13 +133,72 @@ def test_prepared_official_camoufox_bundle_launches_both_context_modes(
         browser_context.close()
         browser_manager.close()
 
-    persistent_manager = CamoufoxPersistentContextManager(
-        user_data_dir=str(tmp_path / "camoufox-profile"),
+    # The existing native bundle gate also proves the publisher profile owner,
+    # native OS-lock handling and cross-restart state, without JSON replay.
+    from paper_fetch.providers.browser_runtime.profile import PublisherProfileManager
+    from paper_fetch.providers.browser_runtime.types import BrowserRuntimeConfig
+
+    config = BrowserRuntimeConfig(
+        provider="pnas",
+        doi="offline-profile",
+        artifact_dir=tmp_path,
+        user_data_dir=tmp_path / "camoufox-profile",
         headless=True,
+        user_agent=None,
+        persist_storage_state=False,
     )
-    persistent_context = persistent_manager.new_context()
-    try:
-        page = persistent_context.new_page()
-        assert page.url == "about:blank"
-    finally:
-        persistent_manager.close()
+    for attempt in range(2):
+        persistent_manager = PublisherProfileManager(config)
+        persistent_context = persistent_manager.new_context()
+        try:
+            persistent_context.route(
+                "https://www.pnas.org/**",
+                lambda route: route.fulfill(
+                    body="<title>Offline native profile</title>"
+                ),
+            )
+            page = persistent_context.new_page()
+            page.goto("https://www.pnas.org/offline-profile")
+            if attempt == 0:
+                page.evaluate("localStorage.setItem('native-profile', 'persisted')")
+                persistent_context.add_cookies(
+                    [
+                        {
+                            "name": "native-profile",
+                            "value": "persisted",
+                            "domain": "www.pnas.org",
+                            "path": "/",
+                            "expires": time.time() + 3600,
+                        }
+                    ]
+                )
+            else:
+                assert (
+                    page.evaluate("localStorage.getItem('native-profile')")
+                    == "persisted"
+                )
+                assert any(
+                    cookie["name"] == "native-profile"
+                    for cookie in persistent_context.cookies()
+                )
+            page.close()
+        finally:
+            persistent_manager.close()
+    assert not (config.user_data_dir / "storage-state.json").exists()
+
+    # The offline wizard reuses the prepared runtime and fingerprint model,
+    # then verifies only about:blank without downloads or provider state.
+    from paper_fetch.offline_setup import Setup
+    from paper_fetch.providers.browser_runtime import preparation
+
+    monkeypatch.setattr(
+        preparation,
+        "prepare_camoufox_managed_runtime",
+        lambda: pytest.fail("optional wizard must reuse the valid native bundle"),
+    )
+    setup = Setup(tmp_path, tmp_path / "offline.env")
+    setup.browser(selected=True)
+    assert "Camoufox: ready" in setup.summary()
+    assert (
+        "Fingerprint model and real backend; local script verified" in setup.summary()
+    )

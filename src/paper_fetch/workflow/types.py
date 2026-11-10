@@ -4,14 +4,13 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
-from collections.abc import Iterator, Set as AbstractSet
 
 from ..failure import FailureDiagnostics
 from ..metadata.types import ProviderMetadata
 from ..models import AssetProfile
 from ..provider_catalog import (
-    default_asset_profile_for_provider,
     default_asset_profile_for_source,
+    effective_route_asset_scope,
     provider_names,
 )
 from ..reason_codes import ERROR
@@ -21,25 +20,6 @@ from ..utils import normalize_text
 
 def allowed_preferred_providers() -> frozenset[str]:
     return frozenset(provider_names())
-
-
-class _AllowedPreferredProviders(AbstractSet[str]):
-    def __contains__(self, value: object) -> bool:
-        return value in allowed_preferred_providers()
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(allowed_preferred_providers())
-
-    def __len__(self) -> int:
-        return len(allowed_preferred_providers())
-
-
-ALLOWED_PREFERRED_PROVIDERS: AbstractSet[str] = _AllowedPreferredProviders()
-
-
-def provider_default_asset_profile(provider_name: str | None) -> AssetProfile:
-    normalized = normalize_text(provider_name).lower()
-    return default_asset_profile_for_provider(normalized)
 
 
 def source_default_asset_profile(source_name: str | None) -> AssetProfile:
@@ -52,11 +32,16 @@ def effective_asset_profile(
     *,
     provider_name: str | None = None,
     source_name: str | None = None,
+    route_name: str | None = None,
 ) -> AssetProfile:
     if asset_profile is not None:
         return asset_profile
     if provider_name is not None:
-        return provider_default_asset_profile(provider_name)
+        return effective_route_asset_scope(
+            None,
+            provider_name=provider_name,
+            route_name=route_name,
+        )
     return source_default_asset_profile(source_name)
 
 
@@ -144,8 +129,12 @@ class FetchStrategy:
     allow_metadata_only_fallback: bool = True
     preferred_providers: list[str] | None = None
     asset_profile: AssetProfile | None = None
+    require_local_body_assets: bool = False
+    require_full_size_body_assets: bool = False
 
     def __post_init__(self) -> None:
+        if self.require_full_size_body_assets and not self.require_local_body_assets:
+            object.__setattr__(self, "require_local_body_assets", True)
         normalized = self.normalized_preferred_providers()
         if normalized is None:
             return

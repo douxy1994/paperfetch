@@ -2,27 +2,53 @@
 
 from __future__ import annotations
 
-import gzip
+import contextlib
 import io
+import math
+import os
 from pathlib import Path
-import tarfile
 from typing import Any
 from collections.abc import Mapping, Sequence
 import re
 import urllib.parse
-import zipfile
+import uuid
 
 from ..common_patterns import EXTENDED_DATA_FIGURE_LABEL
+from ..arxiv_id import arxiv_id_from_query, canonical_arxiv_abs_url
+from ..asset_budget import AssetBudget, AssetBudgetExceeded, AssetReservation
+from ..artifacts import ArtifactStore
 from ..config import resolve_asset_download_concurrency
 from ..extraction.image_payloads import (
     image_dimensions_from_bytes,
+    image_dimensions_from_path,
     image_mime_type_from_bytes,
+    payload_mime_type_from_path,
 )
 from ..extraction.html import assets as html_assets
-from ..http import DEFAULT_FULLTEXT_TIMEOUT_SECONDS, HttpTransport, RequestFailure
+from ..http import (
+    DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+    HttpRequestPolicy,
+    HttpStreamOptions,
+    HttpTransport,
+    RequestFailure,
+    provider_request_policy,
+)
+from ..runtime import RuntimeContext
 from ..markdown.images import render_markdown_image
-from ..utils import empty_asset_results, normalize_text, sanitize_filename, save_payload
+from ..models.markdown import iter_markdown_images
+from ..utils import empty_asset_results, normalize_text, sanitize_filename
 from ._arxiv_parsing import ARXIV_HTML_PARSER
+from ._arxiv_source_archive import (
+    _ARXIV_SOURCE_MAX_MEMBER_BYTES,
+    _ArxivSourceMember,
+    _cleanup_arxiv_source_members,
+    _extract_arxiv_source_figure_references,
+    _read_arxiv_source_files_from_path,
+    _read_bounded_stream,
+    _retain_arxiv_source_member as _retain_arxiv_source_member,
+    _safe_arxiv_source_member_name as _safe_arxiv_source_member_name,
+    _arxiv_source_url,
+)
 from ._asset_retry import AssetRetryPolicy, is_retryable_asset_failure
 from ._arxiv_html import Tag, BeautifulSoup
 from ._arxiv_references import _is_arxiv_inline_figure_container
@@ -38,24 +64,161 @@ ARXIV_IMAGE_ACCEPT = "image/avif,image/webp,image/*,*/*;q=0.8"
 ARXIV_SOURCE_ACCEPT = (
     "application/gzip,application/x-gzip,application/x-tar,application/zip,*/*;q=0.8"
 )
-_ARXIV_SOURCE_MAX_MEMBER_BYTES = 50 * 1024 * 1024
-_ARXIV_SOURCE_IMAGE_SUFFIXES = {
-    ".apng",
-    ".avif",
-    ".bmp",
-    ".gif",
-    ".heic",
-    ".heif",
-    ".ico",
-    ".jpeg",
-    ".jpg",
-    ".png",
-    ".svg",
-    ".tif",
-    ".tiff",
-    ".webp",
-}
-_ARXIV_SOURCE_GRAPHIC_SUFFIXES = (*sorted(_ARXIV_SOURCE_IMAGE_SUFFIXES), ".pdf")
+
+
+def _official_arxiv_ancillary_url(url: str) -> str:
+    """Normalize untrusted listing links before testing paper/version ownership."""
+    parsed = urllib.parse.urlsplit(url)
+    path = urllib.parse.unquote(parsed.path)
+    if (
+        parsed.scheme != "https"
+        or parsed.netloc.lower() != "arxiv.org"
+        or any(part in {".", "..", ""} for part in path.split("/")[1:])
+        or any(ord(char) < 32 or ord(char) == 127 for char in path)
+        or "\\" in path
+        or "%" in path
+    ):
+        return ""
+    return "https://arxiv.org" + urllib.parse.quote(path, safe="/-._~")
+
+
+def discover_arxiv_ancillary_assets(
+    transport: HttpTransport,
+    arxiv_id: str,
+    *,
+    user_agent: str,
+    context: RuntimeContext,
+) -> tuple[str, dict[str, list[dict[str, Any]]]]:
+    """Pin the abstract-page version and read its complete official file list."""
+    result = empty_asset_results()
+    page_url = canonical_arxiv_abs_url(arxiv_id)
+
+    def read_page(url: str) -> BeautifulSoup:
+        context.raise_if_cancelled()
+        response = transport.request(
+            "GET",
+            url,
+            headers={"Accept": "text/html", "User-Agent": user_agent},
+            timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+            request_policy=provider_request_policy("arxiv", "source_assets"),
+        )
+        final_url = urllib.parse.urljoin(url, str(response.get("url") or url))
+        if _official_arxiv_ancillary_url(final_url) != url:
+            raise ValueError(
+                "arXiv ancillary page redirected to a different identity or route."
+            )
+        if int(response.get("status") or 200) != 200:
+            raise ValueError("arXiv ancillary page did not return HTTP 200.")
+        return BeautifulSoup(bytes(response.get("body") or b""), ARXIV_HTML_PARSER)
+
+    try:
+        abstract = read_page(page_url)
+        identity = abstract.select_one('meta[name="citation_arxiv_id"]')
+        version_link = abstract.select_one(".arxividv a[href]")
+        observed = (
+            arxiv_id_from_query(str(identity.get("content") or "")) if identity else ""
+        )
+        version_url = (
+            _official_arxiv_ancillary_url(
+                urllib.parse.urljoin(page_url, str(version_link.get("href") or ""))
+            )
+            if version_link
+            else ""
+        )
+        version = arxiv_id_from_query(version_url)
+        if (
+            not abstract.select_one("#abs h1.title")
+            or not observed
+            or re.sub(r"v\d+$", "", observed) != re.sub(r"v\d+$", "", arxiv_id)
+            or not re.search(r"v\d+$", version)
+            or re.sub(r"v\d+$", "", version) != re.sub(r"v\d+$", "", arxiv_id)
+            or (re.search(r"v\d+$", arxiv_id) and version != arxiv_id)
+        ):
+            raise ValueError(
+                "arXiv abstract page identity/version could not be verified."
+            )
+        arxiv_id = version
+        ancillary = abstract.select_one(".ancillary")
+        if ancillary is None:
+            return arxiv_id, result
+        details_url = f"https://arxiv.org/src/{arxiv_id}/anc"
+        if not any(
+            _official_arxiv_ancillary_url(
+                urllib.parse.urljoin(page_url, str(link.get("href") or ""))
+            )
+            == details_url
+            for link in ancillary.select("a[href]")
+        ):
+            raise ValueError(
+                "arXiv Ancillary files section has no matching details link."
+            )
+        page_url = details_url
+        details = read_page(page_url)
+        heading = details.select_one("#content h2")
+        heading_link = heading.select_one("a[href]") if heading else None
+        if (
+            heading is None
+            or not heading.get_text(" ", strip=True).startswith("Ancillary files for ")
+            or heading_link is None
+            or _official_arxiv_ancillary_url(
+                urllib.parse.urljoin(page_url, str(heading_link.get("href") or ""))
+            )
+            != canonical_arxiv_abs_url(arxiv_id)
+        ):
+            raise ValueError(
+                "arXiv ancillary details identity/version could not be verified."
+            )
+        count = re.search(
+            r"There are (\d+) ancillary files", details.get_text(" ", strip=True)
+        )
+        prefix = details_url + "/"
+        seen: set[str] = set()
+        for link in details.select("#content a.anc-file-name[href]"):
+            href = str(link.get("href") or "")
+            # Reject traversal before urljoin can erase dot segments.
+            if any(
+                part in {".", ".."}
+                for part in urllib.parse.unquote(
+                    urllib.parse.urlsplit(href).path
+                ).split("/")
+            ):
+                continue
+            url = _official_arxiv_ancillary_url(urllib.parse.urljoin(page_url, href))
+            if not url.startswith(prefix) or url in seen:
+                continue
+            seen.add(url)
+            source_path = urllib.parse.unquote(url[len(prefix) :])
+            result["assets"].append(
+                {
+                    "kind": "supplementary",
+                    "section": "supplementary",
+                    "heading": normalize_text(link.get_text(" ", strip=True))
+                    or source_path,
+                    "url": url,
+                    "source_ref": url,
+                    "source_path": source_path,
+                    "filename_hint": source_path.rsplit("/", 1)[-1],
+                }
+            )
+        if count is None or int(count.group(1)) != len(seen) or not seen:
+            raise ValueError("arXiv ancillary details list is missing or incomplete.")
+    except (RequestFailure, ValueError) as exc:
+        result = {
+            "assets": [],
+            "asset_failures": [
+                {
+                    "kind": "supplementary",
+                    "section": "supplementary",
+                    "heading": "Ancillary files",
+                    "source_url": page_url,
+                    "reason": "arxiv_ancillary_discovery_failed",
+                    "message": str(exc),
+                }
+            ],
+        }
+    return arxiv_id, result
+
+
 _ARXIV_FIGURE_CAPTION_LABEL_PATTERN = re.compile(
     rf"^(?P<label>(?:Figure|Fig\.?|{re.escape(EXTENDED_DATA_FIGURE_LABEL)}\.?)\s+\d+[A-Za-z]?)[.:]?\s*(?P<caption>.*)$",
     flags=re.IGNORECASE,
@@ -63,21 +226,6 @@ _ARXIV_FIGURE_CAPTION_LABEL_PATTERN = re.compile(
 _ARXIV_FIGURE_ID_PATTERN = re.compile(
     r"(?:^|[.])F(?P<number>\d+[A-Za-z]?(?:\.\d+[A-Za-z]?)?)(?=$|[.])",
     flags=re.IGNORECASE,
-)
-_ARXIV_LATEX_FIGURE_ENV_PATTERN = re.compile(
-    r"\\begin\{(?P<env>figure\*?)\}(?P<body>.*?)\\end\{(?P=env)\}",
-    flags=re.DOTALL,
-)
-_ARXIV_LATEX_INCLUDEGRAPHICS_PATTERN = re.compile(
-    r"\\includegraphics(?:\s*\[[^\]]*\])?\s*\{",
-    flags=re.DOTALL,
-)
-_ARXIV_LATEX_TEXT_COMMAND_PATTERN = re.compile(
-    r"\\(?:textbf|textit|emph|textrm|textsc|texttt|textsuperscript|textsubscript)\s*\{([^{}]*)\}"
-)
-_ARXIV_LATEX_DROP_COMMAND_PATTERN = re.compile(
-    r"\\(?:label|ref|autoref|cref|Cref|cite|citet|citep|citealp|url)\*?"
-    r"(?:\s*\[[^\]]*\])*\s*\{[^{}]*\}"
 )
 
 
@@ -165,6 +313,28 @@ def _extract_arxiv_html_assets(
         if normalize_text(str(item.get("kind") or "")).lower() == "figure"
         and _asset_has_download_candidate(item)
     ]
+    soup = BeautifulSoup(article_html, ARXIV_HTML_PARSER)
+    for image in soup.select("img[data-arxiv-graphic]"):
+        matches = [
+            asset for asset in assets if asset.get("image_id") == image.get("id")
+        ]
+        if not matches:
+            # Some LaTeXML graphs occur directly in a paragraph, with no figure.
+            matches = [
+                {
+                    "kind": "figure",
+                    "section": "body",
+                    "url": image["src"],
+                    "image_id": image.get("id"),
+                    "dom_id": image.get("id"),
+                    "heading": "Figure",
+                    "caption": "",
+                }
+            ]
+            assets.extend(matches)
+        for asset in matches:
+            asset["source_kind"] = image["data-arxiv-graphic"]
+            asset["full_size_url"] = image["src"]
     return [dict(item) for item in merge_assets_by_identity(assets)]
 
 
@@ -210,230 +380,6 @@ def _postprocess_arxiv_html_asset(asset: Mapping[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _arxiv_source_url(arxiv_id: str) -> str:
-    normalized = normalize_text(arxiv_id).strip("/")
-    return f"https://arxiv.org/e-print/{urllib.parse.quote(normalized, safe='/.')}"
-
-
-def _safe_arxiv_source_member_name(name: Any) -> str:
-    normalized = normalize_text(str(name or "")).replace("\\", "/").lstrip("/")
-    if not normalized:
-        return ""
-    parts = [part for part in normalized.split("/") if part and part != "."]
-    if not parts or any(part == ".." for part in parts):
-        return ""
-    return "/".join(parts)
-
-
-def _read_arxiv_source_tar(body: bytes) -> dict[str, bytes]:
-    files: dict[str, bytes] = {}
-    try:
-        with tarfile.open(fileobj=io.BytesIO(body), mode="r:*") as archive:
-            for member in archive.getmembers():
-                if not member.isfile() or member.size > _ARXIV_SOURCE_MAX_MEMBER_BYTES:
-                    continue
-                name = _safe_arxiv_source_member_name(member.name)
-                if not name:
-                    continue
-                handle = archive.extractfile(member)
-                if handle is None:
-                    continue
-                files.setdefault(name, handle.read())
-    except tarfile.TarError:
-        return {}
-    return files
-
-
-def _read_arxiv_source_zip(body: bytes) -> dict[str, bytes]:
-    files: dict[str, bytes] = {}
-    try:
-        with zipfile.ZipFile(io.BytesIO(body)) as archive:
-            for info in archive.infolist():
-                if info.is_dir() or info.file_size > _ARXIV_SOURCE_MAX_MEMBER_BYTES:
-                    continue
-                name = _safe_arxiv_source_member_name(info.filename)
-                if not name:
-                    continue
-                files.setdefault(name, archive.read(info))
-    except zipfile.BadZipFile:
-        return {}
-    return files
-
-
-def _read_arxiv_source_files(body: bytes) -> dict[str, bytes]:
-    for reader in (_read_arxiv_source_tar, _read_arxiv_source_zip):
-        files = reader(body)
-        if files:
-            return files
-    try:
-        decompressed = gzip.decompress(body)
-    except OSError:
-        return {}
-    if (
-        b"\\documentclass" in decompressed[:4096]
-        or b"\\begin{document}" in decompressed[:8192]
-    ):
-        return {"source.tex": decompressed}
-    return {}
-
-
-def _strip_latex_comments(text: str) -> str:
-    lines: list[str] = []
-    for line in text.splitlines():
-        escaped = False
-        cut_at = len(line)
-        for index, char in enumerate(line):
-            if escaped:
-                escaped = False
-                continue
-            if char == "\\":
-                escaped = True
-                continue
-            if char == "%":
-                cut_at = index
-                break
-        lines.append(line[:cut_at])
-    return "\n".join(lines)
-
-
-def _balanced_latex_brace_content(text: str, open_index: int) -> str:
-    if open_index < 0 or open_index >= len(text) or text[open_index] != "{":
-        return ""
-    depth = 0
-    escaped = False
-    start = open_index + 1
-    for index in range(open_index, len(text)):
-        char = text[index]
-        if escaped:
-            escaped = False
-            continue
-        if char == "\\":
-            escaped = True
-            continue
-        if char == "{":
-            depth += 1
-            continue
-        if char != "}":
-            continue
-        depth -= 1
-        if depth == 0:
-            return text[start:index]
-    return ""
-
-
-def _latex_command_argument(text: str, command: str) -> str:
-    pattern = re.compile(
-        rf"\\{re.escape(command)}\*?(?:\s*\[[^\]]*\])?\s*\{{",
-        flags=re.DOTALL,
-    )
-    match = pattern.search(text)
-    if match is None:
-        return ""
-    return _balanced_latex_brace_content(text, match.end() - 1)
-
-
-def _latex_includegraphics_paths(text: str) -> list[str]:
-    paths: list[str] = []
-    for match in _ARXIV_LATEX_INCLUDEGRAPHICS_PATTERN.finditer(text):
-        value = normalize_text(_balanced_latex_brace_content(text, match.end() - 1))
-        if value:
-            paths.append(value.replace("\\", "/").strip())
-    return paths
-
-
-def _latex_caption_to_text(text: str) -> str:
-    normalized = _strip_latex_comments(text).replace("\n", " ")
-    for _ in range(6):
-        updated = _ARXIV_LATEX_TEXT_COMMAND_PATTERN.sub(r"\1", normalized)
-        if updated == normalized:
-            break
-        normalized = updated
-    normalized = re.sub(r"\$([^$]*)\$", r"\1", normalized)
-    normalized = _ARXIV_LATEX_DROP_COMMAND_PATTERN.sub("", normalized)
-    normalized = re.sub(r"\\[a-zA-Z]+\*?(?:\s*\[[^\]]*\])?", "", normalized)
-    normalized = normalized.replace("\\&", "&").replace("\\%", "%")
-    normalized = normalized.replace("\\_", "_").replace("\\#", "#")
-    normalized = normalized.replace("~", " ")
-    normalized = normalized.replace("{", "").replace("}", "")
-    return normalize_text(normalized)
-
-
-def _source_candidate_paths(tex_name: str, graphic_path: str) -> list[str]:
-    normalized = _safe_arxiv_source_member_name(graphic_path)
-    if not normalized:
-        return []
-    tex_dir = Path(tex_name.replace("\\", "/")).parent.as_posix()
-    base_candidates = [normalized]
-    if tex_dir and tex_dir != ".":
-        base_candidates.append(f"{tex_dir}/{normalized}")
-    candidates: list[str] = []
-    for candidate in base_candidates:
-        if candidate not in candidates:
-            candidates.append(candidate)
-        if Path(candidate).suffix:
-            continue
-        for suffix in _ARXIV_SOURCE_GRAPHIC_SUFFIXES:
-            with_suffix = f"{candidate}{suffix}"
-            if with_suffix not in candidates:
-                candidates.append(with_suffix)
-    return candidates
-
-
-def _resolve_arxiv_source_graphic(
-    files: Mapping[str, bytes], *, tex_name: str, graphic_path: str
-) -> tuple[str, bytes] | None:
-    by_lower = {name.lower(): name for name in files}
-    for candidate in _source_candidate_paths(tex_name, graphic_path):
-        exact = files.get(candidate)
-        if exact is not None:
-            return candidate, exact
-        actual_name = by_lower.get(candidate.lower())
-        if actual_name is not None:
-            return actual_name, files[actual_name]
-    return None
-
-
-def _extract_arxiv_source_figure_references(
-    files: Mapping[str, bytes],
-) -> list[dict[str, Any]]:
-    tex_names = sorted(
-        (
-            name
-            for name in files
-            if Path(name).suffix.lower() in {"", ".tex"}
-            and not Path(name).name.startswith(".")
-        ),
-        key=lambda name: (Path(name).name.lower() != "main.tex", name.lower()),
-    )
-    figures: list[dict[str, Any]] = []
-    for tex_name in tex_names:
-        try:
-            tex = files[tex_name].decode("utf-8", errors="replace")
-        except Exception:
-            continue
-        tex = _strip_latex_comments(tex)
-        for block_match in _ARXIV_LATEX_FIGURE_ENV_PATTERN.finditer(tex):
-            block = block_match.group("body")
-            caption = _latex_caption_to_text(_latex_command_argument(block, "caption"))
-            label = normalize_text(_latex_command_argument(block, "label"))
-            for graphic_path in _latex_includegraphics_paths(block):
-                resolved = _resolve_arxiv_source_graphic(
-                    files, tex_name=tex_name, graphic_path=graphic_path
-                )
-                if resolved is None:
-                    continue
-                source_path, source_body = resolved
-                figures.append(
-                    {
-                        "source_path": source_path,
-                        "body": source_body,
-                        "caption": caption,
-                        "label": label,
-                    }
-                )
-    return figures
-
-
 def _caption_match_text(value: Any) -> str:
     normalized = normalize_text(str(value or "")).lower()
     match = _ARXIV_FIGURE_CAPTION_LABEL_PATTERN.match(normalized)
@@ -452,37 +398,46 @@ def _caption_similarity(left: Any, right: Any) -> int:
         from rapidfuzz import fuzz
     except Exception:
         return 100 if left_text == right_text else 0
-    return int(fuzz.token_set_ratio(left_text, right_text))
+    # A short generic caption contained in a longer one is not object identity.
+    return int(fuzz.token_sort_ratio(left_text, right_text))
 
 
 def _match_source_figures_to_html_placeholders(
     placeholders: Sequence[Mapping[str, Any]],
     source_figures: Sequence[Mapping[str, Any]],
 ) -> list[tuple[dict[str, Any], dict[str, Any] | None]]:
-    unused = set(range(len(source_figures)))
     matches: list[tuple[dict[str, Any], dict[str, Any] | None]] = []
-    for index, placeholder in enumerate(placeholders):
-        best_index: int | None = None
-        best_score = -1
-        for source_index in sorted(unused):
-            score = _caption_similarity(
-                placeholder.get("caption"), source_figures[source_index].get("caption")
+    for placeholder in placeholders:
+        # A member may legitimately occur in several HTML figures. Match identity,
+        # not the position in a source archive (whose TeX order can differ).
+        paths = {
+            urllib.parse.unquote(urllib.parse.urlsplit(url).path).lstrip("/")
+            for url in _asset_candidate_urls(placeholder)
+        }
+        candidates = [
+            figure
+            for figure in source_figures
+            if (path := str(figure.get("source_path") or "").lstrip("./"))
+            and any(value == path or value.endswith("/" + path) for value in paths)
+        ]
+        if not candidates:
+            # Caption-only recovery is reserved for missing/generated HTML URLs.
+            # A known filename must never be reassigned to an unrelated member.
+            named_image = any(
+                not re.fullmatch(r"x\d+", Path(path).stem) for path in paths
             )
-            if score > best_score:
-                best_index = source_index
-                best_score = score
-        if best_index is not None and best_score >= 55:
-            unused.remove(best_index)
-            matches.append((dict(placeholder), dict(source_figures[best_index])))
-            continue
-        fallback_index = index if index in unused else None
-        if fallback_index is None and unused:
-            fallback_index = min(unused)
-        if fallback_index is None:
-            matches.append((dict(placeholder), None))
-            continue
-        unused.remove(fallback_index)
-        matches.append((dict(placeholder), dict(source_figures[fallback_index])))
+            if not named_image:
+                candidates = [
+                    figure
+                    for figure in source_figures
+                    if _caption_similarity(
+                        placeholder.get("caption"), figure.get("caption")
+                    )
+                    >= 90
+                ]
+        by_path = {str(figure.get("source_path")): figure for figure in candidates}
+        matched = next(iter(by_path.values())) if len(by_path) == 1 else None
+        matches.append((dict(placeholder), dict(matched) if matched else None))
     return matches
 
 
@@ -499,10 +454,65 @@ def _render_pdf_source_figure_to_png(body: bytes) -> tuple[bytes, int, int] | No
             if len(document) <= 0:
                 return None
             page = document.load_page(0)
+            rect = page.rect
+            projected_width = max(1, math.ceil(float(rect.width) * 2))
+            projected_height = max(1, math.ceil(float(rect.height) * 2))
+            if projected_width * projected_height > 64_000_000:
+                return None
             pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
-            return bytes(pixmap.tobytes("png")), int(pixmap.width), int(pixmap.height)
+            payload = bytes(pixmap.tobytes("png"))
+            if len(payload) > _ARXIV_SOURCE_MAX_MEMBER_BYTES:
+                return None
+            return payload, int(pixmap.width), int(pixmap.height)
     except Exception:
         return None
+
+
+def _render_pdf_source_figure_path_to_png(
+    source_path: Path,
+    destination: Path,
+    *,
+    reservation: AssetReservation,
+) -> tuple[int, int, int]:
+    """Render the first PDF page path-to-path after a pre-raster pixel check."""
+
+    try:
+        import pymupdf
+    except Exception:
+        try:
+            import fitz as pymupdf
+        except Exception as exc:
+            raise RuntimeError("PyMuPDF is unavailable") from exc
+    reservation.register_staging(destination)
+    try:
+        with pymupdf.open(str(source_path)) as document:
+            if len(document) <= 0:
+                raise RuntimeError("PDF source figure has no pages")
+            page = document.load_page(0)
+            rect = page.rect
+            projected_width = max(1, math.ceil(float(rect.width) * 2))
+            projected_height = max(1, math.ceil(float(rect.height) * 2))
+            reservation.validate_pixels(projected_width, projected_height)
+            pixmap = page.get_pixmap(matrix=pymupdf.Matrix(2, 2), alpha=False)
+            width = int(pixmap.width)
+            height = int(pixmap.height)
+            reservation.validate_pixels(width, height)
+            # The unique staging suffix is deliberately ``.part``; state the
+            # encoder explicitly instead of relying on filename inference.
+            pixmap.save(str(destination), output="png")
+        with destination.open("rb+") as output:
+            output.flush()
+            os.fsync(output.fileno())
+        output_bytes = destination.stat().st_size
+        reservation.consume(output_bytes)
+        if output_bytes <= 0:
+            raise RuntimeError("PDF source figure rendered an empty PNG")
+        return width, height, output_bytes
+    except BaseException:
+        reservation.rollback()
+        with contextlib.suppress(OSError):
+            destination.unlink(missing_ok=True)
+        raise
 
 
 def _source_figure_image_payload(
@@ -563,6 +573,40 @@ def _arxiv_source_asset_failure(
     return failure
 
 
+def _arxiv_source_downloaded_asset(
+    placeholder: Mapping[str, Any],
+    *,
+    arxiv_id: str,
+    source_archive_url: str,
+    source_path: str,
+    content_type: str,
+    saved_path: str,
+    output_bytes: int,
+    width: int | None,
+    height: int | None,
+) -> dict[str, Any]:
+    source_ref_url = (
+        f"{source_archive_url}#{urllib.parse.quote(source_path, safe='/._-')}"
+    )
+    asset = {
+        **dict(placeholder),
+        "url": f"arxiv-source://{arxiv_id}/{source_path}",
+        "original_url": placeholder.get("url") or source_ref_url,
+        "download_url": source_ref_url,
+        "source_url": source_archive_url,
+        "source_path": source_path,
+        "content_type": content_type,
+        "path": saved_path,
+        "downloaded_bytes": output_bytes,
+        "download_tier": "arxiv_source",
+        "section": "body",
+    }
+    if width is not None and height is not None:
+        asset["width"] = width
+        asset["height"] = height
+    return asset
+
+
 def _extract_arxiv_missing_html_figure_placeholders(
     article_html: str, source_url: str
 ) -> list[dict[str, Any]]:
@@ -604,6 +648,97 @@ def _extract_arxiv_missing_html_figure_placeholders(
     return placeholders
 
 
+def _admit_arxiv_source_placeholders(
+    placeholders: Sequence[Mapping[str, Any]],
+    *,
+    source_url: str,
+    asset_budget: AssetBudget,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    admission = asset_budget.admit_work(
+        [
+            "|".join(
+                (
+                    "arxiv_source",
+                    normalize_text(str(item.get("dom_id") or "")),
+                    normalize_text(str(item.get("image_id") or "")),
+                    normalize_text(str(item.get("asset_order") or "")),
+                )
+            )
+            for item in placeholders
+        ]
+    )
+    admitted = [
+        dict(item)
+        for item, accepted in zip(placeholders, admission, strict=True)
+        if accepted
+    ]
+    rejected = [
+        _arxiv_source_asset_failure(
+            item,
+            source_url,
+            reason="asset_file_limit_exceeded",
+        )
+        for item, accepted in zip(placeholders, admission, strict=True)
+        if not accepted
+    ]
+    return admitted, rejected
+
+
+def _stage_arxiv_source_archive(
+    transport: HttpTransport,
+    source_archive_url: str,
+    source_staging: Path,
+    *,
+    user_agent: str,
+    asset_budget: AssetBudget,
+    reservation: AssetReservation,
+) -> None:
+    request_policy = provider_request_policy(
+        "arxiv",
+        "source_assets",
+        base=HttpRequestPolicy(
+            max_response_bytes=asset_budget.max_bytes_per_asset,
+            max_compressed_response_bytes=asset_budget.max_bytes_per_asset,
+        ),
+    )
+    if bool(
+        getattr(transport, "_streaming_ready", False) is True
+        and callable(getattr(transport, "stream_to_file", None))
+    ):
+        transport.stream_to_file(
+            "GET",
+            source_archive_url,
+            source_staging,
+            headers={"Accept": ARXIV_SOURCE_ACCEPT, "User-Agent": user_agent},
+            options=HttpStreamOptions(
+                request_policy=request_policy,
+                on_content_length=reservation.declare_content_length,
+                on_chunk=reservation.consume,
+            ),
+        )
+        reservation.reconcile_actual()
+        return
+
+    # Compatibility path for explicitly injected test transports only.  It
+    # still consumes the exact compiled route policy; production capability is
+    # gated by the strict instance-scoped pinned-streaming marker above.
+    source_response = transport.request(
+        "GET",
+        source_archive_url,
+        headers={"Accept": ARXIV_SOURCE_ACCEPT, "User-Agent": user_agent},
+        request_policy=request_policy,
+    )
+    source_body = source_response.get("body")
+    if not isinstance(source_body, (bytes, bytearray)):
+        source_body = b""
+    reservation.declare_content_length(len(source_body))
+    _read_bounded_stream(
+        io.BytesIO(bytes(source_body)),
+        reservation=reservation,
+        destination=source_staging,
+    )
+
+
 def download_arxiv_source_figure_assets(
     transport: HttpTransport,
     *,
@@ -613,42 +748,85 @@ def download_arxiv_source_figure_assets(
     source_url: str,
     output_dir: Path | None,
     user_agent: str,
+    runtime_context: RuntimeContext | None = None,
+    placeholders: Sequence[Mapping[str, Any]] | None = None,
+    admit_placeholders: bool = True,
 ) -> dict[str, list[dict[str, Any]]]:
     if output_dir is None:
         return empty_asset_results()
-    placeholders = _extract_arxiv_missing_html_figure_placeholders(
-        article_html, source_url
+    active_placeholders = (
+        [dict(item) for item in placeholders]
+        if placeholders is not None
+        else _extract_arxiv_missing_html_figure_placeholders(article_html, source_url)
     )
-    if not placeholders:
+    if not active_placeholders:
         return empty_asset_results()
 
-    source_archive_url = _arxiv_source_url(arxiv_id)
-    try:
-        response = transport.request(
-            "GET",
-            source_archive_url,
-            headers={"Accept": ARXIV_SOURCE_ACCEPT, "User-Agent": user_agent},
-            timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
-            retry_on_transient=True,
+    active_budget = (
+        runtime_context.asset_budget
+        if runtime_context is not None and runtime_context.asset_budget is not None
+        else AssetBudget()
+    )
+    if admit_placeholders:
+        active_placeholders, rejected = _admit_arxiv_source_placeholders(
+            active_placeholders,
+            source_url=source_url,
+            asset_budget=active_budget,
         )
-    except RequestFailure as exc:
+    else:
+        rejected = []
+    if not active_placeholders:
+        return {"assets": [], "asset_failures": rejected}
+
+    source_archive_url = _arxiv_source_url(arxiv_id)
+    asset_dir = output_dir / f"{sanitize_filename(article_id)}_assets"
+    asset_dir.mkdir(parents=True, exist_ok=True)
+    source_staging = asset_dir / f".paper-fetch-arxiv-{uuid.uuid4().hex}.part"
+    files: dict[str, _ArxivSourceMember] = {}
+    archive_reservation: AssetReservation | None = None
+    try:
+        archive_reservation = active_budget.reserve_transient()
+        archive_reservation.register_staging(source_staging)
+        _stage_arxiv_source_archive(
+            transport,
+            source_archive_url,
+            source_staging,
+            user_agent=user_agent,
+            asset_budget=active_budget,
+            reservation=archive_reservation,
+        )
+        files = _read_arxiv_source_files_from_path(
+            source_staging,
+            staging_dir=asset_dir,
+            asset_budget=active_budget,
+        )
+    except (AssetBudgetExceeded, RequestFailure) as exc:
+        _cleanup_arxiv_source_members(files)
         return {
             "assets": [],
             "asset_failures": [
                 _arxiv_source_asset_failure(
                     asset,
                     source_archive_url,
-                    reason="arxiv_source_fetch_failed",
+                    reason=(
+                        exc.reason_code
+                        if isinstance(exc, AssetBudgetExceeded)
+                        else normalize_text(str(getattr(exc, "reason_code", "") or ""))
+                        or "arxiv_source_fetch_failed"
+                    ),
                     message=str(exc),
                 )
-                for asset in placeholders
-            ],
+                for asset in active_placeholders
+            ]
+            + rejected,
         }
-
-    body = bytes(response.get("body") or b"")
-    files = _read_arxiv_source_files(body)
+    finally:
+        if archive_reservation is not None:
+            archive_reservation.rollback()
+        source_staging.unlink(missing_ok=True)
     source_figures = _extract_arxiv_source_figure_references(files)
     if not source_figures:
+        _cleanup_arxiv_source_members(files)
         return {
             "assets": [],
             "asset_failures": [
@@ -657,77 +835,205 @@ def download_arxiv_source_figure_assets(
                     source_archive_url,
                     reason="arxiv_source_figures_not_found",
                 )
-                for asset in placeholders
-            ],
+                for asset in active_placeholders
+            ]
+            + rejected,
         }
-
-    asset_dir = output_dir / f"{sanitize_filename(article_id)}_assets"
-    asset_dir.mkdir(parents=True, exist_ok=True)
+    referenced_member_ids = {
+        id(member)
+        for figure in source_figures
+        for member in [figure.get("source_member")]
+        if isinstance(member, _ArxivSourceMember)
+    }
+    _cleanup_arxiv_source_members(files, keep_ids=referenced_member_ids)
     used_names = {path.name for path in asset_dir.iterdir() if path.is_file()}
     downloaded_assets: list[dict[str, Any]] = []
     asset_failures: list[dict[str, Any]] = []
-    for placeholder, source_figure in _match_source_figures_to_html_placeholders(
-        placeholders, source_figures
-    ):
-        if source_figure is None:
-            asset_failures.append(
-                _arxiv_source_asset_failure(
+    published_members: dict[int, tuple[str, str, int, int | None, int | None]] = {}
+    try:
+        for placeholder, source_figure in _match_source_figures_to_html_placeholders(
+            active_placeholders, source_figures
+        ):
+            if source_figure is None:
+                asset_failures.append(
+                    _arxiv_source_asset_failure(
+                        placeholder,
+                        source_archive_url,
+                        reason="arxiv_source_figure_not_matched",
+                    )
+                )
+                continue
+            source_path = normalize_text(str(source_figure.get("source_path") or ""))
+            source_member = source_figure.get("source_member")
+            source_body = source_figure.get("body")
+            if not source_path or not (
+                isinstance(source_member, _ArxivSourceMember)
+                or isinstance(source_body, (bytes, bytearray))
+            ):
+                asset_failures.append(
+                    _arxiv_source_asset_failure(
+                        placeholder,
+                        source_archive_url,
+                        reason="arxiv_source_figure_not_found",
+                    )
+                )
+                continue
+
+            if isinstance(source_member, _ArxivSourceMember):
+                cached_publication = published_members.get(id(source_member))
+                if cached_publication is not None:
+                    (
+                        saved_path,
+                        content_type,
+                        output_bytes,
+                        cached_width,
+                        cached_height,
+                    ) = cached_publication
+                    downloaded_assets.append(
+                        _arxiv_source_downloaded_asset(
+                            placeholder,
+                            arxiv_id=arxiv_id,
+                            source_archive_url=source_archive_url,
+                            source_path=source_path,
+                            content_type=content_type,
+                            saved_path=saved_path,
+                            output_bytes=output_bytes,
+                            width=cached_width,
+                            height=cached_height,
+                        )
+                    )
+                    continue
+
+            width: int | None = None
+            height: int | None = None
+            output_bytes = 0
+            reservation: AssetReservation
+            output_staging: Path | None = None
+            suffix = Path(source_path).suffix.lower()
+            try:
+                if isinstance(source_member, _ArxivSourceMember):
+                    if suffix == ".pdf":
+                        content_type = "image/png"
+                        reservation = active_budget.reserve()
+                        output_staging = (
+                            asset_dir
+                            / f".paper-fetch-arxiv-render-{uuid.uuid4().hex}.part"
+                        )
+                        width, height, output_bytes = (
+                            _render_pdf_source_figure_path_to_png(
+                                source_member.path,
+                                output_staging,
+                                reservation=reservation,
+                            )
+                        )
+                    else:
+                        content_type = payload_mime_type_from_path(source_member.path)
+                        if not content_type.startswith("image/"):
+                            raise ValueError("arXiv source figure is not an image")
+                        dimensions = image_dimensions_from_path(source_member.path)
+                        width, height = (
+                            dimensions if dimensions is not None else (None, None)
+                        )
+                        if width is not None and height is not None:
+                            source_member.reservation.validate_pixels(width, height)
+                        source_member.reservation.promote_file()
+                        reservation = source_member.reservation
+                        output_staging = source_member.path
+                        output_bytes = source_member.size
+                else:
+                    if not isinstance(source_body, (bytes, bytearray)):
+                        raise ValueError("arXiv source figure body is unavailable")
+                    image_payload = _source_figure_image_payload(
+                        source_path, bytes(source_body)
+                    )
+                    if image_payload is None:
+                        raise ValueError("arXiv source figure is not an image")
+                    image_body, content_type, width, height = image_payload
+                    reservation = active_budget.reserve(declared_bytes=len(image_body))
+                    if width is not None and height is not None:
+                        reservation.validate_pixels(width, height)
+                    output_staging = (
+                        asset_dir / f".paper-fetch-arxiv-compat-{uuid.uuid4().hex}.part"
+                    )
+                    _read_bounded_stream(
+                        io.BytesIO(image_body),
+                        reservation=reservation,
+                        destination=output_staging,
+                    )
+                    output_bytes = len(image_body)
+            except AssetBudgetExceeded as exc:
+                failure = _arxiv_source_asset_failure(
                     placeholder,
                     source_archive_url,
-                    reason="arxiv_source_figure_not_matched",
+                    reason=exc.reason_code,
                 )
+                failure.update(exc.diagnostic)
+                asset_failures.append(failure)
+                break
+            except (OSError, RuntimeError, ValueError) as exc:
+                asset_failures.append(
+                    _arxiv_source_asset_failure(
+                        placeholder,
+                        f"{source_archive_url}#{urllib.parse.quote(source_path, safe='/._-')}",
+                        reason="arxiv_source_figure_not_image",
+                        message=str(exc),
+                    )
+                )
+                continue
+
+            output_path = _unique_source_asset_path(
+                asset_dir,
+                source_path=source_path,
+                content_type=content_type,
+                used_names=used_names,
             )
-            continue
-        source_path = normalize_text(str(source_figure.get("source_path") or ""))
-        source_body = source_figure.get("body")
-        if not source_path or not isinstance(source_body, (bytes, bytearray)):
-            asset_failures.append(
-                _arxiv_source_asset_failure(
+            store = (
+                runtime_context.artifact_store
+                if runtime_context is not None
+                and isinstance(runtime_context.artifact_store, ArtifactStore)
+                else ArtifactStore.from_download_dir(output_dir)
+            )
+            try:
+                assert output_staging is not None
+                with reservation.commit_critical_section():
+                    saved_path = str(
+                        store.publish_staged_file(output_staging, output_path)
+                    )
+                    reservation.unregister_staging(output_staging)
+                    reservation.commit()
+            except BaseException:
+                reservation.rollback()
+                raise
+            finally:
+                if suffix == ".pdf" and isinstance(source_member, _ArxivSourceMember):
+                    source_member.cleanup()
+            if isinstance(source_member, _ArxivSourceMember):
+                published_members[id(source_member)] = (
+                    saved_path,
+                    content_type,
+                    output_bytes,
+                    width,
+                    height,
+                )
+            downloaded_assets.append(
+                _arxiv_source_downloaded_asset(
                     placeholder,
-                    source_archive_url,
-                    reason="arxiv_source_figure_not_found",
+                    arxiv_id=arxiv_id,
+                    source_archive_url=source_archive_url,
+                    source_path=source_path,
+                    content_type=content_type,
+                    saved_path=saved_path,
+                    output_bytes=output_bytes,
+                    width=width,
+                    height=height,
                 )
             )
-            continue
-        image_payload = _source_figure_image_payload(source_path, bytes(source_body))
-        if image_payload is None:
-            asset_failures.append(
-                _arxiv_source_asset_failure(
-                    placeholder,
-                    f"{source_archive_url}#{urllib.parse.quote(source_path, safe='/._-')}",
-                    reason="arxiv_source_figure_not_image",
-                )
-            )
-            continue
-        image_body, content_type, width, height = image_payload
-        output_path = _unique_source_asset_path(
-            asset_dir,
-            source_path=source_path,
-            content_type=content_type,
-            used_names=used_names,
-        )
-        saved_path = save_payload(output_path, image_body)
-        source_ref_url = (
-            f"{source_archive_url}#{urllib.parse.quote(source_path, safe='/._-')}"
-        )
-        asset = {
-            **placeholder,
-            "url": f"arxiv-source://{arxiv_id}/{source_path}",
-            "original_url": source_ref_url,
-            "download_url": source_ref_url,
-            "source_url": source_archive_url,
-            "source_path": source_path,
-            "content_type": content_type,
-            "path": saved_path,
-            "downloaded_bytes": len(image_body),
-            "download_tier": "arxiv_source",
-            "section": "body",
-        }
-        if width is not None and height is not None:
-            asset["width"] = width
-            asset["height"] = height
-        downloaded_assets.append(asset)
-    return {"assets": downloaded_assets, "asset_failures": asset_failures}
+    finally:
+        _cleanup_arxiv_source_members(files)
+    return {
+        "assets": downloaded_assets,
+        "asset_failures": [*asset_failures, *rejected],
+    }
 
 
 def inline_arxiv_source_assets_in_markdown(
@@ -739,12 +1045,28 @@ def inline_arxiv_source_assets_in_markdown(
 
     source_assets_by_heading: dict[str, list[Mapping[str, Any]]] = {}
     heading_order: list[str] = []
+    images = list(iter_markdown_images(markdown_text))
+    represented: set[int] = set()
     for asset in assets:
         if normalize_text(str(asset.get("download_tier") or "")) != "arxiv_source":
             continue
         heading = normalize_text(str(asset.get("heading") or ""))
         inline_url = normalize_text(str(asset.get("url") or ""))
-        if not heading or not inline_url or inline_url in markdown_text:
+        if not heading or not inline_url:
+            continue
+        aliases = _asset_candidate_urls(asset) | {str(asset.get("path") or "")}
+        occurrence = next(
+            (
+                index
+                for index, image in enumerate(images)
+                if index not in represented
+                and image.alt == heading
+                and image.url in aliases
+            ),
+            None,
+        )
+        if occurrence is not None:
+            represented.add(occurrence)
             continue
         if heading not in source_assets_by_heading:
             source_assets_by_heading[heading] = []
@@ -772,6 +1094,47 @@ def inline_arxiv_source_assets_in_markdown(
         if count:
             continue
     return rendered
+
+
+def reconcile_arxiv_body_assets(
+    markdown_text: str,
+    extracted_assets: Sequence[Mapping[str, Any]],
+    downloaded_assets: Sequence[Mapping[str, Any]],
+    *,
+    article_html: str = "",
+    source_url: str = "",
+) -> list[dict[str, Any]]:
+    """Keep undispatched/failed body images visible to local-asset acceptance."""
+    assets = [dict(asset) for asset in downloaded_assets]
+    known_urls = set().union(*(_asset_candidate_urls(asset) for asset in assets))
+    for asset in extracted_assets:
+        urls = _asset_candidate_urls(asset)
+        if not urls.intersection(known_urls):
+            assets.append(dict(asset))
+            known_urls.update(urls)
+    # Audit retained body figure nodes, not badges/icons in article frontmatter.
+    soup = BeautifulSoup(article_html, ARXIV_HTML_PARSER)
+    article = soup.find("article") or soup
+    body_urls = set().union(
+        *(
+            set(_arxiv_image_url_candidates(image, source_url))
+            for image in article.find_all("img")
+            if _arxiv_inline_figure_for_image(image, article) is not None
+        )
+    )
+    for image in iter_markdown_images(markdown_text):
+        if image.url in body_urls and image.url not in known_urls:
+            assets.append(
+                {
+                    "kind": "figure",
+                    "section": "body",
+                    "url": image.url,
+                    "heading": image.alt or "Figure",
+                    "render_state": "inline",
+                }
+            )
+            known_urls.add(image.url)
+    return assets
 
 
 def _arxiv_parent_figures(node: Any, article: Any) -> list[Any]:
@@ -955,9 +1318,9 @@ def _annotate_arxiv_inline_figure_images(
     image_by_id: dict[str, Any] = {}
     image_url_candidates: dict[int, set[str]] = {}
     for image in article.find_all("img"):
-        if (
-            not isinstance(image, Tag)
-            or _arxiv_inline_figure_for_image(image, article) is None
+        if not isinstance(image, Tag) or (
+            _arxiv_inline_figure_for_image(image, article) is None
+            and not image.get("data-arxiv-graphic")
         ):
             continue
         eligible_images.append(image)

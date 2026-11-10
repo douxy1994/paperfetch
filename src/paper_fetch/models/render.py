@@ -10,7 +10,7 @@ from typing import Any
 from collections.abc import Mapping
 
 from ..common_patterns import EXTENDED_DATA_FIGURE_LABEL
-from ..markdown.images import render_markdown_image
+from ..markdown.images import render_markdown_image, short_image_alt
 from ..utils import normalize_text, safe_text
 from .markdown import (
     NATURE_TABLE_LIKE_FIGURE_ASSET_PATTERN,
@@ -38,7 +38,6 @@ from .schema import (
 from .sections import (
     BODY_SECTION_EXCLUDED_KINDS,
     RETAINED_NON_BODY_SECTION_KINDS,
-    abstract_sections,
     first_abstract_text,
     renderable_body_sections,
     section_priority,
@@ -61,7 +60,42 @@ FIGURE_CAPTION_LABEL_PREFIX_PATTERN = re.compile(
 
 
 def asset_link(asset: Asset) -> str:
-    return normalize_text(asset.path or asset.url)
+    return normalize_text(
+        asset.path
+        or asset.url
+        or (
+            (asset.original_url or asset.source_url)
+            if asset.kind == "supplementary"
+            else ""
+        )
+    )
+
+
+def _rewrite_supplementary_destinations(text: str, assets: Sequence[Asset]) -> str:
+    targets = {
+        str(url): asset.path
+        for asset in assets
+        if asset.kind == "supplementary" and asset.path
+        for url in (asset.url, asset.original_url, asset.source_url)
+        if url
+    }
+    if not targets:
+        return text
+
+    def rewrite(fragment: str) -> str:
+        for url, path in targets.items():
+            fragment = fragment.replace(f"]({url})", f"]({path})")
+            fragment = fragment.replace(f"](<{url}>)", f"](<{path}>)")
+        return fragment
+
+    # Source code is literal, including examples containing attachment URLs.
+    pieces: list[str] = []
+    cursor = 0
+    for code in re.finditer(r"(`+)(.*?)\1", text, flags=re.S):
+        pieces.extend((rewrite(text[cursor : code.start()]), code[0]))
+        cursor = code.end()
+    pieces.append(rewrite(text[cursor:]))
+    return "".join(pieces)
 
 
 def is_table_like_figure_asset(asset: Asset) -> bool:
@@ -129,13 +163,25 @@ def _build_article_header_block(article: ArticleModel) -> RenderedBlock:
     for key, value in front_matter_fields:
         normalized_value = normalize_inline_html_text(value)
         if normalized_value:
+            normalized_value = normalized_value.replace("\\", "\\\\")
             lines.append(f'{key}: "{normalized_value.replace(chr(34), chr(39))}"')
     display_title = (
         normalize_inline_html_text(article.metadata.title) or "Untitled Article"
     )
+    lines.append(f'source: "{article.source}"')
+    if article.acquisition is not None:
+        lines.extend(
+            [
+                "acquisition:",
+                f'  provider: "{article.acquisition.provider}"',
+                f'  route: "{article.acquisition.route}"',
+                f'  representation: "{article.acquisition.representation}"',
+                f'  transport: "{article.acquisition.transport}"',
+                f"  fallback_used: {str(article.acquisition.fallback_used).lower()}",
+            ]
+        )
     lines.extend(
         [
-            f'source: "{article.source}"',
             f"has_fulltext: {str(article.quality.has_fulltext).lower()}",
             f'content_kind: "{article.quality.content_kind}"',
             f"has_abstract: {str(article.quality.has_abstract).lower()}",
@@ -170,7 +216,13 @@ def _build_markdown_render_plan(
         asset_profile=asset_profile,
     )
     body_sections = tuple(renderable_body_sections(article.sections))
-    rendered_abstract_sections = tuple(abstract_sections(article.sections))
+    # Explicit abstract sections can consist entirely of a graphical abstract.
+    # Text-only filtering belongs to metadata/metrics, not document rendering.
+    rendered_abstract_sections = tuple(
+        section
+        for section in article.sections
+        if normalize_text(section.kind).lower() == "abstract" and section.text.strip()
+    )
     lead_sections, remaining_body_sections = split_leading_abstract_context_sections(
         body_sections
     )
@@ -180,14 +232,79 @@ def _build_markdown_render_plan(
         if strip_markdown_images(section.text)
         and normalize_text(section.kind).lower() in RETAINED_NON_BODY_SECTION_KINDS
     )
+    supplementary_sections = tuple(
+        section
+        for section in article.sections
+        if section.kind == "supplementary"
+        and section.text.strip()
+        and effective_include_supplementary
+        and asset_profile == "all"
+    )
     remaining_ids = {id(section) for section in remaining_body_sections}
-    retained_ids = {id(section) for section in retained_sections}
+    retained_ids = {
+        id(section) for section in (*retained_sections, *supplementary_sections)
+    }
     source_ordered_main_sections = tuple(
         section
         for section in article.sections
         if id(section) in remaining_ids or id(section) in retained_ids
     )
+    merged_main: list[Section] = []
+    by_kind: dict[Any, int] = {}
+    for section in source_ordered_main_sections:
+        if section.kind == "supplementary":
+            section = replace(
+                section,
+                text=_rewrite_supplementary_destinations(section.text, article.assets),
+            )
+        key = (
+            section.kind
+            if section.kind in RETAINED_NON_BODY_SECTION_KINDS
+            else (
+                (section.kind, section.heading.casefold())
+                if section.kind == "supplementary"
+                else None
+            )
+        )
+        if key is not None and key in by_kind:
+            index = by_kind[key]
+            previous = merged_main[index]
+            merged_main[index] = replace(
+                previous, text=previous.text + "\n\n" + section.text
+            )
+        else:
+            if key is not None:
+                by_kind[key] = len(merged_main)
+            merged_main.append(section)
+    source_ordered_main_sections = tuple(merged_main)
+    supplementary_assets = selected_supplementary_assets(
+        article.assets,
+        asset_profile=asset_profile,
+        include_supplementary=effective_include_supplementary,
+    )
+    rendered_text = "\n".join(section.text for section in source_ordered_main_sections)
+    seen_supplementary = set()
+    filtered_supplementary = []
+    for asset in supplementary_assets:
+        link = asset_link(asset)
+        key = (
+            asset.path
+            or asset.original_url
+            or asset.url
+            or asset.anchor_key
+            or asset.heading
+        )
+        if key in seen_supplementary or (link and f"]({link})" in rendered_text):
+            continue
+        seen_supplementary.add(key)
+        filtered_supplementary.append(asset)
     figure_assets = selected_figure_assets(article.assets, asset_profile=asset_profile)
+    if not effective_include_supplementary:
+        figure_assets = [
+            asset
+            for asset in figure_assets
+            if normalize_asset_section(asset) != "supplementary"
+        ]
     figure_assets = filter_inline_body_figure_assets(
         figure_assets,
         sections=(
@@ -195,19 +312,28 @@ def _build_markdown_render_plan(
             *rendered_abstract_sections,
             *remaining_body_sections,
             *retained_sections,
+            *supplementary_sections,
         ),
     )
     figure_assets = suppress_repeated_body_figure_captions(
         figure_assets,
         sections=(*rendered_abstract_sections, *body_sections, *retained_sections),
     )
+    table_assets = selected_table_assets(article.assets, asset_profile=asset_profile)
+    if not effective_include_supplementary:
+        table_assets = [
+            asset
+            for asset in table_assets
+            if normalize_asset_section(asset) != "supplementary"
+        ]
     table_assets = filter_inline_body_table_assets(
-        selected_table_assets(article.assets, asset_profile=asset_profile),
+        table_assets,
         sections=(
             *lead_sections,
             *rendered_abstract_sections,
             *remaining_body_sections,
             *retained_sections,
+            *supplementary_sections,
         ),
     )
     return _MarkdownRenderPlan(
@@ -226,13 +352,7 @@ def _build_markdown_render_plan(
         retained_sections=(),
         figure_assets=tuple(figure_assets),
         table_assets=tuple(table_assets),
-        supplementary_assets=tuple(
-            selected_supplementary_assets(
-                article.assets,
-                asset_profile=asset_profile,
-                include_supplementary=effective_include_supplementary,
-            )
-        ),
+        supplementary_assets=tuple(filtered_supplementary),
     )
 
 
@@ -278,6 +398,7 @@ def _append_sections_with_budget(
     level_shift: int,
     context: RenderContext,
     preserve_source_order: bool = False,
+    preserve_text: bool = False,
 ) -> None:
     selected_sections: list[tuple[int, RenderedBlock]] = []
     indexed_sections = list(enumerate(sections))
@@ -290,11 +411,27 @@ def _append_sections_with_budget(
         )
     )
     for index, section in ordered_sections:
-        section_block = render_section_block(section, level_shift=level_shift)
+        section_block = (
+            build_rendered_block([section.text, ""], normalized_text=section.text)
+            if preserve_text
+            else render_section_block(section, level_shift=level_shift)
+        )
         if section_block.token_estimate <= context.remaining_budget:
             selected_sections.append((index, section_block))
             context.remaining_budget -= section_block.token_estimate
             continue
+        if preserve_text:
+            if context.remaining_budget > 0:
+                clipped = section.text[: int(context.remaining_budget) * 4]
+                selected_sections.append(
+                    (
+                        index,
+                        build_rendered_block([clipped, ""], normalized_text=clipped),
+                    )
+                )
+                context.remaining_budget = 0
+            context.mark_truncated()
+            break
         if not math.isinf(context.remaining_budget) and context.remaining_budget > 64:
             truncated_text = truncate_text_to_tokens(
                 section.text,
@@ -375,19 +512,10 @@ def _asset_link_field(asset: Asset | Mapping[str, Any], field: str) -> str | Non
 
 
 def _asset_markdown_reference_candidates(asset: Asset | Mapping[str, Any]) -> set[str]:
+    from ..extraction.html.asset_fields import MARKDOWN_ASSET_REFERENCE_FIELDS
+
     candidates: set[str] = set()
-    for asset_field in (
-        "path",
-        "url",
-        "original_url",
-        "download_url",
-        "source_url",
-        "source_path",
-        "source_href",
-        "preview_url",
-        "full_size_url",
-        "link",
-    ):
+    for asset_field in MARKDOWN_ASSET_REFERENCE_FIELDS:
         candidates |= image_reference_candidates(_asset_link_field(asset, asset_field))
     return candidates
 
@@ -399,7 +527,8 @@ def _asset_image_markdown(
     replacement_path: str,
 ) -> str:
     kind = _asset_link_field(asset, "kind") or ""
-    heading = _asset_link_field(asset, "heading") or image_alt
+    # A file can occur under different figure numbers in the same article.
+    heading = short_image_alt(kind, image_alt, _asset_link_field(asset, "heading"))
     return render_markdown_image(kind, heading, replacement_path)
 
 
@@ -445,15 +574,28 @@ def filter_inline_body_assets(
 ) -> list[Asset]:
     inline_urls = _inline_markdown_image_urls(sections)
     if not inline_urls:
-        return list(assets)
+        return [
+            a
+            for a in assets
+            if not (
+                not asset_link(a)
+                and a.caption
+                and _caption_match_text(a.caption)
+                in _caption_match_text("\n".join(section.text for section in sections))
+            )
+        ]
     inline_candidates = [image_reference_candidates(url) for url in inline_urls]
 
     remaining: list[Asset] = []
     for asset in assets:
-        if not asset_in_body(asset):
-            remaining.append(asset)
-            continue
         asset_candidates = _asset_markdown_reference_candidates(asset)
+        if (
+            not asset_link(asset)
+            and asset.caption
+            and _caption_match_text(asset.caption)
+            in _caption_match_text("\n".join(section.text for section in sections))
+        ):
+            continue
         if asset_candidates and any(
             image_references_match(asset_candidates, inline_candidate)
             for inline_candidate in inline_candidates
@@ -482,7 +624,7 @@ def filter_inline_body_table_assets(
 
 def _caption_match_text(value: str | None) -> str:
     text = strip_markdown_images(normalize_markdown_text(value or ""))
-    text = re.sub(r"</?(?:sub|sup)>", "", text, flags=re.IGNORECASE)
+    text = re.sub(r"</?[A-Za-z][^>]*>", "", text)
     text = MARKDOWN_DECORATION_PATTERN.sub("", text)
     return re.sub(r"[\W_]+", "", normalize_text(text).lower(), flags=re.UNICODE)
 
@@ -658,7 +800,7 @@ def append_reference_block(
         [f"## References ({total_references} total, showing {shown_references})", ""]
     )
     for reference in references:
-        lines.append(_render_reference_line(reference.raw))
+        lines.extend([_render_reference_line(reference.raw), ""])
     lines.append("")
 
 
@@ -682,7 +824,9 @@ def append_reference_block_with_budget(
     selected_references: list[RenderedBlock] = []
     remaining_after_header = context.remaining_budget - header_block.token_estimate
     for reference in references:
-        candidate_block = build_rendered_block([_render_reference_line(reference.raw)])
+        candidate_block = build_rendered_block(
+            [_render_reference_line(reference.raw), ""]
+        )
         if candidate_block.token_estimate <= remaining_after_header:
             selected_references.append(candidate_block)
             remaining_after_header -= candidate_block.token_estimate

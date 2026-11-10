@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 from contextlib import redirect_stderr, redirect_stdout
 from datetime import UTC, datetime
@@ -7,12 +6,11 @@ import hashlib
 import io
 import json
 from pathlib import Path
+import shutil
 from types import SimpleNamespace
 from unittest import mock
 from uuid import UUID
-
 import pytest
-
 from paper_fetch import cli
 from paper_fetch import runtime as runtime_module
 from paper_fetch.manifest import (
@@ -20,16 +18,18 @@ from paper_fetch.manifest import (
     ManifestRecordStatus,
     parse_manifest_record,
 )
-from paper_fetch.models import Asset, SemanticLosses
+from paper_fetch.models import AcquisitionProvenance, Asset, SemanticLosses
+from paper_fetch.providers import springer as springer_provider
+from paper_fetch.providers._asset_retry import merge_asset_retry_results
 from paper_fetch.providers.base import ProviderFailure
-from paper_fetch.reason_codes import MANAGED_CHROME_EXITED_BEFORE_CDP, RATE_LIMITED
+from paper_fetch.quality.assets import build_asset_quality_summary
+from paper_fetch.reason_codes import BROWSER_CONTEXT_CREATE_FAILED, RATE_LIMITED
 from paper_fetch.tracing import trace_event
 from paper_fetch.workflow.acceptance import (
     AssetAcceptanceStatus,
     OverallAcceptanceStatus,
 )
-
-from .test_workflow_acceptance import _envelope
+from tests.support.workflow_acceptance import _envelope
 
 
 RUN_ID = UUID("10000000-0000-4000-8000-000000000001")
@@ -148,25 +148,14 @@ def test_single_manifest_is_explicit_atomic_and_hashes_final_output(
     assert record.completed_at == COMPLETED_AT
     assert len(record.request_fingerprint) == 64
     assert record.request.parameters["format"] == "markdown"
-    assert record.status == "ok"
+    assert record.error is None
     assert record.acceptance.overall == OverallAcceptanceStatus.COMPLETE
     assert [event.stage for event in record.trace[:2]] == ["resolve", "fulltext"]
     assert record.fallback_codes == ()
-    assert record.output_path == str(output_path)
+    assert primary.path == str(output_path)
     assert primary.size == len(body)
     assert primary.sha256 == hashlib.sha256(body).hexdigest()
     assert primary.verification_status == "verified"
-    assert list(record.legacy_projection().to_dict()) == [
-        "index",
-        "query",
-        "status",
-        "doi",
-        "source",
-        "output_path",
-        "saved_markdown_path",
-        "warnings",
-        "error",
-    ]
 
 
 def test_single_manifest_hashes_primary_and_saved_markdown_outputs(
@@ -183,6 +172,7 @@ def test_single_manifest_hashes_primary_and_saved_markdown_outputs(
     ):
         exit_code = cli.main(
             [
+                "fetch",
                 "--query",
                 "10.1000/acceptance",
                 "--format",
@@ -201,8 +191,9 @@ def test_single_manifest_hashes_primary_and_saved_markdown_outputs(
 
     record = parse_manifest_record(json.loads(manifest_path.read_text("utf-8")))
     assert exit_code == 0
-    assert record.output_path == str(output_path)
-    assert record.saved_markdown_path is not None
+    assert any(
+        artifact.path == str(output_path) for artifact in record.output_artifacts
+    )
     assert {artifact.kind for artifact in record.output_artifacts} == {
         "primary_json",
         "saved_markdown",
@@ -225,6 +216,7 @@ def test_single_default_does_not_write_a_manifest(tmp_path: Path) -> None:
     ):
         exit_code = cli.main(
             [
+                "fetch",
                 "--query",
                 "10.1000/acceptance",
                 "--artifact-mode",
@@ -250,6 +242,7 @@ def test_single_manifest_cannot_overwrite_the_primary_output(tmp_path: Path) -> 
     ):
         exit_code = cli.main(
             [
+                "fetch",
                 "--query",
                 "10.1000/acceptance",
                 "--output",
@@ -294,6 +287,7 @@ def test_single_failure_manifest_preserves_exit_code_and_null_output_fields(
     ):
         exit_code = cli.main(
             [
+                "fetch",
                 "--query",
                 "10.1000/acceptance",
                 "--output-dir",
@@ -307,26 +301,25 @@ def test_single_failure_manifest_preserves_exit_code_and_null_output_fields(
     assert exit_code == 3
     assert json.loads(stderr.getvalue())["status"] == "no_access"
     assert record.record_status == ManifestRecordStatus.FAILED
-    assert record.status == "no_access"
-    assert record.output_path is None
-    assert record.saved_markdown_path is None
+    assert record.error is not None
+    assert record.error.status == "no_access"
     assert record.output_artifacts == ()
     assert record.warnings == ("license required",)
 
 
-def test_failed_manifest_preserves_managed_chrome_stage_code_and_summary(
+def test_failed_manifest_preserves_browser_runtime_stage_code_and_summary(
     tmp_path: Path,
 ) -> None:
     error = ProviderFailure(
-        MANAGED_CHROME_EXITED_BEFORE_CDP,
-        "managed_chrome_startup: Chrome exited. Chrome stderr: profile locked",
+        BROWSER_CONTEXT_CREATE_FAILED,
+        "runtime_prepare: Camoufox exited. stderr: profile locked",
         trace=[
             trace_event(
-                "managed_chrome_startup",
+                "runtime_prepare",
                 "wiley_html",
                 "fail",
-                code=MANAGED_CHROME_EXITED_BEFORE_CDP,
-                message="Chrome stderr: profile locked",
+                code=BROWSER_CONTEXT_CREATE_FAILED,
+                message="Camoufox stderr: profile locked",
             )
         ],
     )
@@ -335,11 +328,11 @@ def test_failed_manifest_preserves_managed_chrome_stage_code_and_summary(
 
     assert record.record_status == ManifestRecordStatus.FAILED
     assert record.error is not None
-    assert record.error.status == MANAGED_CHROME_EXITED_BEFORE_CDP
-    assert record.trace[0].stage == "managed_chrome_startup"
-    assert record.trace[0].code == MANAGED_CHROME_EXITED_BEFORE_CDP
-    assert record.trace[0].message == "Chrome stderr: profile locked"
-    assert MANAGED_CHROME_EXITED_BEFORE_CDP in record.failure_codes
+    assert record.error.status == BROWSER_CONTEXT_CREATE_FAILED
+    assert record.trace[0].stage == "runtime_prepare"
+    assert record.trace[0].code == BROWSER_CONTEXT_CREATE_FAILED
+    assert record.trace[0].message == "Camoufox stderr: profile locked"
+    assert BROWSER_CONTEXT_CREATE_FAILED in record.failure_codes
 
 
 def test_successful_pdf_fallback_keeps_html_browser_failure_degraded(
@@ -351,8 +344,8 @@ def test_successful_pdf_fallback_keeps_html_browser_failure_degraded(
                 "fulltext",
                 "wiley_html",
                 "fail",
-                code="managed_chrome_cdp_timeout",
-                message="CDP startup timed out.",
+                code="browser_runtime_prepare_timeout",
+                message="Camoufox preparation timed out.",
             ),
             trace_event("fulltext", "wiley_pdf_fallback", "ok"),
         ]
@@ -363,10 +356,10 @@ def test_successful_pdf_fallback_keeps_html_browser_failure_degraded(
         result=cli.SingleFetchResult(envelope),
     )
 
-    assert record.status == "ok"
+    assert record.error is None
     assert record.acceptance.overall == OverallAcceptanceStatus.DEGRADED
-    assert "managed_chrome_cdp_timeout" in record.failure_codes
-    assert "managed_chrome_cdp_timeout" in record.fallback_codes
+    assert "browser_runtime_prepare_timeout" in record.failure_codes
+    assert "browser_runtime_prepare_timeout" in record.fallback_codes
 
 
 @pytest.mark.parametrize(
@@ -421,9 +414,166 @@ def test_cli_adapter_exposes_fulltext_limited_and_asset_acceptance(
         result=cli.SingleFetchResult(envelope),
     )
 
-    assert record.status == "ok"
+    assert record.error is None
     assert record.acceptance.overall == overall
     assert record.asset_summary.status == asset_status
+
+
+def test_cli_manifest_fingerprint_and_acceptance_include_strict_asset_flags(
+    tmp_path: Path,
+) -> None:
+    envelope = _envelope(
+        assets=[
+            Asset(
+                kind="figure",
+                heading="Figure 1",
+                url="https://example.test/figure-1.png",
+            )
+        ]
+    )
+    default = _build_record(
+        tmp_path,
+        args=_args(asset_profile="body"),
+        result=cli.SingleFetchResult(envelope),
+    )
+    strict = _build_record(
+        tmp_path,
+        args=_args(
+            asset_profile="body",
+            require_local_body_assets=False,
+            require_full_size_body_assets=True,
+        ),
+        result=cli.SingleFetchResult(envelope),
+    )
+
+    assert strict.request.parameters["strategy"] == {
+        "allow_metadata_only_fallback": True,
+        "asset_profile": "body",
+        "require_local_body_assets": True,
+        "require_full_size_body_assets": True,
+    }
+    assert strict.request_fingerprint != default.request_fingerprint
+    assert strict.asset_summary.require_local_body_assets is True
+    assert strict.asset_summary.require_full_size_body_assets is True
+    assert strict.asset_summary.local_body_assets_satisfied is False
+    assert strict.acceptance.fetch.status.value == "ok"
+    assert strict.acceptance.overall == OverallAcceptanceStatus.DEGRADED
+
+
+def test_springer_formula_rendition_aliases_produce_complete_manifest(
+    tmp_path: Path,
+) -> None:
+    fixture_dir = (
+        Path(__file__).parents[1]
+        / "fixtures"
+        / "golden_criteria"
+        / "10.1371_journal.pone.0015338"
+        / "body_assets"
+    )
+    source_images = [
+        fixture_dir / f"pone.0015338.e{index:03d}.png" for index in range(1, 5)
+    ]
+    extracted_assets: list[dict[str, object]] = []
+    downloaded_assets: list[dict[str, object]] = []
+    for index, (size, source_image) in enumerate(
+        zip((220, 40, 35, 80), source_images, strict=True),
+        start=1,
+    ):
+        filename = f"41586_2016_BFnature16457_IEq{index}_HTML.gif"
+        preview_url = (
+            f"https://media.springernature.com/lw{size}/springer-static/image/"
+            f"art%3A10.1038%2Fnature16457/MediaObjects/{filename}"
+        )
+        full_url = preview_url.replace(f"/lw{size}/", "/full/")
+        local_path = tmp_path / f"nature16457-formula-{index}.png"
+        shutil.copyfile(source_image, local_path)
+        extracted_assets.append(
+            {
+                "kind": "formula",
+                "heading": f"Formula {index}",
+                "original_url": preview_url,
+                "url": preview_url,
+            }
+        )
+        downloaded_assets.append(
+            {
+                "kind": "formula",
+                "heading": f"Formula {index}",
+                "original_url": full_url,
+                "url": full_url,
+                "path": str(local_path),
+                "download_tier": "full",
+            }
+        )
+
+    merged_assets = merge_asset_retry_results(
+        extracted_assets,
+        downloaded_assets,
+        policy=springer_provider.SPRINGER_ASSET_RETRY_POLICY,
+    )
+    assets = [Asset(**item) for item in merged_assets]
+    asset_summary = build_asset_quality_summary(
+        assets,
+        asset_profile="body",
+        archive_enabled=True,
+    )
+    envelope = _envelope(assets=assets)
+    envelope.doi = "10.1038/nature16457"
+    envelope.source = "springer_html"
+    assert envelope.article is not None
+    envelope.article.doi = envelope.doi
+    envelope.article.source = envelope.source
+    envelope.acquisition = AcquisitionProvenance(
+        provider="springer",
+        route="direct_html",
+        representation="html",
+        transport="http",
+    )
+    envelope.article.acquisition = envelope.acquisition
+    envelope.quality.asset_summary = asset_summary
+    envelope.markdown = envelope.article.to_ai_markdown(
+        asset_profile="body",
+        include_refs="all",
+        max_tokens="full_text",
+    )
+
+    output_path = tmp_path / "nature16457.md"
+    manifest_path = tmp_path / "nature16457.manifest.json"
+    with (
+        mock.patch.object(cli, "build_runtime_env", return_value={}),
+        mock.patch.object(cli, "fetch_paper", return_value=envelope),
+        redirect_stdout(io.StringIO()),
+        redirect_stderr(io.StringIO()),
+    ):
+        exit_code = cli.main(
+            [
+                "fetch",
+                "--query",
+                envelope.doi,
+                "--output",
+                str(output_path),
+                "--output-dir",
+                str(tmp_path),
+                "--artifact-mode",
+                "markdown-assets",
+                "--asset-profile",
+                "body",
+                "--manifest",
+                str(manifest_path),
+            ]
+        )
+
+    assert exit_code == 0
+    record = parse_manifest_record(json.loads(manifest_path.read_text("utf-8")))
+    assert len(merged_assets) == 4
+    assert record.acceptance.overall == OverallAcceptanceStatus.COMPLETE
+    assert record.asset_summary.status == AssetAcceptanceStatus.COMPLETE
+    assert record.asset_summary.total == 4
+    assert record.asset_summary.local == 4
+    assert record.asset_summary.full_size == 4
+    assert record.asset_summary.failed == 0
+    assert record.asset_summary.remote_only_count == 0
+    assert record.asset_summary.issue_codes == ()
 
 
 def test_cli_adapter_publishes_semantic_losses(tmp_path: Path) -> None:
@@ -468,8 +618,9 @@ def test_batch_rate_limit_streams_one_terminal_record_per_input_and_aborts_lane(
     )
     with (
         mock.patch.object(cli, "run_single_fetch", side_effect=run_single),
-        mock.patch.object(
-            cli, "build_http_transport_for_context", return_value=object()
+        mock.patch(
+            "paper_fetch.runtime.build_http_transport_for_context",
+            return_value=object(),
         ),
     ):
         exit_code = cli.run_batch_fetch(
@@ -493,7 +644,7 @@ def test_batch_rate_limit_streams_one_terminal_record_per_input_and_aborts_lane(
     assert {record.index for record in records} == {1, 2, 3}
     assert len({record.record_id for record in records}) == 3
     assert {record.run_id for record in records} == {RUN_ID}
-    assert [record.status for record in records] == [
+    assert [record.error.status if record.error else "ok" for record in records] == [
         RATE_LIMITED,
         "aborted",
         "aborted",
@@ -503,8 +654,7 @@ def test_batch_rate_limit_streams_one_terminal_record_per_input_and_aborts_lane(
         ManifestRecordStatus.ABORTED,
         ManifestRecordStatus.ABORTED,
     ]
-    assert all(record.output_path is None for record in records)
-    assert all(record.saved_markdown_path is None for record in records)
+    assert all(not record.output_artifacts for record in records)
 
 
 def test_batch_rate_limit_keeps_an_unrelated_provider_lane_running(
@@ -526,8 +676,9 @@ def test_batch_rate_limit_keeps_an_unrelated_provider_lane_running(
 
     with (
         mock.patch.object(cli, "run_single_fetch", side_effect=run_single),
-        mock.patch.object(
-            cli, "build_http_transport_for_context", return_value=object()
+        mock.patch(
+            "paper_fetch.runtime.build_http_transport_for_context",
+            return_value=object(),
         ),
     ):
         exit_code = cli.run_batch_fetch(
@@ -557,7 +708,7 @@ def test_batch_rate_limit_keeps_an_unrelated_provider_lane_running(
     ]
     assert exit_code == 4
     assert calls == ["10.1016/limited", "10.1111/continues"]
-    assert [record.status for record in records] == [
+    assert [record.error.status if record.error else "ok" for record in records] == [
         RATE_LIMITED,
         "ok",
         "aborted",
@@ -577,8 +728,9 @@ def test_batch_generic_exception_is_failed_and_does_not_drop_later_input(
 
     with (
         mock.patch.object(cli, "run_single_fetch", side_effect=run_single),
-        mock.patch.object(
-            cli, "build_http_transport_for_context", return_value=object()
+        mock.patch(
+            "paper_fetch.runtime.build_http_transport_for_context",
+            return_value=object(),
         ),
     ):
         exit_code = cli.run_batch_fetch(
@@ -602,7 +754,10 @@ def test_batch_generic_exception_is_failed_and_does_not_drop_later_input(
         for line in results_path.read_text("utf-8").splitlines()
     ]
     assert exit_code == 1
-    assert [record.status for record in records] == ["error", "ok"]
+    assert [record.error.status if record.error else "ok" for record in records] == [
+        "error",
+        "ok",
+    ]
     assert records[0].record_status == ManifestRecordStatus.FAILED
     assert records[0].error is not None
     assert records[0].error.reason == "worker exploded"
@@ -623,7 +778,9 @@ def test_batch_resolution_and_queue_time_do_not_consume_fetch_deadline(
             query=query,
             provider_hint="test-provider",
             landing_url=None,
-            doi="10.1000/resolved",
+            # Keep the deadline regression independent of canonical DOI
+            # deduplication; each logical paper must own one fetch slot here.
+            doi=f"10.1000/{query.split()[0].lower()}",
         )
 
     def run_single(_args, *, query, context, **_kwargs):
@@ -643,8 +800,9 @@ def test_batch_resolution_and_queue_time_do_not_consume_fetch_deadline(
     with (
         mock.patch.object(cli, "resolve_paper", side_effect=resolve),
         mock.patch.object(cli, "run_single_fetch", side_effect=run_single),
-        mock.patch.object(
-            cli, "build_http_transport_for_context", return_value=object()
+        mock.patch(
+            "paper_fetch.runtime.build_http_transport_for_context",
+            return_value=object(),
         ),
     ):
         exit_code = cli.run_batch_fetch(
@@ -677,8 +835,9 @@ def test_metadata_only_batch_status_ok_remains_zero_exit(tmp_path: Path) -> None
 
     with (
         mock.patch.object(cli, "run_single_fetch", return_value=outcome),
-        mock.patch.object(
-            cli, "build_http_transport_for_context", return_value=object()
+        mock.patch(
+            "paper_fetch.runtime.build_http_transport_for_context",
+            return_value=object(),
         ),
     ):
         exit_code = cli.run_batch_fetch(
@@ -694,7 +853,7 @@ def test_metadata_only_batch_status_ok_remains_zero_exit(tmp_path: Path) -> None
 
     record = parse_manifest_record(json.loads(results_path.read_text("utf-8").strip()))
     assert exit_code == 0
-    assert record.status == "ok"
+    assert record.error is None
     assert record.acceptance.overall == OverallAcceptanceStatus.LIMITED
     assert record.acceptance.content.has_fulltext is False
 
@@ -707,6 +866,7 @@ def test_batch_rejects_single_manifest_option(tmp_path: Path) -> None:
     with redirect_stderr(stderr), pytest.raises(SystemExit) as raised:
         cli.main(
             [
+                "fetch",
                 "--query-file",
                 str(query_file),
                 "--manifest",
@@ -716,3 +876,388 @@ def test_batch_rejects_single_manifest_option(tmp_path: Path) -> None:
 
     assert raised.value.code == 2
     assert "single-paper only" in stderr.getvalue()
+
+
+def test_single_progress_jsonl_keeps_stdout_and_manifest_identical(
+    tmp_path, monkeypatch, capsys
+):
+    envelope = _envelope()
+
+    def fetch(*_args, context, **_kwargs):
+        context.report_progress("stage", stage="identity")
+        context.report_progress("stage", stage="fetching")
+        return envelope
+
+    monkeypatch.setattr(cli, "fetch_paper", fetch)
+    manifest = tmp_path / "record.json"
+    assert (
+        cli.main(
+            [
+                "fetch",
+                "--query",
+                "10.1000/acceptance",
+                "--progress",
+                "jsonl",
+                "--format",
+                "json",
+                "--output",
+                "-",
+                "--artifact-mode",
+                "none",
+                "--output-dir",
+                str(tmp_path),
+                "--manifest",
+                str(manifest),
+            ]
+        )
+        == 0
+    )
+    output = capsys.readouterr()
+    assert json.loads(output.out)
+    assert "paper_fetch_progress" not in output.out
+    events = [json.loads(line) for line in output.err.splitlines()]
+    assert [event["type"] for event in events] == [
+        "run_started",
+        "stage",
+        "stage",
+        "stage",
+        "stage",
+        "terminal",
+    ]
+    assert [event.get("stage") for event in events[1:-1]] == [
+        "queued",
+        "identity",
+        "fetching",
+        "writing",
+    ]
+    record = json.loads(manifest.read_text())
+    assert events[-1]["record"] == record
+    assert all(event["run_id"] == record["run_id"] for event in events)
+    assert events[-1]["index"] == 1
+
+
+@pytest.mark.parametrize("stage", ["identity", "assets", "writing"])
+def test_single_cancel_at_execution_boundaries_prevents_output(
+    tmp_path, monkeypatch, capsys, stage
+):
+    original_emit = cli.FetchProgress.emit
+
+    def emit(progress, event, index, **data):
+        original_emit(progress, event, index, **data)
+        if event == "stage" and data.get("stage") == stage:
+            progress.control(
+                {
+                    "protocol_version": 1,
+                    "run_id": progress.run_id,
+                    "command": "cancel",
+                    "index": 1,
+                }
+            )
+
+    def fetch(*_args, context, **_kwargs):
+        context.report_progress("stage", stage="identity")
+        context.raise_if_cancelled()
+        context.report_progress("stage", stage="assets")
+        context.raise_if_cancelled()
+        return _envelope()
+
+    monkeypatch.setattr(cli.FetchProgress, "emit", emit)
+    monkeypatch.setattr(cli.FetchProgress, "start_control", lambda _self: None)
+    monkeypatch.setattr(cli, "fetch_paper", fetch)
+    manifest = tmp_path / "record.json"
+    assert (
+        cli.main(
+            [
+                "fetch",
+                "--query",
+                "10.1000/acceptance",
+                "--progress",
+                "jsonl",
+                "--control-stdin",
+                "--format",
+                "markdown",
+                "--output-dir",
+                str(tmp_path),
+                "--manifest",
+                str(manifest),
+            ]
+        )
+        == 1
+    )
+    assert not list(tmp_path.glob("*.md"))
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    terminals = [event for event in events if event["type"] == "terminal"]
+    assert len(terminals) == 1
+    assert terminals[0]["record"] == json.loads(manifest.read_text())
+    assert terminals[0]["record"]["record_status"] == "aborted"
+
+
+def test_control_validation_eof_and_finished_race(tmp_path, monkeypatch, capsys):
+    progress = cli.FetchProgress("jsonl", RUN_ID, 2)
+    progress.control(
+        {"protocol_version": 1, "run_id": "old", "command": "cancel", "index": 1}
+    )
+    progress.control(
+        {
+            "protocol_version": 1,
+            "run_id": str(RUN_ID),
+            "command": "cancel",
+            "index": True,
+        }
+    )
+    assert not progress.is_cancelled(1)
+    record = _build_record(tmp_path, result=cli.SingleFetchResult(_envelope()))
+    progress.complete(1, lambda _cancelled: record)
+    progress.control(
+        {"protocol_version": 1, "run_id": str(RUN_ID), "command": "cancel", "index": 1}
+    )
+    assert not progress.is_cancelled(1)
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO("not json\n"))
+    progress.read_control()
+    assert progress.is_cancelled(2)
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [
+        event["status"] for event in events if event["type"] == "cancel_response"
+    ] == ["stale_run", "invalid_command", "already_finished", "invalid_command"]
+
+
+@pytest.mark.parametrize("cancel_indexes", [(1,), (2,), (1, 2)])
+def test_batch_duplicate_cancellation_preserves_other_dependants(
+    tmp_path, monkeypatch, capsys, cancel_indexes
+):
+    progress_ref = []
+    monkeypatch.setattr(
+        cli.FetchProgress,
+        "start_control",
+        lambda progress: progress_ref.append(progress),
+    )
+    fetched = []
+
+    def fetch(*_args, context, **_kwargs):
+        fetched.append(True)
+        progress = progress_ref[0]
+        for index in cancel_indexes:
+            progress.control(
+                {
+                    "protocol_version": 1,
+                    "run_id": progress.run_id,
+                    "command": "cancel",
+                    "index": index,
+                }
+            )
+        context.raise_if_cancelled()
+        return _envelope()
+
+    monkeypatch.setattr(cli, "fetch_paper", fetch)
+    monkeypatch.setattr(
+        cli, "_resolve_cli_batch_item_lane", lambda item, **_kwargs: item
+    )
+    queries = tmp_path / "queries.txt"
+    queries.write_text("10.1000/acceptance\n10.1000/acceptance\n")
+    cli.main(
+        [
+            "fetch",
+            "--query-file",
+            str(queries),
+            "--progress",
+            "jsonl",
+            "--control-stdin",
+            "--format",
+            "markdown",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    assert len(fetched) == 1
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "batch-results.jsonl").read_text().splitlines()
+    ]
+    assert [record["record_status"] for record in records] == [
+        "aborted" if index in cancel_indexes else "completed" for index in (1, 2)
+    ]
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert [
+        event["record"] for event in events if event["type"] == "terminal"
+    ] == records
+
+
+def test_batch_progress_reports_out_of_order_before_final_manifest(
+    tmp_path, monkeypatch, capsys
+):
+    import threading
+    import time
+
+    second_finished = threading.Event()
+    original_emit = cli.FetchProgress.emit
+
+    def emit(progress, event, index, **data):
+        original_emit(progress, event, index, **data)
+        if event == "terminal" and index == 2:
+            assert not (tmp_path / "batch-results.jsonl").exists()
+            second_finished.set()
+
+    def fetch(query, context, **_kwargs):
+        if query.endswith("first"):
+            assert second_finished.wait(2)
+            time.sleep(0.01)
+        return _envelope()
+
+    monkeypatch.setattr(cli, "fetch_paper", fetch)
+    monkeypatch.setattr(cli.FetchProgress, "emit", emit)
+    monkeypatch.setattr(
+        cli, "_resolve_cli_batch_item_lane", lambda item, **_kwargs: item
+    )
+    queries = tmp_path / "queries.txt"
+    queries.write_text("10.1000/first\n10.1000/second\n")
+    cli.main(
+        [
+            "fetch",
+            "--query-file",
+            str(queries),
+            "--batch-concurrency",
+            "2",
+            "--progress",
+            "jsonl",
+            "--format",
+            "markdown",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    terminals = [event for event in events if event["type"] == "terminal"]
+    assert [event["index"] for event in terminals] == [2, 1]
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "batch-results.jsonl").read_text().splitlines()
+    ]
+    assert [event["record"] for event in reversed(terminals)] == records
+
+
+def test_text_progress_auto_and_asset_throttle(monkeypatch, capsys):
+    monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: True)
+    monkeypatch.setattr(cli.time, "monotonic", lambda: 100.0)
+    progress = cli.FetchProgress("auto", RUN_ID, 1)
+    progress.emit("stage", 1, stage="assets")
+    for completed in range(20):
+        progress.emit(
+            "assets",
+            1,
+            scope="body",
+            counts=[
+                {"kind": "formula", "completed": completed, "total": None, "failed": 0}
+            ],
+        )
+    output = capsys.readouterr()
+    assert output.out == ""
+    assert "[1/1] assets" in output.err
+    assert output.err.count("formula") == 1
+    assert "0/?" in output.err
+    monkeypatch.setattr(cli.sys.stderr, "isatty", lambda: False)
+    cli.FetchProgress("auto", RUN_ID, 1)
+    assert capsys.readouterr().err == ""
+
+
+def test_cancellation_during_identity_closes_browser_on_owning_worker(
+    tmp_path, monkeypatch, capsys
+):
+    import threading
+
+    progress_ref = []
+    owners = []
+    closed = []
+    monkeypatch.setattr(
+        cli.FetchProgress,
+        "start_control",
+        lambda progress: progress_ref.append(progress),
+    )
+
+    def resolve(query, context):
+        owner = threading.get_ident()
+        owners.append(owner)
+
+        class Browser:
+            def close(self):
+                closed.append(threading.get_ident())
+                assert threading.get_ident() == owner
+
+        context._camoufox_browser_managers[(owner, True, "test")] = Browser()
+        progress = progress_ref[0]
+        progress.control(
+            {
+                "protocol_version": 1,
+                "run_id": progress.run_id,
+                "command": "cancel",
+                "index": 1,
+            }
+        )
+        context.raise_if_cancelled()
+        raise AssertionError("resolution continued after cancellation")
+
+    def fetch(*_args, **_kwargs):
+        return _envelope()
+
+    monkeypatch.setattr(cli, "resolve_paper", resolve)
+    monkeypatch.setattr(cli, "fetch_paper", fetch)
+    queries = tmp_path / "queries.txt"
+    queries.write_text("cancel during identity\n10.1111/other\n")
+    cli.main(
+        [
+            "fetch",
+            "--query-file",
+            str(queries),
+            "--batch-concurrency",
+            "2",
+            "--progress",
+            "jsonl",
+            "--control-stdin",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "batch-results.jsonl").read_text().splitlines()
+    ]
+    assert [record["record_status"] for record in records] == ["aborted", "completed"]
+    assert owners == closed
+    assert owners and owners[0] != threading.get_ident()
+    assert [
+        json.loads(line)["index"]
+        for line in capsys.readouterr().err.splitlines()
+        if json.loads(line)["type"] == "terminal"
+    ] == [1, 2]
+
+
+def test_control_eof_cancels_every_input_without_fetching(
+    tmp_path, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli.sys, "stdin", io.StringIO(""))
+    monkeypatch.setattr(
+        cli.FetchProgress, "start_control", cli.FetchProgress.read_control
+    )
+    fetch = mock.Mock(side_effect=AssertionError("EOF must cancel queued work"))
+    monkeypatch.setattr(cli, "fetch_paper", fetch)
+    queries = tmp_path / "queries.txt"
+    queries.write_text("10.1111/one\n10.1111/two\n")
+    cli.main(
+        [
+            "fetch",
+            "--query-file",
+            str(queries),
+            "--progress",
+            "jsonl",
+            "--control-stdin",
+            "--output-dir",
+            str(tmp_path),
+        ]
+    )
+    fetch.assert_not_called()
+    events = [json.loads(line) for line in capsys.readouterr().err.splitlines()]
+    assert len([event for event in events if event["type"] == "terminal"]) == 2
+    records = [
+        json.loads(line)
+        for line in (tmp_path / "batch-results.jsonl").read_text().splitlines()
+    ]
+    assert all(record["record_status"] == "aborted" for record in records)

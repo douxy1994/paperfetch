@@ -2,20 +2,34 @@
 
 这份文档是 `paper-fetch` 命令行行为的权威说明，重点解释主输出、artifact、资产下载和常见参数组合。Agent 使用的自包含执行顺序见 [`../skills/paper-fetch-skill/references/cli-workflow.md`](../skills/paper-fetch-skill/references/cli-workflow.md)，意图/落盘矩阵见 [`presets.md`](../skills/paper-fetch-skill/references/presets.md)，产物复核见 [`acceptance.md`](../skills/paper-fetch-skill/references/acceptance.md)；安装后的 skill 不反向依赖本 `docs/` 目录。
 
-## 命令面与兼容期
+## 命令面
 
-`paper-fetch --help` 会直接列出当前可用的 `fetch`、`auth`、`browser-preflight`、`manifest` 和 `doctor` 子命令；每个子命令都可以用 `--help` 查看有效默认值、枚举和落盘影响：
+`paper-fetch --help` 会直接列出当前可用的 `fetch`、`auth`、`browser-preflight`、`doctor` 和 `update` 子命令；每个子命令都可以用 `--help` 查看有效默认值、枚举和落盘影响：
 
 ```bash
 paper-fetch --help
 paper-fetch fetch --help
 paper-fetch auth --help
 paper-fetch browser-preflight --help
-paper-fetch manifest --help
 paper-fetch doctor --help
+paper-fetch update --help
 ```
 
-新脚本应使用 `paper-fetch fetch ...`。原有的根级 `paper-fetch --query ...` / `paper-fetch --query-file ...` 调用至少保留一个兼容周期，并与显式 `fetch` 共用同一参数注册和执行路径；这一兼容层保持原有退出码及 stdout/stderr 契约。`paper-fetch manifest audit|reconcile` 是可调用的只读检查命令；单篇抓取的 `--manifest <path>` 是结果文件选项，二者不要混淆。`doctor` 是内置的只读、无网络静态诊断命令；自定义 CLI 组装仍可通过既有 registrar 替换该子命令。
+抓取必须使用 `paper-fetch fetch ...`。单篇抓取的 `--manifest <path>` 是一次性结果文件选项，不是独立子命令。`doctor` 是内置的只读、无网络静态诊断命令。
+
+## 更新官方安装包
+
+```bash
+paper-fetch update
+```
+
+固定从 `Dictation354/paper-fetch-skill` 查询最新正式 Release，按当前平台、架构和 CPython ABI 下载官方安装包及同一 Release 的 `SHA256SUMS`，摘要匹配后才执行。当前版本相同或更新时直接提示并退出；源码和 pip 环境会提示各自的更新命令。
+
+Linux/macOS 在当前安装目录自动升级，复用当前 Python、配置解析得到的 headless/headful 设置及外部 env 路径，并以 `--non-interactive` 跳过可选配置。macOS 先预检 tarball 的路径、链接及特殊文件，再解包执行原安装器，继续执行其 ABI、payload 和 quarantine 检查。用户配置、论文文件、认证状态和宿主集成沿用安装器的保留语义。
+
+Windows 下载校验后打开图形安装向导，以 `/DIR` 预选当前安装目录；CLI 随后退出释放 runtime，输出“已启动安装向导”和保留的安装包位置，升级结果由向导报告。
+
+更新完成、无需更新或成功交接向导返回 `0`；不支持的安装方式，以及查询、下载、校验或安装失败返回 `1`，错误写入 stderr。部署细节见 [部署文档](deployment.md#8-更新方式)。
 
 ## 基本用法
 
@@ -24,16 +38,30 @@ paper-fetch fetch --query "10.1186/1471-2105-11-421" \
   --format markdown \
   --output - \
   --output-dir ./.paper-fetch-tmp \
-  --no-download \
   --artifact-mode none \
   --asset-profile none \
   --include-refs all \
   --max-tokens full_text
 ```
 
-`--query` 可以是 DOI、论文 landing URL 或标题查询。CLI 默认会优先尝试全文；如果全文不可用，可能返回摘要或 metadata-only 结果。MDPI 的经典数字 URL（例如 `https://www.mdpi.com/2072-4292/18/10/1673`）会先按已知 ISSN 到 journal code 映射推导 DOI；MDPI DOI / DOI URL 也会在 provider 阶段反推对应的数字 article URL，再进入 MDPI selected-browser provider，避免解析阶段被 MDPI direct HTTP/CDN 403 阻断；未知 ISSN 仍按通用 landing URL 解析。URL 中嵌入 DOI 时，resolver 会复用 provider path templates 清理已知 route 后缀，例如 Frontiers 的 `/full` / `/pdf` / `/xml`、IOP 的 `/pdf`、Wiley 的 `/fullpdf` 和 Springer PDF URL 的 `.pdf`，PLOS 这类 `id={doi}` query parameter 也会直接提取 DOI；未知 provider 的 DOI 后缀不会被猜测性剥离。旧式 SICI DOI（例如 `10.1175/1520-0469(1967)024<0241:TEOTAW>2.0.CO;2` 或 Wiley/Blackwell 的 `10.1002/(SICI)...<...>...`）会保留完整 `<...>` / `;` 后缀；对应的 AMS `view/...xml` 或 `downloadpdf/...pdf` URL 可作为 query。官方 PDF fallback 已经下载到真实 PDF 但无法转换成 Markdown 时，会保留已下载的 PDF artifact 并在 warning 中说明 PDF-only 状态，而不是降级成 Crossref metadata-only source。
+`--query` 可以是 DOI、论文 landing URL 或标题查询。CLI 优先尝试全文，全文不可用时可返回摘要或 metadata-only。URL/DOI 路由规则与 provider 特例见 [provider 指南](providers.md#抓取瀑布与回退语义)。官方 PDF 已下载但无法转换为 Markdown 时，会保留可落盘的 PDF artifact 并报告 PDF-only 状态。
 
-上面的命令是临时阅读：正文写 stdout，不归档论文文件。CLI 仍会准备显式的 `./.paper-fetch-tmp` 工作目录，因此不能承诺硬零写盘；完全不落盘请使用 MCP 的临时阅读预设。CLI 没有 cache-only / `prefer_cache` 预设，也没有与 `batch_check(mode="metadata")` 等价的低成本批量 probe。
+上面的命令是临时阅读：正文写 stdout，不归档论文文件。CLI 仍会准备显式的 `./.paper-fetch-tmp` 工作目录，MCP 临时阅读预设可关闭论文产物与 fetch cache 写入，浏览器运行时仍可能写入状态。CLI 没有 cache-only / `prefer_cache` 预设，也没有与 `batch_check(mode="metadata")` 等价的低成本批量 probe。
+
+## 独立补充材料任务
+
+```bash
+paper-fetch fetch --target supplementary --query "论文 DOI 或 URL" --output-dir ./papers
+paper-fetch fetch --target supplementary --query-file queries.txt --output-dir ./papers --format json
+```
+
+`--target` 接受 `paper|supplementary`，默认 `paper`。独立补充任务不检查正文充分性，不组装或输出正文，不下载正文 PDF；正文付费不妨碍获取公开附件，附件自身的访问限制仍逐项报告。来源未实现此能力时返回 `not_supported`。
+
+材料范围沿用 provider 的明确补充区、Source Data、Extended Data 和多媒体定义，普通数据仓库链接不自动纳入。`--asset-profile` 的三个值不变，补充任务固定获取材料范围；`--include-refs`、`--max-tokens` 和正文资产要求仅用于 `paper`。
+
+主 JSON/Markdown 及另存 Markdown 索引使用 `<paper-stem>_supplementary`，附件沿用原资产目录规则。JSON 的 `target="supplementary"`、`has_fulltext=false`、`article=null`；`supplementary` 包含 `assets`、`asset_failures`、`discovery_complete`、`identity_verified` 和 `source_urls`。Markdown 只列材料名称、来源链接及已下载文件路径。`--artifact-mode none` 返回未归档清单，显式的主输出或索引保存仍遵循原 CLI 语义。
+
+全部文件成功时 acceptance 为 `complete`，部分成功或仅发现未归档时为 `degraded`；全部下载失败保留具体原因。只有完整检查且没有材料时返回 `no_result` 和空清单，并使用非零退出码，批量 JSONL 的 acceptance 保留该结果。随正文下载补充材料继续用 `--target paper --asset-profile all`。
 
 ## 任务预设
 
@@ -50,9 +78,35 @@ paper-fetch fetch --query "10.1186/1471-2105-11-421" \
   --max-tokens full_text
 ```
 
-用户明确要求正文图时改用 `--artifact-mode markdown-assets --asset-profile body`；明确要求补充材料时改用 `--artifact-mode markdown-assets --asset-profile all`。`--artifact-mode all` 是原始 provider 载荷、HTTP cache 和调试 sidecar 的保留策略，不是补充材料开关。
+用户明确要求正文图时改用 `--artifact-mode markdown-assets --asset-profile body`；明确要求补充材料时改用 `--artifact-mode markdown-assets --asset-profile all`。`--artifact-mode all` 是原始 provider 载荷和调试 sidecar 的保留策略，不是补充材料开关。HTTP transport 只使用进程内存缓存，不保留磁盘 HTTP cache。
 
 CLI 适合单篇或批量本地归档；需要 MCP 宿主内 progress/cancel、结构化批量 acceptance 或不便解析 CLI stdout 时可使用 `batch_fetch`。临时阅读、可缓存阅读、批量可读性分诊和 MCP 批量归档的参数矩阵见技能包的 [`presets.md`](../skills/paper-fetch-skill/references/presets.md)。
+
+## 实时进度与机器取消
+
+单篇和批量都支持 `--progress auto|text|jsonl|none`。默认 `auto` 仅在 stderr 连接终端时显示文本；`text` 强制显示，`none` 关闭。正文或 JSON 的 stdout 语义不变。文本按输入序号报告阶段及资产计数，高频资产刷新间隔至少 200ms，阶段和终态立即显示。
+
+`--progress jsonl` 在 stderr 逐行、即时输出协议 1 事件。只识别 `paper_fetch_progress: true` 的行，其他行是普通诊断。每个事件都有 `protocol_version: 1`、本次启动的 `run_id`、原始输入 `index` 和 `type`：
+
+| type | 内容 |
+| --- | --- |
+| `run_started` | `index: 0`，`total` 输入数量 |
+| `stage` | `queued / identity / fetching / assets / validating / writing`；只报告实际执行的阶段 |
+| `assets` | `scope` 当前来源/处理轮次，`counts` 中各项含 `kind: figure/formula/table/supplementary`、`completed`、`total`、`failed` |
+| `terminal` | `record` 为既有 manifest v2 record，产物写入和工作线程清理完成后发送 |
+| `cancel_response` | `status: cancelling / already_finished / invalid_command / stale_run` |
+
+单篇 `index` 为 1，批量即使乱序完成也保留原始序号。`completed` 为已处理资产（包括失败），候选地址尝试及重试不重复累加。同一次发现/下载范围内按资产身份计数，切换来源或重试轮次时 `scope` 改变，消费者替换当前计数。`total: null` 表示未知；不推算百分比。正文任务的补充材料仅在请求 `asset_profile=all` 时处理；独立 `target=supplementary` 固定处理补充材料。
+
+`--control-stdin` 仅与 `--progress jsonl` 配合使用。等待 `run_started` 后向 stdin 写入以下 JSONL（每行最多 16,384 字符）：
+
+```json
+{"protocol_version":1,"run_id":"从 run_started 读取","command":"cancel","index":2}
+```
+
+`index: null` 取消整批。默认 CLI 不读取 stdin，也没有终端交互式单篇取消菜单。过期 run_id 被拒绝，已终结输入返回 `already_finished`。有效请求立即回应 `cancelling`；执行端确认停止后才发送 `record_status: aborted` 的终态。被取消输入不会被随后成功覆盖；重复 DOI 仍共享抓取，只有全部依赖输入取消才停止共享工作。stdin 断开会请求整批协作式退出。请求等待、资产循环、输出提交沿用现有取消检查，保留共享 HTTP 连接池与出版社限流；浏览器清理由所属工作线程执行，控制读取线程不关闭浏览器。通常的 Ctrl-C 行为保留。
+
+实时终态与最终 manifest 内容一致；批量 `batch-results.jsonl` 仍在结束时按输入序号一次性生成。取消留下的部分产物按终态 record 中的 acceptance 判断完整度。
 
 ## 单篇 manifest
 
@@ -68,64 +122,72 @@ paper-fetch fetch --query "10.1186/1471-2105-11-421" \
   --manifest ./papers/example.manifest.json
 ```
 
-该文件包含一条与批量 JSONL 完全相同的 v2 record。主输出和额外保存的 Markdown 都先通过原子替换完成最终写入，record 随后读取最终文件的 size、SHA256 和 mtime；因此 `output_artifacts` 描述的是 record 建立时的最终文件，而不是临时 `.part` 文件。显式 manifest 自身也通过原子替换写入，且 manifest 路径不能与主输出或额外 Markdown 路径相同。目标 manifest 或最终输出已存在时默认拒绝替换；人工检查后可显式传 `--overwrite`。单篇不能同时使用 `--query-file` 和 `--manifest`；批量结果使用 `--batch-results`。
+该文件包含一条与批量 JSONL 完全相同的 v2 record。主输出、额外 Markdown 和 manifest 都使用目标 path-scoped lock、唯一同目录 staging file、flush/fsync 与原子替换；取消 fence 与最终 replace 由同一临界区线性化。record 随后读取最终文件的 size、SHA256 和 mtime，因此 `output_artifacts` 不描述临时 `.part`。默认不覆盖时，相同字节视为幂等成功且不改写，不同字节明确冲突；显式 `--overwrite` 允许串行原子替换。manifest 路径不能与主输出或额外 Markdown 相同。单篇不能同时使用 `--query-file` 和 `--manifest`；批量结果使用 `--batch-results`。
 
-单篇 manifest 与批量 run 使用同一只读审计逻辑。例如：
-
-```bash
-paper-fetch manifest audit ./papers/example.manifest.json
-```
+JSON、manifest v2 与 Markdown YAML front matter 都保留原有 `source`，并增量输出 `acquisition.provider/route/representation/transport/fallback_used`。例如 Wiley TDM PDF 的 `source` 仍是 `wiley_browser`，精确路线另记为 `wiley/tdm_pdf/pdf/api`。若旧 Markdown 没有该块仍可读取，值视为 `null`；新抓取无法确认精确路线时也保持 `null`，对应 provenance 不会被判为 complete。
 
 ## 静态诊断、真实预检与人工认证
 
-`doctor` 汇总 provider 配置、Playwright、本地 Camoufox runtime 配置以及 Ghostscript/libvips 的本地状态。它不会启动浏览器、下载 Camoufox runtime、访问出版社页面或安装工具：
+`doctor` 汇总 provider 配置、Playwright、本地浏览器 runtime 配置及 Ghostscript/libvips 状态；Byparr 检查只读取本地组件和依赖状态。它不会启动浏览器、下载浏览器／Byparr runtime、访问出版社页面或安装工具：
 
 ```bash
 paper-fetch doctor
 paper-fetch doctor --provider wiley --detail compact
 paper-fetch doctor --group browser --json
 paper-fetch doctor --env-file /path/to/offline.env --json
-paper-fetch doctor --install-root ~/.local/share/paper-fetch-skill --json
 ```
 
-`--provider` 只返回一个 catalog provider；`--group` 支持 `all`、`official`、`browser`、`direct` 和 `metadata`；`--detail compact` 的每个 provider 只保留 `provider/status/reason_code/reason/suggested_action`，`full` 额外保留原有 checks、配置来源与本地能力。provider、group 或 detail 非法时会在参数校验阶段拒绝。配置诊断只报告变量名、是否存在以及来源层，不回显 token、cookie、endpoint 或其它配置值。`--install-root` 显式核对一个离线安装目录；未指定时会从当前 module、entrypoint、`PAPER_FETCH_ENV_FILE` 或 PATH CLI 附近发现 `offline-manifest.json`。`--json` 的 `install_provenance` 会列出 source/distribution/UA/PATH CLI/offline manifest/installed runtime 的版本与路径，并逐一校验 bundle 和 Codex、Claude、Antigravity 三份 skill；纯源码开发态没有可发现的 offline manifest 时返回 `not_applicable`，版本或 hash 不一致返回 `drift`。
+`--provider` 只返回一个 catalog provider；`--group` 支持 `all`、`official`、`browser`、`direct` 和 `metadata`；`--detail compact` 的每个 provider 只保留 `provider/status/reason_code/reason/suggested_action`，`full` 额外保留原有 checks、配置来源与本地能力。provider、group 或 detail 非法时会在参数校验阶段拒绝。配置诊断只报告变量名、是否存在以及来源层，不回显 token、cookie、endpoint 或其它配置值。安装和宿主 Skill 完整性由安装器及 `scripts/skill_integrity.py` 独立验证，不进入 doctor 状态。
 
-诊断顺序固定为：先用 `doctor` / MCP `provider_status` 检查静态配置与本地依赖；browser-backed provider 需要真实链路证明时再运行 CLI `browser-preflight` 或 MCP `browser_preflight`；只有预检或实际抓取明确要求登录/验证时，才显式运行 `auth`。`doctor` 退出码为 `0=ready`、`1=degraded`、`2=error`；它的 `ready` 仍不表示出版社网页当前可访问。
+按问题选择诊断入口：`doctor` / MCP `provider_status` 检查静态配置与本地依赖；CLI `browser-preflight` / MCP `browser_preflight` 检查真实浏览器链路；`auth` 用于人工登录或验证。正常抓取可直接运行。`doctor` 退出码为 `0=ready`、`1=degraded`、`2=error`；它的 `ready` 仍不表示出版社网页当前可访问。
+
+`fetch`、`auth` 和 `browser-preflight` 首次实际使用浏览器时准备受管运行时；
+HTTP 路线和静态诊断不触发准备。组件安装、渠道与失败重试见
+[浏览器安装与准备](deployment.md#浏览器安装与准备)。
 
 ## Browser 登录态
 
-4.0 的唯一浏览器后端是原生 Firefox/Juggler Camoufox。HTML、PDF fallback、图片/补充文件、preflight 和 auth 都通过同一 browser-runtime facade；失败不会静默切换其它 backend。默认 core 安装不包含浏览器依赖，使用这些命令前需安装 `paper-fetch-skill[browser]` 或 `[full]`。完整配置见 [`browser-backends.md`](browser-backends.md)。
+浏览器 provider 共用受管 Byparr：Windows/Linux x64 使用 Invisible，macOS/ARM 使用
+Camoufox。core 安装需补充 `[browser]` 或 `[full]`；后端兼容值、binary、目录覆盖和
+原生/JSON 状态选择见 [browser-backends.md](browser-backends.md)。
 
-如果自动过盾失败，可用通用手动 fallback 打开 headed browser：
+需要建立或更新合法登录、验证状态时运行：
 
 ```bash
 paper-fetch auth <provider>
 paper-fetch auth wiley --url "https://onlinelibrary.wiley.com/doi/full/10.1111/example"
 ```
 
-`provider` 来自 browser runtime catalog，例如 `wiley` / `science` / `pnas` / `ams` / `mdpi` / `royalsocietypublishing` / `annualreviews` / `acs` / `iop` / `aip`。未传 `--url` 时打开内置样例文章；传入 `--url` 时打开用户指定的失败文章页。命令强制 headed 模式，打印所选后端的 profile 和 storage-state 路径，用户在浏览器中完成合法登录或验证后，在终端按 Enter 保存过滤后的本地 storage-state 并退出。AMS 抓取不强制预先认证；无保存状态时仍会启动浏览器尝试静默验证，只有站点验证未自动完成时才需要 `paper-fetch auth ams`。
+`provider` 取自 runtime catalog；不传 `--url` 时打开内置样例文章。命令使用有窗口模式，
+用户在浏览器中完成登录或验证后，在终端按 Enter 关闭，再按正式抓取窗口配置验证保存
+状态。`--timeout-ms` 控制导航超时；`auth` 不接受 `--browser-user-agent`。普通 fetch 默认
+无窗口，可通过 `PAPER_FETCH_BROWSER_HEADLESS` 控制。未预先认证仍可直接抓取。
 
-如果需要在批量抓取前确认所有 browser-backed provider 的浏览器链路是否能过站点验证，可以先串行运行预检：
+需要检查真实浏览器链路时运行：
 
 ```bash
 paper-fetch browser-preflight
 paper-fetch browser-preflight --provider wiley --provider science --timeout-ms 120000
 ```
 
-预检会按 runtime catalog 中 `requires_browser_runtime=True` 的 provider 顺序使用内置样例 DOI/URL 构造正常 HTML candidates，并复用 provider HTML bootstrap、同一 browser context 重试和 availability 判定。内置样例优先选择结构较轻、已有 fixture 覆盖的 full-text 页面，降低预热耗时；成功时会保存对应 `publisher-browser-profiles/<provider>/storage-state.json`。IEEE 会等待最多 15 秒，只有匹配文章号的 `#article` 才算 ready；初始 HTTP 202 不会单独决定结果，持续 AWS WAF 页报告 `aws_waf_challenge`，顶层状态仍为 `challenge`。结果使用唯一 `status/reason_code/stage/message` 契约：`challenge/auth_required` 才建议人工认证，`network_timeout` 建议重试，`extraction_error` 指向页面/selector 诊断，`runtime_error` 先修复本地运行时，`cancelled` 显式重跑。失败时 stdout 还会在可用时输出脱敏 final URL、Chrome exit/stderr 与 diagnostic artifact。该命令只验证 HTML 路径，不触发 PDF fallback；它会真实访问出版社样例页，不同于 MCP `provider_status()` 的本地能力检查。
+预检按 runtime catalog 顺序串行访问内置样例或指定页面，复用正式 HTML bootstrap、
+重试和 availability 判定，返回 `status/reason_code/stage/message`、下一步与可用诊断。
+它只检查 HTML，不执行 PDF fallback 或自动 auth；正式 fetch 会独立导航和验收。
+预检结果不会作为后续 fetch 的页面缓存或 route hint。
 
-MCP 的 `browser_preflight` 直接调用同一个 preflight 核心。无参数时与 CLI 一样检查全部 browser provider；单 provider 可传 `provider`，并可同时指定 `test_url`、`timeout_ms`、`browser_user_agent`、`storage_state_path`、`save_storage_state` 和 `detail="full|compact"`。`test_url` / `storage_state_path` 要求显式单 provider；默认 `save_storage_state=true`，因此该 open-world 工具不是只读操作。返回逐 provider `ready/challenge/auth_required/network_timeout/extraction_error/runtime_error/cancelled`、下一步与进度；compact 每项只保留路由字段。一个 provider 失败不抹掉其它已完成结果，取消保留已完成结果并停止后续调度。该工具始终报告未尝试 PDF fallback 和 auth；需要登录或处理 challenge 时只建议用户显式运行 `paper-fetch auth <provider>`。
+MCP `browser_preflight` 使用同一核心，无参数时检查全部 browser provider；可指定
+`provider`、`test_url`、`timeout_ms`、`browser_user_agent`、`storage_state_path`、
+`save_storage_state` 和 `detail="full|compact"`。`test_url` / `storage_state_path` 要求
+显式单 provider。compact 项仅保留
+`provider/status/reason_code/stage/message/next_action`。状态为
+`ready/challenge/auth_required/network_timeout/extraction_error/runtime_error/cancelled`；
+单项失败不抹掉已完成结果，取消保留已完成项并停止后续调度。
 
-普通 `paper-fetch fetch --query ...` 默认使用 managed headless Camoufox；`PAPER_FETCH_BROWSER_HEADLESS` 控制 headed/headless。只有 `paper-fetch auth <provider>` 或显式关闭 headless 时才显示窗口。
-
-常用参数：
-
-- `--url <url>`：覆盖内置样例文章，打开具体失败文章页。
-- `--timeout-ms <ms>`：设置浏览器导航超时。
-- `--browser-user-agent <ua>`：Camoufox 会拒绝该参数，以保持生成的 Firefox 指纹一致。
-- storage-state 保存位置优先通过 `PAPER_FETCH_BROWSER_PROFILE_DIR` 或 `PAPER_FETCH_BROWSER_USER_DATA_DIR` 覆盖。
-
-storage-state JSON 是主要复用状态，只是本地辅助状态，不绕过权限，也不是跨机器通用凭据；站点 session 可能按时间、网络、设备或浏览器指纹失效。未配置持久凭证不会阻止正常抓取；抓取仍会按当前 browser workflow 和 provider PDF / abstract-only / metadata fallback 运行。手动 auth 后再次抓取同一 provider 会复用同一个 publisher storage-state 文件。
+预检会访问网络、准备组件并默认导出过滤后的 JSON；`save_storage_state=false` 只禁止
+JSON 导出，原生目录仍可更新。原生目录与 JSON 不自动迁移，已有目录的初始化、显式
+JSON 导入、目录排他锁和 auth 回放统一见[状态模式](browser-backends.md#状态模式)。
+保存状态只复用已有访问权限，站点 session 仍可能过期。支持的 Cloudflare interstitial
+由 Byparr 在当前 context 和预算内处理；需登录或人工验证时，结果提示显式运行 `auth`。
 
 ## 批量抓取
 
@@ -151,27 +213,15 @@ paper-fetch fetch --query-file ./queries.txt \
 
 论文元数据无法提供标题且 query 也不含 DOI 时，`paper-stem` 使用规范化 query 的 16 位 SHA-256 摘要（例如 `unknown_unknown_article_<digest>`）。该回退在并发和续跑之间保持稳定，避免不同 URL 结果争用同一个匿名文件名，也不会把完整 query 写入文件名。
 
-如果未提供 `--output-dir`，CLI 使用默认下载目录。默认事件文件是 `<output-dir>/batch-results.jsonl`，可用 `--batch-results <path>` 覆盖；原子 run 摘要默认写在事件文件同目录的 `run-manifest.json`，可用 `--run-manifest <path>` 覆盖。JSONL 每行是一条 schema v2 attempt record；旧的 `index`、`query`、`status`、`doi`、`source`、`output_path`、`saved_markdown_path`、`warnings` 和 `error` 九个顶层字段保持原名和原语义，旧消费者可以继续只读取这些字段。v2 只做增量扩展，不要求消费者一次理解所有新增字段。
+如果未提供 `--output-dir`，CLI 使用默认下载目录。最终结果默认写入 `<output-dir>/batch-results.jsonl`，可用 `--batch-results <path>` 覆盖。文件只在全部输入取得终态后写一次：每行是一条 schema-v2 record，严格按输入 `index` 排列，不提供 journal 或恢复语义。
 
-```bash
-paper-fetch fetch --query-file ./queries.txt \
-  --format markdown \
-  --output-dir ./papers \
-  --batch-concurrency 4 \
-  --batch-results ./papers/results.jsonl \
-  --artifact-mode none \
-  --asset-profile none \
-  --include-refs all \
-  --max-tokens full_text
-```
+`--batch-concurrency` 默认是 `1`，允许范围是 `1..8`。标题查询会先在自己的 child context 解析实际 provider；规范 DOI 相同的输入只在当前批次抓取 representative 一次，再按原 `index/query` fan-out。单个 provider 错误不会阻止其它 lane；未调度、取消和失败输入也各有一个终态 record。全部调用成功且没有 aborted 时退出码为 `0`；`no_access`、`rate_limited`、`ambiguous` 分别优先映射到 `3`、`4`、`2`，其它失败为 `1`。
 
-`--batch-concurrency` 默认是 `1`，允许范围是 `1..8`。CLI 使用共享增量 runner，只维持有限的 in-flight 项。某个可静态识别的 provider lane 被限速后，不再向该 lane 提交新任务；无法从 URL/DOI 可靠判断 provider 的标题查询进入通用 lane。批量解析和 provider lane 排队不计入单篇论文的 request deadline；该预算在 fetch worker 真正取得执行槽时开始，而单篇内部的 HTML、browser、PDF 与 fallback 仍共享同一 deadline。已提交任务正常终态化，未调度项也各写一条 `record_status=aborted`、`status=aborted` 的记录。一次正常完成的批量运行保证输入数、record 数和唯一 `index` 数相等。第一次 Ctrl-C 只发出协作式取消并等待在途 worker 收敛；超过宽限期 runner 才关闭共享 browser manager，第二次 Ctrl-C 可立即升级强制关闭。
-
-单个条目的普通 provider 错误不会停止其它 lane；失败条目会写入 JSONL 的 `error` 字段。全部调用成功且没有 aborted 时退出码为 `0`；工具失败或 aborted 为非零，并继续按 `no_access`、`rate_limited`、`ambiguous` 优先映射到 `3`、`4`、`2`，其它失败/aborted 为 `1`。`acceptance.overall=degraded` 本身不会把退出码升级为非零。
+`--overwrite` 同时保护每篇最终输出和 batch results。目标已存在时默认在执行前拒绝；传入 `--overwrite` 允许替换。最终 JSONL 通过 path lock、同目录唯一临时文件、flush/fsync 和原子替换提交，不会暴露半写文件。
 
 ### 批量并行
 
-批量抓取默认是串行执行，也就是 `--batch-concurrency 1`。当 `--batch-concurrency` 大于 `1` 时，CLI 会并行抓取多篇论文：
+当 `--batch-concurrency` 大于 `1` 时，CLI 会并行抓取多篇论文：
 
 ```bash
 paper-fetch fetch --query-file ./queries.txt \
@@ -180,68 +230,10 @@ paper-fetch fetch --query-file ./queries.txt \
   --batch-concurrency 4 \
   --batch-results ./papers/batch-results.jsonl \
   --artifact-mode none \
-  --asset-profile none \
-  --include-refs all \
-  --max-tokens full_text
+  --asset-profile none
 ```
 
-上面的命令最多同时抓取 `4` 篇。每篇抓取会独立创建运行时上下文，避免跨任务共享 provider 解析状态；同一个 batch 会共享 HTTP transport，并按 browser 配置共享且保留 managed browser manager，因此连接池、同 host 限流、请求缓存和 provider Chrome lifecycle 可以跨条目复用，而 context/page 仍逐条隔离。item context 在预解析阶段保留已解析身份，fetch worker 开始时只重置请求时钟，不丢弃该缓存。JSONL 汇总仍由主线程在每个终态到达时立即写入并 flush，避免并发写文件。并行模式下 `batch-results.jsonl` 按任务完成顺序追加，不保证与输入文件顺序一致；`index` 始终是输入文件过滤空行和注释后的稳定 1-based 序号，消费者必须按 `index` 关联或重排输入，不能把行号当成输入顺序。
-
-### Run 目录、状态与 attempts
-
-默认布局如下；显式路径可以把两个 manifest 文件放到其它位置：
-
-```text
-papers/
-├── run-manifest.json       # 原子替换的 run 摘要
-├── batch-results.jsonl     # append-only attempt events
-└── <paper-stem>.md         # 每篇最终输出
-```
-
-跨进程 run/file locks 位于 `platformdirs` 解析出的当前用户 runtime 目录，不写进论文输出目录，也不计入论文输出或 attempt event。
-
-`run-manifest.json` 记录 schema 版本、run id、工具版本、完整有序输入、关键抓取/渲染/输出配置及其 fingerprint、时间、状态统计和事件文件位置。状态从 `running` 开始，正常终态为 `completed`；键盘中断、协作式取消和其它持久化后的失败分别落为 `interrupted`、`cancelled`、`failed`。每条完成事件写入后都会 checkpoint 摘要，因此异常退出后仍可审计已经持久化的部分。
-
-事件文件只追加 attempt，不会在恢复时改写历史记录。`index` 在同一 run 内始终对应原输入位置，`attempt` 从 `1` 连续递增；`record_id` 由 run/index/attempt 稳定确定。JSONL 仍按终态到达顺序排列，当前状态应按每个 `index` 的最大 `attempt` 重建。
-
-### 只读 audit / reconcile
-
-两个子命令都不写 manifest、不修改论文文件、不联网，也不自动修复；`reconcile` 只是更明确地表达“重新读取当前文件并与历史快照核对”，当前与 `audit` 使用同一审计引擎：
-
-```bash
-paper-fetch manifest audit ./papers/run-manifest.json
-paper-fetch manifest reconcile ./papers/run-manifest.json
-```
-
-stdout 是稳定 JSON 报告，包含 manifest 类型、run 状态、输入/record/index 数、缺失 index、可复用与需重试 index，以及逐条 finding。审计会检查 run/attempt 结构、request fingerprint、最终文件存在性、size/SHA256、Markdown YAML front matter 的 DOI/source/content、输出与统一 acceptance 是否满足当前请求。front matter 使用结构化 YAML parser，不按文本正则猜测。
-
-退出码含义如下：
-
-| 退出码 | `status` | 含义 |
-| ---: | --- | --- |
-| `0` | `ok` | 结构和当前最终输出均可验证 |
-| `1` | `manifest_stale` | 结构可读，但 run 未完成、记录/文件缺失或当前文件不再匹配历史快照/请求 |
-| `2` | `invalid` | manifest、事件 JSONL 或 run/index/attempt 结构无效，不能安全恢复 |
-
-### 安全 resume 与 overwrite
-
-恢复时必须同时提供原始 query 文件及原运行的完整关键选项：
-
-```bash
-paper-fetch fetch --query-file ./queries.txt \
-  --format markdown \
-  --output-dir ./papers \
-  --batch-concurrency 4 \
-  --artifact-mode none \
-  --asset-profile none \
-  --include-refs all \
-  --max-tokens full_text \
-  --resume ./papers/run-manifest.json
-```
-
-CLI 先在 run lock 内执行只读审计。只有 query、工具版本和关键配置 fingerprint 全部匹配，且当前输出的 hash、front matter 与 acceptance 仍满足请求的 index 才会跳过。缺失、stale、失败或低于请求质量的 index 会产生下一条 attempt；输入顺序或关键配置变化会直接拒绝恢复并要求新建 run。`--resume` 不能与 `--run-manifest` 同时使用；显式 `--batch-results` 时必须与 run 摘要记录的事件路径一致。
-
-安全边界是“默认不覆盖”。新 run 的摘要、事件文件或最终输出已存在时会拒绝；resume 若需要替换仍存在的 stale/低质量输出，也会先拒绝。只有人工确认这些路径可以替换后才传 `--overwrite`。输出已缺失时可直接重新生成，无需 `--overwrite`。写入通过 path/run lock、同目录临时文件和原子替换完成；此机制不自动编辑用户 Markdown，也不提供跨机器同步。
+每篇抓取使用独立 child context；同一 batch 只共享线程安全 HTTP transport 和不可变环境。Provider client、session、CookieJar、trace、timing、diagnostics 与 browser context/page 均逐条隔离。任务可按完成顺序并发收敛，但最终 JSONL 始终恢复为输入顺序。
 
 ### JSONL schema v2 字段
 
@@ -250,36 +242,45 @@ CLI 先在 run lock 内执行只读审计。只有 query、工具版本和关键
 | `schema_version` / `minimum_reader_schema_version` | record schema 版本和最低 reader 版本，当前均为 `2` |
 | `tool_version` | 产生记录的 paper-fetch 版本 |
 | `run_id` / `record_id` | 同一批共享的 run UUID 和每条记录独立的 UUID；单篇也各有一个 |
-| `index` / `attempt` | 稳定 1-based 输入序号和连续 attempt；resume 重试时递增 |
-| `query` / `request` / `request_fingerprint` | 原始输入、影响抓取/渲染/输出的请求参数，以及规范 JSON 的 SHA256 指纹 |
-| `record_status` / `status` | v2 终态 `completed/failed/aborted`，以及旧状态字段；成功调用仍是 `status=ok` |
-| `identity` / `doi` / `source` | 规范化 identity、兼容 DOI 字段和最终 source |
+| `index` / `attempt` | 稳定 1-based 输入序号；一次性批处理的 attempt 为 `1` |
+| `query` / `request` / `request_fingerprint` | 原始输入、影响抓取/渲染/输出的不可变语义参数，以及规范 JSON 的 SHA256 指纹；run 级并发/重试策略不在此列 |
+| `record_status` | 终态 `completed/failed/aborted` |
+| `identity` / `doi` / `source` | 规范化 identity、DOI 和最终 source |
 | `started_at` / `completed_at` | 带时区的 attempt 开始和终态时间 |
 | `acceptance` | 统一 identity/fetch/content/asset/output/provenance 验收；`overall` 可为 `complete/degraded/limited/failed/action_required` |
 | `trace` / `fallback_codes` / `warning_codes` / `failure_codes` | 结构化 trace 与从统一验收派生的分类码，不从 warning 文本猜测 |
-| `warnings` / `error` | 兼容 warning 列表和结构化错误；成功时 `error` 为 `null` |
+| `warnings` / `error` | warning 列表和结构化错误；成功时 `error` 为 `null` |
 | `semantic_losses` | 表格 fallback、布局降级、语义损失和公式 fallback/missing 计数 |
 | `asset_summary` | 资产是否请求、完整/preview/失败/未归档、远程链接等统一摘要 |
 | `output_artifacts` | 每个最终输出的 `path/kind/size/sha256/mtime/completed_at/verification_status` |
-| `output_path` / `saved_markdown_path` | 从 `output_artifacts` 派生的两个旧兼容路径字段 |
 
-`status=ok` 继续只表示该调用没有抛异常，不等于已取得完整正文。全文成功通常是 `acceptance.overall=complete` 或 `degraded`；preview、资产失败或语义损失可使其为 `degraded`；abstract-only / metadata-only 是 `limited`；工具或必需输出失败是 `failed` 或 `action_required`。因此旧脚本可继续检查 `status`，需要判断全文和资产质量的新脚本应读取 `acceptance`。
+全文成功通常是 `acceptance.overall=complete` 或 `degraded`；preview、资产失败或语义损失可使其为 `degraded`；abstract-only / metadata-only 是 `limited`；工具或必需输出失败是 `failed` 或 `action_required`。调用终态和内容质量分别读取 `record_status` 与 `acceptance`。
+
+Identity acceptance 不把普通 title 当作唯一论文证明。DOI-less 结果只有在 runtime 同时提供 canonical landing URL、已验证标记和唯一性标记时才是 `resolved`；否则为 `unavailable/action_required`。MCP 的版本化 payload 与协议级 `outputSchema` 是不同契约，见 [MCP 层](architecture/overview.md#2-mcp-层)。
 
 下面是为阅读裁剪过的一条完成记录；真实 JSONL 还会包含表中列出的全部验收子字段：
 
 ```json
 {
   "schema_version": 2,
-  "tool_version": "5.3.0",
+  "tool_version": "<installed-version>",
   "run_id": "10000000-0000-4000-8000-000000000001",
   "record_id": "20000000-0000-4000-8000-000000000002",
   "index": 2,
   "attempt": 1,
   "query": "10.1186/1471-2105-11-421",
+  "request": {
+    "query": "10.1186/1471-2105-11-421",
+    "parameters": {
+      "artifact_mode": "none",
+      "asset_profile": "none",
+      "format": "markdown"
+    }
+  },
+  "request_fingerprint": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "record_status": "completed",
-  "status": "ok",
   "doi": "10.1186/1471-2105-11-421",
-  "source": "publisher_html",
+  "source": "springer_html",
   "acceptance": {
     "overall": "complete",
     "content": {"status": "fulltext", "has_fulltext": true},
@@ -300,8 +301,6 @@ CLI 先在 run lock 内执行只读审计。只有 query、工具版本和关键
       "verification_status": "verified"
     }
   ],
-  "output_path": "papers/example.md",
-  "saved_markdown_path": null,
   "warnings": [],
   "error": null
 }
@@ -324,6 +323,8 @@ CLI 先在 run lock 内执行只读审计。只有 query、工具版本和关键
 | `markdown` | `<paper-stem>.md` |
 | `json` | `<paper-stem>.json` |
 | `both` | `<paper-stem>.both.json` |
+
+年份取出版日期中第一个不与其他数字相连的四位数字：例如 `20 October 2020`、`October 20, 2020` 和 `2020-10-20` 均提取 `2020`。日期为空或没有符合条件的年份时，文件名中的年份使用 `unknown`；出版日期元数据保持原值。
 
 需要精确文件名时，显式使用 `--output <path>`。
 
@@ -352,7 +353,6 @@ CLI 先在 run lock 内执行只读审计。只有 query、工具版本和关键
 - 资产目录：`<doi>_assets/` 或 provider 指定的同级资产目录
 - PDF fallback 源文件，文件名优先使用 provider 抓取后合并的标题、作者和年份元数据
 - provider 原始 HTML/XML/PDF
-- HTTP textual cache：`.paper-fetch-http-cache/`
 - adapter cache 或调试 JSON sidecar
 - 资产下载诊断
 
@@ -385,25 +385,44 @@ CLI 默认：
 --asset-profile body
 ```
 
-`--artifact-mode markdown-assets` 保存 Markdown、按 `--asset-profile` 保存本地资产，并保留 PDF fallback 源文件；PDF 源文件名优先使用 provider 抓取后合并的标题、作者和年份元数据。不会保存 provider 原始 HTML/XML、调试 JSON sidecar 或 HTTP textual cache。
+`--artifact-mode markdown-assets` 保存 Markdown、按 `--asset-profile` 保存本地资产，并保留 PDF fallback 源文件；PDF 源文件名优先使用 provider 抓取后合并的标题、作者和年份元数据。不会保存 provider 原始 HTML/XML 或调试 JSON sidecar。
 
-`--artifact-mode all` 保留完整调试 artifact，包括 provider HTML/PDF、辅助 artifact、HTTP textual cache 和调试 JSON sidecar。已到达页面但 extraction/availability 失败时，另在 `diagnostics/<provider>/<doi-or-url-digest>/<route>-<attempt>/` 保存 `diagnostic.json` 与 `page-sanitized.html`；后者删除脚本、表单、事件属性、email 和 URL query/userinfo，不保存原始失败 HTML 或截图。批量成功与终态失败 record 都将这些文件列为 `kind=diagnostic` 并快照 size/SHA-256。
+`--artifact-mode all` 保留完整调试 artifact，包括 provider HTML/PDF、辅助 artifact和调试 JSON sidecar。已到达页面但 extraction/availability 失败时，另在 `diagnostics/<provider>/<doi-or-url-digest>/<route>-<attempt>/` 保存 `diagnostic.json` 与 `page-sanitized.html`；后者删除脚本、表单、事件属性、email 和 URL query/userinfo，不保存原始失败 HTML 或截图。批量成功与终态失败 record 都将这些文件列为 `kind=diagnostic` 并快照 size/SHA-256。
 
-`--artifact-mode none` 不保存 provider artifact 或资产；显式 `--output <path>`、`--save-markdown`，以及未显式 `--output` 时由 `--output-dir` 承接的主输出仍可写文件。
-
-`--no-download` 是 CLI 的 `--artifact-mode none` alias，只关闭 provider artifact 和资产归档。它不表示“禁止所有写盘”，也不会阻止显式 `--output <path>`、由 `--output-dir` 承接的主输出或 `--save-markdown`。如果同时需要不下载资产，agent-facing 调用仍应显式传 `--asset-profile none`；该 alias 不改变公开的 `--asset-profile body` 默认值。
+`--artifact-mode none` 关闭 provider artifact 和资产归档，但不会阻止显式 `--output <path>`、由 `--output-dir` 承接的主输出或 `--save-markdown`。如果同时不需要下载资产，应显式传 `--asset-profile none`。
 
 ## 资产下载
 
 `--asset-profile` 只控制本地内容资产下载范围，不决定主输出是否写文件。
 
+CLI 省略该选项时仍显式使用 `body`。Python API / MCP 的
+`strategy.asset_profile=null` 才使用获胜 provider route 编译后的 `asset_scope`；
+显式传入 `none`、`body` 或 `all` 时不会被 route 默认值扩大或缩小。
+
 - `none`：不下载本地资产；不主动清除 Markdown 中已有或 provider 可解析出的远程图片链接。
 - `body`：默认值，保存正文图片、图表、公式图片等。
 - `all`：在正文资产之外，额外保存可识别的补充材料等相关资产。
 
+默认 acceptance 保持 provider-policy 兼容语义。需要离线归档全部正文逻辑资产时加
+`--require-local-body-assets`；需要全部本地资产均为 full-size 时加
+`--require-full-size-body-assets`，后者自动隐含前者。两项默认关闭且只适用于
+`body` / `all`；约束未满足时 asset/overall 为 `degraded`，已经取得的全文仍保持
+fetch 成功。JSON acceptance 会同时报告要求值、`has_local_body_assets`、全部本地化/
+full-size satisfaction，以及 body discovered/attempted/local/preview/remote-only 计数。
+这些 body 计数只纳入需要独立 binary 文件的逻辑资产；没有 remote/failure、已经以内联
+语义完成的 table/formula/figure 不属于本地文件义务。
+
+`body` 与 `all` 不会放宽运行时安全上限。同一篇论文的正文与补充资产共享默认预算：
+普通 provider 不设文件数上限，单文件 32 MiB、累计 256 MiB、单图 64,000,000 像素，
+并发最多 4 且受 provider route 限制；arXiv source archive 仍独立限制最多 128 个
+regular member。达到显式文件数、字节或像素上限会删除未发布的 staging、停止剩余下载，并在
+`asset_failures[*].reason` 返回稳定的 `asset_file_limit_exceeded`、
+`asset_bytes_per_asset_exceeded`、`asset_bytes_total_exceeded` 或
+`asset_pixel_limit_exceeded`；已完成正文不会因此被覆盖。
+
 PDF fallback 在 `body` / `all` 且 artifact mode 允许资产落盘时，会保存 `pymupdf4llm` 从 PDF 导出的正文图片到 `<doi>_assets/`；`none` 或 `--artifact-mode none` 保持不保存本地图片资产。
 
-当 artifact mode 或 `--no-download` 禁止资产落盘时，即使 `--asset-profile` 是 `body` 或 `all`，资产也不会保存。
+当 artifact mode 禁止资产落盘时，即使 `--asset-profile` 是 `body` 或 `all`，资产也不会保存。
 
 ## `--save-markdown`
 
@@ -429,21 +448,21 @@ paper-fetch fetch --query "10.1016/test" \
 
 | 命令 | stdout | 主输出文件 | artifact / 资产 |
 | --- | --- | --- | --- |
-| `paper-fetch fetch --query ... --output - --no-download --artifact-mode none --asset-profile none` | 打印 Markdown | 无显式主输出文件 | 无论文 artifact/资产；仍准备工作目录 |
+| `paper-fetch fetch --query ... --output - --artifact-mode none --asset-profile none` | 打印 Markdown | 无显式主输出文件 | 无论文 artifact/资产；仍准备工作目录 |
 | `paper-fetch fetch --query ... --output-dir ./papers --artifact-mode none --asset-profile none` | 不打印正文 | `./papers/<paper-stem>.md` | 不保存额外 artifact/资产 |
 | `paper-fetch fetch --query ... --format json --output-dir ./papers --artifact-mode markdown-assets --asset-profile body` | 不打印正文 | `./papers/<paper-stem>.json` | 另保存 Markdown artifact、PDF fallback 与正文资产 |
 | `paper-fetch fetch --query ... --format both --output-dir ./papers --artifact-mode markdown-assets --asset-profile all` | 不打印正文 | `./papers/<paper-stem>.both.json` | 另保存 Markdown artifact、PDF fallback、正文与补充资产 |
 | `paper-fetch fetch --query ... --output - --output-dir ./papers --artifact-mode markdown-assets --asset-profile body` | 打印 Markdown | 无默认主输出文件 | `./papers` 只用于 Markdown artifact/PDF fallback/正文资产 |
 | `paper-fetch fetch --query ... --output ./result.md --output-dir ./papers --artifact-mode none --asset-profile none` | 不打印正文 | `./result.md` | 不保存额外 artifact/资产 |
 | `paper-fetch fetch --query ... --format json --output-dir ./papers --artifact-mode none --asset-profile none` | 不打印正文 | `./papers/<paper-stem>.json` | 不保存 artifact/资产 |
-| `paper-fetch fetch --query ... --output - --artifact-mode none --asset-profile none` | 打印 Markdown | 无 | 不保存论文文件；仍准备工作目录 |
-| `paper-fetch fetch --query-file ./queries.txt --output-dir ./papers --artifact-mode none --asset-profile none` | 不打印正文 | 每篇 `./papers/<paper-stem>.md`，另有 `batch-results.jsonl` 和 `run-manifest.json` | 文本批量归档，不保存额外 artifact/资产 |
+| `paper-fetch fetch --query-file ./queries.txt --output-dir ./papers --artifact-mode none --asset-profile none` | 不打印正文 | 每篇 `./papers/<paper-stem>.md`，另有 `batch-results.jsonl` | 文本批量归档，不保存额外 artifact/资产 |
 | `paper-fetch doctor --group browser --json` | 打印静态诊断 JSON | 无 | 不访问网络、不启动浏览器、不写 storage-state |
 
 ## 渲染选项
 
 - `--include-refs none|top10|all` 控制 references 渲染范围。
 - `--asset-profile none|body|all` 控制本地内容资产范围；PDF fallback 在 `body` / `all` 下也会尝试保存 PDF 导出的正文图片。
+- `--require-local-body-assets` / `--require-full-size-body-assets` 启用严格正文资产验收；full-size 自动隐含 local，两项不改变全文 fetch 状态。
 - `--max-tokens full_text|<positive-int>` 控制 Markdown 渲染预算，默认是 `full_text`。
 - `--version` 输出当前安装版本并退出。
 

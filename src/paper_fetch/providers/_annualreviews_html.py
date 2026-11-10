@@ -7,11 +7,14 @@ import re
 from dataclasses import dataclass, replace
 from typing import Any
 from collections.abc import Mapping
-from urllib.parse import quote, urljoin
+from urllib.parse import parse_qs, quote, urljoin, urlsplit
 
 from bs4 import BeautifulSoup, Comment, Tag
 
-from ..extraction.html._metadata import merge_html_metadata, parse_html_metadata
+from ..extraction.html._metadata import (
+    merge_html_metadata,
+    parse_html_metadata,
+)
 from ..extraction.html.assets import (
     extract_scoped_html_assets as extract_provider_neutral_scoped_assets,
 )
@@ -114,7 +117,6 @@ ANNUALREVIEWS_SITE_RULE_OVERRIDES: dict[str, object] = {}
 ANNUALREVIEWS_NOISE_PROFILE = "annualreviews"
 
 _NOISY_LINES = {
-    "top",
     "go to section...",
     "click to view",
     "download as powerpoint",
@@ -164,42 +166,6 @@ def direct_article_url(doi: str) -> str:
 def direct_pdf_url(doi: str) -> str:
     normalized_doi = normalize_doi(doi)
     return f"https://www.annualreviews.org/doi/pdf/{quote(normalized_doi, safe='/')}"
-
-
-def _raw_meta_values(metadata: Mapping[str, Any], key: str) -> list[str]:
-    raw_meta = metadata.get("raw_meta")
-    if not isinstance(raw_meta, Mapping):
-        return []
-    values = raw_meta.get(key) or raw_meta.get(key.lower()) or []
-    if isinstance(values, str):
-        values = [values]
-    if not isinstance(values, list):
-        return []
-    return [
-        normalize_text(str(item or ""))
-        for item in values
-        if normalize_text(str(item or ""))
-    ]
-
-
-def pdf_candidate_urls(
-    metadata: Mapping[str, Any],
-    *,
-    source_url: str,
-    doi: str,
-) -> list[str]:
-    candidates: list[str] = []
-    for value in _raw_meta_values(metadata, "citation_pdf_url"):
-        candidates.append(urljoin(source_url, value))
-    for item in metadata.get("fulltext_links") or ():
-        if not isinstance(item, Mapping):
-            continue
-        url = normalize_text(str(item.get("url") or ""))
-        content_type = normalize_text(str(item.get("content_type") or "")).lower()
-        if url and ("pdf" in content_type or "pdf" in url.lower()):
-            candidates.append(urljoin(source_url, url))
-    candidates.append(direct_pdf_url(doi))
-    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 
 def merge_metadata_with_html(
@@ -302,8 +268,6 @@ def _canonical_heading(text: str) -> str:
         return aliases[lowered]
     if lowered.startswith("literature cited"):
         return "References"
-    if heading.isupper() and len(heading) > 3:
-        return heading.title()
     return heading
 
 
@@ -342,6 +306,15 @@ def _normalize_section_headings(container: Tag) -> None:
         if title:
             lowest.replace_with(_new_tag_like(lowest, "h3", title))
 
+    # These loaded back-matter dialogs hold article-level glossary/footnotes.
+    # Their h4 is modal styling, not a fourth-level scientific subsection.
+    for heading in container.select(
+        "#viewGlossaryPopup .modal-title, #viewFootnotePopup .modal-title"
+    ):
+        title = _canonical_heading(_node_text(heading))
+        if title.casefold() in {"terms and definitions", "footnotes"}:
+            heading.replace_with(_new_tag_like(heading, "h2", title))
+
 
 def _remove_noise_nodes(container: Tag) -> None:
     for selector in ANNUALREVIEWS_EXTRACTION_CLEANUP_SELECTORS:
@@ -362,8 +335,11 @@ def _remove_noise_nodes(container: Tag) -> None:
             anchor.decompose()
             continue
         if href.startswith("#"):
+            if lowered == "top" and href in {"#top", "#"}:
+                anchor.decompose()
+                continue
             if text:
-                anchor.replace_with(text)
+                anchor.unwrap()
             else:
                 anchor.decompose()
 
@@ -427,7 +403,8 @@ def _normalize_figures(container: Tag, source_url: str) -> None:
             caption_node.name = "figcaption"
         caption = _figure_caption(figure)
 
-        image = figure.find("img")
+        # Captions can precede the figure and contain inline equation images.
+        image = figure.select_one(".image img") or figure.find("img")
         if not isinstance(image, Tag):
             continue
         media_link = image.find_parent("a", class_="media-link")
@@ -487,7 +464,9 @@ def _replace_with_markdown_table(table_container: Tag, table: Tag) -> None:
     markdown = _markdown_table_block(table, table_container)
     if not markdown:
         return
-    replacement = BeautifulSoup("", choose_parser()).new_tag("pre")
+    replacement = BeautifulSoup("", choose_parser()).new_tag(
+        "div", attrs={"data-paper-fetch-markdown": "1"}
+    )
     replacement["class"] = _TABLE_BLOCK_CLASS
     replacement.string = markdown
     table_container.replace_with(replacement)
@@ -501,6 +480,12 @@ def _normalize_tables(container: Tag) -> None:
             for node in list(caption.select(selector)):
                 if isinstance(node, Tag):
                     node.decompose()
+        for label in list(caption.select(".table-label")):
+            text = _node_text(label)
+            if text:
+                replacement = _new_tag_like(label, "p", f"**{text}**")
+                replacement["data-paper-fetch-markdown"] = "1"
+                label.replace_with(replacement)
 
     for table_container in list(container.select(".table-container")):
         if not isinstance(table_container, Tag):
@@ -559,6 +544,9 @@ def _cleaned_article_html_from_soup(
     list[dict[str, Any]],
     HtmlContainerEvidence,
 ]:
+    from ..extraction.html.object_links import prepare_retained_object_links
+
+    prepare_retained_object_links(soup, source_url)
     selection = _select_article_container(soup)
     if selection is None:
         raise HtmlExtractionFailure(
@@ -566,8 +554,32 @@ def _cleaned_article_html_from_soup(
             "Could not identify the Annual Reviews full-text container.",
         )
     cleaned = copy.deepcopy(selection.node)
+    for node in cleaned.select("span.jp-sub, span.jp-sup"):
+        node.name = "sub" if "jp-sub" in node.get("class", []) else "sup"
     _remove_noise_nodes(cleaned)
     _normalize_section_headings(cleaned)
+    for formula in cleaned.select(".disp-formula"):
+        label = formula.find(class_="label", recursive=False)
+        if isinstance(label, Tag):
+            formula.insert_before(_new_tag_like(label, "p", _node_text(label)))
+            label.decompose()
+    # Annual Reviews supplies body equations as root-relative GIFs. The
+    # provider renderer emits these directly, so retain a usable source link
+    # when the resulting Markdown is opened away from the publisher page.
+    for image in cleaned.select(".disp-formula img[src], img.inline-formula[src]"):
+        image["src"] = urljoin(source_url, str(image["src"]))
+        if "inline-formula" in (image.get("class") or []):
+            # Normalize this publisher's legacy marker to the renderer's
+            # existing inline-equation contract, including figure captions.
+            image["class"] = [*image.get("class", []), "inline-equation"]
+    for styled in cleaned.select(".jp-italic, .jp-bold"):
+        styled.name = "em" if "jp-italic" in styled.get("class", []) else "strong"
+    for heading in cleaned.select(".tl-third-level-section"):
+        label = heading.find_previous_sibling(class_="label")
+        if label is not None:
+            heading.insert(0, label.get_text(strip=True) + " ")
+            label.decompose()
+        heading.name = "h4"
     _normalize_figures(cleaned, source_url)
     _normalize_tables(cleaned)
     _normalize_references(cleaned)
@@ -634,17 +646,35 @@ def _extract_page_title_from_soup(
 
 
 def _render_annualreviews_article_markdown(article_html: str, source_url: str) -> str:
-    del source_url
     soup = BeautifulSoup(article_html, choose_parser())
     article = soup.find("article")
     if not isinstance(article, Tag):
         return ""
+    for anchor in article.select("a[href]"):
+        if not str(anchor["href"]).startswith(("javascript:", "mailto:")):
+            anchor["href"] = urljoin(source_url, str(anchor["href"]))
+    # A caption's equation images belong to its inline text, not to the
+    # figure's image list. Work on this render copy so asset discovery still
+    # sees the original caption subtree and its formula URLs.
+    for figure in article.find_all("figure"):
+        caption = figure.find("figcaption")
+        if isinstance(caption, Tag) and caption.find("img") is not None:
+            for image in caption.find_all("img"):
+                if "inline-equation" in image.get(
+                    "class", []
+                ) or "inline-formula" in image.get("class", []):
+                    image["alt"] = "Formula"
+            text = render_clean_text_from_html(caption)
+            caption.clear()
+            caption.append(text)
+            caption["data-paper-fetch-markdown"] = "1"
     lines: list[str] = []
     render_container_markdown(
         article,
         lines,
         level=2,
         section_content_selectors=(),
+        preserve_heading_levels=True,
     )
     return "\n".join(lines)
 
@@ -704,6 +734,15 @@ def extract_references(html_text: str) -> list[dict[str, Any]]:
         for item in list(ref.select(".citation-label")):
             if isinstance(item, Tag):
                 item.decompose()
+        for script in ref.select("sub, sup, span.jp-sub, span.jp-sup"):
+            script.name = (
+                "sub"
+                if script.name == "sub" or "jp-sub" in script.get("class", [])
+                else "sup"
+            )
+            script.replace_with(
+                f"<{script.name}>{script.get_text(strip=True)}</{script.name}>"
+            )
         raw = normalize_text(ref.get_text(" ", strip=True))
         raw = _REFERENCE_LEADING_LABEL_RE.sub("", raw).strip()
         raw = _PUNCT_SPACE_RE.sub(r"\1", raw)
@@ -761,7 +800,9 @@ def extract_asset_html_scopes(html_text: str, source_url: str) -> tuple[str, str
         _abstract_sections,
         _container_evidence,
     ) = _cleaned_article_html(html_text, source_url)
-    return article_html, ""
+    soup = BeautifulSoup(html_text, choose_parser())
+    supplementary = soup.select_one("#supplementary_data")
+    return article_html, str(supplementary) if supplementary is not None else ""
 
 
 def extract_scoped_html_assets(
@@ -771,14 +812,104 @@ def extract_scoped_html_assets(
     asset_profile: AssetProfile,
 ) -> list[dict[str, str]]:
     body_html, supplementary_html = extract_asset_html_scopes(html_text, source_url)
+    return _extract_assets_from_scopes(
+        body_html,
+        supplementary_html,
+        html_text,
+        source_url,
+        asset_profile=asset_profile,
+    )
+
+
+def _extract_assets_from_scopes(
+    body_html: str,
+    supplementary_html: str,
+    html_text: str,
+    source_url: str,
+    *,
+    asset_profile: AssetProfile,
+) -> list[dict[str, str]]:
     body_html = promote_silverchair_srcset_originals(body_html)
     assets = extract_provider_neutral_scoped_assets(
         body_html,
         source_url,
         asset_profile=asset_profile,
-        supplementary_html_text=supplementary_html,
+        supplementary_html_text="",
         noise_profile=ANNUALREVIEWS_NOISE_PROFILE,
     )
+    # Legacy Annual Reviews pages use standalone inline-formula GIFs. The
+    # shared extractor deliberately ignores inline formulas; these images have
+    # no accompanying MathML and must retain their own downloadable bytes.
+    formula_images = BeautifulSoup(body_html, choose_parser()).select(
+        "img.inline-formula[src]"
+    )
+    for image in formula_images:
+        url = urljoin(source_url, str(image.get("src") or ""))
+        parsed = urlsplit(url)
+        if parsed.scheme not in {"http", "https"} or not re.search(
+            r"/eq-[^/]+\.gif$", parsed.path
+        ):
+            continue
+        existing = next((asset for asset in assets if asset.get("url") == url), None)
+        if existing is not None:
+            existing["kind"] = "formula"
+            continue
+        assets.append(
+            {
+                "kind": "formula",
+                "heading": parsed.path.rsplit("/", 1)[-1].removesuffix(".gif"),
+                "section": "body",
+                "url": url,
+                "render_state": "inline",
+            }
+        )
+    if asset_profile == "all" and supplementary_html:
+        doi = normalize_doi(parse_html_metadata(html_text, source_url).get("doi"))
+        if not doi:
+            doi = normalize_doi(extract_doi(source_url))
+        soup = BeautifulSoup(supplementary_html, choose_parser())
+        seen_urls: set[str] = set()
+        for anchor in soup.select("a[href]"):
+            url = urljoin(source_url, str(anchor.get("href") or ""))
+            parsed = urlsplit(url)
+            if (
+                parsed.scheme not in {"http", "https"}
+                or parsed.hostname not in {"annualreviews.org", "www.annualreviews.org"}
+                or not parsed.path.startswith("/deliver/fulltext/")
+                or not parsed.path.lower().endswith((".pdf", ".mpg"))
+            ):
+                continue
+            item_ids = parse_qs(parsed.query).get("itemId", [])
+            if len(item_ids) != 1:
+                continue
+            parent = re.fullmatch(
+                r"/content/suppdata/(10\.1146/.+)/[0-9]+", item_ids[0]
+            )
+            if (
+                not parent
+                or not doi
+                or normalize_doi(parent[1]) != doi
+                or url in seen_urls
+            ):
+                continue
+            seen_urls.add(url)
+            paragraph = anchor.find_parent("p")
+            label = paragraph.find(["b", "strong"]) if paragraph is not None else None
+            assets.append(
+                {
+                    "kind": "supplementary",
+                    "heading": normalize_text(
+                        (label or anchor).get_text(" ", strip=True)
+                    ),
+                    "caption": normalize_text(paragraph.get_text(" ", strip=True))
+                    if paragraph is not None
+                    else "",
+                    "section": "supplementary",
+                    "url": url,
+                    "source_href": str(anchor.get("href") or ""),
+                    "source_page_url": source_url,
+                }
+            )
     return _dedupe_assets(assets)
 
 
@@ -866,8 +997,10 @@ def extract_markdown(
     references = extract_references(article_html)
     if references and not merged_metadata.get("references"):
         merged_metadata["references"] = references
-    extracted_assets = extract_scoped_html_assets(
+    extracted_assets = _extract_assets_from_scopes(
         article_html,
+        "",
+        html_text,
         source_url,
         asset_profile="body",
     )
@@ -943,5 +1076,4 @@ __all__ = [
     "extract_references",
     "extract_scoped_html_assets",
     "merge_metadata_with_html",
-    "pdf_candidate_urls",
 ]

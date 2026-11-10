@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from collections import defaultdict, deque
+from copy import deepcopy
 import re
 from typing import Any
 from collections.abc import Mapping
-from urllib.parse import urlparse
+from urllib.parse import parse_qsl, unquote, urlencode, urljoin, urlparse
 
-from bs4 import BeautifulSoup, Comment, Tag
+from bs4 import BeautifulSoup, Tag
 
 from ..extraction.html import assets as html_assets
 from ..extraction.html._metadata import merge_html_metadata, parse_html_metadata
@@ -18,13 +20,17 @@ from ..extraction.html.renderer import clean_rendered_markdown
 from ..extraction.html.semantics import collect_html_section_hints
 from ..extraction.html.tables import render_table_markdown
 from ..models import AssetProfile
+from ..provider_catalog import host_matches_domain
 from ..publisher_identity import normalize_doi
-from ..utils import normalize_text
+from ..utils import extend_unique, normalize_text
 from ._html_section_markdown import (
     render_clean_text_from_html,
+    render_retained_text_from_html,
     render_container_markdown,
+    render_heading_text_from_html,
 )
 from ._html_references import extract_numbered_references_from_html
+from ._oxfordacademic_assets import extract_inline_figures
 from ._pdf_candidates import (
     extract_pdf_candidate_urls_from_html,
     extract_pdf_url_from_metadata_links,
@@ -58,6 +64,13 @@ OXFORDACADEMIC_FRONT_MATTER_PUBLICATION_KEYWORDS = (
     "bioinformatics",
 )
 OXFORDACADEMIC_EXTRACTION_CLEANUP_SELECTORS = (
+    "#Toolbar",
+    ".toolbar-wrap",
+    ".toolbar-outer-wrap",
+    ".toolbar-inner-wrap",
+    "#getCitation",
+    ".js-citation-modal",
+    "#ShareDrop",
     ".article-metadata-panel",
     ".article-tools",
     ".article-view-links",
@@ -131,18 +144,22 @@ class OxfordAcademicExtraction:
     abstract_sections: list[Any]
     section_hints: list[Any]
     extracted_assets: list[dict[str, Any]]
+    source_mathml_error_count: int = 0
+
+
+def source_mathml_warnings(count: int) -> list[str]:
+    return (
+        [
+            f"Source MathML contains {count} merror node(s); readable children were preserved, not corrected."
+        ]
+        if count
+        else []
+    )
 
 
 def is_oxfordacademic_url(value: str | None) -> bool:
-    parsed = urlparse(normalize_text(value))
-    host = normalize_text(parsed.hostname or "").lower()
-    return host == "academic.oup.com" or host.endswith(".academic.oup.com")
-
-
-def _append_unique(values: list[str], candidate: str | None) -> None:
-    normalized = normalize_text(candidate)
-    if normalized and normalized not in values:
-        values.append(normalized)
+    hostname = urlparse(normalize_text(value)).hostname
+    return host_matches_domain(hostname, "academic.oup.com")
 
 
 def _nodes_with_class(
@@ -298,13 +315,67 @@ def merge_metadata_with_html(
         html_text
     ) or citation_reference_metadata(merged)
     if references:
+        _normalize_reference_doi_texts(references, html_text)
+        # Some OUP Crossref widgets link the journal's ISSN DOI, not the
+        # cited article (e.g. btaa161's Youden reference). Keep the visible
+        # citation, but do not report this journal identifier as its DOI.
+        for reference in references:
+            if "(issn)" in str(reference.get("doi") or "").casefold():
+                reference["doi"] = None
         merged_payload: dict[str, Any] = dict(merged)
         merged_payload["references"] = references
         return merged_payload
     return dict(merged)
 
 
-def _supplementary_lines(soup: BeautifulSoup) -> list[str]:
+def _normalize_reference_doi_texts(
+    references: list[dict[str, Any]], html_text: str
+) -> None:
+    soup = BeautifulSoup(html_text, choose_parser())
+    nodes_by_label = {
+        normalize_text(label.get_text())
+        if (label := node.select_one(".label")) is not None
+        else f"{index}.": node
+        for index, node in enumerate(soup.select(".ref-list .ref"), 1)
+    }
+    for reference in references:
+        label = str(reference.get("label") or "")
+        node = nodes_by_label.get(label)
+        if node is None:
+            continue
+        dois: list[str] = []
+        for anchor in node.select("a[href]"):
+            match = re.fullmatch(
+                r"https?://(?:dx\.)?doi\.org/(10\..+)",
+                unquote(str(anchor["href"])),
+                re.I,
+            )
+            if match and match[1].casefold() not in {doi.casefold() for doi in dois}:
+                dois.append(match[1])
+        text = str(reference.get("raw") or "")
+        for doi in dois:
+            pattern = re.compile(
+                r"(?<![\w/])(?:https?://(?:dx\.)?doi\.org/|doi:\s*)?"
+                + r"\s*".join(re.escape(char) for char in doi)
+                + r"(?![\w/])",
+                re.I,
+            )
+            seen = False
+
+            def replace(match: re.Match[str], canonical_doi: str = doi) -> str:
+                nonlocal seen
+                if seen:
+                    return ""
+                seen = True
+                return (
+                    "doi: " if match[0].lower().startswith("doi:") else ""
+                ) + canonical_doi
+
+            text = pattern.sub(replace, text)
+        reference["raw"] = _clean_reference_sentence(text)
+
+
+def _supplementary_lines(soup: BeautifulSoup, source_url: str) -> list[str]:
     lines: list[str] = []
     seen: set[str] = set()
     for selector in OXFORDACADEMIC_SUPPLEMENTARY_LINK_SELECTORS:
@@ -313,10 +384,7 @@ def _supplementary_lines(soup: BeautifulSoup) -> list[str]:
             _nodes_with_class(soup, class_name) if class_name else soup.select(selector)
         )
         for node in nodes:
-            text = render_clean_text_from_html(
-                node,
-                collapse_prose_line_breaks=True,
-            )
+            text = render_retained_text_from_html(node, source_url=source_url)
             if not text:
                 continue
             normalized = normalize_text(text)
@@ -331,6 +399,51 @@ def _supplementary_lines(soup: BeautifulSoup) -> list[str]:
             seen.add(normalized)
             lines.append(f"- {text}")
     return lines
+
+
+def _supplementary_assets(soup: BeautifulSoup, source_url: str) -> list[dict[str, str]]:
+    # Prefer the attachment widget's current signed URL over inline references.
+    panel_links = soup.select(".dataSuppLink a[href]")
+    links = [*panel_links, *soup.select("a[href]")]
+    panel_ids = {id(anchor) for anchor in panel_links}
+    assets: dict[tuple[str, str, str, str], dict[str, str]] = {}
+    for anchor in links:
+        url = urljoin(source_url, str(anchor.get("href") or ""))
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            continue
+        path = parsed.path.lower()
+        if "/article-pdf/" in path or re.search(r"/doi/(?:e?pdf)/", path):
+            continue
+        cdn_attachment = (
+            parsed.hostname == "oup.silverchair-cdn.com" and "/oup/backfile/" in path
+        )
+        local_attachment = parsed.hostname == "academic.oup.com" and any(
+            token in path
+            for token in (
+                "/suppl_file/",
+                "/article-supplement/",
+                "/article/supplement/",
+            )
+        )
+        if id(anchor) not in panel_ids and not (cdn_attachment or local_attachment):
+            continue
+        candidates = html_assets.extract_supplementary_assets(str(anchor), source_url)
+        if not candidates:
+            continue
+        query = parsed.query
+        if cdn_attachment:
+            query = urlencode(
+                [
+                    (key, value)
+                    for key, value in parse_qsl(query, keep_blank_values=True)
+                    if key.lower()
+                    not in {"expires", "signature", "key-pair-id", "policy"}
+                ]
+            )
+        identity = (parsed.scheme, parsed.netloc, parsed.path, query)
+        assets.setdefault(identity, candidates[0])
+    return list(assets.values())
 
 
 def _article_body(soup: BeautifulSoup) -> Any:
@@ -352,9 +465,69 @@ def _normalize_oxford_body_for_rendering(body: Any) -> None:
         tag_name="div",
     ):
         node.name = "p"
-    for comment in body.find_all(string=lambda value: isinstance(value, Comment)):
-        if "citationlinks" in str(comment).lower():
-            comment.extract()
+    for node in body.select(".inline-formula, .tex-math"):
+        # These are text-bearing OUP TeX nodes. MathML and bitmap formulas
+        # continue through their existing renderers.
+        text = node.get_text("", strip=True).strip("\u2060\u200b\ufeff")
+        if text.startswith(("|$", "$", r"\(", r"\[")) and not node.find(
+            ["math", "img"]
+        ):
+            node["class"] = [*(node.get("class") or []), "mathjax-tex"]
+
+
+def _retain_author_footnotes(soup: BeautifulSoup, body: Tag) -> None:
+    names_by_target: dict[str, list[str]] = defaultdict(list)
+    for name_node in soup.select(".info-card-name, .al-author-name"):
+        name_copy = deepcopy(name_node)
+        for marker in name_copy.select(
+            ".info-card-footnote, sup, .xrefLink, .link-ref"
+        ):
+            marker.decompose()
+        name = render_clean_text_from_html(name_copy)
+        if not name:
+            continue
+        for anchor in name_node.select("a"):
+            href = str(anchor.get("href") or "")
+            target = str(
+                anchor.get("data-open")
+                or anchor.get("reveal-id")
+                or (href[1:] if href.startswith("#") else "")
+            )
+            if target and name not in names_by_target[target]:
+                names_by_target[target].append(name)
+    cleanup_ids = {
+        id(node)
+        for node in soup.select(", ".join(OXFORDACADEMIC_EXTRACTION_CLEANUP_SELECTORS))
+    }
+    for target, names in names_by_target.items():
+        seen: set[int] = set()
+        retained = False
+        note_text = ""
+        for note in soup.find_all(attrs={"content-id": target}) + soup.find_all(
+            id=target
+        ):
+            if id(note) in seen:
+                continue
+            seen.add(id(note))
+            content = note.select_one(".footnote-content")
+            if content is None:
+                continue
+            text = render_clean_text_from_html(content, collapse_prose_line_breaks=True)
+            note_text = f"{', '.join(names)}: {text}"
+            parents = list(note.parents)
+            if not any(parent is body for parent in parents) or any(
+                id(parent) in cleanup_ids for parent in parents
+            ):
+                continue
+            content.clear()
+            content.append(note_text)
+            content["data-paper-fetch-markdown"] = "1"
+            retained = True
+        if note_text and not retained:
+            note = soup.new_tag("p")
+            note.string = note_text
+            note["data-paper-fetch-markdown"] = "1"
+            body.append(note)
 
 
 def extract_markdown(
@@ -372,8 +545,40 @@ def extract_markdown(
     )
     title = str(merged_metadata.get("title") or merged_metadata.get("doi") or "")
     soup = BeautifulSoup(html_text, choose_parser())
-    supplementary_lines = _supplementary_lines(soup)
+    for anchor in soup.select("a[href]"):
+        href = str(anchor["href"])
+        if not href.startswith(("#", "javascript:", "mailto:")):
+            anchor["href"] = urljoin(source_url, href)
+    from ..extraction.html.object_links import prepare_retained_object_links
+
+    prepare_retained_object_links(soup, source_url)
+    for encoded in soup.select("[data-cfemail]"):
+        try:
+            data = bytes.fromhex(str(encoded["data-cfemail"]))
+            email = bytes(value ^ data[0] for value in data[1:]).decode("utf-8")
+        except (ValueError, UnicodeDecodeError, IndexError):
+            continue
+        encoded.string = email
+        if encoded.name == "a":
+            encoded["href"] = "mailto:" + email
+    supplementary_lines = _supplementary_lines(soup, source_url)
+    supplementary_assets = (
+        _supplementary_assets(soup, source_url) if asset_profile == "all" else []
+    )
     body = _article_body(soup)
+    # Download controls carry the original figure URL. Discover owned assets
+    # before removing those controls from the reader's prose.
+    formula_assets = html_assets.extract_formula_assets(str(body), source_url)
+    body_assets = [*extract_inline_figures(body, source_url), *formula_assets]
+    _retain_author_footnotes(soup, body)
+    for anchor in list(body.select("a[href]")):
+        if anchor.get_text(strip=True) in OXFORDACADEMIC_MARKDOWN_PROMO_TOKENS:
+            anchor.decompose()
+    # The attachment widget is rendered once below with its descriptions.
+    # Keeping the same source widget in the body duplicates each download.
+    for widget in list(body.select(".widget-ArticleDataSupplements")):
+        widget.decompose()
+    source_mathml_error_count = len(body.select("math merror"))
     _normalize_oxford_body_for_rendering(body)
     for selector in OXFORDACADEMIC_EXTRACTION_CLEANUP_SELECTORS:
         class_name = _selector_class_name(selector)
@@ -400,20 +605,85 @@ def extract_markdown(
         rendered_table = render_table_markdown(table, label=label, caption=caption)
         if not normalize_text(rendered_table):
             continue
+        for foot in _nodes_with_class(wrapper, "table-wrap-foot"):
+            for label_node in foot.select(".fn-label"):
+                if label_node.find_next_sibling("p") is not None:
+                    label_node.insert_after(" ")
+            for anchor in foot.select("a[href]"):
+                if (
+                    normalize_text(anchor.get_text())
+                    in OXFORDACADEMIC_MARKDOWN_PROMO_TOKENS
+                ):
+                    anchor.decompose()
+            notes = render_retained_text_from_html(foot, source_url=source_url)
+            if notes:
+                rendered_table += "\n\n" + notes
         marker = f"PAPER_FETCH_OXFORDACADEMIC_TABLE_{index:04d}"
         table_replacements[marker] = rendered_table
         marker_node = soup.new_tag("p")
         marker_node.string = marker
+        marker_node["data-paper-fetch-markdown"] = "1"
         wrapper.replace_with(marker_node)
 
     section_hints = collect_html_section_hints(body, title=title)
-    abstract_sections = collect_html_abstract_blocks(body)
+    # The model's body kind is the existing retained-back-matter rendering
+    # category; the default reference classifier would hide these paragraphs.
+    for hint in section_hints:
+        if str(hint.get("heading") or "").casefold() in {
+            "acknowledgements",
+            "acknowledgments",
+            "funding",
+            "authors’ roles",
+            "authors' roles",
+        }:
+            hint["kind"] = "body"
+    abstract_sections = [
+        block
+        for block in collect_html_abstract_blocks(
+            body,
+            text_renderer=lambda node: render_clean_text_from_html(
+                node, collapse_prose_line_breaks=True
+            ),
+        )
+        if normalize_text(str(block.get("text") or "")).casefold() != "abstract"
+        and "ajax-articleAbstract-exclude-regex"
+        not in str(block.get("source_selector") or "")
+    ]
+    if (
+        normalize_text(str(merged_metadata.get("abstract") or "")).casefold()
+        == "abstract"
+    ):
+        merged_metadata["abstract"] = None
     lines: list[str] = []
     render_container_markdown(body, lines, level=2)
-    markdown = clean_rendered_markdown("\n".join(lines))
+    markdown = clean_rendered_markdown(
+        "\n".join(lines), noise_profile=OXFORDACADEMIC_NOISE_PROFILE
+    )
+    # Silverchair uses sibling h2/h3/h4 nodes rather than nested sections.
+    # The shared container renderer emits its supplied level for each sibling;
+    # restore the DOM levels before assembly so empty parent headings survive.
+    heading_levels: dict[str, deque[int]] = defaultdict(deque)
+    for node in body.find_all(re.compile(r"^h[2-6]$")):
+        heading_levels[normalize_text(render_heading_text_from_html(node))].append(
+            int(node.name[1])
+        )
+
+    def restore_heading_level(match: re.Match[str]) -> str:
+        levels = heading_levels.get(normalize_text(match[1]))
+        if not levels:
+            return match[0]
+        return "#" * levels.popleft() + " " + match[1]
+
+    markdown = re.sub(
+        r"(?m)^#{2,6} (.+)$",
+        restore_heading_level,
+        markdown,
+    )
     for marker, rendered_table in table_replacements.items():
         markdown = markdown.replace(marker, rendered_table)
-    markdown = clean_rendered_markdown(markdown)
+    markdown = clean_rendered_markdown(
+        markdown, noise_profile=OXFORDACADEMIC_NOISE_PROFILE
+    )
     markdown = "\n".join(
         line
         for line in markdown.splitlines()
@@ -421,7 +691,10 @@ def extract_markdown(
     )
     if supplementary_lines:
         markdown = clean_rendered_markdown(
-            markdown + "\n\n## Supplementary Files\n\n" + "\n".join(supplementary_lines)
+            markdown
+            + "\n\n## Supplementary Files\n\n"
+            + "\n".join(supplementary_lines),
+            noise_profile=OXFORDACADEMIC_NOISE_PROFILE,
         )
     body_html = str(body)
     return OxfordAcademicExtraction(
@@ -430,11 +703,8 @@ def extract_markdown(
         html_text=body_html,
         abstract_sections=abstract_sections,
         section_hints=section_hints,
-        extracted_assets=html_assets.extract_scoped_html_assets(
-            body_html,
-            source_url,
-            asset_profile=asset_profile,
-        ),
+        extracted_assets=body_assets + supplementary_assets,
+        source_mathml_error_count=source_mathml_error_count,
     )
 
 
@@ -446,7 +716,9 @@ def pdf_candidate_urls(
     doi: str | None = None,
 ) -> list[str]:
     candidates: list[str] = []
-    _append_unique(candidates, extract_pdf_url_from_metadata_links(metadata))
+    metadata_pdf_url = extract_pdf_url_from_metadata_links(metadata)
+    if metadata_pdf_url:
+        extend_unique(candidates, [metadata_pdf_url])
     for value in (
         source_url,
         str(metadata.get("source_url") or ""),
@@ -456,15 +728,19 @@ def pdf_candidate_urls(
         if normalized and (
             "/article-pdf/" in normalized.lower() or normalized.lower().endswith(".pdf")
         ):
-            _append_unique(candidates, normalized)
+            extend_unique(candidates, [normalized])
     if html_text and source_url:
-        for candidate in extract_pdf_candidate_urls_from_html(html_text, source_url):
-            _append_unique(candidates, candidate)
+        extend_unique(
+            candidates, extract_pdf_candidate_urls_from_html(html_text, source_url)
+        )
     normalized_doi = normalize_doi(str(doi or metadata.get("doi") or ""))
     if normalized_doi:
-        _append_unique(candidates, f"https://academic.oup.com/doi/pdf/{normalized_doi}")
-        _append_unique(
-            candidates, f"https://academic.oup.com/doi/epdf/{normalized_doi}"
+        extend_unique(
+            candidates,
+            [
+                f"https://academic.oup.com/doi/pdf/{normalized_doi}",
+                f"https://academic.oup.com/doi/epdf/{normalized_doi}",
+            ],
         )
     return candidates
 

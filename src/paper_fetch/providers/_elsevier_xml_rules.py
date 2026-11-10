@@ -12,6 +12,50 @@ import re
 
 from ..extraction.html.semantics import FRONT_MATTER_HEADINGS
 from ..reason_codes import METADATA_ONLY
+from ..utils import normalize_text
+
+
+def combine_elsevier_section_title(label: str, title: str) -> str:
+    """Use only the source label, without repeating a numbered title."""
+    label, title = normalize_text(label), normalize_text(title)
+    if not label or not title:
+        return title
+    counter = label.rstrip(".")
+    if re.match(rf"^{re.escape(counter)}(?:\.(?!\d)|\s|$)", title):
+        return title
+    return f"{label} {title}"
+
+
+def complete_elsevier_reference_doi(raw: str, doi: str) -> str:
+    """Append an evidenced DOI once, keeping a source annotation last."""
+    if not doi or doi.casefold() in raw.casefold():
+        return raw
+    annotation = re.search(r" \[[^\]\n]+\]$", raw)
+    suffix = annotation[0] if annotation else ""
+    body = raw[: annotation.start()] if annotation else raw
+    return body.rstrip(". ") + ". " + doi + suffix
+
+
+def format_elsevier_reference(
+    index: int,
+    body: str,
+    label: str = "",
+    *,
+    doi: str = "",
+    keys=(),
+) -> str:
+    counter = normalize_text(label).strip("[](). ")
+    numeric = bool(re.fullmatch(r"\d+[A-Za-z]?", counter)) and not bool(
+        re.fullmatch(r"(?:18|19|20|21)\d{2}", counter)
+    )
+    from ._elsevier_navigation import anchor_markup
+
+    body = complete_elsevier_reference_doi(body, doi)
+    anchors = "".join(anchor_markup(key) for key in dict.fromkeys(keys) if key)
+    raw = f"{index}. {anchors}{body}"
+    if label and not numeric:
+        raw += f" [{label}]"
+    return raw
 
 
 @dataclass(frozen=True)
@@ -28,6 +72,12 @@ class ElsevierXmlRules:
 
 
 ELSEVIER_ELEMENT_RULES: dict[str, ElsevierElementRule] = {
+    "conflict-of-interest": ElsevierElementRule(
+        "structure", "section", "render declaration heading and paragraphs"
+    ),
+    "acknowledgment": ElsevierElementRule(
+        "structure", "section", "render acknowledgment heading and paragraphs"
+    ),
     "sections": ElsevierElementRule(
         category="structure",
         handler="container",
@@ -146,6 +196,14 @@ ELSEVIER_ELEMENT_RULES: dict[str, ElsevierElementRule] = {
     ),
 }
 
+ELSEVIER_DECLARATION_ELEMENTS = frozenset(
+    {
+        "data-availability",
+        "conflict-of-interest",
+        "acknowledgment",
+    }
+)
+
 
 ELSEVIER_XML_RULES = ElsevierXmlRules(
     # Elsevier XML renders graphical abstracts as section-like metadata blocks.
@@ -233,6 +291,8 @@ def infer_elsevier_asset_group_key(value: str) -> str:
     filename = (
         re.split(r"[?#]", normalized, maxsplit=1)[0].rsplit("/", 1)[-1] or normalized
     )
+    if re.fullmatch(r"(?:1-s2\.0-[a-z0-9]+-)?am(?:\.pdf)?", filename):
+        return "am"
     match = _ASSET_GROUP_PATTERN.search(filename)
     if match:
         return match.group(1).lower()

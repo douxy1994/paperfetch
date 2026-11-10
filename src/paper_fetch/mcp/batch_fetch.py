@@ -2,24 +2,25 @@
 
 from __future__ import annotations
 
+from ..workflow.batch_session import BatchExecutionSession
+
 import asyncio
+import threading
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from contextlib import ExitStack, nullcontext
-from dataclasses import dataclass, replace
+from contextlib import ExitStack
+from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
-import threading
 from typing import Any, cast
 from uuid import UUID
 
 from mcp.server.mcpserver import Context
 from mcp.types import CallToolResult
 
-from ..artifacts import ArtifactMode
+from ..artifacts import ArtifactMode, ArtifactStore
 from ..manifest import (
     DEFAULT_MANIFEST_BUILDER_DEPENDENCIES,
-    LegacyArtifactField,
     ManifestBuilderDependencies,
     ManifestOutputArtifactSpec,
     ManifestRecord,
@@ -27,21 +28,22 @@ from ..manifest import (
     build_manifest_record,
 )
 from ..manifest_writer import (
-    ManifestJsonlWriter,
-    ManifestPersistenceError,
-    RunManifest,
-    RunManifestState,
-    RunManifestStore,
     deterministic_manifest_record_id,
-    latest_manifest_records,
+    serialize_manifest_record,
 )
 from ..models import (
     QUALITY_FLAG_CACHED_WITH_CURRENT_REVISION,
     AssetProfile,
     FetchEnvelope,
 )
-from ..runtime import RuntimeContext
 from ..reason_codes import RATE_LIMITED
+from ..runtime import RuntimeContext
+from ..workflow.batch_routing import (
+    expected_doi_from_query,
+    initial_provider_lane,
+    provider_lane_limit,
+    resolve_batch_item_routing,
+)
 from ..workflow.batch_runner import (
     BatchCompletionEvent,
     BatchFailure,
@@ -51,28 +53,10 @@ from ..workflow.batch_runner import (
     BatchRunResult,
     run_batch_async,
 )
-from ..workflow.batch_lifecycle import (
-    BatchLifecycleOverwriteError,
-    BatchManifestJournal,
-    prepare_batch_run,
-)
 from ..workflow.types import effective_asset_profile
-from ..workflow.batch_routing import (
-    initial_provider_lane,
-    provider_lane_limit,
-    resolve_provider_lane,
-)
 from ._deps import MCPDeps, default_mcp_deps
-from .acceptance_payloads import (
-    compact_acceptance_payload,
-    expected_doi_from_query,
-)
+from .acceptance_payloads import compact_acceptance_payload
 from .batch import _mcp_batch_failure, report_progress
-from .cache_index import (
-    cache_scope_id,
-    cached_resource_uri,
-    scoped_cached_resource_uri,
-)
 from .cache_payloads import (
     _MCP_DEFAULT_DOWNLOAD_DIR,
     _resolve_download_dir,
@@ -95,6 +79,7 @@ class BatchFetchItem:
     query: str
     lane_key: str
     attempt: int = 1
+    canonical_doi: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -107,12 +92,31 @@ class BatchFetchOutcome:
     diagnostic_artifacts: tuple[dict[str, Any], ...] = ()
 
 
-def _expected_doi(query: str) -> str | None:
-    return expected_doi_from_query(query)
+@dataclass(frozen=True, slots=True)
+class _CompactRunState:
+    prepared_indices: set[int]
+    submitted_indices: set[int]
+    record_sequences: Mapping[tuple[int, int], int]
+    envelopes: Mapping[tuple[int, int], FetchEnvelope]
+    cache_hits: Mapping[tuple[int, int], bool]
+    run_result: BatchRunResult[BatchFetchItem, BatchFetchOutcome] | None
 
 
-def _lane_for_query(query: str) -> str:
-    return initial_provider_lane(query)
+def _raise_for_callback_failures(
+    run_result: BatchRunResult[BatchFetchItem, BatchFetchOutcome],
+    items: Sequence[BatchFetchItem],
+) -> None:
+    if not run_result.callback_failures:
+        return
+    details = "; ".join(
+        f"index {items[failure.source_index].index}: {failure.message}"
+        for failure in run_result.callback_failures
+    )
+    raise RuntimeError(f"could not build complete batch_fetch results: {details}")
+
+
+_expected_doi = expected_doi_from_query
+_lane_for_query = initial_provider_lane
 
 
 def _resolve_batch_item_lane(
@@ -121,21 +125,15 @@ def _resolve_batch_item_lane(
     context: RuntimeContext,
     deps: MCPDeps,
 ) -> BatchFetchItem:
-    try:
-        lane_key = resolve_provider_lane(
-            item.query,
-            initial_lane=item.lane_key,
+    return resolve_batch_item_routing(
+        item,
+        context=context,
+        resolver=lambda query, *, context: _call_service_resolve_paper(
+            query,
             context=context,
-            resolver=lambda query, *, context: _call_service_resolve_paper(
-                query,
-                context=context,
-                deps=deps,
-            ),
-        )
-    except Exception:
-        # The fetch attempt remains the owner of resolution errors and diagnostics.
-        return item
-    return replace(item, lane_key=lane_key)
+            deps=deps,
+        ),
+    )
 
 
 async def _resolve_batch_item_lanes(
@@ -147,18 +145,18 @@ async def _resolve_batch_item_lanes(
 ) -> list[BatchFetchItem]:
     """Resolve generic inputs before scheduling and retain item-local cache state."""
 
-    semaphore = asyncio.Semaphore(max(1, concurrency))
-
-    async def resolve_one(item: BatchFetchItem) -> BatchFetchItem:
-        async with semaphore:
-            return await asyncio.to_thread(
-                _resolve_batch_item_lane,
-                item,
-                context=contexts[item.index],
-                deps=deps,
-            )
-
-    return list(await asyncio.gather(*(resolve_one(item) for item in items)))
+    resolved = await asyncio.to_thread(
+        BatchExecutionSession.resolve_all,
+        list(items),
+        lambda item: _resolve_batch_item_lane(
+            item, context=contexts[item.index], deps=deps
+        ),
+        max_workers=max(1, concurrency),
+    )
+    return [
+        result.value if result.value is not None else result.item
+        for result in resolved.results
+    ]
 
 
 def _download_argument(request: BatchFetchRequest) -> Path | object:
@@ -203,6 +201,7 @@ def _request_parameters(
     markdown_dir: Path | None,
 ) -> dict[str, Any]:
     return {
+        **({"target": request.target} if request.target != "paper" else {}),
         "modes": sorted(str(mode) for mode in request.modes),
         "strategy": request.strategy.cache_request_payload(),
         "render": {
@@ -220,26 +219,7 @@ def _request_parameters(
         ),
         "markdown_filename": request.markdown_filename,
         "primary_output_to_output_dir": request.save_markdown,
-        "batch_concurrency": request.concurrency,
-        "continue_on_error": request.continue_on_error,
     }
-
-
-def _resource_uri_for_saved_markdown(
-    request: BatchFetchRequest,
-    saved: SavedMarkdownResult | None,
-) -> str | None:
-    if saved is None or saved.cache_entry is None:
-        return None
-    entry_id = str(saved.cache_entry.get("id") or "")
-    if not entry_id:
-        return None
-    uses_default_scope = (
-        request.markdown_output_dir is None and request.download_dir is None
-    )
-    if uses_default_scope:
-        return cached_resource_uri(entry_id)
-    return scoped_cached_resource_uri(cache_scope_id(saved.output_dir), entry_id)
 
 
 def _cache_hit(envelope: FetchEnvelope | None) -> bool:
@@ -299,7 +279,6 @@ def _record_from_batch_result(
                 ManifestOutputArtifactSpec(
                     path=str(outcome.saved_markdown.path),
                     kind="saved_markdown",
-                    legacy_field=LegacyArtifactField.SAVED_MARKDOWN_PATH,
                 ),
             )
         diagnostic_artifacts = (
@@ -385,45 +364,20 @@ def _record_from_batch_result(
     )
 
 
-def _synthetic_aborted_record(
-    request: BatchFetchRequest,
-    item: BatchFetchItem,
-    *,
-    request_parameters: Mapping[str, Any],
-    run_id: UUID,
-    tool_version: str,
-    code: str,
-    reason: str,
-    deps: ManifestBuilderDependencies,
-) -> ManifestRecord:
-    completed_at = deps.clock()
-    return build_manifest_record(
-        tool_version=tool_version,
-        run_id=run_id,
-        record_id=deterministic_manifest_record_id(
-            run_id, index=item.index, attempt=item.attempt
-        ),
-        index=item.index,
-        attempt=item.attempt,
-        query=item.query,
-        request_parameters=request_parameters,
-        asset_profile=_asset_profile_for_record(request, None),
-        error=_aborted_error_payload(reason=reason, code=code),
-        aborted=True,
-        requested_outputs=request.to_fetch_request(item.query).requested_modes(),
-        expected_doi=_expected_doi(item.query),
-        started_at=completed_at,
-        completed_at=completed_at,
-        deps=deps,
-    )
-
-
 def _classify_outcome(outcome: BatchFetchOutcome) -> BatchFailure | None:
     if outcome.error is not None:
         return _mcp_batch_failure(outcome.error)
     envelope = outcome.envelope
     if envelope is None:
         return None
+    if envelope.target == "supplementary" and envelope.supplementary is not None:
+        status = envelope.supplementary.status
+        if status not in {"complete", "degraded"}:
+            return BatchFailure(
+                reason_code=status,
+                message="Supplementary acquisition returned " + status,
+                rate_limited=status == RATE_LIMITED,
+            )
     rate_limit_events = [
         event
         for event in envelope.trace
@@ -458,9 +412,7 @@ def _compact_messages(values: Sequence[str]) -> list[str]:
     return [str(value)[:400] for value in values[:8]]
 
 
-def _artifact_payloads(
-    record: ManifestRecord, *, resource_uri: str | None
-) -> list[dict[str, Any]]:
+def _artifact_payloads(record: ManifestRecord) -> list[dict[str, Any]]:
     payloads: list[dict[str, Any]] = []
     for artifact in record.output_artifacts:
         payload = {
@@ -472,9 +424,6 @@ def _artifact_payloads(
             "sha256": artifact.sha256,
             "completed_at": artifact.completed_at.isoformat(),
             "verification_status": artifact.verification_status.value,
-            "resource_uri": (
-                resource_uri if artifact.kind == "saved_markdown" else None
-            ),
         }
         payloads.append(payload)
     return payloads
@@ -512,32 +461,25 @@ def _bounded_content_by_record(
 def _compact_run_payload(
     request: BatchFetchRequest,
     *,
-    manifest: RunManifest,
+    run_id: UUID,
     records: Sequence[ManifestRecord],
-    attempted_indices: set[int],
-    record_sequences: Mapping[tuple[int, int], int],
-    envelopes: Mapping[tuple[int, int], FetchEnvelope],
-    saved_results: Mapping[tuple[int, int], SavedMarkdownResult],
-    cache_hits: Mapping[tuple[int, int], bool],
-    run_result: BatchRunResult[BatchFetchItem, BatchFetchOutcome] | None,
-    store: RunManifestStore | None,
+    state: _CompactRunState,
+    execution_count: int,
+    cancelled: bool,
 ) -> dict[str, Any]:
-    latest = latest_manifest_records(records)
-    ordered_records = [latest[index] for index in range(1, len(request.queries) + 1)]
+    ordered_records = sorted(records, key=lambda record: record.index)
     content_payloads: dict[tuple[int, int], dict[str, Any]] = {}
     content_returned_chars = 0
     if request.detail == "bounded":
         content_payloads, content_returned_chars = _bounded_content_by_record(
             ordered_records,
-            envelopes=envelopes,
+            envelopes=state.envelopes,
             limit=request.content_max_chars,
         )
 
     results: list[dict[str, Any]] = []
     for record in ordered_records:
         key = (record.index, record.attempt)
-        saved = saved_results.get(key)
-        resource_uri = _resource_uri_for_saved_markdown(request, saved)
         error_payload = (
             record.error.model_dump(mode="json") if record.error is not None else None
         )
@@ -545,28 +487,36 @@ def _compact_run_payload(
             "index": record.index,
             "query": record.query,
             "attempt": record.attempt,
-            "completion_sequence": record_sequences.get(key),
+            "completion_sequence": state.record_sequences.get(key),
             "started_at": record.started_at.isoformat(),
             "completed_at": record.completed_at.isoformat(),
             "record_status": record.record_status.value,
-            "status": record.status,
+            "status": "ok" if record.error is None else record.error.status,
             "run_id": str(record.run_id),
             "record_id": str(record.record_id),
             "request_fingerprint": record.request_fingerprint,
             "doi": record.doi,
             "source": record.source,
-            "reused": record.index not in attempted_indices,
-            "cache_hit": cache_hits.get(key, False),
+            "acquisition": (
+                asdict(record.acquisition) if record.acquisition is not None else None
+            ),
+            "cache_hit": state.cache_hits.get(key, False),
             "acceptance": compact_acceptance_payload(record.acceptance),
             "fallback_codes": list(record.fallback_codes),
             "warning_codes": list(record.warning_codes),
             "failure_codes": list(record.failure_codes),
             "warnings": _compact_messages(record.warnings),
             "error": error_payload,
-            "output_artifacts": _artifact_payloads(record, resource_uri=resource_uri),
-            "saved_markdown_path": record.saved_markdown_path,
-            "resource_uri": resource_uri,
+            "output_artifacts": _artifact_payloads(record),
         }
+        envelope = state.envelopes.get(key)
+        if (
+            envelope is not None
+            and envelope.target == "supplementary"
+            and envelope.supplementary is not None
+        ):
+            item["target"] = envelope.target
+            item["supplementary"] = asdict(envelope.supplementary)
         if request.detail == "bounded":
             item.update(
                 content_payloads.get(
@@ -583,7 +533,7 @@ def _compact_run_payload(
 
     latest_sequences = sorted(
         (
-            (record_sequences.get((record.index, record.attempt)), record)
+            (state.record_sequences.get((record.index, record.attempt)), record)
             for record in ordered_records
         ),
         key=lambda item: item[0] if item[0] is not None else 10**12 + item[1].index,
@@ -601,11 +551,11 @@ def _compact_run_payload(
     ]
 
     lane_cooldowns: list[dict[str, Any]] = []
-    if run_result is not None:
+    if state.run_result is not None:
         for lane, cooldown in sorted(
-            run_result.lane_cooldowns.items(), key=lambda item: str(item[0])
+            state.run_result.lane_cooldowns.items(), key=lambda item: str(item[0])
         ):
-            source_item = run_result.results[cooldown.source_index].item
+            source_item = state.run_result.results[cooldown.source_index].item
             lane_cooldowns.append(
                 {
                     "lane": str(lane),
@@ -624,18 +574,21 @@ def _compact_run_payload(
         record.record_status is ManifestRecordStatus.ABORTED
         for record in ordered_records
     )
-    cancelled = manifest.state is RunManifestState.CANCELLED
     return with_schema_version(
         {
-            "run_id": str(manifest.run_id),
-            "request_fingerprint": manifest.request_fingerprint,
-            "state": manifest.state.value,
-            "persisted": store is not None,
-            "run_manifest_path": str(store.manifest_path) if store else None,
-            "events_path": str(store.events_path) if store else None,
+            "run_id": str(run_id),
+            "state": "cancelled" if cancelled else "completed",
+            "persisted": request.batch_results is not None,
+            "batch_results_path": request.batch_results,
             "query_count": len(request.queries),
-            "attempted_count": len(attempted_indices),
-            "reused_count": len(request.queries) - len(attempted_indices),
+            "attempted_count": len(state.submitted_indices),
+            "execution_count": execution_count,
+            "deduplicated_count": max(
+                0, len(state.submitted_indices) - execution_count
+            ),
+            "not_scheduled_count": len(
+                state.prepared_indices - state.submitted_indices
+            ),
             "detail": request.detail,
             "content_max_chars": request.content_max_chars,
             "content_returned_chars": content_returned_chars,
@@ -644,39 +597,19 @@ def _compact_run_payload(
             "summary": {
                 "record_statuses": dict(sorted(record_statuses.items())),
                 "acceptance": dict(sorted(acceptance_counts.items())),
-                "cache_hits": sum(1 for value in cache_hits.values() if value),
+                "cache_hits": sum(1 for value in state.cache_hits.values() if value),
                 "saved_markdown": sum(
-                    1 for record in ordered_records if record.saved_markdown_path
+                    any(
+                        artifact.kind == "saved_markdown"
+                        for artifact in record.output_artifacts
+                    )
+                    for record in ordered_records
                 ),
             },
             "lane_cooldowns": lane_cooldowns,
             "aborted": aborted,
             "cancelled": cancelled,
         }
-    )
-
-
-def _store_for_request(request: BatchFetchRequest) -> RunManifestStore | None:
-    if request.resume is not None:
-        return RunManifestStore.from_manifest(Path(request.resume))
-    if request.run_manifest is None and request.batch_results is None:
-        return None
-    results_path = (
-        Path(request.batch_results)
-        if request.batch_results is not None
-        else Path(request.run_manifest or "run-manifest.json").parent
-        / "batch-results.jsonl"
-    )
-    manifest_path = (
-        Path(request.run_manifest)
-        if request.run_manifest is not None
-        else results_path.parent / "run-manifest.json"
-    )
-    if manifest_path.resolve(strict=False) == results_path.resolve(strict=False):
-        raise ValueError("run_manifest and batch_results must use different paths.")
-    return RunManifestStore.for_new_run(
-        manifest_path=manifest_path,
-        events_path=results_path,
     )
 
 
@@ -705,82 +638,81 @@ async def _execute_batch_fetch(
         deps=deps,
     )
     request_parameters = _request_parameters(
-        request, cache_dir=cache_dir, markdown_dir=markdown_dir
+        request,
+        cache_dir=cache_dir,
+        markdown_dir=markdown_dir,
     )
-    store = _store_for_request(request)
-    lock_context = store.run_lock() if store is not None else nullcontext()
+    results_path = Path(request.batch_results) if request.batch_results else None
+    if results_path is not None and results_path.exists() and not request.overwrite:
+        raise FileExistsError(
+            f"refusing to overwrite existing batch results: {results_path}; "
+            "set overwrite=true"
+        )
 
     await report_progress(ctx, 0, len(request.queries), "Starting batch_fetch")
     cancelled = threading.Event()
-    runtime_context = RuntimeContext(
-        env=runtime_env,
-        download_dir=cache_dir,
-        artifact_mode=("none" if request.no_download else request.artifact_mode),
-        cancel_check=cancelled.is_set,
-    )
-    item_contexts: dict[int, RuntimeContext] = {}
+    active_run_id = requested_run_id or manifest_deps.uuid_factory()
+    logical_items = [
+        BatchFetchItem(
+            index=index,
+            query=query,
+            lane_key=_lane_for_query(query),
+            canonical_doi=_expected_doi(query),
+        )
+        for index, query in enumerate(request.queries, start=1)
+    ]
+    records: dict[int, ManifestRecord] = {}
+    record_sequences: dict[tuple[int, int], int] = {}
+    envelopes: dict[tuple[int, int], FetchEnvelope] = {}
+    cache_hits: dict[tuple[int, int], bool] = {}
+    logical_terminal = 0
+    run_result: BatchRunResult[BatchFetchItem, BatchFetchOutcome] | None = None
 
-    with lock_context:
-        run_started = False
-        journal: BatchManifestJournal | None = None
-        items: list[BatchFetchItem] = []
-        run_result: BatchRunResult[BatchFetchItem, BatchFetchOutcome] | None = None
-        envelopes: dict[tuple[int, int], FetchEnvelope] = {}
-        saved_results: dict[tuple[int, int], SavedMarkdownResult] = {}
-        cache_hits: dict[tuple[int, int], bool] = {}
+    with (
+        RuntimeContext(
+            env=runtime_env,
+            download_dir=cache_dir,
+            artifact_mode=("none" if request.no_download else request.artifact_mode),
+            cancel_check=cancelled.is_set,
+        ) as runtime_context,
+        runtime_context.fetch_browser_preparation(prepare=False),
+    ):
+        session = BatchExecutionSession(
+            runtime_context, logical_items, asset_profile=request.strategy.asset_profile
+        )
+        item_contexts = session.contexts
+
+        def close_active_contexts() -> None:
+            session.close()
 
         try:
-            try:
-                prepared = prepare_batch_run(
-                    store=store,
-                    queries=request.queries,
-                    request_parameters=request_parameters,
-                    tool_version=tool_version,
-                    requested_run_id=requested_run_id,
-                    resume=request.resume is not None,
-                    overwrite=request.overwrite,
-                    clock=manifest_deps.clock,
-                    uuid_factory=manifest_deps.uuid_factory,
-                    item_factory=lambda index, query, attempt: BatchFetchItem(
-                        index=index,
-                        query=query,
-                        lane_key=_lane_for_query(query),
-                        attempt=attempt,
-                    ),
+            items = list(logical_items)
+            if request.prefer_cache:
+                known_doi_items = [item for item in items if _expected_doi(item.query)]
+                unresolved_items = [
+                    item for item in items if not _expected_doi(item.query)
+                ]
+                resolved_items = await _resolve_batch_item_lanes(
+                    unresolved_items,
+                    contexts=item_contexts,
+                    concurrency=request.concurrency,
+                    deps=deps,
                 )
-            except BatchLifecycleOverwriteError as exc:
-                raise FileExistsError(
-                    str(exc).replace("enable overwrite", "set overwrite=true")
-                ) from exc
-            journal = BatchManifestJournal(
-                manifest=prepared.manifest,
-                records=prepared.records,
-                store=store,
-            )
-            items = prepared.items
-            effective_run_id = prepared.run_id
-            append_events = prepared.append_events
-            reused_count = prepared.reused_count
-            run_started = True
-            item_contexts = {
-                item.index: runtime_context.new_request_context(
-                    asset_profile=request.strategy.asset_profile,
+                resolved_by_index = {item.index: item for item in resolved_items}
+                items = [
+                    resolved_by_index.get(item.index, item)
+                    for item in [*known_doi_items, *unresolved_items]
+                ]
+                items.sort(key=lambda item: item.index)
+            else:
+                items = await _resolve_batch_item_lanes(
+                    items,
+                    contexts=item_contexts,
+                    concurrency=request.concurrency,
+                    deps=deps,
                 )
-                for item in items
-            }
-            items = await _resolve_batch_item_lanes(
-                items,
-                contexts=item_contexts,
-                concurrency=request.concurrency,
-                deps=deps,
-            )
-            if reused_count:
-                await report_progress(
-                    ctx,
-                    reused_count,
-                    len(request.queries),
-                    f"batch_fetch reused {reused_count} audited result(s)",
-                )
+            logical_items = list(items)
+            items, duplicates_by_owner = session.group(logical_items)
 
             def run_item(item: BatchFetchItem) -> BatchFetchOutcome:
                 started_at = manifest_deps.clock()
@@ -790,12 +722,9 @@ async def _execute_batch_fetch(
                     item_context.reset_request_deadline()
                     envelope = deps.fetch_paper_envelope(
                         fetch_request,
-                        env=runtime_env,
                         download_dir=download_arg,
-                        transport=None,
                         include_article_for_assets=True,
                         context=item_context,
-                        cancel_check=cancelled.is_set,
                         deps=deps,
                     )
                     saved = _save_markdown_result_for_fetch_request(
@@ -813,16 +742,16 @@ async def _execute_batch_fetch(
                         envelope=envelope,
                         saved_markdown=saved,
                         diagnostic_artifacts=tuple(
-                            dict(item) for item in item_context.diagnostic_artifacts
+                            dict(value) for value in item_context.diagnostic_artifacts
                         ),
                     )
-                except Exception as error:  # every submitted item gets one record
+                except Exception as error:
                     return BatchFetchOutcome(
                         started_at=started_at,
                         completed_at=manifest_deps.clock(),
                         error=error,
                         diagnostic_artifacts=tuple(
-                            dict(item) for item in item_context.diagnostic_artifacts
+                            dict(value) for value in item_context.diagnostic_artifacts
                         ),
                     )
                 finally:
@@ -831,23 +760,24 @@ async def _execute_batch_fetch(
             def on_completion(
                 event: BatchCompletionEvent[BatchFetchItem, BatchFetchOutcome],
             ) -> None:
-                record = _record_from_batch_result(
-                    request,
-                    event.result,
-                    request_parameters=request_parameters,
-                    run_id=effective_run_id,
-                    tool_version=tool_version,
-                    deps=manifest_deps,
-                )
-                outcome = event.result.value
-                if outcome is not None and outcome.envelope is not None:
+                nonlocal logical_terminal
+                for fanout_result in session.fanout(event.result):
+                    outcome = fanout_result.value
+                    record = _record_from_batch_result(
+                        request,
+                        fanout_result,
+                        request_parameters=request_parameters,
+                        run_id=active_run_id,
+                        tool_version=tool_version,
+                        deps=manifest_deps,
+                    )
                     key = (record.index, record.attempt)
-                    envelopes[key] = outcome.envelope
-                    cache_hits[key] = _cache_hit(outcome.envelope)
-                    if outcome.saved_markdown is not None:
-                        saved_results[key] = outcome.saved_markdown
-                assert journal is not None
-                journal.persist(record, writer=writer)
+                    if outcome is not None and outcome.envelope is not None:
+                        envelopes[key] = outcome.envelope
+                        cache_hits[key] = _cache_hit(outcome.envelope)
+                    logical_terminal += 1
+                    records[record.index] = record
+                    record_sequences[key] = logical_terminal
 
             async def on_progress(
                 progress: BatchProgress[BatchFetchItem, BatchFetchOutcome],
@@ -855,150 +785,104 @@ async def _execute_batch_fetch(
                 item = progress.event.result.item
                 await report_progress(
                     ctx,
-                    reused_count + progress.terminal,
+                    logical_terminal,
                     len(request.queries),
                     (
                         f"batch_fetch index {item.index}: "
                         f"{progress.event.result.status.value} "
-                        f"({reused_count + progress.terminal}/{len(request.queries)})"
+                        f"({logical_terminal}/{len(request.queries)})"
                     ),
                 )
 
-            writer: ManifestJsonlWriter | None = None
-            if items:
-                writer_context = (
-                    ManifestJsonlWriter(
-                        store.events_path,
-                        append=append_events,
-                        overwrite=request.overwrite,
-                    )
-                    if store is not None
-                    else nullcontext(None)
-                )
-                with writer_context as opened_writer:
-                    writer = cast(ManifestJsonlWriter | None, opened_writer)
-                    run_result = await run_batch_async(
-                        items,
-                        run_item,
-                        max_workers=request.concurrency,
-                        lane_key=lambda item: item.lane_key,
-                        lane_limits=lambda lane: provider_lane_limit(
-                            lane,
-                            global_limit=request.concurrency,
-                        ),
-                        completion_callback=on_completion,
-                        progress_callback=on_progress,
-                        stop_predicate=(
-                            None
-                            if request.continue_on_error
-                            else lambda result: (
-                                result.status is not BatchItemStatus.SUCCEEDED
-                            )
-                        ),
-                        cancel_event=cancelled,
-                        result_classifier=_classify_outcome,
-                    )
-                if run_result.callback_failures:
-                    details = "; ".join(
-                        f"index {items[failure.source_index].index}: {failure.message}"
-                        for failure in run_result.callback_failures
-                    )
-                    raise RuntimeError(
-                        f"could not persist complete batch_fetch events: {details}"
-                    )
-
-            assert journal is not None
-            journal.require_complete(len(request.queries))
-            state = (
-                RunManifestState.CANCELLED
-                if run_result is not None and run_result.cancelled
-                else RunManifestState.COMPLETED
-            )
-            manifest = journal.finish(
-                state=state,
-                completed_at=manifest_deps.clock(),
-            )
-            await report_progress(
-                ctx,
-                len(request.queries),
-                len(request.queries),
-                (
-                    "batch_fetch cancelled"
-                    if state is RunManifestState.CANCELLED
-                    else "batch_fetch complete"
+            run_result = await run_batch_async(
+                items,
+                run_item,
+                max_workers=request.concurrency,
+                lane_key=lambda item: item.lane_key,
+                lane_limits=lambda lane: provider_lane_limit(
+                    lane,
+                    global_limit=request.concurrency,
                 ),
+                completion_callback=on_completion,
+                progress_callback=on_progress,
+                stop_predicate=(
+                    None
+                    if request.continue_on_error
+                    else lambda result: result.status is not BatchItemStatus.SUCCEEDED
+                ),
+                cancel_event=cancelled,
+                result_classifier=_classify_outcome,
             )
-            return _compact_run_payload(
-                request,
-                manifest=manifest,
-                records=journal.records,
-                attempted_indices={item.index for item in items},
-                record_sequences=journal.record_sequences,
-                envelopes=envelopes,
-                saved_results=saved_results,
-                cache_hits=cache_hits,
-                run_result=run_result,
-                store=store,
-            )
+            _raise_for_callback_failures(run_result, items)
         except asyncio.CancelledError:
             cancelled.set()
-            if run_started and journal is not None:
-                try:
-                    journal.terminalize_missing(
-                        items,
-                        lambda item: _synthetic_aborted_record(
-                            request,
-                            item,
-                            request_parameters=request_parameters,
-                            run_id=effective_run_id,
-                            tool_version=tool_version,
-                            code="request_cancelled",
-                            reason=(
-                                "Item was interrupted by MCP cooperative cancellation."
-                            ),
-                            deps=manifest_deps,
-                        ),
-                    )
-                    journal.finish(
-                        state=RunManifestState.CANCELLED,
-                        completed_at=manifest_deps.clock(),
-                    )
-                except Exception:
-                    pass
-            raise
-        except Exception:
-            cancelled.set()
-            if run_started and journal is not None:
-                try:
-                    journal.terminalize_missing(
-                        items,
-                        lambda item: _synthetic_aborted_record(
-                            request,
-                            item,
-                            request_parameters=request_parameters,
-                            run_id=effective_run_id,
-                            tool_version=tool_version,
-                            code="batch_interrupted",
-                            reason=(
-                                "Item was not completed because batch_fetch was interrupted."
-                            ),
-                            deps=manifest_deps,
-                        ),
-                    )
-                    journal.finish(
-                        state=RunManifestState.INTERRUPTED,
-                        completed_at=manifest_deps.clock(),
-                    )
-                except Exception:
-                    pass
+            close_active_contexts()
             raise
         finally:
-            runtime_context.close()
+            close_active_contexts()
+
+    if len(records) != len(request.queries):
+        raise RuntimeError("batch runner did not produce one result per input")
+    ordered_records = [records[index] for index in sorted(records)]
+    if results_path is not None:
+        body = "".join(
+            f"{serialize_manifest_record(record)}\n" for record in ordered_records
+        )
+        ArtifactStore.from_download_dir(results_path.parent).write_text_file(
+            results_path,
+            body,
+            overwrite=request.overwrite,
+        )
+
+    prepared_indices = {item.index for item in logical_items}
+    submitted_indices: set[int] = set()
+    execution_count = 0
+    if run_result is not None:
+        for result in run_result.results:
+            if not result.was_submitted:
+                continue
+            execution_count += 1
+            submitted_indices.add(result.item.index)
+            submitted_indices.update(
+                duplicate.index
+                for duplicate in duplicates_by_owner.get(result.item.index, ())
+            )
+    was_cancelled = bool(run_result is not None and run_result.cancelled)
+    await report_progress(
+        ctx,
+        len(request.queries),
+        len(request.queries),
+        (
+            "batch_fetch cancelled"
+            if was_cancelled
+            else (
+                "batch_fetch terminalized "
+                f"(terminal={len(request.queries)}, "
+                f"not_scheduled={len(prepared_indices - submitted_indices)})"
+            )
+        ),
+    )
+    return _compact_run_payload(
+        request,
+        run_id=active_run_id,
+        records=ordered_records,
+        state=_CompactRunState(
+            prepared_indices=prepared_indices,
+            submitted_indices=submitted_indices,
+            record_sequences=record_sequences,
+            envelopes=envelopes,
+            cache_hits=cache_hits,
+            run_result=run_result,
+        ),
+        execution_count=execution_count,
+        cancelled=was_cancelled,
+    )
 
 
 async def batch_fetch_tool_async(
     *,
     queries: list[str],
+    target: str = "paper",
     concurrency: int = 1,
     modes: list[str] | None = None,
     strategy: FetchStrategyInput | Mapping[str, Any] | None = None,
@@ -1014,9 +898,7 @@ async def batch_fetch_tool_async(
     detail: str = "compact",
     content_max_chars: int = 20_000,
     continue_on_error: bool = True,
-    run_manifest: str | None = None,
     batch_results: str | None = None,
-    resume: str | None = None,
     overwrite: bool = False,
     env: Mapping[str, str] | None = None,
     ctx: Context | None = None,
@@ -1025,26 +907,11 @@ async def batch_fetch_tool_async(
     run_id: UUID | None = None,
     tool_version: str | None = None,
 ) -> CallToolResult:
+    input_values = locals()
     request_payload: dict[str, Any] = {
-        "queries": queries,
-        "concurrency": concurrency,
-        "modes": modes,
-        "strategy": strategy,
-        "include_refs": include_refs,
-        "max_tokens": max_tokens,
-        "prefer_cache": prefer_cache,
-        "no_download": no_download,
-        "artifact_mode": artifact_mode,
-        "save_markdown": save_markdown,
-        "markdown_output_dir": markdown_output_dir,
-        "markdown_filename": markdown_filename,
-        "detail": detail,
-        "content_max_chars": content_max_chars,
-        "continue_on_error": continue_on_error,
-        "run_manifest": run_manifest,
-        "batch_results": batch_results,
-        "resume": resume,
-        "overwrite": overwrite,
+        name: input_values[name]
+        for name in BatchFetchRequest.model_fields
+        if name != "download_dir"
     }
     if download_dir is not _MCP_DEFAULT_DOWNLOAD_DIR:
         request_payload["download_dir"] = (
@@ -1073,7 +940,7 @@ async def batch_fetch_tool_async(
         return _tool_result(payload, is_error=False)
     except asyncio.CancelledError:
         raise
-    except (ManifestPersistenceError, OSError, ValueError, RuntimeError) as error:
+    except (OSError, ValueError, RuntimeError) as error:
         await report_progress(
             ctx, len(request.queries), len(request.queries), "batch_fetch failed"
         )

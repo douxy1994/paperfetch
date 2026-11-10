@@ -7,7 +7,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from ...utils import normalize_text
-from ...quality.reason_codes import (
+from ...reason_codes import (
     ABSTRACT_ONLY,
     AWS_WAF_CHALLENGE,
     CLOUDFLARE_CHALLENGE,
@@ -229,6 +229,7 @@ def detect_html_access_signals(
     redirected_to_abstract: bool = False,
     include_paywall_text: bool = True,
     explicit_no_access: bool = False,
+    substantive_body_ready: bool = False,
     html_text: str = "",
     response_headers: Mapping[str, Any] | None = None,
 ) -> list[str]:
@@ -252,8 +253,9 @@ def detect_html_access_signals(
         )
     ):
         signals.append(CLOUDFLARE_CHALLENGE)
-    if response_status == 404 or any(
-        pattern in combined for pattern in NOT_FOUND_PATTERNS
+    if response_status == 404 or (
+        not substantive_body_ready
+        and any(pattern in combined for pattern in NOT_FOUND_PATTERNS)
     ):
         signals.append(PUBLISHER_NOT_FOUND)
     if response_status in {401, 402, 403} and not {
@@ -263,7 +265,11 @@ def detect_html_access_signals(
         signals.append(PUBLISHER_ACCESS_DENIED)
     if explicit_no_access:
         signals.append(PUBLISHER_ACCESS_DENIED)
-    if include_paywall_text and contains_access_gate_text(combined):
+    if (
+        include_paywall_text
+        and not substantive_body_ready
+        and contains_access_gate_text(combined)
+    ):
         signals.append(PUBLISHER_PAYWALL)
     return list(dict.fromkeys(signals))
 
@@ -273,6 +279,8 @@ def detect_html_block(
     text: str,
     response_status: int | None,
     *,
+    substantive_body_ready: bool = False,
+    include_paywall_text: bool = True,
     html_text: str = "",
     response_headers: Mapping[str, Any] | None = None,
 ) -> HtmlExtractionFailure | None:
@@ -280,6 +288,8 @@ def detect_html_block(
         title,
         text,
         response_status,
+        substantive_body_ready=substantive_body_ready,
+        include_paywall_text=include_paywall_text,
         html_text=html_text,
         response_headers=response_headers,
     )

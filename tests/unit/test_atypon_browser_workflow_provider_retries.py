@@ -1,7 +1,6 @@
-# ruff: noqa: F403,F405
 from __future__ import annotations
-
-from ._atypon_browser_workflow_provider_support import *
+from tests.support._atypon_browser_workflow_provider_support import *
+# ruff: noqa: F403,F405
 
 
 class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestCase):
@@ -175,9 +174,15 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                     ),
                     refresh_browser_context_seed=mocked_warm,
                     download_assets=mocked_download_assets,
+                    _build_shared_browser_file_fetcher=mock.Mock(
+                        return_value=mock.Mock(requires_caller_thread=True)
+                    ),
                 ),
             )
             client.name = "science"
+            client._browser_asset_file_fetcher = mock.Mock(
+                return_value=mock.Mock(requires_caller_thread=True)
+            )
             raw_payload = _typed_raw_payload(
                 provider="science",
                 source_url=article_url,
@@ -194,7 +199,7 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 asset_profile="all",
             )
 
-        mocked_warm.assert_not_called()
+        mocked_warm.assert_called_once()
         figure_calls = [
             call
             for call in mocked_download_assets.call_args_list
@@ -242,23 +247,27 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
             "url": "https://example.test/supplement.docx",
             "section": "supplementary",
         }
-        initial_body_result = {
+        probe_body_result = {
             "assets": [
-                {
-                    "kind": "figure",
-                    "heading": "Figure 2",
-                    "caption": "Second figure caption",
-                    "download_url": "https://example.test/figure2.png",
-                    "source_url": "https://example.test/figure2.png",
-                    "section": "body",
-                }
-            ],
-            "asset_failures": [
                 {
                     "kind": "figure",
                     "heading": "Figure 1",
                     "caption": "Figure caption",
+                    "download_url": "https://example.test/figure1.png",
                     "source_url": "https://example.test/figure1.png",
+                    "section": "body",
+                }
+            ],
+            "asset_failures": [],
+        }
+        initial_body_result = {
+            "assets": [],
+            "asset_failures": [
+                {
+                    "kind": "figure",
+                    "heading": "Figure 2",
+                    "caption": "Second figure caption",
+                    "source_url": "https://example.test/figure2.png",
                     "section": "body",
                     "reason": "cloudflare_challenge",
                 }
@@ -268,10 +277,10 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
             "assets": [
                 {
                     "kind": "figure",
-                    "heading": "Figure 1",
-                    "caption": "Figure caption",
-                    "download_url": "https://example.test/figure1.png",
-                    "source_url": "https://example.test/figure1.png",
+                    "heading": "Figure 2",
+                    "caption": "Second figure caption",
+                    "download_url": "https://example.test/figure2.png",
+                    "source_url": "https://example.test/figure2.png",
                     "section": "body",
                 }
             ],
@@ -294,7 +303,9 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = self._runtime_config(tmpdir, "science", doi)
             mocked_warm = mock.Mock(return_value={"browser_final_url": article_url})
-            body_results = iter([initial_body_result, retry_body_result])
+            body_results = iter(
+                [probe_body_result, initial_body_result, retry_body_result]
+            )
             mocked_download_assets = mock.Mock(
                 side_effect=lambda kind, *_args, **_kwargs: (
                     next(body_results)
@@ -313,9 +324,15 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                     ),
                     refresh_browser_context_seed=mocked_warm,
                     download_assets=mocked_download_assets,
+                    _build_shared_browser_file_fetcher=mock.Mock(
+                        return_value=mock.Mock(requires_caller_thread=True)
+                    ),
                 ),
             )
             client.name = "science"
+            client._browser_asset_file_fetcher = mock.Mock(
+                return_value=mock.Mock(requires_caller_thread=True)
+            )
             raw_payload = _typed_raw_payload(
                 provider="science",
                 source_url=article_url,
@@ -343,11 +360,10 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
             for call in mocked_download_assets.call_args_list
             if call.args[0] is html_assets.SUPPLEMENTARY_KIND
         ]
-        self.assertEqual(len(figure_calls), 2)
-        self.assertEqual(
-            figure_calls[0].kwargs["assets"], [first_figure, second_figure]
-        )
-        self.assertEqual(figure_calls[1].kwargs["assets"], [first_figure])
+        self.assertEqual(len(figure_calls), 3)
+        self.assertEqual(figure_calls[0].kwargs["assets"], [first_figure])
+        self.assertEqual(figure_calls[1].kwargs["assets"], [second_figure])
+        self.assertEqual(figure_calls[2].kwargs["assets"], [second_figure])
         self.assertEqual(len(supplementary_calls), 1)
         self.assertEqual(supplementary_calls[0].kwargs["assets"], [supplementary_asset])
         self.assertEqual(
@@ -362,7 +378,7 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
         )
         self.assertEqual(result["asset_failures"], [])
 
-    def test_wiley_provider_download_related_assets_uses_shared_browser_primary_path(
+    def test_wiley_provider_download_related_assets_uses_page_browser_primary_path(
         self,
     ) -> None:
         """asset-download-contract: provider=wiley"""
@@ -410,34 +426,30 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 markdown_text="# Title\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed=seed,
             )
-            mocked_builder = mock.Mock(return_value=shared_fetcher)
+            mocked_builder = self.enterContext(
+                mock.patch(
+                    "paper_fetch.providers._wiley_page_assets.WileyPageAssetFetcher",
+                    return_value=shared_fetcher,
+                )
+            )
             install_browser_workflow_deps(
                 client,
                 load_runtime_config=mock.Mock(return_value=runtime),
                 ensure_runtime_ready=mock.Mock(),
-                _build_shared_browser_image_fetcher=mocked_builder,
             )
-            with (
-                mock.patch.object(
-                    html_assets, "_build_cookie_seeded_opener"
-                ) as mocked_opener,
-                mock.patch.object(
-                    html_assets, "_request_with_opener"
-                ) as mocked_request,
-            ):
-                result = client.download_related_assets(
-                    "10.1111/gcb.16011",
-                    {"doi": "10.1111/gcb.16011", "title": "Title"},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="body",
-                )
-                saved_bytes = Path(result["assets"][0]["path"]).read_bytes()
+            result = client.download_related_assets(
+                "10.1111/gcb.16011",
+                {"doi": "10.1111/gcb.16011", "title": "Title"},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="body",
+            )
+            saved_bytes = Path(result["assets"][0]["path"]).read_bytes()
 
         mocked_builder.assert_called_once()
-        self.assertTrue(mocked_builder.call_args.kwargs["use_runtime_shared_browser"])
-        mocked_opener.assert_not_called()
-        mocked_request.assert_not_called()
+        self.assertIs(
+            mocked_builder.call_args.kwargs["browser_options"].runtime_config, runtime
+        )
         shared_fetcher.assert_called_once()
         self.assertEqual(shared_fetcher.call_args.args[0], full_size_url)
         self.assertEqual(len(result["assets"]), 1)
@@ -445,7 +457,7 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
         self.assertEqual(result["assets"][0]["download_tier"], "full_size")
         self.assertEqual(saved_bytes, b"\xff\xd8\xffprimary-image")
 
-    def test_wiley_provider_download_related_assets_reuses_shared_browser_fetcher_across_assets(
+    def test_wiley_provider_download_related_assets_reuses_page_fetcher_across_assets(
         self,
     ) -> None:
         first_url = "https://onlinelibrary.wiley.com/cms/asset/full/figure1.jpg"
@@ -505,32 +517,26 @@ class AtyponBrowserWorkflowProviderRetryTests(AtyponBrowserWorkflowProviderTestC
                 markdown_text="# Title\n\n## Results\n\n" + ("Body text " * 120),
                 browser_context_seed=seed,
             )
-            mocked_builder = mock.Mock(return_value=shared_fetcher)
+            mocked_builder = self.enterContext(
+                mock.patch(
+                    "paper_fetch.providers._wiley_page_assets.WileyPageAssetFetcher",
+                    return_value=shared_fetcher,
+                )
+            )
             install_browser_workflow_deps(
                 client,
                 load_runtime_config=mock.Mock(return_value=runtime),
                 ensure_runtime_ready=mock.Mock(),
-                _build_shared_browser_image_fetcher=mocked_builder,
             )
-            with (
-                mock.patch.object(
-                    html_assets, "_build_cookie_seeded_opener"
-                ) as mocked_opener,
-                mock.patch.object(
-                    html_assets, "_request_with_opener"
-                ) as mocked_request,
-            ):
-                result = client.download_related_assets(
-                    "10.1111/gcb.16011",
-                    {"doi": "10.1111/gcb.16011", "title": "Title"},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="body",
-                )
+            result = client.download_related_assets(
+                "10.1111/gcb.16011",
+                {"doi": "10.1111/gcb.16011", "title": "Title"},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="body",
+            )
 
         mocked_builder.assert_called_once()
-        mocked_opener.assert_not_called()
-        mocked_request.assert_not_called()
         self.assertEqual(len(result["assets"]), 2)
         self.assertEqual(result["asset_failures"], [])
         self.assertEqual(shared_fetcher.call_count, 2)

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..models.markdown import replace_markdown_image_url
+
 import os
 import re
 import urllib.parse
@@ -10,16 +12,15 @@ from typing import Any
 from collections.abc import Callable, Mapping
 
 from ..artifacts import ArtifactStore
-from ..markdown.images import render_markdown_image
+from ..extraction.html.asset_fields import MARKDOWN_ASSET_REFERENCE_FIELDS
+from ..markdown.images import render_markdown_image, short_image_alt
 from ..models import ArticleModel, FetchEnvelope, OutputMode, RenderOptions
 from ..models.markdown import (
     image_reference_basename,
     image_reference_candidates,
     replace_markdown_images,
 )
-from ..provider_catalog import known_article_source_names
-from ..reason_codes import METADATA_ONLY
-from ..quality.reason_codes import FULLTEXT
+from ..reason_codes import FULLTEXT, METADATA_ONLY
 from ..tracing import (
     TraceEvent,
     download_marker,
@@ -32,6 +33,7 @@ from ..utils import (
     _extract_year,
     extend_unique,
     format_paper_stem,
+    is_http_url,
     normalize_text,
     sanitize_filename,
 )
@@ -58,8 +60,6 @@ def finalize_article(
 def public_source_for_article(article: ArticleModel) -> str:
     if fallback_marker(METADATA_ONLY) in article.quality.source_trail:
         return METADATA_ONLY
-    if article.source in known_article_source_names():
-        return article.source
     return article.source
 
 
@@ -68,9 +68,8 @@ def relative_asset_link(value: str | None, *, target_path: Path) -> str | None:
     if not original or original.startswith(("http://", "https://", "//")):
         return None
     source_path = Path(original).expanduser()
-    if not source_path.is_absolute():
-        if not source_path.exists():
-            return None
+    if not source_path.is_file():
+        return None
     source_path = source_path.resolve()
     target_dir = target_path.parent.resolve()
     relative = Path(os.path.relpath(source_path, start=target_dir))
@@ -141,18 +140,7 @@ def _local_asset_lookups(
         if relative_path is None:
             continue
         candidates: set[str] = set()
-        for field in (
-            "path",
-            "url",
-            "original_url",
-            "download_url",
-            "source_url",
-            "source_path",
-            "source_href",
-            "preview_url",
-            "full_size_url",
-            "link",
-        ):
+        for field in MARKDOWN_ASSET_REFERENCE_FIELDS:
             candidates |= image_reference_candidates(_asset_field(asset, field))
         for candidate in candidates:
             value = (relative_path, asset)
@@ -195,6 +183,20 @@ def _remote_asset_basename(destination: str) -> str | None:
     return basename or None
 
 
+def _publisher_root_relative_asset_link(
+    value: str | None,
+    *,
+    article: ArticleModel | None,
+) -> str | None:
+    original = str(value or "").strip()
+    if not original.lower().startswith("/cms/") or article is None:
+        return None
+    landing_page_url = normalize_text(article.metadata.landing_page_url)
+    if not is_http_url(landing_page_url):
+        return None
+    return urllib.parse.urljoin(landing_page_url, original)
+
+
 def _render_asset_markdown_image(
     asset: Any,
     *,
@@ -203,7 +205,7 @@ def _render_asset_markdown_image(
     title: str = "",
 ) -> str:
     kind = _asset_field(asset, "kind") or ""
-    heading = _asset_field(asset, "heading") or fallback_alt
+    heading = short_image_alt(kind, fallback_alt, _asset_field(asset, "heading"))
     destination = f'{relative_path} "{title}"' if title else relative_path
     return render_markdown_image(kind, heading, destination)
 
@@ -215,9 +217,13 @@ def rewrite_markdown_asset_links(
     target_path: Path,
     render: RenderOptions,
 ) -> str:
-    if not markdown or envelope.article is None:
+    article = envelope.article
+    if not markdown or article is None:
         return markdown
 
+    from ..acquisition import is_pdf_article
+
+    preserve_pdf = is_pdf_article(envelope.article)
     local_assets_by_basename = _local_asset_lookup_by_basename(
         envelope.article, target_path=target_path
     )
@@ -254,11 +260,42 @@ def rewrite_markdown_asset_links(
                 if match_value is not None:
                     relative_path = match_value[0]
         if relative_path is None:
-            return match.group(0)
+            if preserve_pdf:
+                return match.group(0)
+            remote_path = _publisher_root_relative_asset_link(
+                destination,
+                article=envelope.article,
+            )
+            if remote_path is None:
+                return match.group(0)
+            return f"{prefix}{remote_path}{match.group(3)}"
         return f"{prefix}{relative_path}{match.group(3)}"
 
     def rewrite_image(image: Any) -> str:
         destination = normalize_text(image.url).strip("<>")
+        if article.source == "plos_xml" and is_http_url(destination):
+            # PLOS object identity lives in the query (e001, e002, ...).
+            # A single downloaded /article/file must not claim other objects
+            # through the shared path or basename fallback below.
+            matches = {}
+            for asset in article.assets:
+                if not any(
+                    _asset_field(asset, field) == destination
+                    for field in MARKDOWN_ASSET_REFERENCE_FIELDS
+                ):
+                    continue
+                local_path = relative_asset_link(asset.path, target_path=target_path)
+                if local_path is not None:
+                    matches[local_path] = asset
+            if len(matches) != 1:
+                return image.text
+            local_path, asset = next(iter(matches.items()))
+            return _render_asset_markdown_image(
+                asset,
+                fallback_alt=image.alt,
+                relative_path=local_path,
+                title=image.title,
+            )
         destination_candidates = image_reference_candidates(destination)
         relative_path: str | None = None
         matched_asset: Any | None = None
@@ -284,9 +321,17 @@ def rewrite_markdown_asset_links(
         if relative_path is None:
             relative_path = relative_asset_link(destination, target_path=target_path)
         if relative_path is None:
+            if preserve_pdf:
+                return image.text
+            remote_path = _publisher_root_relative_asset_link(
+                destination,
+                article=envelope.article,
+            )
+            if remote_path is not None:
+                return replace_markdown_image_url(image, remote_path)
             return image.text
-        if matched_asset is None:
-            return image.text.replace(destination, relative_path, 1)
+        if matched_asset is None or preserve_pdf:
+            return replace_markdown_image_url(image, relative_path)
         return _render_asset_markdown_image(
             matched_asset,
             fallback_alt=image.alt,
@@ -320,7 +365,8 @@ def _markdown_filename(
     authors = list(meta.authors) if meta and meta.authors else None
     year = _extract_year(meta.published if meta else None)
     title = meta.title if meta else None
-    return f"{format_paper_stem(authors, year, title, doi=envelope.doi)}.md"
+    suffix = "_supplementary" if envelope.target == "supplementary" else ""
+    return f"{format_paper_stem(authors, year, title, doi=envelope.doi)}{suffix}.md"
 
 
 def _extend_envelope_status(
@@ -329,13 +375,8 @@ def _extend_envelope_status(
     warnings: list[str] | None = None,
     source_trail: list[str] | None = None,
 ) -> None:
-    extend_unique(envelope.warnings, warnings)
-    extend_unique(envelope.source_trail, source_trail)
     extend_unique(envelope.quality.warnings, warnings)
     extend_unique(envelope.quality.source_trail, source_trail)
-    if envelope.article is not None:
-        extend_unique(envelope.article.quality.warnings, warnings)
-        extend_unique(envelope.article.quality.source_trail, source_trail)
 
 
 def save_markdown_to_disk(
@@ -349,7 +390,14 @@ def save_markdown_to_disk(
     commit_guard: Callable[[], None] | None = None,
 ) -> Path | None:
     has_usable_fulltext = bool(
-        envelope.content_kind == FULLTEXT and envelope.markdown and envelope.article
+        (
+            envelope.target == "supplementary"
+            and envelope.supplementary is not None
+            and envelope.markdown is not None
+        )
+        or (
+            envelope.content_kind == FULLTEXT and envelope.markdown and envelope.article
+        )
     )
     if not has_usable_fulltext:
         _extend_envelope_status(
@@ -371,10 +419,10 @@ def save_markdown_to_disk(
         ),
         encoding="utf-8",
         overwrite=overwrite,
-        use_lock=True,
         commit_guard=commit_guard,
     )
-    message = f"Markdown full text was saved to {target}."
+    label = "supplementary index" if envelope.target == "supplementary" else "full text"
+    message = f"Markdown {label} was saved to {target}."
     _extend_envelope_status(
         envelope,
         warnings=[message],
@@ -408,13 +456,9 @@ def build_fetch_envelope(
         doi=article.doi,
         source=public_source_for_article(article),
         has_fulltext=article.quality.has_fulltext,
-        content_kind=article.quality.content_kind,
-        has_abstract=article.quality.has_abstract,
-        warnings=list(article.quality.warnings),
+        acquisition=article.acquisition,
         source_trail=list(article.quality.source_trail),
         trace=list(trace or trace_from_markers(article.quality.source_trail)),
-        token_estimate=article.quality.token_estimate,
-        token_estimate_breakdown=article.quality.token_estimate_breakdown,
         quality=article.quality,
         article=article if "article" in modes else None,
         markdown=markdown,

@@ -20,10 +20,11 @@ def provider_failure_diagnostics(
     return diagnostics
 
 
-def build_provider_payload(
+def build_provider_payload(  # noqa: PLR0913 - explicit typed payload boundary
     *,
     provider: str,
     route_kind: str,
+    route_name: str | None = None,
     source_url: str,
     content_type: str,
     body: bytes,
@@ -40,13 +41,13 @@ def build_provider_payload(
     warnings: list[str] | None = None,
     trace_markers: list[str] | tuple[str, ...] | None = None,
     needs_local_copy: bool = False,
-    content_needs_local_copy: bool | None = None,
 ) -> RawFulltextPayload:
     content = ProviderContent(
         route_kind=route_kind,
         source_url=source_url,
         content_type=content_type,
         body=body,
+        route_name=route_name,
         markdown_text=markdown_text,
         merged_metadata=dict(merged_metadata)
         if isinstance(merged_metadata, Mapping)
@@ -59,20 +60,13 @@ def build_provider_payload(
         html_failure_reason=html_failure_reason,
         html_failure_message=html_failure_message,
         extracted_assets=[dict(item) for item in (extracted_assets or [])],
-        needs_local_copy=needs_local_copy
-        if content_needs_local_copy is None
-        else content_needs_local_copy,
+        needs_local_copy=needs_local_copy,
     )
     return RawFulltextPayload(
         provider=provider,
-        source_url=source_url,
-        content_type=content_type,
-        body=body,
         content=content,
-        warnings=warnings,
+        warnings=list(warnings or []),
         trace=trace_from_markers(list(trace_markers or [])),
-        merged_metadata=merged_metadata,
-        needs_local_copy=needs_local_copy,
     )
 
 

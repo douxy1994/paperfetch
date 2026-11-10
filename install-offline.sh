@@ -8,6 +8,9 @@ PYTHON_BIN="${PAPER_FETCH_OFFLINE_PYTHON_BIN:-python3}"
 PRESET="headless"
 MERGE_USER_CONFIG=0
 RUN_SMOKE=1
+NON_INTERACTIVE=0
+SKIP_BROWSER_PREPARE=0
+BROWSER_PREPARATION_STATE="skipped"
 UNINSTALL=0
 PURGE=0
 INSTALL_ROOT=""
@@ -34,41 +37,16 @@ MCP_ENV_KEYS=(
   MATHML_TO_LATEX_NODE_BIN
   PAPER_FETCH_BROWSER_HEADLESS
 )
-OFFLINE_ENV_KEYS=(
-  PAPER_FETCH_DOWNLOAD_DIR
-  PAPER_FETCH_FORMULA_TOOLS_DIR
-  PAPER_FETCH_IMAGE_TOOLS_DIR
-  MATHML_TO_LATEX_NODE_BIN
-  PAPER_FETCH_BROWSER_HEADLESS
-  PYTHONUTF8
-  PYTHONIOENCODING
-)
-SHELL_ENV_KEYS=(
-  PAPER_FETCH_ENV_FILE
-  PAPER_FETCH_DOWNLOAD_DIR
-  PAPER_FETCH_FORMULA_TOOLS_DIR
-  PAPER_FETCH_IMAGE_TOOLS_DIR
-  MATHML_TO_LATEX_NODE_BIN
-  PAPER_FETCH_BROWSER_HEADLESS
-  PYTHONUTF8
-  PYTHONIOENCODING
-)
-ACTIVATE_ENV_KEYS=(
-  PAPER_FETCH_ENV_FILE
-  PAPER_FETCH_DOWNLOAD_DIR
-  PAPER_FETCH_FORMULA_TOOLS_DIR
-  PAPER_FETCH_IMAGE_TOOLS_DIR
-  MATHML_TO_LATEX_NODE_BIN
-  PAPER_FETCH_BROWSER_HEADLESS
-  PYTHONUTF8
-  PYTHONIOENCODING
-)
+OFFLINE_ENV_KEYS=()
+SHELL_ENV_KEYS=()
+ACTIVATE_ENV_KEYS=()
 
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 warn() { printf '\033[1;33m!!\033[0m %s\n' "$*" >&2; }
 die() { printf '\033[1;31mxx\033[0m %s\n' "$*" >&2; exit 1; }
 
 load_installer_manifest() {
+  derive_env_key_sets
   INSTALLER_MANIFEST_FILE="$BUNDLE_ROOT/installer/manifest.json"
   if [ ! -f "$INSTALLER_MANIFEST_FILE" ] && [ -n "$INSTALL_ROOT" ]; then
     INSTALLER_MANIFEST_FILE="$INSTALL_ROOT/installer/manifest.json"
@@ -105,11 +83,6 @@ print(manifest["mcp"]["name"])
 print("[mcp.env_keys]")
 for key in manifest["mcp"]["env_keys"]:
     print(key)
-env_sets = manifest.get("env_sets", {})
-for section in ("offline_env_keys", "shell_env_keys", "activate_env_keys"):
-    print(f"[env_sets.{section}]")
-    for key in env_sets.get(section, []):
-        print(key)
 ' "$INSTALLER_MANIFEST_FILE")
 
   [ "${values[0]:-}" = "installer_manifest_values" ] || die "Invalid installer manifest payload from $INSTALLER_MANIFEST_FILE"
@@ -121,36 +94,22 @@ for section in ("offline_env_keys", "shell_env_keys", "activate_env_keys"):
   MCP_NAME="${values[6]:-}"
   local section=""
   local loaded_mcp_env_keys=()
-  local loaded_offline_env_keys=()
-  local loaded_shell_env_keys=()
-  local loaded_activate_env_keys=()
   for value in "${values[@]:7}"; do
     case "$value" in
-      "[mcp.env_keys]"|"[env_sets.offline_env_keys]"|"[env_sets.shell_env_keys]"|"[env_sets.activate_env_keys]")
+      "[mcp.env_keys]")
         section="$value"
         continue
         ;;
     esac
     case "$section" in
       "[mcp.env_keys]") loaded_mcp_env_keys+=("$value") ;;
-      "[env_sets.offline_env_keys]") loaded_offline_env_keys+=("$value") ;;
-      "[env_sets.shell_env_keys]") loaded_shell_env_keys+=("$value") ;;
-      "[env_sets.activate_env_keys]") loaded_activate_env_keys+=("$value") ;;
     esac
   done
   if [ "${#loaded_mcp_env_keys[@]}" -gt 0 ]; then
     MCP_ENV_KEYS=("${loaded_mcp_env_keys[@]}")
   fi
-  if [ "${#loaded_offline_env_keys[@]}" -gt 0 ]; then
-    OFFLINE_ENV_KEYS=("${loaded_offline_env_keys[@]}")
-  fi
-  if [ "${#loaded_shell_env_keys[@]}" -gt 0 ]; then
-    SHELL_ENV_KEYS=("${loaded_shell_env_keys[@]}")
-  fi
-  if [ "${#loaded_activate_env_keys[@]}" -gt 0 ]; then
-    ACTIVATE_ENV_KEYS=("${loaded_activate_env_keys[@]}")
-  fi
   normalize_mcp_env_keys
+  derive_env_key_sets
 
   [ -n "$MANAGED_BEGIN" ] || die "installer manifest is missing managed_blocks.offline.begin"
   [ -n "$MANAGED_END" ] || die "installer manifest is missing managed_blocks.offline.end"
@@ -159,9 +118,7 @@ for section in ("offline_env_keys", "shell_env_keys", "activate_env_keys"):
   [ -n "$SKILL_NAME" ] || die "installer manifest is missing skill.name"
   [ -n "$MCP_NAME" ] || die "installer manifest is missing mcp.name"
   [ "${#MCP_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing mcp.env_keys"
-  [ "${#OFFLINE_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing env_sets.offline_env_keys"
-  [ "${#SHELL_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing env_sets.shell_env_keys"
-  [ "${#ACTIVATE_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest is missing env_sets.activate_env_keys"
+  [ "${#OFFLINE_ENV_KEYS[@]}" -gt 0 ] || die "installer manifest mcp.env_keys does not provide offline environment keys"
 }
 
 usage() {
@@ -181,12 +138,17 @@ Options:
   --no-user-config        Do not touch the platform user config. This is the default.
   --reuse-env-file <path> Use an existing offline.env without modifying it.
   --skip-smoke            Skip local command smoke checks after installation.
+  --non-interactive       Skip optional configuration; prepare browsers without system installs or elevation.
+  --skip-browser-prepare  Skip installer browser preparation; runtime remains on demand.
   --uninstall             Remove user-level shell, skill, and MCP integration without deleting the install directory.
   --purge                 Remove user-level integration and delete the install directory.
   -h, --help              Show this help.
 
 Environment:
   PAPER_FETCH_BROWSER_HEADLESS Set to false for a headful managed browser runtime.
+
+Browser preparation runs by default and may download browser components and fingerprint models.
+Optional Ghostscript/libvips installs default to No.
 EOF
 }
 
@@ -208,6 +170,18 @@ normalize_mcp_env_keys() {
     filtered+=(PAPER_FETCH_BROWSER_HEADLESS)
   fi
   MCP_ENV_KEYS=("${filtered[@]}")
+}
+
+derive_env_key_sets() {
+  local key
+  SHELL_ENV_KEYS=("${MCP_ENV_KEYS[@]}")
+  ACTIVATE_ENV_KEYS=("${MCP_ENV_KEYS[@]}")
+  OFFLINE_ENV_KEYS=()
+  for key in "${MCP_ENV_KEYS[@]}"; do
+    if [ "$key" != "PAPER_FETCH_ENV_FILE" ]; then
+      OFFLINE_ENV_KEYS+=("$key")
+    fi
+  done
 }
 
 normalize_path() {
@@ -266,6 +240,12 @@ while (($#)); do
       ;;
     --skip-smoke)
       RUN_SMOKE=0
+      ;;
+    --skip-browser-prepare)
+      SKIP_BROWSER_PREPARE=1
+      ;;
+    --non-interactive)
+      NON_INTERACTIVE=1
       ;;
     --uninstall)
       UNINSTALL=1
@@ -690,13 +670,13 @@ verify_skill_bundle_integrity() {
   local runtime_root="$1"
   local skill_dir="$2"
   local phase="$3"
-  local verifier="$runtime_root/runtime/site-packages/paper_fetch/skill_integrity.py"
+  local verifier="$runtime_root/scripts/skill_integrity.py"
 
   require_file "$runtime_root/offline-manifest.json"
   require_file "$verifier"
   log "Verifying $phase skill bundle manifest"
   "$runtime_root/runtime/paper-fetch-python" -X utf8 \
-    -m paper_fetch.skill_integrity verify \
+    "$verifier" verify \
     --manifest "$runtime_root/offline-manifest.json" \
     --skill-dir "$skill_dir" >/dev/null
 }
@@ -797,7 +777,7 @@ antigravity_home() {
 install_skills() {
   [ -n "${HOME:-}" ] || die "HOME is required to install Codex, Claude, and Antigravity skills."
 
-  local codex_skill="$HOME/.codex/skills/$SKILL_NAME"
+  local codex_skill="$HOME/.agents/skills/$SKILL_NAME"
   local claude_skill="$HOME/.claude/skills/$SKILL_NAME"
   local antigravity_skill
   antigravity_skill="$(antigravity_home)/skills/$SKILL_NAME"
@@ -1105,12 +1085,13 @@ remove_user_config_blocks() {
 remove_installed_skills() {
   [ -n "${HOME:-}" ] || die "HOME is required for --uninstall."
 
-  local codex_skill="$HOME/.codex/skills/$SKILL_NAME"
+  local codex_skill="$HOME/.agents/skills/$SKILL_NAME"
   local claude_skill="$HOME/.claude/skills/$SKILL_NAME"
   local antigravity_skill
   antigravity_skill="$(antigravity_home)/skills/$SKILL_NAME"
 
   rm -rf "$codex_skill" "$claude_skill" "$antigravity_skill"
+  rm -rf "$HOME/.codex/skills/$SKILL_NAME"
   log "Removed Codex skill at $codex_skill"
   log "Removed Claude Code skill at $claude_skill"
   log "Removed Antigravity skill at $antigravity_skill"
@@ -1434,17 +1415,20 @@ EOF
 check_browser_runtime_package() {
   local runtime_python
   runtime_python="$(mcp_python_bin)"
-  "$runtime_python" -c 'import camoufox; import playwright; import pymupdf; from paper_fetch.runtime_browser import BrowserContextManager; assert hasattr(camoufox, "Camoufox"); assert BrowserContextManager is not None'
+  "$runtime_python" -c 'import camoufox; import playwright; import pymupdf; from paper_fetch.providers.browser_runtime.camoufox_manager import CamoufoxBrowserManager; assert hasattr(camoufox, "Camoufox"); assert CamoufoxBrowserManager is not None'
 }
 
 run_smoke_checks() {
   [ "$RUN_SMOKE" = "1" ] || return 0
 
-  local key env_args=()
+  local key texmath_output env_args=()
 
   log "Running local smoke checks"
   "$INSTALL_ROOT/bin/paper-fetch" --help >/dev/null
-  "$INSTALL_ROOT/formula-tools/bin/texmath" --help >/dev/null
+  if ! texmath_output="$("$INSTALL_ROOT/formula-tools/bin/texmath" --version 2>&1)"; then
+    warn "texmath smoke check failed: $texmath_output"
+    return 1
+  fi
   if [ -x "$INSTALL_ROOT/image-tools/bin/gs" ]; then
     "$INSTALL_ROOT/image-tools/bin/gs" --version >/dev/null
   fi
@@ -1458,6 +1442,72 @@ run_smoke_checks() {
   env "${env_args[@]}" "$(mcp_python_bin)" -c 'from paper_fetch.mcp.fetch_tool import provider_status_payload; payload = provider_status_payload(); assert "providers" in payload'
 }
 
+prepare_browsers() {
+  rm -f "$INSTALL_ROOT/browser-setup-results.txt"
+  [ "$SKIP_BROWSER_PREPARE" = "0" ] || return 0
+  local args=(--install-root "$INSTALL_ROOT" --env-file "$OFFLINE_ENV_FILE" --prepare-browsers all
+    --result "$INSTALL_ROOT/browser-setup-results.txt")
+  if [ "$NON_INTERACTIVE" = "1" ]; then args+=(--non-interactive); fi
+  if [ "$REUSE_ENV_FILE" = "1" ]; then args+=(--reuse-env-file); fi
+  log "Core installation complete; preparing supported browsers (may use the network)"
+  BROWSER_PREPARATION_STATE="not ready"
+  trap ':' INT
+  if "$(mcp_python_bin)" -m paper_fetch.offline_setup "${args[@]}"; then
+    if [ -f "$INSTALL_ROOT/browser-setup-results.txt" ] \
+      && grep -qx 'Browser preparation: ready' "$INSTALL_ROOT/browser-setup-results.txt"; then
+      BROWSER_PREPARATION_STATE="ready"
+    fi
+  fi
+  trap - INT
+  if [ "$BROWSER_PREPARATION_STATE" != "ready" ]; then
+    warn "Browser preparation is not ready; core installation is preserved."
+    if [ ! -f "$INSTALL_ROOT/browser-setup-results.txt" ] \
+      || ! grep -qx 'Browser preparation: not ready' "$INSTALL_ROOT/browser-setup-results.txt"; then
+      {
+        echo "Browser preparation: not ready"
+        echo "Preparation did not complete; core installation is preserved."
+        printf 'Retry: '
+        printf '%q ' "$(mcp_python_bin)" -m paper_fetch.offline_setup --install-root "$INSTALL_ROOT" --env-file "$OFFLINE_ENV_FILE" --prepare-browsers all
+        printf '\n'
+      } > "$INSTALL_ROOT/browser-setup-results.txt"
+    fi
+  fi
+}
+
+browser_preparation_summary() {
+  echo "Browser preparation: $BROWSER_PREPARATION_STATE"
+  if [ "$BROWSER_PREPARATION_STATE" != "skipped" ] && [ -f "$INSTALL_ROOT/browser-setup-results.txt" ]; then
+    echo "Browser preparation results: $INSTALL_ROOT/browser-setup-results.txt"
+  fi
+  case "$BROWSER_PREPARATION_STATE" in
+    "not ready") printf 'Retry: ' ;;
+    "skipped") printf 'Prepare manually: ' ;;
+    *) return 0 ;;
+  esac
+  printf '%q ' "$(mcp_python_bin)" -m paper_fetch.offline_setup --install-root "$INSTALL_ROOT" --env-file "$OFFLINE_ENV_FILE" --prepare-browsers all
+  printf '\n'
+}
+
+run_optional_configuration() {
+  if [ "$NON_INTERACTIVE" = "1" ] || [ ! -t 0 ] || [ ! -t 1 ]; then
+    log "Optional configuration skipped (non-interactive); no downloads or elevation."
+    return 0
+  fi
+  if [ "$RUN_SMOKE" != "1" ]; then
+    warn "Optional configuration skipped because core smoke checks were skipped."
+    return 0
+  fi
+  local args=(--install-root "$INSTALL_ROOT" --env-file "$OFFLINE_ENV_FILE")
+  if [ "$REUSE_ENV_FILE" = "1" ]; then
+    args+=(--reuse-env-file)
+  fi
+  # A child cancellation must not terminate the successful core installation.
+  trap ':' INT
+  "$(mcp_python_bin)" -m paper_fetch.offline_setup "${args[@]}" \
+    || warn "Optional configuration cancelled or failed; core installation remains complete."
+  trap - INT
+}
+
 same_directory() {
   local left="$1"
   local right="$2"
@@ -1466,53 +1516,87 @@ same_directory() {
   [ "$(cd "$left" && pwd -P)" = "$(cd "$right" && pwd -P)" ]
 }
 
-clean_install_root_payload() {
-  mkdir -p "$INSTALL_ROOT"
-  rm -rf \
-    "$INSTALL_ROOT/bin" \
-    "$INSTALL_ROOT/runtime" \
-    "$INSTALL_ROOT/formula-tools" \
-    "$INSTALL_ROOT/image-tools" \
-    "$INSTALL_ROOT/skills" \
-    "$INSTALL_ROOT/installer" \
-    "$INSTALL_ROOT/install-offline.sh" \
-    "$INSTALL_ROOT/activate-offline.sh" \
-    "$INSTALL_ROOT/README.offline.md" \
-    "$INSTALL_ROOT/offline-manifest.json" \
-    "$INSTALL_ROOT/sha256sums.txt" \
-    "$INSTALL_ROOT/LICENSE" \
-    "$INSTALL_ROOT/.env.example" \
-    "$INSTALL_ROOT/src" \
-    "$INSTALL_ROOT/tests" \
-    "$INSTALL_ROOT/.github" \
-    "$INSTALL_ROOT/wheelhouse" \
-    "$INSTALL_ROOT/dist" \
-    "$INSTALL_ROOT/pyproject.toml"
-}
+# Only installer-owned payload components participate in replacement. User data,
+# offline.env and unrelated top-level files remain in place throughout.
+install_runtime_payload() (
+  local transaction_root="" component status rollback_failed=0
+  local backed_up=() installed=()
+  local managed_components=(
+    bin runtime formula-tools image-tools skills installer scripts
+    install-offline.sh activate-offline.sh README.offline.md
+    offline-manifest.json sha256sums.txt LICENSE .env.example
+  )
 
-install_runtime_payload() {
-  local env_backup=""
+  finish_runtime_transaction() {
+    status=$?
+    trap - EXIT HUP INT TERM
+    if [ "$status" -ne 0 ] && [ -n "$transaction_root" ]; then
+      warn "Runtime installation failed (exit $status); restoring previous payload."
+      for component in ${installed[@]+"${installed[@]}"}; do
+        rm -rf "$INSTALL_ROOT/$component" || rollback_failed=1
+      done
+      for component in ${backed_up[@]+"${backed_up[@]}"}; do
+        if [ -e "$INSTALL_ROOT/$component" ] || [ -L "$INSTALL_ROOT/$component" ]; then
+          rollback_failed=1
+        else
+          mv "$transaction_root/backup/$component" "$INSTALL_ROOT/$component" \
+            || rollback_failed=1
+        fi
+      done
+    fi
+    if [ "$rollback_failed" = "1" ]; then
+      warn "Runtime rollback failed; backup retained at $transaction_root/backup"
+    elif [ -n "$transaction_root" ]; then
+      rm -rf "$transaction_root"
+    fi
+    exit "$status"
+  }
+  trap finish_runtime_transaction EXIT
+  trap 'exit 129' HUP
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
 
   mkdir -p "$INSTALL_ROOT"
   if same_directory "$BUNDLE_ROOT" "$INSTALL_ROOT"; then
     log "Using existing offline runtime directory: $INSTALL_ROOT"
-    return 0
+  else
+    transaction_root="$(mktemp -d "$INSTALL_ROOT/.paper-fetch-update.XXXXXX")"
+    mkdir -p "$transaction_root/staged" "$transaction_root/backup"
+    log "Staging runtime payload for $INSTALL_ROOT"
+    cp -a "$BUNDLE_ROOT/." "$transaction_root/staged/"
+    (
+      BUNDLE_ROOT="$transaction_root/staged"
+      verify_checksums
+      check_bundle_assets
+      verify_skill_bundle_integrity \
+        "$BUNDLE_ROOT" "$BUNDLE_ROOT/skills/$SKILL_NAME" "staged runtime"
+    )
+
+    log "Replacing runtime payload in $INSTALL_ROOT"
+    for component in "${managed_components[@]}"; do
+      if [ -e "$INSTALL_ROOT/$component" ] || [ -L "$INSTALL_ROOT/$component" ]; then
+        mv "$INSTALL_ROOT/$component" "$transaction_root/backup/$component"
+        backed_up+=("$component")
+      fi
+      if [ -e "$transaction_root/staged/$component" ]; then
+        mv "$transaction_root/staged/$component" "$INSTALL_ROOT/$component"
+        installed+=("$component")
+      fi
+    done
   fi
 
-  if [ "$REUSE_ENV_FILE" != "1" ] && [ -f "$INSTALL_ROOT/offline.env" ]; then
-    env_backup="$(mktemp)"
-    cp "$INSTALL_ROOT/offline.env" "$env_backup"
-  fi
+  write_runtime_python_file
+  verify_skill_bundle_integrity \
+    "$INSTALL_ROOT" "$INSTALL_ROOT/skills/$SKILL_NAME" "installed runtime"
+  run_smoke_checks
 
-  log "Installing runtime payload to $INSTALL_ROOT"
-  clean_install_root_payload
-  cp -a "$BUNDLE_ROOT/." "$INSTALL_ROOT/"
-
-  if [ -n "$env_backup" ]; then
-    cp "$env_backup" "$INSTALL_ROOT/offline.env"
-    rm -f "$env_backup"
+  # Commit only after required validation and enabled smoke checks succeed.
+  # Source/build leftovers are removed only on a successful replacement.
+  if [ -n "$transaction_root" ]; then
+    rm -rf "$INSTALL_ROOT/src" "$INSTALL_ROOT/tests" "$INSTALL_ROOT/.github" \
+      "$INSTALL_ROOT/wheelhouse" "$INSTALL_ROOT/dist" "$INSTALL_ROOT/pyproject.toml"
   fi
-}
+)
 
 main() {
   local config_env_file
@@ -1541,11 +1625,6 @@ main() {
   check_preset_requirements
   check_bundle_assets
   install_runtime_payload
-  write_runtime_python_file
-  verify_skill_bundle_integrity \
-    "$INSTALL_ROOT" \
-    "$INSTALL_ROOT/skills/$SKILL_NAME" \
-    "installed runtime"
 
   if [ "$REUSE_ENV_FILE" = "1" ]; then
     log "Reusing offline.env without modifying it: $OFFLINE_ENV_FILE"
@@ -1564,7 +1643,7 @@ main() {
   install_skills
   verify_skill_bundle_integrity \
     "$INSTALL_ROOT" \
-    "$HOME/.codex/skills/$SKILL_NAME" \
+    "$HOME/.agents/skills/$SKILL_NAME" \
     "Codex post-install"
   verify_skill_bundle_integrity \
     "$INSTALL_ROOT" \
@@ -1574,23 +1653,29 @@ main() {
     "$INSTALL_ROOT" \
     "$(antigravity_home)/skills/$SKILL_NAME" \
     "Antigravity post-install"
+  # Remove the previous Codex discovery entry only after all new bundles verify.
+  rm -rf "$HOME/.codex/skills/$SKILL_NAME"
   write_shell_startup_file
   register_codex_mcp
   register_claude_mcp
   register_antigravity_mcp
 
-  run_smoke_checks
+  prepare_browsers
+  run_optional_configuration
 
   echo
   echo "Offline installation complete."
   echo "Shell startup file updated: $SHELL_STARTUP_TARGET"
   echo "Install directory: $INSTALL_ROOT"
   echo "Open a new shell, or activate the current one with: source $INSTALL_ROOT/activate-offline.sh"
-  echo "Default browser backend: Camoufox (headless: $(browser_headless_value))"
-  echo "The Camoufox browser binary is not bundled, and paper-fetch does not download it automatically during fetch."
-  echo "While online, run '$INSTALL_ROOT/runtime/paper-fetch-python -m camoufox fetch' to download it."
-  echo "Then run 'paper-fetch browser-preflight' to verify the runtime before moving fully offline."
-  echo "Browser backend: Camoufox."
+  if [ "$HOST_PLATFORM" = "linux" ]; then
+    echo "Default browser backend: Byparr + managed Camoufox for all browser providers (headless: $(browser_headless_value))"
+  else
+    echo "Default browser backend: Camoufox (headless: $(browser_headless_value))"
+  fi
+  browser_preparation_summary
+  echo "Browser preparation runs by default and may download browser components and fingerprint models."
+  echo "--skip-browser-prepare skips installation preparation only; runtime automatic preparation remains enabled."
   echo "Restart Codex, Claude Code, and the Antigravity CLI so they rescan skills and MCP registration."
   echo "Elsevier setup: request a key at https://dev.elsevier.com/, then add ELSEVIER_API_KEY=\"...\" to $OFFLINE_ENV_FILE before fetching Elsevier papers."
 }

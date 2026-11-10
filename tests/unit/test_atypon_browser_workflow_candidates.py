@@ -5,7 +5,11 @@ import unittest
 import urllib.parse
 
 from paper_fetch.providers import (
-    _atypon_browser_workflow_profiles as atypon_profiles,
+    _ams_assets,
+    _ams_dom,
+    _ams_markdown,
+    _pnas_html,
+    _science_html,
     _script_json,
     browser_workflow,
 )
@@ -20,7 +24,8 @@ from paper_fetch.providers._atypon_browser_workflow_profiles import (
 )
 from paper_fetch.providers._pdf_candidates import extract_pdf_candidate_urls_from_html
 from paper_fetch.provider_catalog import PROVIDER_CATALOG
-from paper_fetch.providers.base import RawFulltextPayload
+from paper_fetch.providers.base import ProviderContent, RawFulltextPayload
+from paper_fetch.tracing import trace_from_markers
 from paper_fetch.providers.acs import AcsClient
 from paper_fetch.providers.aip import AipClient
 from paper_fetch.providers.ams import AmsClient
@@ -68,7 +73,17 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
     def test_atypon_profile_scope_is_catalog_aligned(self) -> None:
         self.assertEqual(
             ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES,
-            ("science", "pnas", "wiley", "ams", "acs", "iop", "aip", "tandf"),
+            (
+                "science",
+                "pnas",
+                "elsevier",
+                "wiley",
+                "ams",
+                "acs",
+                "iop",
+                "aip",
+                "tandf",
+            ),
         )
         self.assertTrue(
             set(ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES) <= set(PROVIDER_CATALOG)
@@ -99,6 +114,14 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
         for name in ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES:
             with self.subTest(provider=name):
                 profile = publisher_profile(name)
+                if name == "elsevier":
+                    from paper_fetch.providers import _elsevier_html
+
+                    self.assertIs(
+                        profile.prepare_browser_page,
+                        _elsevier_html.prepare_browser_page,
+                    )
+                    continue
                 self.assertTrue(
                     any(
                         getattr(profile.dom_hooks, field.name) is not None
@@ -109,14 +132,48 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
 
         self.assertIsNotNone(publisher_profile("science").is_front_matter_teaser_figure)
         self.assertIsNone(publisher_profile("springer").scoped_asset_extractor)
+        ams_profile = publisher_profile("ams")
+        self.assertIs(
+            ams_profile.refine_selected_container,
+            _ams_dom.refine_selected_container,
+        )
+        self.assertIs(
+            ams_profile.finalize_extraction,
+            _ams_markdown.finalize_extraction,
+        )
+        self.assertIs(
+            ams_profile.scoped_asset_extractor,
+            _ams_assets.scoped_asset_extractor,
+        )
 
-    def test_atypon_profile_modules_are_resolved_from_provider_names(self) -> None:
-        self.assertFalse(hasattr(atypon_profiles, "_PUBLISHER_MODULES"))
-        for name in ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES:
-            with self.subTest(provider=name):
-                module = atypon_profiles._publisher_module(name)
-                self.assertIsNotNone(module)
-                self.assertEqual(module.__name__, f"paper_fetch.providers._{name}_html")
+    def test_pnas_and_science_profiles_keep_module_owned_asset_callbacks(self) -> None:
+        pnas_profile = publisher_profile("pnas")
+        science_profile = publisher_profile("science")
+
+        self.assertIs(
+            pnas_profile.extract_asset_html_scopes,
+            _pnas_html.extract_asset_html_scopes,
+        )
+        self.assertIs(
+            science_profile.extract_asset_html_scopes,
+            _science_html.extract_asset_html_scopes,
+        )
+        self.assertIs(
+            pnas_profile.scoped_asset_extractor,
+            _pnas_html.scoped_asset_extractor,
+        )
+        self.assertIs(
+            science_profile.scoped_asset_extractor,
+            _science_html.scoped_asset_extractor,
+        )
+        self.assertIsNot(
+            pnas_profile.extract_asset_html_scopes,
+            science_profile.extract_asset_html_scopes,
+        )
+        self.assertIsNot(
+            pnas_profile.scoped_asset_extractor,
+            science_profile.scoped_asset_extractor,
+        )
 
     def test_site_rule_merges_default_and_publisher_overrides(self) -> None:
         cases = {
@@ -198,8 +255,8 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
         self.assertEqual(
             build_html_candidates("pnas", PNAS_SAMPLE.doi)[:2],
             [
-                f"https://www.pnas.org/doi/{PNAS_SAMPLE.doi}",
                 f"https://www.pnas.org/doi/full/{PNAS_SAMPLE.doi}",
+                f"https://www.pnas.org/doi/{PNAS_SAMPLE.doi}",
             ],
         )
         self.assertEqual(
@@ -302,8 +359,8 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
                 expected_html_candidates = build_html_candidates(provider, doi)
                 if provider == "pnas":
                     expected_html_candidates = [
-                        f"https://www.pnas.org/doi/{doi}",
                         f"https://www.pnas.org/doi/full/{doi}",
+                        f"https://www.pnas.org/doi/{doi}",
                         f"https://doi.org/{doi}",
                     ]
                 self.assertEqual(
@@ -420,32 +477,49 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
                     client.profile, browser_workflow.ProviderBrowserProfile
                 )
 
-    def test_atypon_browser_workflow_client_alias_is_removed(self) -> None:
-        self.assertFalse(hasattr(browser_workflow, "AtyponBrowserWorkflowClient"))
-        self.assertFalse(
-            hasattr(browser_workflow, "preferred_html_candidate_from_landing_page")
-        )
-
-    def test_provider_profile_article_source_label_and_hooks(self) -> None:
+    def test_provider_catalog_article_source_label_and_profile_hooks(self) -> None:
         cases = (
-            (ScienceClient(None, {}), None, "Science", "science"),
-            (PnasClient(None, {}), None, "PNAS", "pnas"),
+            (ScienceClient(None, {}), "science", "Science", "science"),
+            (PnasClient(None, {}), "pnas", "PNAS", "pnas"),
             (WileyClient(None, {}), "wiley_browser", "Wiley", "wiley"),
-            (AmsClient(None, {}), None, "AMS", "ams"),
-            (AcsClient(None, {}), None, "ACS", "acs"),
+            (AmsClient(None, {}), "ams_html", "AMS", "ams"),
+            (AcsClient(None, {}), "acs", "ACS", "acs"),
         )
 
-        for client, article_source_name, label, markdown_publisher in cases:
+        for client, article_source, label, markdown_publisher in cases:
             with self.subTest(provider=client.name):
-                self.assertEqual(
-                    client.profile.article_source_name, article_source_name
-                )
-                self.assertEqual(
-                    client.article_source(), article_source_name or client.name
-                )
+                self.assertEqual(client.article_source(), article_source)
                 self.assertEqual(client.provider_label(), label)
                 self.assertEqual(client.profile.markdown_publisher, markdown_publisher)
                 self.assertTrue(client.profile.shared_browser_image_fetcher)
+
+        self.assertNotIn(
+            "article_source_name",
+            {field.name for field in fields(browser_workflow.ProviderBrowserProfile)},
+        )
+
+    def test_article_source_uses_exact_route_and_kind_compatibility(self) -> None:
+        cases = (
+            (AipClient(None, {}), "browser_pdf", "aip_pdf"),
+            (AipClient(None, {}), None, "aip_pdf"),
+            (WileyClient(None, {}), "tdm_pdf", "wiley_browser"),
+            (WileyClient(None, {}), None, "wiley_browser"),
+        )
+        for client, route_name, expected_source in cases:
+            with self.subTest(provider=client.name, route_name=route_name):
+                payload = RawFulltextPayload(
+                    provider=client.name,
+                    content=ProviderContent(
+                        route_kind="pdf_fallback",
+                        route_name=route_name,
+                        source_url="https://example.test/article.pdf",
+                        content_type="application/pdf",
+                        body=b"%PDF-test",
+                    ),
+                )
+                self.assertEqual(
+                    client.article_source_for_payload(payload), expected_source
+                )
 
     def test_shared_author_helpers_preserve_provider_strategies(self) -> None:
         science_html = """
@@ -542,11 +616,14 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
             source_url="https://www.science.org/doi/full/10.1126/example",
             content_type="text/html",
             body=html.encode("utf-8"),
-            metadata={
-                "route": "html",
-                "markdown_text": "# Example\n\n## Results\n\n" + ("Body text " * 120),
-                "source_trail": ["fulltext:science_html_ok"],
-            },
+            content=ProviderContent(
+                route_kind="html",
+                source_url="https://www.science.org/doi/full/10.1126/example",
+                content_type="text/html",
+                body=html.encode("utf-8"),
+                markdown_text="# Example\n\n## Results\n\n" + ("Body text " * 120),
+            ),
+            trace=trace_from_markers(["fulltext:science_html_ok"]),
         )
 
         article = client.to_article_model(
@@ -596,8 +673,8 @@ class AtyponBrowserWorkflowCandidateTests(unittest.TestCase):
         self.assertEqual(
             candidates[:2],
             [
-                f"https://www.pnas.org/doi/{PNAS_SAMPLE.doi}",
                 f"https://www.pnas.org/doi/full/{PNAS_SAMPLE.doi}",
+                f"https://www.pnas.org/doi/{PNAS_SAMPLE.doi}",
             ],
         )
 

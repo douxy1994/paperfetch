@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from ..quality.access_boundary import propagate_paywall, raise_for_paywall
+
+from dataclasses import dataclass, replace
 import math
 import re
 import urllib.parse
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 from collections.abc import Mapping, Sequence
 
 from ..common_patterns import (
@@ -15,7 +17,7 @@ from ..common_patterns import (
     TABLE_LABEL_PREFIX_PATTERN,
     table_label_prefix_for_match,
 )
-from ..config import build_publisher_user_agent, resolve_asset_download_concurrency
+from ..config import build_publisher_user_agent
 from ..extraction.html.availability_policy import AvailabilityPolicy
 from ..extraction.html.landing import (
     LandingHtmlFetchResult,
@@ -46,13 +48,15 @@ from ..models import AssetProfile, article_from_markdown, metadata_only_article
 from ..failure import FailureDiagnostics
 from ..page_diagnostics import PageDiagnosticRequest, capture_page_diagnostic
 from ..publisher_identity import normalize_doi
-from ..provider_catalog import PdfSourcePathTemplate, ProviderSpec
+from ..provider_contracts import PdfSourcePathTemplate, ProviderRouteSpec, ProviderSpec
 from ..runtime import RuntimeContext
 from ..tracing import (
+    TraceContext,
     download_marker,
     fulltext_marker,
     merge_trace,
     trace_from_markers,
+    trace_event,
 )
 from ..utils import (
     choose_public_landing_page_url,
@@ -61,7 +65,8 @@ from ..utils import (
     extend_unique,
     normalize_text,
 )
-from . import _springer_html
+from . import _springer_assets, _springer_authors, _springer_dom, _springer_markdown
+
 from ..extraction.html.assets import html_asset_identity_key
 from ._asset_retry import (
     AssetRetryPolicy,
@@ -77,6 +82,7 @@ from ._pdf_common import (
 )
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http
 from ._payloads import build_provider_payload
+from ._springer_dom import promote_springer_media_url_to_full_size
 from ._waterfall import (
     DEFAULT_WATERFALL_CONTINUE_CODES,
     ProviderWaterfallStep,
@@ -85,17 +91,15 @@ from ._waterfall import (
 )
 from ..reason_codes import (
     ABSTRACT_ONLY,
+    AWS_WAF_CHALLENGE,
+    CLOUDFLARE_CHALLENGE,
     ERROR,
+    FULLTEXT,
     NO_ACCESS,
     NO_RESULT,
     NOT_SUPPORTED,
     OK,
     PDF_FALLBACK,
-)
-from ..quality.reason_codes import (
-    AWS_WAF_CHALLENGE,
-    CLOUDFLARE_CHALLENGE,
-    FULLTEXT,
     PUBLISHER_ACCESS_DENIED,
     PUBLISHER_PAYWALL,
     REDIRECTED_TO_ABSTRACT,
@@ -121,7 +125,7 @@ from ..extraction.html.provider_rules import (
     SPRINGER_NATURE_MARKDOWN_PROMO_TOKENS,
     SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS,
 )
-from ._registry import ProviderBundle, register_provider_bundle
+from ._registry import ProviderBundle
 from .base import (
     PreparedFetchResultPayload,
     ProviderArtifacts,
@@ -137,72 +141,6 @@ from .base import (
 )
 
 from bs4 import BeautifulSoup, Tag
-
-
-register_provider_bundle(
-    ProviderBundle(
-        catalog=ProviderSpec(
-            name="springer",
-            display_name="Springer",
-            official=True,
-            domains=(
-                "springer.com",
-                "springernature.com",
-                "nature.com",
-                "biomedcentral.com",
-            ),
-            doi_prefixes=("10.1038/", "10.1007/", "10.1186/"),
-            publisher_aliases=(
-                "springer",
-                "springer nature",
-                "springer science and business media llc",
-            ),
-            asset_default="body",
-            probe_capability="routing_signal",
-            provider_managed_abstract_only=True,
-            client_factory_path="paper_fetch.providers.springer:SpringerClient",
-            status_order=2,
-            base_domains=("link.springer.com",),
-            pdf_path_templates=("/content/pdf/{doi_quoted}.pdf",),
-            pdf_source_path_templates=(
-                PdfSourcePathTemplate(
-                    domain="nature.com",
-                    path_prefix="/articles/",
-                    path_template="{source_path}.pdf",
-                ),
-            ),
-            persist_provider_html=True,
-            xml_root_tags=("article",),
-            xml_file_tokens=("springer", "nature", "10.1038", "10.1007", "10.1186"),
-        ),
-        html_rules=ProviderHtmlRules(
-            name="springer_nature",
-            aliases=("springer", "nature"),
-            noise_profile="springer_nature",
-            cleanup=ProviderCleanupRules(
-                markdown_promo_tokens=SPRINGER_NATURE_MARKDOWN_PROMO_TOKENS,
-                chrome_section_headings=SPRINGER_NATURE_CHROME_SECTION_HEADINGS,
-                chrome_attr_tokens=SPRINGER_NATURE_CHROME_ATTR_TOKENS,
-                license_link_hosts=SPRINGER_NATURE_LICENSE_LINK_HOSTS,
-                license_link_path_prefixes=SPRINGER_NATURE_LICENSE_LINK_PATH_PREFIXES,
-                license_word_limit=SPRINGER_NATURE_LICENSE_WORD_LIMIT,
-            ),
-            formula=ProviderFormulaRules(
-                container_tokens=SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS,
-                display_selectors=SPRINGER_NATURE_DISPLAY_FORMULA_SELECTORS,
-            ),
-            assets=ProviderAssetRules(
-                supplementary_text_tokens=SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS,
-            ),
-            heading=ProviderHeadingRules(normalizations={"online methods": "Methods"}),
-            availability=AvailabilityPolicy(
-                name="springer_nature",
-                overrides=SPRINGER_AVAILABILITY_OVERRIDES,
-            ),
-        ),
-        sources=("springer_html", "springer_pdf"),
-    )
-)
 
 MARKDOWN_TEXT_KEY = "markdown_text"
 SPRINGER_FETCH_RESULT_WARNINGS_KEY = "springer_fetch_result_warnings"
@@ -270,8 +208,12 @@ class SpringerSiteFamilyProfile:
     name: str
     domains: tuple[str, ...]
     doi_prefixes: tuple[str, ...]
-    html_source: str = "springer_html"
-    pdf_source: str = "springer_pdf"
+
+
+def _raise_for_springer_paywall(html_text, **kwargs):
+    if isinstance(html_text, bytes):
+        html_text = html_text.decode("utf-8", errors="replace")
+    return raise_for_paywall(_springer_dom.access_check_html(html_text), **kwargs)
 
 
 def _springer_html_failure_code(reason: str | None) -> str:
@@ -320,7 +262,9 @@ def springer_site_family_profile(
 
 
 def _springer_asset_retry_key(asset: Mapping[str, Any]) -> tuple[Any, ...]:
-    return (normalize_text(html_asset_identity_key(asset)),)
+    identity = normalize_text(html_asset_identity_key(asset))
+    canonical_identity = promote_springer_media_url_to_full_size(identity)
+    return (normalize_text(canonical_identity or identity),)
 
 
 SPRINGER_ASSET_RETRY_POLICY = AssetRetryPolicy(
@@ -391,7 +335,7 @@ def _cached_springer_html_payload(
     )
     return context.get_or_set_parse_cache(
         key,
-        lambda: _springer_html.extract_html_payload(
+        lambda: _springer_markdown.extract_html_payload(
             html_text,
             title=title,
             source_url=source_url,
@@ -422,7 +366,7 @@ def _cached_springer_scoped_assets(
     )
     return context.get_or_set_parse_cache(
         key,
-        lambda: _springer_html.extract_scoped_html_assets(
+        lambda: _springer_assets.extract_scoped_html_assets(
             body_html,
             source_url,
             asset_profile=asset_profile,
@@ -444,6 +388,7 @@ def _springer_html_payload_from_attempt(
     return build_provider_payload(
         provider="springer",
         route_kind="html",
+        route_name="direct_html",
         source_url=attempt.response_url,
         content_type=content_type,
         body=attempt.response["body"],
@@ -599,9 +544,8 @@ def _springer_allows_extended_data_table_image_fallback(
 ) -> bool:
     label_number = _springer_extended_data_table_number(label)
     table_page_number = _springer_table_page_number(table_url)
-    return bool(
-        label_number and table_page_number and label_number == table_page_number
-    )
+    # The URL numbers pages, while the label numbers Extended Data tables.
+    return bool(label_number and table_page_number)
 
 
 def _springer_response_content_type(response: Mapping[str, Any]) -> str:
@@ -635,7 +579,9 @@ def _springer_table_image_asset(
         "heading": heading,
         "caption": normalize_text(caption),
         "url": image_url,
-        "section": "body",
+        "section": "supplementary"
+        if _springer_extended_data_table_number(label)
+        else "body",
     }
     if image_url:
         asset["full_size_url"] = image_url
@@ -747,6 +693,7 @@ class SpringerClient(ProviderClient):
             ),
         )
         details: dict[str, Any] = {
+            "failure_code": failure_code,
             "availability_diagnostics": availability,
             "page_diagnostic": page,
         }
@@ -786,10 +733,13 @@ class SpringerClient(ProviderClient):
                         ),
                     ),
                     max_redirects=5,
-                    metadata_parser=_springer_html.parse_html_metadata,
+                    metadata_parser=_springer_dom.parse_html_metadata,
                     retry_on_transient=True,
                 )
             except RequestFailure as exc:
+                _raise_for_springer_paywall(
+                    exc.body, source_url=str(exc.url or landing_url), provider=self.name
+                )
                 raise map_request_failure(exc) from exc
         try:
             last_result: LandingHtmlFetchResult | None = None
@@ -822,8 +772,13 @@ class SpringerClient(ProviderClient):
                 last_result = build_landing_html_result(
                     response,
                     current_url=landing_url,
-                    decoder=_springer_html.decode_html,
-                    metadata_parser=_springer_html.parse_html_metadata,
+                    decoder=_springer_dom.decode_html,
+                    metadata_parser=_springer_dom.parse_html_metadata,
+                )
+                _raise_for_springer_paywall(
+                    last_result.html_text,
+                    source_url=last_result.final_url,
+                    provider=self.name,
                 )
                 query = urllib.parse.parse_qs(
                     urllib.parse.urlsplit(last_result.final_url).query
@@ -840,6 +795,9 @@ class SpringerClient(ProviderClient):
                 "Springer direct HTML retrieval exhausted the request deadline.",
             ) from exc
         except RequestFailure as exc:
+            _raise_for_springer_paywall(
+                exc.body, source_url=str(exc.url or landing_url), provider=self.name
+            )
             raise map_request_failure(exc) from exc
 
     def _fetch_html_response(
@@ -870,6 +828,7 @@ class SpringerClient(ProviderClient):
                 context=context,
             )
         except ProviderFailure as exc:
+            propagate_paywall(exc)
             reason = f"Springer inline table supplement for {fallback_label} could not be fetched ({exc.code}: {exc.message})."
             if allow_degraded_placeholder:
                 return (
@@ -898,7 +857,7 @@ class SpringerClient(ProviderClient):
                 asset,
             )
 
-        table_html = _springer_html.decode_html(
+        table_html = _springer_dom.decode_html(
             response["body"],
             content_type=_springer_response_content_type(response),
         )
@@ -924,10 +883,18 @@ class SpringerClient(ProviderClient):
                         None,
                     )
                 return None, reason, None
+            from ._html_section_markdown import render_retained_text_from_html
+
+            for footer in soup.select(
+                ".c-article-table-footer, .c-article-table__footer, .c-article-table-footnote, .c-article-table__footnote"
+            ):
+                note = render_retained_text_from_html(footer, source_url=response_url)
+                if note:
+                    markdown += "\n\n" + note
             return markdown, None, None
 
         if allow_image_asset:
-            image_url = _springer_html.extract_springer_table_image_url(
+            image_url = _springer_assets.extract_springer_table_image_url(
                 table_html,
                 response_url,
                 label=fallback_label,
@@ -961,17 +928,54 @@ class SpringerClient(ProviderClient):
         source_url: str,
         *,
         context: RuntimeContext,
+        asset_profile: AssetProfile = "all",
     ) -> tuple[str, list[dict[str, str]], list[str], list[dict[str, Any]]]:
 
         soup = BeautifulSoup(html_text, choose_parser())
         table_entries: list[dict[str, str]] = []
         warnings: list[str] = []
         table_assets: list[dict[str, Any]] = []
+        supplementary_sections, source_data_sections = (
+            _springer_dom._springer_collect_asset_sections(soup)
+        )
 
         for node in _springer_inline_table_nodes(soup):
             if not isinstance(node, Tag) or node.parent is None:
                 continue
             label = _springer_table_label(node)
+            supplementary = bool(_springer_extended_data_table_number(label)) or any(
+                node is section
+                or _springer_dom._springer_is_descendant_of(node, section)
+                for section in [*supplementary_sections, *source_data_sections]
+            )
+            if supplementary and asset_profile != "all":
+                # Preserve the caption and official entry without downloading
+                # excluded supplementary content. Nature may place it outside
+                # main-content, so mark it for the provider renderer as well.
+                mention = soup.new_tag("p")
+                mention["data-paper-fetch-table-mention"] = "true"
+                caption = next(
+                    (
+                        node.select_one(selector)
+                        for selector in SPRINGER_TABLE_CAPTION_SELECTORS
+                        if node.select_one(selector) is not None
+                    ),
+                    None,
+                )
+                mention.string = _springer_short_text(caption or node)
+                for selector in SPRINGER_TABLE_LINK_SELECTORS:
+                    link = node.select_one(selector)
+                    if isinstance(link, Tag) and link.get("href"):
+                        entry = soup.new_tag(
+                            "a",
+                            href=urllib.parse.urljoin(source_url, str(link["href"])),
+                        )
+                        entry.string = mention.get_text()
+                        mention.clear()
+                        mention.append(entry)
+                        break
+                node.replace_with(mention)
+                continue
             caption = _springer_table_caption(node, label)
             table_url = ""
             for selector in SPRINGER_TABLE_LINK_SELECTORS:
@@ -985,6 +989,16 @@ class SpringerClient(ProviderClient):
             if not table_url:
                 warning = f"Springer inline table supplement for {label} was skipped because no table page link was found."
                 warnings.append(warning)
+                if supplementary:
+                    table_assets.append(
+                        {
+                            "kind": "table",
+                            "section": "supplementary",
+                            "heading": _springer_table_label_heading(label),
+                            "caption": caption,
+                            "source_url": source_url,
+                        }
+                    )
                 node.decompose()
                 continue
 
@@ -1004,15 +1018,32 @@ class SpringerClient(ProviderClient):
             asset = table_page_result[2]
             if page_warning:
                 warnings.append(page_warning)
+                if supplementary and asset is None:
+                    table_assets.append(
+                        {
+                            "kind": "table",
+                            "section": "supplementary",
+                            "heading": _springer_table_label_heading(label),
+                            "caption": caption,
+                            "source_url": table_url,
+                            "figure_page_url": table_url,
+                        }
+                    )
             if not rendered_page_markdown:
                 node.decompose()
                 continue
 
             if asset is not None:
+                asset["render_state"] = "inline"
+                if supplementary:
+                    asset["section"] = "supplementary"
                 table_assets.append(asset)
             placeholder = table_placeholder(len(table_entries) + 1)
             block = soup.new_tag("p")
             block.string = placeholder
+            block["data-paper-fetch-markdown"] = "1"
+            if supplementary:
+                block["data-paper-fetch-supplementary"] = "1"
             node.replace_with(block)
             table_entries.append(
                 {"placeholder": placeholder, "markdown": rendered_page_markdown}
@@ -1032,6 +1063,7 @@ class SpringerClient(ProviderClient):
         metadata: Mapping[str, Any],
         *,
         context: RuntimeContext,
+        asset_profile: AssetProfile = "all",
     ) -> SpringerHtmlAttempt:
         normalized_doi = normalize_doi(doi)
         if not normalized_doi:
@@ -1050,12 +1082,18 @@ class SpringerClient(ProviderClient):
             landing_url,
             context=context,
         )
-        html_text = _springer_html.decode_html(
+        html_text = _springer_dom.decode_html(
             response["body"],
             content_type=_springer_response_content_type(response),
         )
-        html_metadata = _springer_html.parse_html_metadata(html_text, response_url)
-        merged_metadata = _springer_html.merge_html_metadata(metadata, html_metadata)
+        _raise_for_springer_paywall(
+            html_text,
+            metadata={**metadata, "doi": normalized_doi},
+            source_url=response_url,
+            provider=self.name,
+        )
+        html_metadata = _springer_dom.parse_html_metadata(html_text, response_url)
+        merged_metadata = _springer_dom.merge_html_metadata(metadata, html_metadata)
         if not merged_metadata.get("doi"):
             merged_metadata["doi"] = normalized_doi
         prepared_html, table_entries, table_warnings, table_assets = (
@@ -1063,6 +1101,7 @@ class SpringerClient(ProviderClient):
                 html_text,
                 response_url,
                 context=context,
+                asset_profile=asset_profile,
             )
         )
         extraction_payload = _cached_springer_html_payload(
@@ -1072,13 +1111,13 @@ class SpringerClient(ProviderClient):
             title=str(merged_metadata.get("title") or ""),
         )
         asset_body_html, asset_supplementary_html = (
-            _springer_html.extract_asset_html_scopes(
+            _springer_assets.extract_asset_html_scopes(
                 prepared_html,
                 response_url,
                 title=str(merged_metadata.get("title") or "") or None,
             )
         )
-        asset_source_data_html = _springer_html.extract_source_data_html_scope(
+        asset_source_data_html = _springer_assets.extract_source_data_html_scope(
             prepared_html,
             response_url,
             title=str(merged_metadata.get("title") or "") or None,
@@ -1086,7 +1125,7 @@ class SpringerClient(ProviderClient):
         markdown_text = inject_inline_table_blocks(
             extraction_payload[MARKDOWN_TEXT_KEY],
             table_entries=table_entries,
-            clean_markdown_fn=_springer_html.clean_markdown,
+            clean_markdown_fn=_springer_markdown.clean_markdown,
         )
         normalized_markdown_text = normalize_text(markdown_text)
         appended_table_markdown: list[str] = []
@@ -1095,7 +1134,7 @@ class SpringerClient(ProviderClient):
             if rendered_table and rendered_table not in normalized_markdown_text:
                 appended_table_markdown.append(str(entry.get("markdown") or ""))
         if appended_table_markdown:
-            markdown_text = _springer_html.clean_markdown(
+            markdown_text = _springer_markdown.clean_markdown(
                 "\n\n".join([markdown_text, *appended_table_markdown])
             )
         abstract_sections = list(extraction_payload["abstract_sections"])
@@ -1103,13 +1142,21 @@ class SpringerClient(ProviderClient):
         diagnostics = HtmlQualityAssessor(self.name).assess(
             markdown_text,
             merged_metadata,
-            html_text=html_text,
+            html_text=_springer_dom.access_check_html(html_text),
             title=str(merged_metadata.get("title") or ""),
             requested_url=landing_url,
             final_url=response_url,
             response_status=int(response.get("status_code") or 0) or None,
             section_hints=section_hints,
         )
+        if _springer_dom.early_access_without_body(html_text):
+            diagnostics = replace(
+                diagnostics,
+                accepted=False,
+                reason="abstract_only",
+                content_kind="abstract_only",
+                strong_positive_signals=[],
+            )
         return SpringerHtmlAttempt(
             normalized_doi=normalized_doi,
             landing_url=landing_url,
@@ -1154,6 +1201,7 @@ class SpringerClient(ProviderClient):
         )
         pdf_result = PdfFallbackStrategy(
             transport=self.transport,
+            provider_name="springer",
             headers={
                 "User-Agent": self.user_agent,
                 "Referer": attempt.response_url,
@@ -1176,6 +1224,7 @@ class SpringerClient(ProviderClient):
         return build_provider_payload(
             provider="springer",
             route_kind=PDF_FALLBACK,
+            route_name="direct_pdf",
             source_url=pdf_result.final_url,
             content_type=PDF_MIME_TYPE,
             body=pdf_result.pdf_bytes,
@@ -1193,7 +1242,7 @@ class SpringerClient(ProviderClient):
             suggested_filename=pdf_result.suggested_filename,
             extracted_assets=pdf_fetch_result_assets(pdf_result),
             html_failure_message=html_failure_message,
-            content_needs_local_copy=True,
+            needs_local_copy=True,
             warnings=[
                 *warnings,
                 *pdf_fetch_result_warnings(pdf_result),
@@ -1203,7 +1252,6 @@ class SpringerClient(ProviderClient):
                 fulltext_marker("springer", "fail", route="html"),
                 fulltext_marker("springer", "ok", route=PDF_FALLBACK),
             ],
-            needs_local_copy=True,
         )
 
     def download_related_assets(
@@ -1230,7 +1278,7 @@ class SpringerClient(ProviderClient):
             asset_profile=asset_profile,
         )
         if not article_assets:
-            html_text = _springer_html.decode_html(
+            html_text = _springer_dom.decode_html(
                 raw_payload.body,
                 content_type=raw_payload.content_type,
             )
@@ -1242,13 +1290,13 @@ class SpringerClient(ProviderClient):
                 )
             )
             asset_body_html, asset_supplementary_html = (
-                _springer_html.extract_asset_html_scopes(
+                _springer_assets.extract_asset_html_scopes(
                     html_text,
                     raw_payload.source_url,
                     title=title or None,
                 )
             )
-            asset_source_data_html = _springer_html.extract_source_data_html_scope(
+            asset_source_data_html = _springer_assets.extract_source_data_html_scope(
                 html_text,
                 raw_payload.source_url,
                 title=title or None,
@@ -1278,14 +1326,14 @@ class SpringerClient(ProviderClient):
             or normalize_text(str(metadata.get("title") or ""))
             or raw_payload.source_url
         )
-        return _springer_html.download_assets_for_springer(
+        return _springer_assets.download_assets_for_springer(
             self.transport,
             article_id=article_id,
             assets=article_assets,
             output_dir=output_dir,
             user_agent=self.user_agent,
             asset_profile=asset_profile,
-            asset_download_concurrency=resolve_asset_download_concurrency(context.env),
+            runtime_context=context,
         )
 
     def fetch_raw_fulltext(
@@ -1296,6 +1344,7 @@ class SpringerClient(ProviderClient):
         context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         runtime_context = self._runtime_context(context)
+        asset_profile = cast(AssetProfile, runtime_context.asset_profile or "all")
         normalized_doi = normalize_doi(doi)
         if not normalized_doi:
             raise ProviderFailure(
@@ -1318,23 +1367,31 @@ class SpringerClient(ProviderClient):
         }
 
         def run_html(_state: ProviderWaterfallState) -> RawFulltextPayload:
-            attempt = self._prepare_html_attempt(doi, metadata, context=runtime_context)
+            attempt = self._prepare_html_attempt(
+                doi,
+                metadata,
+                context=runtime_context,
+                asset_profile=asset_profile,
+            )
             attempt_context["attempt"] = attempt
             attempt_context["response_url"] = attempt.response_url
             attempt_context["html_text"] = attempt.html_text
             attempt_context["merged_metadata"] = dict(attempt.merged_metadata)
             if attempt.diagnostics.accepted:
-                extracted_assets = [
-                    *_cached_springer_scoped_assets(
-                        runtime_context,
-                        attempt.asset_body_html,
-                        attempt.response_url,
-                        asset_profile="all",
-                        supplementary_html_text=attempt.asset_supplementary_html,
-                        source_data_html_text=attempt.asset_source_data_html,
-                    ),
-                    *[dict(item) for item in attempt.inline_table_assets],
-                ]
+                extracted_assets = _filter_springer_assets_for_profile(
+                    [
+                        *_cached_springer_scoped_assets(
+                            runtime_context,
+                            attempt.asset_body_html,
+                            attempt.response_url,
+                            asset_profile="all",
+                            supplementary_html_text=attempt.asset_supplementary_html,
+                            source_data_html_text=attempt.asset_source_data_html,
+                        ),
+                        *[dict(item) for item in attempt.inline_table_assets],
+                    ],
+                    asset_profile=asset_profile,
+                )
                 return _springer_html_payload_from_attempt(
                     attempt,
                     trace_markers=[fulltext_marker("springer", "ok", route="html")],
@@ -1378,6 +1435,7 @@ class SpringerClient(ProviderClient):
                     context=runtime_context,
                 )
             except PdfFetchFailure as exc:
+                propagate_paywall(exc)
                 raise ProviderFailure(
                     NO_RESULT,
                     _springer_fulltext_failure_message(
@@ -1390,6 +1448,7 @@ class SpringerClient(ProviderClient):
             [
                 ProviderWaterfallStep(
                     label="html",
+                    route_name="direct_html",
                     run=run_html,
                     failure_marker=fulltext_marker("springer", "fail", route="html"),
                     failure_warning=lambda failure, _state: (
@@ -1398,6 +1457,7 @@ class SpringerClient(ProviderClient):
                 ),
                 ProviderWaterfallStep(
                     label="pdf",
+                    route_name="direct_pdf",
                     run=run_pdf,
                     success_markers=(
                         fulltext_marker("springer", "ok", route=PDF_FALLBACK),
@@ -1454,7 +1514,12 @@ class SpringerClient(ProviderClient):
         }
 
         def run_html(_state: ProviderWaterfallState) -> RawFulltextPayload:
-            attempt = self._prepare_html_attempt(doi, metadata, context=context)
+            attempt = self._prepare_html_attempt(
+                doi,
+                metadata,
+                context=context,
+                asset_profile=asset_profile,
+            )
             attempt_context["attempt"] = attempt
             attempt_context["response_url"] = attempt.response_url
             attempt_context["html_text"] = attempt.html_text
@@ -1552,6 +1617,7 @@ class SpringerClient(ProviderClient):
                 [
                     ProviderWaterfallStep(
                         label="html",
+                        route_name="direct_html",
                         run=run_html,
                         failure_marker=fulltext_marker(
                             "springer", "fail", route="html"
@@ -1570,7 +1636,40 @@ class SpringerClient(ProviderClient):
             )
             return PreparedFetchResultPayload(raw_payload=raw_payload)
         except ProviderFailure as exc:
+            propagate_paywall(exc)
             html_failure = exc
+
+        details = html_failure.details
+        html_failure_event = trace_event(
+            "fulltext",
+            "springer_html",
+            "fail",
+            code=details.get("failure_code") or html_failure.code,
+            message=html_failure.message,
+            context=TraceContext(
+                provider="springer",
+                route="html",
+                http_status=html_failure.http_status,
+                target=details.get("diagnostic_path"),
+            ),
+        )
+        html_failure.trace = [
+            replace(
+                event,
+                code=html_failure_event.code,
+                message=html_failure_event.message,
+                http_status=html_failure_event.http_status,
+                target=html_failure_event.target,
+            )
+            if event.marker() == html_failure_event.marker()
+            else event
+            for event in html_failure.trace
+        ]
+        if not any(
+            event.marker() == html_failure_event.marker()
+            for event in html_failure.trace
+        ):
+            html_failure.trace.append(html_failure_event)
 
         fallback_attempt = _springer_fallback_attempt(
             normalized_doi=normalized_doi,
@@ -1586,25 +1685,22 @@ class SpringerClient(ProviderClient):
         html_text = fallback_attempt.html_text
         merged_metadata = dict(fallback_attempt.merged_metadata)
         provisional_payload = attempt_context.get("provisional_payload")
+        if isinstance(provisional_payload, RawFulltextPayload):
+            provisional_payload.trace = list(html_failure.trace)
         return PreparedFetchResultPayload(
             raw_payload=provisional_payload
             or RawFulltextPayload(
                 provider="springer",
-                source_url=response_url,
-                content_type="text/html",
-                body=html_text.encode("utf-8"),
                 content=ProviderContent(
                     route_kind="html",
                     source_url=response_url,
                     content_type="text/html",
                     body=html_text.encode("utf-8"),
+                    route_name="direct_html",
                     merged_metadata=dict(merged_metadata),
                     reason="Springer HTML route was not usable.",
                 ),
-                trace=trace_from_markers(
-                    [fulltext_marker("springer", "fail", route="html")]
-                ),
-                merged_metadata=dict(merged_metadata),
+                trace=list(html_failure.trace),
             ),
             provisional_article=attempt_context.get("provisional_article"),
             context={
@@ -1643,12 +1739,22 @@ class SpringerClient(ProviderClient):
                     context=context,
                 )
             except PdfFetchFailure as exc:
+                propagate_paywall(exc)
                 raise ProviderFailure(
                     NO_RESULT,
                     _springer_fulltext_failure_message(
                         html_message=html_failure.message,
                         pdf_message=exc.message,
                     ),
+                    trace=[
+                        trace_event(
+                            "fulltext",
+                            "springer_pdf_transport",
+                            "fail",
+                            code=exc.kind,
+                            message=exc.message,
+                        )
+                    ],
                 ) from exc
 
         def final_pdf_failure(state: ProviderWaterfallState) -> ProviderFailure:
@@ -1677,6 +1783,7 @@ class SpringerClient(ProviderClient):
                 [
                     ProviderWaterfallStep(
                         label="pdf",
+                        route_name="direct_pdf",
                         run=run_pdf,
                         success_markers=(
                             fulltext_marker("springer", "ok", route=PDF_FALLBACK),
@@ -1692,6 +1799,7 @@ class SpringerClient(ProviderClient):
                 final_failure_factory=final_pdf_failure,
             )
         except ProviderFailure as exc:
+            propagate_paywall(exc)
             warnings = list(exc.warnings or warnings)
             extend_unique(warnings, [exc.message])
             if prepared.provisional_article is not None:
@@ -1715,6 +1823,7 @@ class SpringerClient(ProviderClient):
                     result_warnings=list(provisional_article.quality.warnings),
                     result_trace=merge_trace(
                         prepared.raw_payload.trace,
+                        exc.trace,
                         trace_from_markers(
                             [fulltext_marker("springer", ABSTRACT_ONLY)]
                         ),
@@ -1724,6 +1833,18 @@ class SpringerClient(ProviderClient):
                 [("html", html_failure), ("pdf", exc)]
             ) from exc
 
+        recovered_payload.trace = merge_trace(
+            html_failure.trace,
+            [
+                event
+                for event in recovered_payload.trace
+                if event.marker() not in {item.marker() for item in html_failure.trace}
+            ],
+        )
+        if recovered_payload.content is not None:
+            recovered_payload.content.diagnostics["html_failure"] = dict(
+                html_failure.details
+            )
         return PreparedFetchResultPayload(raw_payload=recovered_payload)
 
     def should_download_related_assets_for_result(
@@ -1765,7 +1886,7 @@ class SpringerClient(ProviderClient):
         doi = normalize_doi(article_metadata.get("doi") or metadata.get("doi"))
         markdown_text = str(
             (content.markdown_text if content is not None else "") or ""
-        ).strip()
+        )
         route = normalize_text(
             content.route_kind if content is not None else ""
         ).lower()
@@ -1826,13 +1947,15 @@ class SpringerClient(ProviderClient):
             if isinstance(extraction_payload, Mapping)
             else []
         )
-        extracted_authors = _springer_html.normalize_display_authors(extracted_authors)
+        extracted_authors = _springer_authors.normalize_display_authors(
+            extracted_authors
+        )
         if (
             not extracted_authors
             and "html" in normalize_text(raw_payload.content_type).lower()
         ):
             html_text = bytes(raw_payload.body or b"").decode("utf-8", errors="replace")
-            extracted_authors = _springer_html.extract_authors(html_text)
+            extracted_authors = _springer_authors.extract_authors(html_text)
         if extracted_authors:
             existing_authors = [
                 normalize_text(str(item))
@@ -1873,7 +1996,7 @@ class SpringerClient(ProviderClient):
                 markdown_text = rewrite_inline_figure_links(
                     markdown_text,
                     figure_assets=inline_figure_assets,
-                    clean_markdown_fn=_springer_html.clean_markdown,
+                    clean_markdown_fn=_springer_markdown.clean_markdown,
                 )
         availability_diagnostics = (
             dict(content.diagnostics.get("availability_diagnostics") or {})
@@ -1925,3 +2048,88 @@ class SpringerClient(ProviderClient):
             if not pdf_assets
             else [],
         )
+
+
+PROVIDER_BUNDLE = ProviderBundle(
+    client_factory=SpringerClient,
+    catalog=ProviderSpec(
+        name="springer",
+        display_name="Springer",
+        official=True,
+        domains=(
+            "springer.com",
+            "springernature.com",
+            "nature.com",
+            "biomedcentral.com",
+        ),
+        doi_prefixes=("10.1038/", "10.1007/", "10.1186/"),
+        publisher_aliases=(
+            "springer",
+            "springer nature",
+            "springer science and business media llc",
+        ),
+        asset_default="body",
+        probe_capability="routing_signal",
+        provider_managed_abstract_only=True,
+        status_order=2,
+        base_domains=("link.springer.com",),
+        pdf_path_templates=("/content/pdf/{doi_quoted}.pdf",),
+        pdf_source_path_templates=(
+            PdfSourcePathTemplate(
+                domain="nature.com",
+                path_prefix="/articles/",
+                path_template="{source_path}.pdf",
+            ),
+        ),
+        persist_provider_html=True,
+        xml_root_tags=("article",),
+        xml_file_tokens=("springer", "nature", "10.1038", "10.1007", "10.1186"),
+        routes=(
+            ProviderRouteSpec(name="metadata", kind="metadata"),
+            ProviderRouteSpec(
+                name="direct_html",
+                kind="html",
+                concurrency=2,
+            ),
+            ProviderRouteSpec(
+                name="direct_pdf",
+                kind="pdf",
+                requires_pdf_conversion=True,
+                concurrency=2,
+            ),
+            ProviderRouteSpec(
+                name="assets",
+                kind="assets",
+                concurrency=2,
+                asset_scope="body",
+            ),
+        ),
+    ),
+    html_rules=ProviderHtmlRules(
+        name="springer_nature",
+        aliases=("springer", "nature"),
+        noise_profile="springer_nature",
+        cleanup=ProviderCleanupRules(
+            markdown_promo_tokens=SPRINGER_NATURE_MARKDOWN_PROMO_TOKENS,
+            chrome_section_headings=SPRINGER_NATURE_CHROME_SECTION_HEADINGS,
+            chrome_attr_tokens=SPRINGER_NATURE_CHROME_ATTR_TOKENS,
+            license_link_hosts=SPRINGER_NATURE_LICENSE_LINK_HOSTS,
+            license_link_path_prefixes=SPRINGER_NATURE_LICENSE_LINK_PATH_PREFIXES,
+            license_word_limit=SPRINGER_NATURE_LICENSE_WORD_LIMIT,
+        ),
+        formula=ProviderFormulaRules(
+            container_tokens=SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS,
+            display_selectors=SPRINGER_NATURE_DISPLAY_FORMULA_SELECTORS,
+        ),
+        assets=ProviderAssetRules(
+            supplementary_text_tokens=SPRINGER_NATURE_SUPPLEMENTARY_TEXT_TOKENS,
+        ),
+        heading=ProviderHeadingRules(normalizations={"online methods": "Methods"}),
+        availability=AvailabilityPolicy(
+            paywall_gate_selectors=".c-article-paywall, .c-article-access-provider",
+            name="springer_nature",
+            overrides=SPRINGER_AVAILABILITY_OVERRIDES,
+        ),
+    ),
+    sources=("springer_html", "springer_pdf"),
+)

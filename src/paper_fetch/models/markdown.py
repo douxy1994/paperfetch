@@ -9,8 +9,9 @@ import re
 import urllib.parse
 from typing import Any
 
+from ..markdown.math import protect_markdown_math, restore_markdown_math
 from ..common_patterns import EXTENDED_DATA_LABEL, INLINE_WHITESPACE_PATTERN
-from ..utils import normalize_text, safe_text
+from ..utils import normalize_text, safe_text, strip_html_tags
 
 MARKDOWN_FENCE_PATTERN = re.compile(r"^\s*(```+|~~~+)")
 
@@ -72,7 +73,6 @@ class MarkdownImageMatch:
     url: str
     title: str
     attrs: str
-    attrs_start: int | None
     text: str
 
 
@@ -256,7 +256,6 @@ def _parse_markdown_image_at(text: str, start: int) -> MarkdownImageMatch | None
         return None
 
     attrs = ""
-    attrs_start: int | None = None
     end = destination_close + 1
     attr_probe = end
     while attr_probe < len(text) and text[attr_probe] in " \t":
@@ -264,7 +263,6 @@ def _parse_markdown_image_at(text: str, start: int) -> MarkdownImageMatch | None
     if attr_probe < len(text) and text[attr_probe] == "{":
         attr_close = text.find("}", attr_probe + 1)
         if attr_close >= 0 and "\n" not in text[attr_probe : attr_close + 1]:
-            attrs_start = attr_probe
             attrs = text[attr_probe : attr_close + 1]
             end = attr_close + 1
 
@@ -278,9 +276,15 @@ def _parse_markdown_image_at(text: str, start: int) -> MarkdownImageMatch | None
         url=url,
         title=title,
         attrs=attrs,
-        attrs_start=attrs_start,
         text=text[start:end],
     )
+
+
+def replace_markdown_image_url(image: MarkdownImageMatch, url: str) -> str:
+    """Replace only the destination, retaining verbatim alt/title/attributes."""
+    destination_start = len(image.alt) + 4  # ![alt](
+    start = image.text.index(image.url, destination_start)
+    return image.text[:start] + url + image.text[start + len(image.url) :]
 
 
 def iter_markdown_images(markdown_text: str) -> Iterator[MarkdownImageMatch]:
@@ -324,7 +328,11 @@ def markdown_image_fullmatch(markdown_text: str) -> MarkdownImageMatch | None:
 
 
 def normalize_markdown_text(value: str | None) -> str:
-    text = (value or "").replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+    text, protected = protect_markdown_math(value or "")
+    protected = {
+        key: _collapse_display_math_padding(math) for key, math in protected.items()
+    }
+    text = text.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
     normalized_lines: list[str] = []
     in_fence = False
     blank_run = 0
@@ -352,7 +360,8 @@ def normalize_markdown_text(value: str | None) -> str:
 
     normalized = "\n".join(normalized_lines).strip()
     normalized = _collapse_display_math_padding(normalized)
-    return _normalize_markdown_image_block_boundaries(normalized)
+    normalized = _normalize_markdown_image_block_boundaries(normalized)
+    return restore_markdown_math(normalized, protected)
 
 
 def _is_block_markdown_image_alt(alt_text: str) -> bool:
@@ -369,6 +378,10 @@ def _is_standalone_markdown_image_line(line: str) -> bool:
 
 
 def _split_markdown_image_adjacency_line(line: str) -> list[str]:
+    # Images inside pipe table cells are inline content; splitting them into
+    # blocks destroys both the row and its panel/column coordinates.
+    if line.strip().startswith("|") and line.strip().endswith("|"):
+        return [line]
     matches = list(iter_markdown_images(line))
     if not matches:
         return [line]
@@ -402,16 +415,29 @@ def _split_markdown_image_adjacency_line(line: str) -> list[str]:
         return [line]
 
     pieces: list[str] = []
+    list_match = re.match(r"^([ \t]*(?:[-*+]|\d+[.)])[ \t]+)", line)
+    if list_match:
+        indent = " " * len(list_match[1])
+    else:
+        indent = line[: len(line) - len(line.lstrip())]
     cursor = 0
     for match in matches:
         prefix = line[cursor : match.start]
         if normalize_text(prefix):
-            pieces.append(prefix.rstrip())
-        pieces.append(match.text)
+            pieces.append(prefix.rstrip() if cursor == 0 else indent + prefix.strip())
+        if (
+            list_match
+            and cursor == 0
+            and not line[len(list_match[1]) : match.start].strip()
+        ):
+            # An image can itself be the first block of a list item.
+            pieces[-1] = list_match[1] + match.text
+        else:
+            pieces.append(indent + match.text)
         cursor = match.end
     suffix = line[cursor:]
     if normalize_text(suffix):
-        pieces.append(suffix.strip())
+        pieces.append(indent + suffix.strip())
     return pieces or [line]
 
 
@@ -436,7 +462,7 @@ def _normalize_markdown_image_block_boundaries(text: str) -> str:
         if _is_standalone_markdown_image_line(line):
             if bounded_lines and bounded_lines[-1].strip():
                 bounded_lines.append("")
-            bounded_lines.append(line.strip())
+            bounded_lines.append(line.rstrip())
             next_line = split_lines[index + 1] if index + 1 < len(split_lines) else ""
             if normalize_text(next_line):
                 bounded_lines.append("")
@@ -456,7 +482,7 @@ def _collapse_display_math_padding(text: str) -> str:
     in_display_math = False
 
     for raw_line in text.split("\n"):
-        line = raw_line.rstrip()
+        line = raw_line
         if MARKDOWN_FENCE_PATTERN.match(line):
             if in_display_math:
                 math_lines.append(line)
@@ -470,11 +496,11 @@ def _collapse_display_math_padding(text: str) -> str:
                 while math_lines and not math_lines[-1].strip():
                     math_lines.pop()
                 collapsed_lines.extend(math_lines)
-                collapsed_lines.append("$$")
+                collapsed_lines.append(line)
                 math_lines = []
                 in_display_math = False
             else:
-                collapsed_lines.append("$$")
+                collapsed_lines.append(line)
                 math_lines = []
                 in_display_math = True
             continue
@@ -490,7 +516,7 @@ def _collapse_display_math_padding(text: str) -> str:
     if in_display_math:
         collapsed_lines.extend(math_lines)
 
-    return "\n".join(collapsed_lines).strip()
+    return "\n".join(collapsed_lines).strip("\r\n")
 
 
 def should_preserve_markdown_line(line: str) -> bool:
@@ -565,7 +591,6 @@ def normalize_inline_html_text(value: Any) -> str:
     text = INLINE_HTML_CLOSE_SUBSUP_WHITESPACE_PATTERN.sub(r"</\1>", text)
     text = INLINE_HTML_BEFORE_SUBSUP_PATTERN.sub(r"\1", text)
     text = INLINE_HTML_AFTER_SUBSUP_NEWLINE_PATTERN.sub(r"\1 ", text)
-    text = INLINE_HTML_AFTER_SUBSUP_WORD_PATTERN.sub(r"\1 ", text)
     text = INLINE_HTML_AFTER_SUBSUP_PUNCT_PATTERN.sub(r"\1\2", text)
     return text.strip()
 
@@ -589,7 +614,9 @@ def strip_leading_markdown_title_heading(
     if match is None or len(match.group(1)) != 1:
         return normalized_markdown
     heading_text = normalize_text(match.group(2))
-    if _canonical_match_text(heading_text) != _canonical_match_text(normalized_title):
+    canonical_heading = _canonical_match_text(strip_html_tags(heading_text) or "")
+    canonical_title = _canonical_match_text(strip_html_tags(normalized_title) or "")
+    if canonical_heading != canonical_title:
         return normalized_markdown
 
     trimmed_lines = list(lines[:line_index]) + list(lines[line_index + 1 :])

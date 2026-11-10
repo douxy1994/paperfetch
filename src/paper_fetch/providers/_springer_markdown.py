@@ -4,6 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from bs4 import BeautifulSoup
+from ..extraction.html.parsing import choose_parser
+
 from ..extraction.html._runtime import clean_markdown
 from ..extraction.html.figure_links import inject_inline_figure_links
 from ..extraction.html.renderer import render_html_markdown
@@ -15,8 +18,11 @@ from ._springer_dom import (
     _remove_springer_ai_alt_disclaimers as _remove_springer_ai_alt_disclaimers,
     extract_html_extraction_sidecars,
 )
-from ._springer_references import (
-    extract_numbered_references_from_html,
+from ._html_references import (
+    extract_numbered_references_from_soup,
+    _reference_text,
+    _reference_doi,
+    _reference_year,
 )
 
 
@@ -48,9 +54,30 @@ def _inject_remote_figure_links(
     figure_assets = extract_figure_assets(cleaned_html, source_url)
     if not figure_assets:
         return markdown_text
+    # The DOM renderer already emits the owning figure; URL aliases replace
+    # only its rendition. Do not inject a second size for the same source ID.
+    from ..models.markdown import replace_markdown_images
+
+    aliases = {}
+    for asset in figure_assets:
+        preferred = asset.get("full_size_url") or asset.get("url")
+        if not preferred:
+            continue
+        for field in ("url", "preview_url", "original_url", "full_size_url"):
+            if asset.get(field):
+                aliases[asset[field]] = preferred
+    markdown_text = replace_markdown_images(
+        markdown_text,
+        lambda image: image.text.replace(
+            image.url, aliases.get(image.url, image.url), 1
+        ),
+    )
     return inject_inline_figure_links(
         markdown_text,
         figure_assets=figure_assets,
+        # Bare box/inline images have independent URLs and must not consume
+        # the next numbered figure merely because they have no figure label.
+        match_unlabeled_images_by_order=False,
         clean_markdown_fn=lambda value: clean_markdown(
             value,
             noise_profile="springer_nature",
@@ -71,7 +98,22 @@ def extract_html_payload(
         extract_article_markdown(extraction_sidecars["cleaned_html"], source_url)
     )
     extracted_authors = extract_authors(html_text)
-    extracted_references = extract_numbered_references_from_html(html_text)
+    reference_soup = BeautifulSoup(html_text, choose_parser())
+    extracted_references = extract_numbered_references_from_soup(reference_soup)
+    if not extracted_references:
+        # Springer Classic uses an unnumbered author-date bibliography. Preserve
+        # that list without inventing numeric callouts for its author-year cites.
+        for node in reference_soup.select(".c-article-references__item"):
+            raw = _reference_text(node)
+            if raw:
+                extracted_references.append(
+                    {
+                        "label": None,
+                        "raw": raw,
+                        "doi": _reference_doi(node),
+                        "year": _reference_year(node, raw),
+                    }
+                )
     return {
         "markdown_text": markdown_text,
         "abstract_sections": list(extraction_sidecars["abstract_sections"]),

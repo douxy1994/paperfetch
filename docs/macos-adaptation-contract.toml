@@ -1,14 +1,9 @@
-schema_version = 2
+schema_version = 3
 contract_id = "paper-fetch/macos"
-contract_version = "4.1.0"
 platform = "macos"
-change_document = "docs/macos-adaptation-changes.md"
-audit_document = "docs/macos-adaptation-audit.md"
 
-[source_baseline]
-repository = "https://github.com/Dictation354/paper-fetch-skill"
-revision = "fc3bd96e8d781667a2e86e90dc6e8e35a8a26fa7"
-version = "4.1.0"
+[support.online]
+python_spec = ">=3.11"
 
 [support.offline]
 status = "supported"
@@ -16,463 +11,83 @@ minimum_os_version = "15.0"
 architectures = ["arm64"]
 python_implementation = "CPython"
 python_versions = ["3.11", "3.12", "3.13", "3.14"]
-python_tags = ["cp311", "cp312", "cp313", "cp314"]
-offline_asset_pattern = "paper-fetch-skill-offline-macos-arm64-{python_tag}.tar.gz"
-ci_runner = "macos-15"
-requires_admin = false
-workflow = ".github/workflows/offline.yml"
-
-[support.online]
-python_spec = ">=3.11"
-formula_tools_location = "platformdirs_user_data"
-
-[build_safety]
-python_abi = "standard-gil-cpython"
-python_architecture = "must-match-target"
-package_name_policy = "single-safe-path-component"
-build_directory_policy = "canonical-safe-root"
-staging_ownership_marker = ".paper-fetch-offline-staging-owner"
-output_directory_policy = "outside-staging"
-release_output_policy = "same-filesystem-atomic-rename"
-tooling_revision_policy = "optional-full-commit-sha"
-
-[install_safety]
-quarantine_scan = "recursive-bundle"
-quarantine_error_policy = "fail-closed"
-payload_inventory_policy = "exact-checksummed-regular-files-no-symlinks"
-host_python_isolation = "all-direct-invocations"
-install_target_policy = "missing-empty-or-owned"
-ownership_manifest_schema = 3
-ownership_runtime_marker = "runtime/python-bin"
-purge_symlink_policy = "reject"
-purge_path_policy = "validated-normalized-path"
-upgrade_preserves = ["offline.env", "user-config-unmanaged-content"]
-uninstall_removes_managed_user_config = true
-
-[components.formula_tools]
-delivery = "bundled"
-architecture = "arm64"
-binary_format = "Mach-O"
-signature = "adhoc"
-relocate_non_system_dylibs = true
-entrypoint = "formula-tools/bin/texmath"
-setup_action = "haskell-actions/setup"
-setup_action_version = "v2.12.0"
-setup_action_sha = "6037f33647c3f17758a2356c80fc4a53d7e0685d"
-ghc_version = "9.10.3"
-cabal_version = "3.12.1.0"
-ci_workflow_uses = 1
-offline_workflow_uses = 2
-
-[components.camoufox]
-python_package = "bundled"
-python_package_specifier = ">=0.5.4,<0.6"
-locked_version_source = "uv.lock"
-version_verification = "lock-wheel-installed-manifest"
-manifest_version_field = "components.camoufox.python_package_version"
-browser_binary = "not_bundled"
-runtime_download_during_install = false
-browser_binary_prepare_command = "<install>/runtime/paper-fetch-python -m camoufox fetch"
-preflight_command = "paper-fetch browser-preflight"
-preflight_downloads_browser = false
-managed_runtime_resolution = "camoufox-package-managed"
-explicit_binary_override = "configured-executable-only"
-native_ci_runtime = "official/152.0.4-beta.28"
-native_test_addon_policy = "exclude-default-addons"
-native_test_screen_policy = "fixed-synthetic-screen"
-
-[native_verifier]
-entrypoint = "scripts/verify-offline-package.sh"
-archive_extraction = "tarfile-data-filter"
-macho_dependency_policy = "canonical-bundle-closure"
-reject_absolute_lc_rpath = true
-quarantine_before_native_execution = true
-node_dependency_check = "otool -L"
-node_launch_check = "--version"
-covers_recursive_quarantine = true
-covers_zsh_symlink = true
-covers_user_config = true
-
-[components]
-forbidden = ["flaresolverr"]
-
-[shell]
-default = "zsh"
-startup_file = ".zshrc"
-activation_shells = ["bash", "zsh"]
-preserve_startup_symlinks = true
-
-[native_gate]
-ci_workflow = ".github/workflows/ci.yml"
-ci_job = "macos-native"
 runner = "macos-15"
-ci_python_version = "3.14"
+requires_admin = false
+
+[evidence.native]
+# Shared-browser gates reuse prepared dependency caches and cap GPU-probing
+# browser launches at two pytest workers; publisher state stays isolated.
+runner = "macos-15"
+python_version = "3.14"
 release_matrix_workflow = ".github/workflows/offline.yml"
-release_workflow = ".github/workflows/release.yml"
-release_requires_offline = true
 network_smoke_required = false
-native_tools = ["sw_vers", "file", "lipo", "otool", "install_name_tool", "codesign", "xattr"]
-cache_alias_test_node = "tests/unit/test_cache_index_semantics.py::CacheIndexSemanticsTests::test_cache_scope_accepts_equivalent_filesystem_alias_for_root"
 
-[portable_ci]
-workflow = ".github/workflows/ci.yml"
-job = "macos-contract-portable"
-runners = ["ubuntu-latest", "windows-latest"]
-linux_entrypoint = "scripts/test-macos-contract.sh"
-windows_entrypoint = "scripts/test-macos-contract.ps1"
-native_equivalent = false
+[safety]
+standard_gil_cpython = true
+target_architecture_match = true
+owned_staging_cleanup = true
+atomic_release_publish = true
+quarantine_fail_closed = true
+exact_payload_inventory = true
+reject_symlinks = true
+validated_purge_paths = true
 
-[release_tooling]
-workflow = ".github/workflows/offline.yml"
-trusted_ref_format = "full-commit-sha"
-source_tag_immutable = true
-adapted_release_requires_version_bump = true
-adapted_release_requires_new_tag = true
-source_contract_required_before_overlay = true
-legacy_source_without_contract = "reject"
-overlay_copy_destinations_exclude_python_source = true
-manifest_records_tooling_revision = true
-trusted_posix_overlay_paths = [
-  "scripts/build-offline-package.sh",
-  "install-offline.sh",
-  "scripts/verify-offline-package.sh",
-]
-trusted_windows_overlay_paths = ["scripts/build-offline-package-windows.ps1"]
+[skills.codex]
+user_directory = "~/.agents/skills/paper-fetch-skill"
+project_directory = ".agents/skills/paper-fetch-skill"
+verify_before_legacy_cleanup = true
+check_is_read_only = true
 
-[development_surfaces.windows]
-entrypoint = "scripts/test-macos-contract.ps1"
-coverage = "contract_and_pure_python_static"
-selection = "explicit"
-native_equivalent = false
-included_test_nodes = [
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_macos_build_contract_declares_arm64_minimum_os_and_relocatable_formula_bundle",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_macos_offline_verifier_uses_zsh_and_native_formula_checks",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_manifest_records_optional_tooling_revision",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_windows_manifest_validates_and_records_optional_tooling_revision",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_manifest_and_readme_document_browser_backend_policy",
-  "tests/unit/test_ci_release_workflow.py::test_offline_builds_full_extra_for_supported_python_matrix",
-  "tests/unit/test_ci_release_workflow.py::test_offline_windows_tooling_ref_is_immutable_and_provenanced",
-  "tests/unit/test_ci_release_workflow.py::test_regular_ci_includes_native_macos_offline_gate",
-  "tests/unit/test_ci_release_workflow.py::test_offline_workflow_verifies_macos_packages_on_pinned_arm64_runner",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_repository_contract_is_valid",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_duplicate_change_id_is_rejected",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_missing_implementation_test_and_audit_references_are_rejected",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_support_matrix_drift_is_rejected",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_camoufox_and_removed_flaresolverr_boundaries_are_enforced",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_contract_keeps_portable_and_native_evidence_explicit",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_windows_entrypoint_rejects_unix_only_dependencies",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_wsl_exclusions_must_be_unique_and_known",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_surface_node_cli_outputs_only_selected_nodes",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_wsl_entrypoint_rejects_native_or_live_dependencies",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_manager_reuses_browser_and_creates_fresh_contexts",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_official_runtime_path_is_resolved_by_package",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_persistent_official_runtime_path_is_resolved_by_package",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_persistent_explicit_binary_path_is_forwarded",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_first_launch_requires_prepared_official_runtime",
-]
+[browser]
+byparr_version = "3.1.1"
+native_engine = "camoufox"
+default_backend = "byparr"
+pnas_backend = "byparr"
+elsevier_browser_routes = "supported"
+system_chrome_required = false
+installer_prepares_byparr = true
+runtime_bundle_built_in = false
+core_install_downloads_runtime = true
+optional_install_download_requires_consent = false
+optional_install_failure_preserves_core = true
+managed_runtime_preparation = true
+fingerprint_model_github_api_fallback = true
+fingerprint_model_before_playwright = true
+fetch_start_preparation = false
+on_demand_preparation = true
+success_only_update_interval = true
+installer_prepares_camoufox = true
+installer_skip_browser_prepare = true
+installer_preparation_single_pass = true
+batch_prepares_once = true
+update_check_interval_seconds = 86400
+default_channel = "official/prerelease"
+prerelease_includes_stable = true
+python_package_spec = "camoufox==0.5.9"
+native_bundle_gate = true
+cooperative_cancel_owner_thread_cleanup = true
+html_snapshot_owner_thread = true
+supplementary_index_without_body = true
+publisher_native_persistent_profiles = true
+profile_exclusive_lock_owner_thread = true
+auth_native_profile_replay = true
+json_export_optional = true
 
-[development_surfaces.wsl]
-entrypoint = "scripts/test-macos-contract.sh"
-coverage = "contract_and_fake_darwin"
-selection = "all_except"
-preferred_repo_filesystem = "wsl_linux_filesystem"
-shared_windows_checkout = "validator_only"
-requires_native_linux_python = true
-native_equivalent = false
-excluded_test_nodes = [
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_activate_script_is_sourceable_from_macos_default_zsh",
-  "tests/integration/test_camoufox_native_macos.py::test_prepared_official_camoufox_bundle_launches_both_context_modes",
-]
-exclusion_reason = "These nodes execute native /bin/zsh or a prepared Darwin arm64 Camoufox app bundle. WSL/Linux can validate source, mocks, and fake-Darwin decisions, but cannot turn local substitutes into native macOS evidence."
+[release]
+installer_manifest = "installer/manifest.json"
+asset_owner = "scripts/prepare_release_assets.py"
+single_source_revision = true
+public_assets_are_installers_only = true
+build_evidence_is_not_public = true
 
-[[changes]]
-id = "MAC-V4-001"
-title = "锁定 v4.1.0 原生矩阵与安全构建输入"
-area = "platform-contract"
-status = "implemented"
-risk = "P0"
-summary = "macOS 离线包基于 upstream fc3bd96，只支持 macOS 15、Apple Silicon arm64 和 CPython 3.11 到 3.14 的标准 GIL ABI；构建解释器架构必须匹配目标，包名只能是安全单组件，清理仅限带 ownership marker 的 canonical staging。"
-rationale = "在构建清理或用户侧写入之前拒绝路径穿越、危险构建根、未归属 staging、错误系统、架构或非标准 ABI，避免删除越界和产生半安装状态。"
-implementation_paths = [
-  ".github/workflows/offline.yml",
-  "scripts/build-offline-package.sh",
-  "install-offline.sh",
-]
-test_nodes = [
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_package_name_rejects_path_traversal_before_build_cleanup",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_build_rejects_repository_as_build_directory_before_cleanup",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_build_rejects_nonempty_unowned_staging_before_cleanup",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_build_rejects_output_directory_inside_staging",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_build_validates_manifest_derived_package_name",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_release_publish_failure_preserves_existing_artifact",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_macos_build_contract_declares_arm64_minimum_os_and_relocatable_formula_bundle",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_macos_host_below_manifest_minimum_is_rejected_before_writes",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_macos_rejects_rosetta_python_before_writes",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_macos_rejects_nonstandard_cpython_abi_before_writes",
-]
-audit_cases = ["MAC-AUD-001", "MAC-AUD-002", "MAC-AUD-003"]
-portable_validation = "static_and_simulated"
-native_validation_required = true
-
-[[changes]]
-id = "MAC-V4-002"
-title = "生成可迁移、可签名且可启动的原生工具"
-area = "native-packaging"
-status = "implemented"
-risk = "P0"
-summary = "构建器收集并重定位非系统 dylib，记录 macOS deployment target，对 texmath 及其依赖执行 ad-hoc 签名；verifier 用安全 tar filter、canonical Mach-O 闭包和 LC_RPATH 检查后才启动 Playwright Node。"
-rationale = "不能让恶意归档路径、Homebrew 构建机绝对依赖、bundle 外链接或不可启动的 Node/Mach-O 泄漏进发布包。"
-implementation_paths = [
-  "scripts/build-offline-package.sh",
-  "scripts/verify-offline-package.sh",
-]
-test_nodes = [
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_macos_build_contract_declares_arm64_minimum_os_and_relocatable_formula_bundle",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_macos_offline_verifier_uses_zsh_and_native_formula_checks",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_macos_binary_checks_do_not_accept_arm64_from_path_text",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_offline_verifier_rejects_malicious_tar_members_before_extraction",
-]
-audit_cases = ["MAC-AUD-004", "MAC-AUD-005", "MAC-AUD-006"]
-portable_validation = "static"
-native_validation_required = true
-
-[[changes]]
-id = "MAC-V4-003"
-title = "明确 Camoufox 离线边界并移除 FlareSolverr"
-area = "browser-runtime"
-status = "implemented"
-risk = "P1"
-summary = "browser/full extra 允许兼容的 Camoufox 0.5.x，并由 uv.lock 选择可复现的具体版本；构建器复核下载 wheel metadata 与 installed distribution，并在 manifest 记录该版本。离线包捆绑 Python 包但不捆绑浏览器 binary，安装器不得下载浏览器，用户须先显式执行 camoufox fetch，再用 browser-preflight 验证。原生 macOS CI runtime discovery 使用只读 workflow token 避免匿名 GitHub API 限额，live 验证只保留本地显式入口。selected-browser 页面等待稳定正文 DOM，并允许 provider 在捕获 HTML 前执行有界、同源、失败不阻断的页面准备；PNAS 使用单次导航和 8 秒正文稳定预算，opt-in provider 只阻断 image/font/media；已验收 preflight HTML 按 DOI/URL/runtime 指纹在同进程一次性复用，AIP 维持跨 RuntimeContext 禁用边界，figure discovery 在同一 runtime 串行复用专用 page。Taylor & Francis 仅用该钩子有界并发读取文章页明确暴露的官方 CSV table action，失败表回退到已加载且不产生新请求的同页 payload，其文章范围内的官方 CMS figure rendition 按 accepted preview 保留。内置 auth/preflight 目标由 catalog 能力与共享测试保持一致，Taylor & Francis 使用已验证的开放文章，避免默认命令在 target_resolution 提前失败。候选循环和保守重试都不得用后续传输/导航失败或 deadline timeout 覆盖已经确认的稳定访问门槛；CLI/MCP 批量解析和 lane 排队不得提前消耗 item fetch deadline；HTTP-200 empty shell 的重试优先下一个既有 provider URL，live MCP 只按精确 access-boundary marker 跳过成功 metadata fallback；活动运行时不得包含 FlareSolverr。"
-rationale = "Python 包可导入不等于目标浏览器可用，安装时静默联网也会破坏离线包边界；同样，远端挑战、延迟正文或批量调度等待必须与本地 browser context 启动和实际抓取预算分开诊断。"
-implementation_paths = [
-  ".github/workflows/ci.yml",
-  "pyproject.toml",
-  "uv.lock",
-  "scripts/build-offline-package.sh",
-  "install-offline.sh",
-  "src/paper_fetch/auth.py",
-  "src/paper_fetch/browser_preflight.py",
-  "src/paper_fetch/cli.py",
-  "src/paper_fetch/extraction/html/asset_fields.py",
-  "src/paper_fetch/extraction/html/assets/figures.py",
-  "src/paper_fetch/extraction/html/assets/silverchair.py",
-  "src/paper_fetch/extraction/html/signals.py",
-  "src/paper_fetch/mcp/batch_fetch.py",
-  "src/paper_fetch/providers/_atypon_browser_workflow_profiles.py",
-  "src/paper_fetch/providers/_playwright_browser.py",
-  "src/paper_fetch/providers/_ieee_asset_recovery.py",
-  "src/paper_fetch/providers/_ieee_asset_memo.py",
-  "src/paper_fetch/providers/_ieee_supplementary.py",
-  "src/paper_fetch/providers/_tandf_html.py",
-  "src/paper_fetch/providers/_acs_html.py",
-  "src/paper_fetch/providers/_annualreviews_html.py",
-  "src/paper_fetch/providers/_royalsocietypublishing_html.py",
-  "src/paper_fetch/providers/acs.py",
-  "src/paper_fetch/providers/aip.py",
-  "src/paper_fetch/providers/ams.py",
-  "src/paper_fetch/providers/annualreviews.py",
-  "src/paper_fetch/providers/browser_workflow/asset_download.py",
-  "src/paper_fetch/providers/browser_workflow/assets.py",
-  "src/paper_fetch/providers/browser_workflow/bootstrap.py",
-  "src/paper_fetch/providers/browser_workflow/fetchers/context.py",
-  "src/paper_fetch/providers/browser_workflow/fetchers/memo.py",
-  "src/paper_fetch/providers/browser_workflow/html_extraction.py",
-  "src/paper_fetch/providers/browser_workflow/fetchers/readiness.py",
-  "src/paper_fetch/providers/browser_workflow/profile.py",
-  "src/paper_fetch/providers/browser_workflow/reuse_cache.py",
-  "src/paper_fetch/providers/iop.py",
-  "src/paper_fetch/providers/mdpi.py",
-  "src/paper_fetch/providers/pnas.py",
-  "src/paper_fetch/providers/royalsocietypublishing.py",
-  "src/paper_fetch/providers/tandf.py",
-  "src/paper_fetch/quality/html_availability.py",
-  "src/paper_fetch/runtime.py",
-]
-test_nodes = [
-  "tests/unit/test_fetch_common.py::FetchCommonTests::test_browser_extras_allow_locked_compatible_camoufox_api_version",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_build_enforces_locked_camoufox_runtime_version",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_manifest_records_verified_camoufox_version",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_manifest_and_readme_document_browser_backend_policy",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_installers_do_not_call_playwright_browser_install",
-  "tests/unit/test_browser_preflight.py::test_static_browser_capabilities_never_claims_live_health",
-  "tests/unit/test_html_access_signals.py::HtmlAccessSignalsTests::test_detect_html_block_classifies_nature_client_challenge_shell",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_candidate_deadline_preserves_observed_access_boundary",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_candidate_transport_failure_preserves_observed_access_boundary",
-  "tests/unit/test_aip_provider.py::test_aip_cold_html_retry_reuses_transient_seed_without_persisting_state",
-  "tests/unit/test_provider_request_options.py::ProviderRequestOptionsTests::test_browser_workflow_preserves_fast_access_gate_when_retry_times_out",
-  "tests/unit/test_live_runtime_env.py::test_live_mcp_no_access_detection_requires_machine_readable_boundary",
-  "tests/unit/test_runtime_deadline_and_readiness.py::test_aip_science_and_mdpi_publish_current_body_readiness_selectors",
-  "tests/unit/test_runtime_deadline_and_readiness.py::test_reset_request_deadline_preserves_item_state_and_shared_transport",
-  "tests/unit/test_cli_manifest_v2.py::test_batch_resolution_and_queue_time_do_not_consume_fetch_deadline",
-  "tests/unit/test_mcp_batch_fetch.py::test_batch_fetch_resolution_and_queue_time_do_not_consume_fetch_deadline",
-  "tests/unit/test_atypon_browser_workflow_candidates.py::AtyponBrowserWorkflowCandidateTests::test_pnas_and_mdpi_use_headless_fulltext_readiness_selectors",
-  "tests/unit/test_auth.py::test_browser_entrypoint_providers_have_builtin_targets",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_provider_page_preparation_runs_before_html_capture",
-  "tests/unit/test_tandf_provider.py::test_tandf_builtin_auth_and_preflight_target_use_verified_open_article",
-  "tests/unit/test_tandf_provider.py::test_tandf_article_assets_keep_body_figures_and_scope_supplement",
-  "tests/unit/test_tandf_provider.py::test_tandf_browser_page_preparation_hydrates_official_csv_table",
-  "tests/unit/test_tandf_provider.py::test_tandf_browser_page_preparation_uses_bounded_embedded_table_fallback",
-  "tests/unit/test_tandf_provider.py::test_tandf_batch_results_keep_input_order_and_failed_table_fallback",
-  "tests/unit/test_tandf_provider.py::test_tandf_table_preparation_obeys_exhausted_total_deadline",
-  "tests/unit/test_browser_preflight_reuse_cache.py::test_preflight_cache_is_one_shot_ttl_and_runtime_fingerprint_scoped",
-  "tests/unit/test_browser_preflight_reuse_cache.py::test_pnas_preflight_then_fetch_reuses_html_without_second_navigation",
-  "tests/unit/test_browser_preflight_reuse_cache.py::test_aip_preflight_html_is_not_reused_across_runtime_contexts",
-  "tests/unit/test_browser_preflight_reuse_cache.py::test_provider_resource_policies_do_not_widen_untouched_profiles",
-  "tests/unit/test_browser_asset_download.py::BrowserWorkflowAssetDownloadTests::test_direct_first_figure_policy_skips_viewer_when_download_url_exists",
-  "tests/unit/test_browser_asset_download.py::BrowserWorkflowAssetDownloadTests::test_silverchair_figure_page_resolution_stays_on_camoufox_owner_thread",
-  "tests/unit/test_camoufox_backend.py::test_provider_resource_policy_blocks_only_configured_heavy_types",
-  "tests/unit/test_camoufox_backend.py::test_pnas_body_readiness_uses_bounded_budget_and_keeps_final_html",
-  "tests/unit/test_camoufox_backend.py::test_figure_page_fetches_reuse_one_runtime_context_and_page",
-  "tests/unit/test_acs_provider.py::test_acs_asset_extraction_promotes_largest_srcset_rendition",
-  "tests/unit/test_annualreviews_provider.py::test_annualreviews_asset_extraction_promotes_largest_srcset_rendition",
-  "tests/unit/test_mdpi_provider.py::MdpiProviderTests::test_mdpi_empty_intermediate_candidate_retries_next_html_before_pdf",
-  "tests/unit/test_iop_provider.py::test_iop_index_cache_dedupes_signed_indexes_and_attachment_signatures",
-  "tests/unit/test_ieee_provider_asset_extraction.py::IeeeProviderAssetExtractionTests::test_ieee_multimedia_discovery_memoizes_redacted_url_per_runtime",
-  "tests/unit/test_royalsocietypublishing_provider.py::test_royal_figure_asset_uses_viewer_only_when_direct_original_is_missing",
-  "tests/unit/test_ci_release_workflow.py::test_regular_ci_includes_non_science_browser_performance_regressions",
-]
-audit_cases = ["MAC-AUD-012"]
-portable_validation = "static_and_simulated"
-native_validation_required = false
-
-[[changes]]
-id = "MAC-V4-004"
-title = "采用 Zsh 与 macOS platformdirs 布局"
-area = "shell-and-filesystem"
-status = "implemented"
-risk = "P1"
-summary = "安装器支持默认 Zsh、从任意目录 source 激活脚本、保留 startup symlink，把用户配置写到 platformdirs 对应的 Application Support 目录，并让 MCP cache scope 接受 /var 与 /private/var 或 /tmp 与 /private/tmp 等价根路径；该 alias 行为由原生 macOS CI 精确测试。"
-rationale = "macOS 默认 shell、用户目录和系统路径别名语义不能沿用 Linux XDG/Bash 与单一绝对路径假设。"
-implementation_paths = [
-  "install-offline.sh",
-  "src/paper_fetch/config.py",
-  "src/paper_fetch/mcp/cache_index.py",
-]
-test_nodes = [
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_macos_user_config_uses_application_support",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_zsh_startup_symlink_is_preserved",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_activate_script_is_sourceable_from_macos_default_zsh",
-  "tests/unit/test_cache_index_semantics.py::CacheIndexSemanticsTests::test_cache_scope_accepts_equivalent_filesystem_alias_for_root",
-]
-audit_cases = ["MAC-AUD-008", "MAC-AUD-010"]
-portable_validation = "static_and_simulated"
-native_validation_required = true
-
-[[changes]]
-id = "MAC-V4-005"
-title = "在写入前约束 quarantine、ownership 与配置安全"
-area = "macos-security"
-status = "implemented"
-risk = "P0"
-summary = "构建器和安装器要求 checksum 清单精确覆盖全部 regular file 并拒绝 payload symlink；安装器所有 host Python preflight 使用 isolated mode，并在用户侧写入前递归检查整个 bundle 的 quarantine，检查错误或附加 payload 均 fail closed。只允许缺失、空目录或带 schema 3 ownership manifest 与 runtime marker 的安装目标；purge 拒绝 symlink 入口并只删除已验证的 normalized target，升级保留用户内容。"
-rationale = "Gatekeeper、错误递归删除、未授权覆盖和用户配置丢失都可能把可恢复的安装失败升级为用户数据损坏。"
-implementation_paths = [
-  "install-offline.sh",
-  "scripts/build-offline-package.sh",
-]
-test_nodes = [
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_checksum_inventory_rejects_payload_symlinks",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_unlisted_runtime_payload_is_rejected_before_bundled_python_runs",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_unlisted_top_level_sitecustomize_is_rejected_before_host_python_import",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_purge_normalizes_owned_dot_path_before_deletion",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_purge_rejects_owned_symlink_before_removing_integrations",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_macos_quarantine_fails_before_user_writes",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_macos_xattr_inspection_error_fails_closed_before_user_writes",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_install_rejects_home_before_removing_existing_content",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_install_rejects_nonempty_unowned_directory",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_install_rejects_symlink_to_nonempty_unowned_directory",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_install_dir_upgrade_cleans_old_payload_and_preserves_offline_env",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_macos_user_config_uses_application_support",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_purge_rejects_home_before_removing_integrations",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_purge_requires_install_marker_for_every_owned_target",
-  "tests/unit/test_offline_install.py::OfflineInstallTests::test_zsh_startup_symlink_is_preserved",
-]
-audit_cases = ["MAC-AUD-007", "MAC-AUD-009", "MAC-AUD-010"]
-portable_validation = "static_and_simulated"
-native_validation_required = true
-
-[[changes]]
-id = "MAC-V4-006"
-title = "把原生 macOS 证据纳入 split offline 发布门禁"
-area = "ci-release"
-status = "implemented"
-risk = "P0"
-summary = "常规 CI 在固定 macos-15 arm64 runner 上精确测试 /var 或 /tmp 的系统 cache alias 并构建验证 cp314；可复用 offline workflow 验证 cp311-cp314 全矩阵，稳定发布必须等待 offline workflow。"
-rationale = "每次变更需要快速原生 cp314 回归，发布还需要完整 ABI 矩阵；Linux、WSL 和 Windows 的静态或模拟测试无法证明 Mach-O、codesign、xattr、Zsh 和原生安装行为。"
-implementation_paths = [
-  ".github/workflows/ci.yml",
-  ".github/workflows/offline.yml",
-  ".github/workflows/release.yml",
-  "scripts/verify-offline-package.sh",
-]
-test_nodes = [
-  "tests/unit/test_ci_release_workflow.py::test_regular_ci_includes_native_macos_offline_gate",
-  "tests/unit/test_ci_release_workflow.py::test_offline_workflow_verifies_macos_packages_on_pinned_arm64_runner",
-]
-audit_cases = ["MAC-AUD-002", "MAC-AUD-006"]
-portable_validation = "static"
-native_validation_required = true
-
-[[changes]]
-id = "MAC-V4-007"
-title = "建立 Windows/WSL 可执行但不冒充原生证据的维护契约"
-area = "cross-platform-maintenance"
-status = "implemented"
-risk = "P1"
-summary = "机器可读 TOML 映射精确 pytest node；普通 CI 在 Ubuntu 与 Windows 运行 portable gate，WSL 使用原生 Linux Python 并把 /mnt checkout 降级为 validator-only。不可变标签重跑必须先通过 source contract，POSIX/Windows tooling ref 都要求完整 SHA，只复制精确同名工具路径而不复制 Python wheel source，并记录 tooling revision。"
-rationale = "主开发环境可以尽早发现契约漂移，但必须清楚保留原生 macOS 发布 gate 的证据边界，并避免工具链修复悄然改变不可变标签的业务源码。"
-implementation_paths = [
-  "docs/macos-adaptation-contract.toml",
-  "scripts/validate_macos_adaptation.py",
-  "scripts/test-macos-contract.ps1",
-  "scripts/test-macos-contract.sh",
-  ".gitattributes",
-  ".github/workflows/ci.yml",
-  ".github/workflows/offline.yml",
-  "scripts/build-offline-package-windows.ps1",
-]
-test_nodes = [
-  "tests/unit/test_ci_release_workflow.py::test_offline_builds_full_extra_for_supported_python_matrix",
-  "tests/unit/test_ci_release_workflow.py::test_offline_windows_tooling_ref_is_immutable_and_provenanced",
-  "tests/unit/test_ci_release_workflow.py::test_regular_ci_includes_native_macos_offline_gate",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_build_rejects_invalid_tooling_revision_before_cleanup",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_posix_manifest_records_optional_tooling_revision",
-  "tests/unit/test_offline_package_build.py::OfflinePackageBuildTests::test_windows_manifest_validates_and_records_optional_tooling_revision",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_repository_contract_is_valid",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_duplicate_change_id_is_rejected",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_missing_implementation_test_and_audit_references_are_rejected",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_support_matrix_drift_is_rejected",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_camoufox_and_removed_flaresolverr_boundaries_are_enforced",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_contract_keeps_portable_and_native_evidence_explicit",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_windows_entrypoint_rejects_unix_only_dependencies",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_wsl_exclusions_must_be_unique_and_known",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_surface_node_cli_outputs_only_selected_nodes",
-  "tests/unit/test_macos_adaptation_validator.py::MacosAdaptationValidatorTests::test_wsl_entrypoint_rejects_native_or_live_dependencies",
-]
-audit_cases = ["MAC-AUD-001", "MAC-AUD-011"]
-portable_validation = "static"
-native_validation_required = false
-
-[[changes]]
-id = "MAC-V4-008"
-title = "让 Camoufox 自行解析官方 macOS app bundle"
-area = "browser-runtime"
-status = "implemented"
-risk = "P1"
-summary = "默认 managed runtime 只用 download_if_missing=false 做就绪检查，不再把官方 app 的 MacOS executable 重新作为 custom executable_path 传回 Camoufox；显式配置的 binary override 仍原样传递，普通抓取和持久 auth context 使用同一规则。"
-rationale = "Camoufox 0.5.4 的官方 Mac bundle 把 executable 放在 Contents/MacOS、properties.json 放在 Contents/Resources；把 managed executable 当 custom path 会错误查找 Contents/MacOS/properties.json，使原生 preflight 在浏览器创建前失败。"
-implementation_paths = [
-  ".github/workflows/ci.yml",
-  "src/paper_fetch/providers/browser_runtime/camoufox_manager.py",
-]
-test_nodes = [
-  "tests/unit/test_camoufox_backend.py::test_camoufox_manager_reuses_browser_and_creates_fresh_contexts",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_official_runtime_path_is_resolved_by_package",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_persistent_official_runtime_path_is_resolved_by_package",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_persistent_explicit_binary_path_is_forwarded",
-  "tests/unit/test_camoufox_backend.py::test_camoufox_first_launch_requires_prepared_official_runtime",
-  "tests/integration/test_camoufox_native_macos.py::test_prepared_official_camoufox_bundle_launches_both_context_modes",
-]
-audit_cases = ["MAC-AUD-013"]
-portable_validation = "simulated"
-native_validation_required = true
+[update]
+command = "paper-fetch update"
+repository = "Dictation354/paper-fetch-skill"
+official_installation_only = true
+stable_release_only = true
+sha256_before_execute = true
+archive_preflight = true
+reuse_offline_installer_checks = true
+staged_payload_validation = true
+runtime_failure_rollback = true
+validation_before_runtime_commit = true

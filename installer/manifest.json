@@ -2,10 +2,7 @@
   "schema_version": 1,
   "project": "paper-fetch-skill",
   "skill": {
-    "name": "paper-fetch-skill",
-    "display_name": "Paper Fetch Skill",
-    "short_description": "Fetch AI-friendly paper text by DOI, URL, or title",
-    "default_prompt": "Use $paper-fetch-skill whenever you need the text, readability, or full-text availability of a specific paper or a citation list of identifiable papers."
+    "name": "paper-fetch-skill"
   },
   "mcp": {
     "name": "paper-fetch",
@@ -18,37 +15,6 @@
       "PAPER_FETCH_IMAGE_TOOLS_DIR",
       "MATHML_TO_LATEX_NODE_BIN",
       "PAPER_FETCH_BROWSER_HEADLESS"
-    ]
-  },
-  "env_sets": {
-    "offline_env_keys": [
-      "PAPER_FETCH_DOWNLOAD_DIR",
-      "PAPER_FETCH_FORMULA_TOOLS_DIR",
-      "PAPER_FETCH_IMAGE_TOOLS_DIR",
-      "MATHML_TO_LATEX_NODE_BIN",
-      "PAPER_FETCH_BROWSER_HEADLESS",
-      "PYTHONUTF8",
-      "PYTHONIOENCODING"
-    ],
-    "shell_env_keys": [
-      "PAPER_FETCH_ENV_FILE",
-      "PAPER_FETCH_DOWNLOAD_DIR",
-      "PAPER_FETCH_FORMULA_TOOLS_DIR",
-      "PAPER_FETCH_IMAGE_TOOLS_DIR",
-      "MATHML_TO_LATEX_NODE_BIN",
-      "PAPER_FETCH_BROWSER_HEADLESS",
-      "PYTHONUTF8",
-      "PYTHONIOENCODING"
-    ],
-    "activate_env_keys": [
-      "PAPER_FETCH_ENV_FILE",
-      "PAPER_FETCH_DOWNLOAD_DIR",
-      "PAPER_FETCH_FORMULA_TOOLS_DIR",
-      "PAPER_FETCH_IMAGE_TOOLS_DIR",
-      "MATHML_TO_LATEX_NODE_BIN",
-      "PAPER_FETCH_BROWSER_HEADLESS",
-      "PYTHONUTF8",
-      "PYTHONIOENCODING"
     ]
   },
   "managed_blocks": {
@@ -68,5 +34,55 @@
     "macos_manifest_name": "paper-fetch-skill-offline",
     "windows_setup_base_name": "paper-fetch-skill-windows-x86_64-setup",
     "windows_manifest_name": "paper-fetch-skill-windows-setup"
+  },
+  "embedded_runtimes": {
+    "windows_cpython_x86_64": {
+      "implementation": "CPython",
+      "version": "3.13.15",
+      "architecture": "x86_64",
+      "archive": "python-3.13.15-embed-amd64.zip",
+      "url": "https://www.python.org/ftp/python/3.13.15/python-3.13.15-embed-amd64.zip",
+      "sha256": "d1f04d990aee1253d8569e8e5104e30fa9f5fa830899f14843448872d936a2cf"
+    }
+  },
+  "setup_components": {
+    "windows_uninsis_i386": {
+      "name": "UninsIS.dll",
+      "version": "1.7.0",
+      "architecture": "i386",
+      "upstream": "https://github.com/Bill-Stewart/UninsIS",
+      "release": "https://github.com/Bill-Stewart/UninsIS/releases/tag/v1.7.0",
+      "release_commit": "adcaa752eb85d518ba55138e196948adc87e5a51",
+      "archive": "UninsIS-1.7.0.zip",
+      "archive_url": "https://github.com/Bill-Stewart/UninsIS/releases/download/v1.7.0/UninsIS-1.7.0.zip",
+      "archive_sha256": "8004d12b1635ccb7fba0c6aa0aeeb72871f9d50aa02d7b8f3134dc10feca4994",
+      "dll_path": "installer/vendor/uninsis/i386/UninsIS.dll",
+      "dll_sha256": "9bf8badad59783459f85a1e6203f0c8257bb9554927ca2fa6df5f74850bdcf78",
+      "license": "LGPL-3.0-or-later",
+      "license_path": "installer/vendor/uninsis/LICENSE",
+      "license_sha256": "6075c8debc4c84fa9912f931834d4044743dd743ffae1ff8aeaa5fe9cbf72ac8",
+      "notice_path": "installer/vendor/uninsis/NOTICE.md",
+      "usage": "setup-time-uninstall-synchronization",
+      "verification": "sha256-before-inno-compile",
+      "evidence": "offline-manifest-dependency-manifest-cyclonedx"
+    }
+  },
+  "optional_windows_tools": {
+    "ghostscript": {
+      "version": "10.08.0",
+      "architecture": "x86_64",
+      "url": "https://github.com/ArtifexSoftware/ghostpdl-downloads/releases/download/gs10080/gs10080w64.exe",
+      "sha256": "52a91b8bf09298788d7a57b9206127026c23eacd75405f0a131e26dc381dce50",
+      "installation": "official-exe",
+      "requires_admin": true
+    },
+    "libvips": {
+      "version": "8.18.7",
+      "architecture": "x86_64",
+      "url": "https://github.com/libvips/build-win64-mxe/releases/download/v8.18.7/vips-dev-x64-all-8.18.7.zip",
+      "sha256": "78e56ba30c267ba32ff965200534bd5721364cadbead8c4d595e44b58dfeff15",
+      "installation": "complete-zip",
+      "requires_admin": false
+    }
   }
 }

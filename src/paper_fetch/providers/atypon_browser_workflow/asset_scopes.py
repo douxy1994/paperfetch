@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import copy
 from typing import Any
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 
 from ...extraction.html import assets as _html_asset_impl
 from ...extraction.html.parsing import choose_parser
@@ -52,7 +52,14 @@ ATYPON_BROWSER_WORKFLOW_SUPPLEMENTARY_HEADING_KEYS = (
 
 
 def _atypon_browser_workflow_supplementary_heading_key(node: Tag) -> str:
-    heading = node.find(HEADING_TAG_PATTERN)
+    heading = next(
+        (
+            h
+            for h in node.find_all(HEADING_TAG_PATTERN)
+            if h.find_parent("section") is node
+        ),
+        None,
+    )
     if not isinstance(heading, Tag):
         return ""
     return normalize_heading(_short_text(heading))
@@ -118,27 +125,6 @@ def _atypon_browser_workflow_supplementary_sections(container: Tag) -> list[Tag]
     return _dedupe_top_level_nodes(candidates)
 
 
-def _extract_atypon_browser_workflow_asset_html_scopes(
-    body_container: Tag,
-    supplementary_container: Tag,
-    *,
-    publisher: str,
-) -> tuple[str, str]:
-    for node in list(_atypon_browser_workflow_supplementary_sections(body_container)):
-        node.decompose()
-
-    supplementary_html = "\n".join(
-        str(node)
-        for node in _atypon_browser_workflow_supplementary_sections(
-            supplementary_container
-        )
-        if normalize_text(node.get_text(" ", strip=True))
-    )
-    return _content_fragment_html(
-        body_container, publisher=publisher
-    ), supplementary_html
-
-
 def _atypon_browser_workflow_supplementary_asset_is_supported(
     asset: Mapping[str, Any],
 ) -> bool:
@@ -176,6 +162,27 @@ def extract_scoped_html_assets(
             supplementary_extractor=extract_supplementary_assets
         ),
     )
+
+
+def extract_body_and_supplementary_html(
+    body_container: Any,
+    supplementary_container: Any,
+    *,
+    publisher: str,
+    content_fragment_html: Callable[..., str],
+    supplementary_sections: Callable[[Any], list[Tag]],
+) -> tuple[str, str]:
+    """Remove supplementary subtrees from body before rendering either scope."""
+    for node in list(supplementary_sections(body_container)):
+        node.decompose()
+    supplementary_html = "\n".join(
+        str(node)
+        for node in supplementary_sections(supplementary_container)
+        if normalize_text(node.get_text(" ", strip=True))
+    )
+    return content_fragment_html(
+        body_container, publisher=publisher
+    ), supplementary_html
 
 
 def extract_browser_workflow_asset_html_scopes(
@@ -223,23 +230,9 @@ def extract_browser_workflow_asset_html_scopes(
     )
 
 
-def extract_atypon_browser_workflow_supplementary_section_asset_html_scopes(
-    body_container: Tag,
-    supplementary_container: Tag,
-    *,
-    publisher: str,
-) -> tuple[str, str]:
-    return _extract_atypon_browser_workflow_asset_html_scopes(
-        body_container,
-        supplementary_container,
-        publisher=publisher,
-    )
-
-
 __all__ = [
     "ATYPON_BROWSER_WORKFLOW_SUPPLEMENTARY_HEADING_KEYS",
     "ATYPON_BROWSER_WORKFLOW_SUPPLEMENTARY_SECTION_SELECTORS",
-    "extract_atypon_browser_workflow_supplementary_section_asset_html_scopes",
     "extract_browser_workflow_asset_html_scopes",
     "extract_scoped_html_assets",
     "extract_supplementary_assets",

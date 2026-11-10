@@ -2,9 +2,11 @@
 # Install the static paper-fetch skill for Codex.
 #
 # Usage:
-#   ./scripts/install-codex-skill.sh              # user-scope skill (~/.codex/skills/...)
-#   ./scripts/install-codex-skill.sh --project    # project-scope skill (./.codex/skills/...)
+#   ./scripts/install-codex-skill.sh              # user-scope skill (~/.agents/skills/...)
+#   ./scripts/install-codex-skill.sh --project    # project-scope skill (./.agents/skills/...)
 #   ./scripts/install-codex-skill.sh --register-mcp [--env-file .env]
+#   ./scripts/install-codex-skill.sh --check        # read-only user-scope drift check
+#   ./scripts/install-codex-skill.sh --project --check
 #   ./scripts/install-codex-skill.sh --uninstall  # remove the installed skill entry
 
 set -euo pipefail
@@ -14,6 +16,7 @@ source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/_skill_install_common.sh"
 
 PF_HOST="codex"
 PF_RESTART_NAME="Codex"
+PF_PROJECT_SKILLS_PARENT=".agents"
 
 pf_host_register_mcp() {
     command -v codex >/dev/null 2>&1 || pf_skill_die "codex not found on PATH; cannot auto-register MCP. Install Codex CLI or rerun without --register-mcp."
@@ -45,7 +48,8 @@ pf_host_unregister_mcp() {
 
 pf_host_print_registered_note() {
     echo "  2. Codex MCP server '$PF_MCP_NAME' is registered and will launch via the current python3 environment."
-    echo "     Browser backend: Camoufox by default; first fetch may download its runtime."
+    echo "     Browser-backed providers automatically prepare managed Camoufox before launch."
+    echo "     For offline use, prepare it while online with 'python -m camoufox fetch'."
 }
 
 pf_skill_main "$@"

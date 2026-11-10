@@ -15,6 +15,7 @@ from ..extraction.html import decode_html
 from ..extraction.html.assets import (
     FIGURE_KIND,
     SUPPLEMENTARY_KIND,
+    AssetDownloadOptions,
     download_assets,
     split_body_and_supplementary_assets,
 )
@@ -171,6 +172,12 @@ def _supplementary_assets_from_ieee_multimedia_payload(
             "url": url,
             "section": "supplementary",
         }
+        asset["source_href"] = url
+        article_number = _article_number_from_url(source_url)
+        if article_number:
+            asset["source_page_url"] = IEEE_DOCUMENT_URL_TEMPLATE.format(
+                article_number=article_number
+            )
         if filename:
             asset["filename_hint"] = filename
         media_type = normalize_text(str(item.get("mediaType") or ""))
@@ -191,6 +198,7 @@ def fetch_ieee_multimedia_assets(
     headers: Mapping[str, str],
     timeout: float = DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
     runtime_context: RuntimeContext | None = None,
+    strict: bool = False,
 ) -> list[dict[str, str]]:
     if not landing_attempt.article_number or not _landing_metadata_has_multimedia_scope(
         landing_attempt.landing_metadata
@@ -201,7 +209,7 @@ def fetch_ieee_multimedia_assets(
         article_number=landing_attempt.article_number,
         multimedia_url=multimedia_url,
     )
-    if cached is not None:
+    if cached is not None and (cached or not strict):
         return cached
     try:
         response = transport.request(
@@ -211,6 +219,11 @@ def fetch_ieee_multimedia_assets(
             timeout=timeout,
             retry_on_transient=True,
         )
+        if (
+            strict
+            and int(response.get("status_code") or response.get("status") or 200) >= 400
+        ):
+            raise ValueError("IEEE multimedia index request failed.")
         payload = json.loads(
             decode_html(
                 bytes(response.get("body") or b""),
@@ -218,8 +231,14 @@ def fetch_ieee_multimedia_assets(
             )
         )
     except (RequestFailure, TypeError, ValueError):
+        if strict:
+            raise
         return []
-    if not isinstance(payload, Mapping):
+    if not isinstance(payload, Mapping) or (
+        strict and not isinstance(payload.get("multimedia"), list)
+    ):
+        if strict:
+            raise ValueError("IEEE multimedia index is incomplete.")
         return []
     response_url = _absolute_ieee_url(
         str(response.get("url") or multimedia_url), multimedia_url
@@ -378,6 +397,8 @@ def _ieee_supplementary_asset_from_anchor(
         or "Supplementary Material",
         "caption": "",
         "url": _absolute_ieee_asset_url(href, source_url),
+        "source_href": href,
+        "source_page_url": source_url,
         "section": "supplementary",
     }
 
@@ -510,9 +531,12 @@ def download_ieee_related_assets(
             output_dir=output_dir,
             user_agent=user_agent,
             asset_profile=asset_profile,
-            headers={"User-Agent": user_agent, "Referer": canonical_landing_url},
-            seed_urls=seed_urls,
-            asset_download_concurrency=concurrency,
+            options=AssetDownloadOptions(
+                headers={"User-Agent": user_agent, "Referer": canonical_landing_url},
+                asset_download_concurrency=concurrency,
+                provider_name="ieee",
+                runtime_context=runtime_context,
+            ),
         )
         if body_assets
         else empty_asset_results()
@@ -526,9 +550,12 @@ def download_ieee_related_assets(
             output_dir=output_dir,
             user_agent=user_agent,
             asset_profile=asset_profile,
-            headers={"User-Agent": user_agent, "Referer": canonical_landing_url},
-            seed_urls=seed_urls,
-            asset_download_concurrency=concurrency,
+            options=AssetDownloadOptions(
+                headers={"User-Agent": user_agent, "Referer": canonical_landing_url},
+                asset_download_concurrency=concurrency,
+                provider_name="ieee",
+                runtime_context=runtime_context,
+            ),
         )
         if supplementary_assets and asset_profile == "all"
         else empty_asset_results()

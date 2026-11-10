@@ -8,7 +8,7 @@ import re
 from typing import Any
 from collections.abc import Mapping
 
-from bs4 import BeautifulSoup, Tag
+from bs4 import BeautifulSoup, NavigableString, Tag
 
 from ..extraction.html.parsing import choose_parser
 from ..utils import normalize_text
@@ -60,6 +60,7 @@ ACS_EMPTY_ABSTRACT_PAIR_PATTERN = re.compile(
     r"(## Abstract\n\n)(## Abstract\n\n)",
     flags=re.IGNORECASE,
 )
+ACS_FIGURE_ID_ATTRIBUTES = ("data-id", "content-id", "id")
 
 
 def _extract_jsonld_authors(html_text: str) -> list[str]:
@@ -97,7 +98,54 @@ def acs_before_block_normalization(container: Any) -> None:
     )
 
     _decompose_matching(container, ACS_DOM_CHROME_SELECTORS)
+    for operator in container.find_all(lambda node: node.name in {"mo", "mml:mo"}):
+        if operator.get_text() == "\u2063" and operator.get("rspace"):
+            width = operator["rspace"]
+            operator.name = (
+                "mml:mspace" if operator.name.startswith("mml:") else "mspace"
+            )
+            operator.clear()
+            operator.attrs = {"width": width}
     _drop_promotional_blocks(container, promo_block_tokens=_promo_block_tokens("acs"))
+    # Publisher source wrapping is whitespace inside a heading, not a Markdown
+    # block boundary. Preserve inline tags while joining its source text lines.
+    for heading in container.select("h1, h2, h3, h4, h5, h6"):
+        for text in list(heading.descendants):
+            if isinstance(text, NavigableString):
+                text.replace_with(re.sub(r"\s+", " ", str(text)))
+    # Silverchair can split one labelled table into several visible tables,
+    # each accompanied by a hidden accessibility copy. Keep every distinct
+    # visible part available to the existing single-table block renderer.
+    for wrapper in list(container.select(".table-wrap")):
+        from ._html_section_markdown import render_retained_text_from_html
+
+        note_blocks = []
+        for note in wrapper.select(".table-wrap-foot"):
+            paragraph = BeautifulSoup("", choose_parser()).new_tag("p")
+            paragraph.string = render_retained_text_from_html(
+                note, source_url="https://pubs.acs.org/"
+            )
+            paragraph["data-paper-fetch-markdown"] = "1"
+            note_blocks.append(paragraph)
+            note.decompose()
+        tables = [
+            table
+            for table in wrapper.find_all("table")
+            if not any(
+                parent.get("aria-hidden") == "true"
+                for parent in [table, *table.parents]
+            )
+        ]
+        anchor = wrapper
+        for table in tables[1:]:
+            continuation = BeautifulSoup("", choose_parser()).new_tag("div")
+            continuation["class"] = ["table-wrap"]
+            continuation.append(table.extract())
+            anchor.insert_after(continuation)
+            anchor = continuation
+        for note in note_blocks:
+            anchor.insert_after(note)
+            anchor = note
 
 
 def acs_body_container(container: Any) -> None:
@@ -115,6 +163,56 @@ def select_content_nodes(container: Any, **_kwargs: Any) -> list[Tag]:
         if normalize_text(str(value))
     }
     return [container] if "article-body" in classes else []
+
+
+def _restore_silverchair_figure_download_links(
+    body_container: Any,
+    raw_body_container: Any,
+) -> None:
+    if not isinstance(body_container, Tag) or not isinstance(raw_body_container, Tag):
+        return
+
+    raw_figures: dict[tuple[str, str], list[Tag]] = {}
+    for raw_figure in raw_body_container.select(".fig.fig-section"):
+        if not isinstance(raw_figure, Tag):
+            continue
+        for attribute in ACS_FIGURE_ID_ATTRIBUTES:
+            value = normalize_text(str(raw_figure.get(attribute) or ""))
+            if value:
+                raw_figures.setdefault((attribute, value), []).append(raw_figure)
+
+    for body_figure in body_container.select(".fig.fig-section"):
+        if not isinstance(body_figure, Tag):
+            continue
+        nested_figure = body_figure.select_one(".graphic-wrap, figure")
+        download_link_target = (
+            nested_figure if isinstance(nested_figure, Tag) else body_figure
+        )
+        matching_raw_figures: list[Tag] = []
+        seen_raw_figures: set[int] = set()
+        for attribute in ACS_FIGURE_ID_ATTRIBUTES:
+            value = normalize_text(str(body_figure.get(attribute) or ""))
+            if not value:
+                continue
+            for raw_figure in raw_figures.get((attribute, value), []):
+                if id(raw_figure) not in seen_raw_figures:
+                    seen_raw_figures.add(id(raw_figure))
+                    matching_raw_figures.append(raw_figure)
+
+        existing_hrefs = {
+            normalize_text(str(anchor.get("href") or ""))
+            for anchor in body_figure.find_all("a", href=True)
+        }
+        for raw_figure in matching_raw_figures:
+            for anchor in raw_figure.find_all("a", href=True):
+                href = normalize_text(str(anchor.get("href") or ""))
+                if (
+                    "/downloadfile/downloadimage.aspx" not in href.lower()
+                    or href in existing_hrefs
+                ):
+                    continue
+                download_link_target.append(copy.deepcopy(anchor))
+                existing_hrefs.add(href)
 
 
 def extract_asset_html_scopes(
@@ -141,6 +239,7 @@ def extract_asset_html_scopes(
         for node in atypon_browser_workflow_supplementary_sections(supplementary_source)
         if normalize_text(node.get_text(" ", strip=True))
     )
+    _restore_silverchair_figure_download_links(body_container, raw_body_container)
     return (
         content_fragment_html(body_container, publisher=publisher),
         supplementary_html,
@@ -177,7 +276,9 @@ def _clean_reference_text(node: Tag) -> str:
     ):
         for match in list(clone.select(selector)):
             match.decompose()
-    text = normalize_text(clone.get_text(" ", strip=True))
+    from ..extraction.html.inline import render_html_inline_node
+
+    text = normalize_text(render_html_inline_node(clone))
     text = re.sub(r"\s+([,.;:])", r"\1", text)
     text = re.sub(r"DOI:\s+", "DOI: ", text, flags=re.IGNORECASE)
     return normalize_text(text)
@@ -252,13 +353,41 @@ def scoped_asset_extractor(
     from ..extraction.html.assets.silverchair import (
         promote_silverchair_srcset_originals,
     )
+    from ._html_asset_engine import merge_assets_by_identity
     from .atypon_browser_workflow.asset_scopes import extract_scoped_html_assets
 
-    return extract_scoped_html_assets(
-        promote_silverchair_srcset_originals(body_html_text),
-        source_url,
-        **kwargs,
+    # Silverchair also embeds chemical graphics in table wrappers, outside
+    # .fig-section. Expose those nodes only in the asset-discovery copy; the
+    # article's table markup and signed image URLs remain unchanged.
+    soup = BeautifulSoup(body_html_text, choose_parser())
+    table_graphics: dict[str, tuple[str, str]] = {}
+    for graphic in soup.select(".table-wrap .fig-graphic[id]"):
+        if graphic.find_parent(class_="table-modal") is None:
+            wrapper = graphic.find_parent(class_="table-wrap")
+            label = wrapper.select_one(".table-wrap-title .label")
+            caption = wrapper.select_one(".table-wrap-title .caption")
+            heading = label.get_text(" ", strip=True).rstrip(".") if label else ""
+            if not heading or len(wrapper.select(".fig-graphic[id]")) > 1:
+                heading = f"{heading or 'Table graphic'} ({graphic['id']})"
+            table_graphics[str(graphic["id"])] = (
+                heading,
+                caption.get_text(" ", strip=True) if caption else heading,
+            )
+            graphic.name = "figure"
+
+    assets = merge_assets_by_identity(
+        extract_scoped_html_assets(
+            promote_silverchair_srcset_originals(str(soup)),
+            source_url,
+            **kwargs,
+        )
     )
+    # Generic image alt text is shared across chemical graphics. Use their
+    # owning table labels so download-result merging cannot collapse them.
+    for asset in assets:
+        if table_info := table_graphics.get(asset.get("dom_id", "")):
+            asset["heading"], asset["caption"] = table_info
+    return assets
 
 
 __all__ = [

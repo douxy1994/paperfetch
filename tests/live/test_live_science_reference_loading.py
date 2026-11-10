@@ -1,0 +1,173 @@
+"""Live Science bibliography and local body image acceptance in both modes."""
+
+from functools import wraps
+from dataclasses import replace
+import json
+import os
+import time
+from pathlib import Path
+
+import pytest
+
+from paper_fetch.browser_preflight import static_browser_capabilities
+from paper_fetch.config import BROWSER_HEADLESS_ENV_VAR
+from paper_fetch.logging_utils import redact_log_value
+from paper_fetch.page_diagnostics import sanitize_page_html
+from paper_fetch.providers import browser_runtime
+from paper_fetch.providers.science import ScienceClient
+from paper_fetch.runtime import RuntimeContext
+from paper_fetch.service import FetchStrategy, fetch_paper
+from paper_fetch.workflow.acceptance import evaluate_fetch_acceptance
+from paper_fetch.workflow.types import PaperFetchFailure
+from tests.live._runtime_env import build_isolated_live_env
+
+
+DOI = "10.1126/science.ady3136"
+
+
+@pytest.mark.parametrize("mode", ["headless", "headed"])
+@pytest.mark.parametrize("attempt", [1, 2, 3])
+def test_science_complete_references_and_body_images(
+    monkeypatch, record_property, mode, attempt
+):
+    if os.environ.get("PAPER_FETCH_RUN_LIVE") != "1":
+        pytest.skip("Set PAPER_FETCH_RUN_LIVE=1 for live Science acceptance.")
+    root = (
+        Path(
+            os.environ.get(
+                "PAPER_FETCH_LIVE_ARTIFACT_DIR",
+                ".paper-fetch-runs/live-science-reference-loading",
+            )
+        )
+        / mode
+        / f"attempt-{attempt}"
+    )
+    root.mkdir(parents=True, exist_ok=True)
+
+    def save(name, payload):
+        (root / name).write_text(
+            json.dumps(redact_log_value(payload), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+
+    env, temporary = build_isolated_live_env()
+    env[BROWSER_HEADLESS_ENV_VAR] = "true" if mode == "headless" else "false"
+    browser_traces = []
+    original_fetch = browser_runtime.fetch_html_with_browser
+
+    @wraps(original_fetch)
+    def observed_fetch(*args, **kwargs):
+        try:
+            result = original_fetch(*args, **kwargs)
+        except Exception as exc:
+            browser_traces.append(dict(getattr(exc, "details", None) or {}))
+            raise
+        else:
+            browser_traces.append(dict(result.diagnostics or {}))
+            sanitized, _ = sanitize_page_html(result.html)
+            (root / "page-sanitized.html").write_text(sanitized, encoding="utf-8")
+            return result
+        finally:
+            save("browser-trace.json", browser_traces)
+
+    original_init = ScienceClient.__init__
+
+    @wraps(original_init)
+    def observed_init(self, *args, **kwargs):
+        original_init(self, *args, **kwargs)
+        self.deps = replace(self.deps, fetch_html_with_browser=observed_fetch)
+
+    monkeypatch.setattr(ScienceClient, "__init__", observed_init)
+    context = RuntimeContext(env=env, download_dir=root / "paper", artifact_mode="all")
+    started_at = time.monotonic()
+    terminal = {"status": "failed", "reason_code": "terminated_before_acceptance"}
+    try:
+        capabilities = static_browser_capabilities(env, provider="science")
+        save("static-capabilities.json", capabilities)
+        assert capabilities["browser_runtime"]["available"], capabilities
+        try:
+            envelope = fetch_paper(
+                DOI,
+                modes={"article"},
+                strategy=FetchStrategy(
+                    preferred_providers=["science"],
+                    allow_metadata_only_fallback=False,
+                    asset_profile="body",
+                ),
+                context=context,
+            )
+        except PaperFetchFailure as exc:
+            save(
+                "acceptance.json",
+                {
+                    "doi": DOI,
+                    "mode": mode,
+                    "validation": "incomplete",
+                    "status": exc.status,
+                    "reason": exc.reason,
+                    "details": exc.details,
+                    "source_trail": exc.source_trail,
+                },
+            )
+            raise
+        acceptance = evaluate_fetch_acceptance(
+            envelope,
+            asset_profile="body",
+            expected_doi=DOI,
+            requested_outputs={"article"},
+            require_local_body_assets=True,
+        )
+        article = envelope.article
+        assert article is not None
+        images = [
+            asset
+            for asset in article.assets
+            if asset.kind == "figure" and asset.section != "supplementary"
+        ]
+        save("article.json", article.to_dict())
+        save(
+            "acceptance.json",
+            {
+                "doi": DOI,
+                "mode": mode,
+                "reference_count": len(article.references),
+                "body_image_count": len(images),
+                "image_paths": [asset.path for asset in images],
+                "acceptance": acceptance.model_dump(mode="json"),
+            },
+        )
+        record_property("reference_count", len(article.references))
+        record_property("body_image_count", len(images))
+        record_property("acceptance", acceptance.to_json())
+        assert len(article.references) == 71
+        # The publisher also exposes a graphical abstract alongside figures 1–5.
+        assert {f"science.ady3136-f{i}.jpg" for i in range(1, 6)} <= {
+            Path(asset.path).name for asset in images if asset.path
+        }
+        assert all(
+            asset.path and Path(asset.path).stat().st_size > 0 for asset in images
+        )
+        assert "reference_targets_missing" not in article.quality.flags
+        assert "fulltext:science_html_ok" in article.quality.source_trail
+        assert acceptance.overall == "complete", acceptance.to_json()
+        assert browser_traces
+        terminal = {"status": "complete", "reason_code": "accepted"}
+    except BaseException as exc:
+        terminal = {
+            "status": "skipped" if isinstance(exc, pytest.skip.Exception) else "failed",
+            "reason_code": getattr(exc, "status", None) or type(exc).__name__,
+        }
+        raise
+    finally:
+        save(
+            "terminal.json",
+            {
+                "doi": DOI,
+                "mode": mode,
+                "attempt": attempt,
+                "terminal": terminal,
+                "total_seconds": round(time.monotonic() - started_at, 3),
+            },
+        )
+        context.close()
+        temporary.cleanup()

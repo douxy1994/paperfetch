@@ -25,14 +25,13 @@ def test_batch_runner_keeps_ordered_results_and_separate_completion_events() -> 
 
     def worker(item: str) -> str:
         if item == "first":
-            assert release_first.wait(timeout=1)
-            time.sleep(0.03)
-        elif item == "second":
-            release_first.set()
+            assert release_first.wait(timeout=5)
         return item.upper()
 
     def on_completion(event) -> None:
         callback_items.append(event.result.item)
+        if event.result.item == "third":
+            release_first.set()
 
     async def on_progress(snapshot: BatchProgress[str, str]) -> None:
         progress.append(
@@ -357,3 +356,61 @@ def test_batch_runner_rejects_worker_limits_outside_public_range(
 ) -> None:
     with pytest.raises((TypeError, ValueError), match="max_workers"):
         BatchRunner(lambda item: item, max_workers=workers)
+
+
+def test_item_cancel_does_not_cancel_batch_and_queued_item_never_runs():
+    cancelled = threading.Event()
+    queued_confirmed = threading.Event()
+    visited = []
+
+    def worker(item):
+        visited.append(item)
+        if item == 1:
+            cancelled.set()
+            assert queued_confirmed.wait(1)
+            raise RequestCancelledError("one item")
+        return item
+
+    def complete(event):
+        if event.result.item == 2:
+            queued_confirmed.set()
+
+    result = run_batch(
+        [1, 2, 3],
+        worker,
+        max_workers=1,
+        item_cancel_check=lambda item: item in (1, 2) and cancelled.is_set(),
+        completion_callback=complete,
+    )
+    assert visited == [1, 3]
+    assert [item.status for item in result.results] == [
+        BatchItemStatus.CANCELLED,
+        BatchItemStatus.CANCELLED,
+        BatchItemStatus.SUCCEEDED,
+    ]
+    assert not result.cancelled
+
+
+def test_controlled_batch_waits_for_worker_cleanup_before_confirming_cancellation():
+    cancel = threading.Event()
+    cleaned = threading.Event()
+
+    def worker(item):
+        cancel.set()
+        time.sleep(0.2)
+        cleaned.set()
+        raise RequestCancelledError("stopped")
+
+    def completed(event):
+        assert cleaned.is_set()
+
+    result = run_batch(
+        [1],
+        worker,
+        cancel_event=cancel,
+        item_cancel_check=lambda _item: cancel.is_set(),
+        cancel_grace_period_seconds=0.001,
+        completion_callback=completed,
+    )
+    assert result.results[0].status is BatchItemStatus.CANCELLED
+    assert not result.callback_failures

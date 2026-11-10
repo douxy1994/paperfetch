@@ -2,371 +2,30 @@
 
 from __future__ import annotations
 
-import importlib
+import urllib.parse
 import xml.etree.ElementTree as ET
-from collections.abc import Callable, Iterator, Mapping as MappingABC
-from dataclasses import asdict, dataclass, replace
+from collections.abc import Mapping as MappingABC
 from types import MappingProxyType
-from typing import Any, Literal
+from typing import Any
 
-from .metadata.types import ProviderMetadata
+from .acquisition import AcquisitionProvenance
+from .providers import load_builtin_provider_bundles
 
-AssetDefault = Literal["none", "body", "all"]
-MetadataProbeShortCircuit = Callable[[str], ProviderMetadata | None]
-ProviderRouteKind = Literal["metadata", "html", "xml", "pdf", "assets"]
-ProviderRouteImplementationStatus = Literal[
-    "available",
-    "not_configured",
-    "unsupported",
-]
-
-
-@dataclass(frozen=True)
-class BodyTextThresholds:
-    min_chars: int = 800
-    short_body_min_chars: int = 300
-    short_body_min_words: int = 60
-    single_block_min_words: int = 90
-    cjk_min_chars: int = 120
-    single_block_min_cjk_chars: int = 180
-    cjk_min_ratio: float = 0.20
-
-
-DEFAULT_BODY_TEXT_THRESHOLDS = BodyTextThresholds()
-ATYPON_DEFAULT_PDF_PATH_TEMPLATES = (
-    "/doi/epdf/{doi}",
-    "/doi/pdf/{doi}",
+from .provider_contracts import (
+    AssetDefault as AssetDefault,
+    MetadataProbeShortCircuit as MetadataProbeShortCircuit,
+    ProviderRouteKind as ProviderRouteKind,
+    ProviderRouteTransport as ProviderRouteTransport,
+    BodyTextThresholds as BodyTextThresholds,
+    DEFAULT_BODY_TEXT_THRESHOLDS as DEFAULT_BODY_TEXT_THRESHOLDS,
+    ATYPON_DEFAULT_PDF_PATH_TEMPLATES as ATYPON_DEFAULT_PDF_PATH_TEMPLATES,
+    PdfSourcePathTemplate as PdfSourcePathTemplate,
+    ProviderRouteSpec as ProviderRouteSpec,
+    ProviderSpec as ProviderSpec,
+    RouteExecutionPolicy as RouteExecutionPolicy,
+    _default_route_timeout as _default_route_timeout,
+    _default_route_acceptance as _default_route_acceptance,
 )
-
-
-@dataclass(frozen=True)
-class PdfSourcePathTemplate:
-    domain: str
-    path_prefix: str
-    path_template: str
-
-
-@dataclass(frozen=True)
-class ProviderRouteSpec:
-    """Local requirements and policy for one provider acquisition route."""
-
-    name: str
-    kind: ProviderRouteKind
-    source: str | None = None
-    order: int | None = None
-    implementation_status: ProviderRouteImplementationStatus = "available"
-    browser_required: bool = False
-    browser_optional: bool = False
-    browser_preflight: bool = False
-    auth_supported: bool = False
-    requires_playwright: bool = False
-    requires_pdf_conversion: bool = False
-    requires_formula_tools: bool = False
-    timeout_seconds: int | None = None
-    concurrency: int | None = None
-    qps: float | None = None
-    rate_limit_wait_budget_seconds: float | None = None
-    transient_retry_categories: tuple[str, ...] = ()
-    rate_policy: str | None = None
-    required_packages: tuple[str, ...] = ()
-    hosts: tuple[str, ...] = ()
-    acceptance_policy: str | None = None
-    asset_scope: AssetDefault | None = None
-    notes: str | None = None
-
-    def __post_init__(self) -> None:
-        if self.browser_required and self.browser_optional:
-            raise ValueError(
-                "A provider route cannot be both browser-required and browser-optional."
-            )
-        if (self.browser_required or self.browser_optional) and not (
-            self.requires_playwright
-        ):
-            object.__setattr__(self, "requires_playwright", True)
-        if self.auth_supported and not self.browser_preflight:
-            object.__setattr__(self, "browser_preflight", True)
-        if self.browser_preflight and not (
-            self.browser_required or self.browser_optional
-        ):
-            raise ValueError("Browser preflight requires a browser-backed route.")
-        if self.timeout_seconds is not None and self.timeout_seconds <= 0:
-            raise ValueError("Route timeout_seconds must be positive.")
-        if self.concurrency is not None and not (1 <= self.concurrency <= 8):
-            raise ValueError("Route concurrency must be from 1 to 8.")
-        if self.order is not None and self.order < 0:
-            raise ValueError("Route order must be non-negative.")
-        if self.qps is not None and self.qps <= 0:
-            raise ValueError("Route qps must be positive.")
-        if (
-            self.rate_limit_wait_budget_seconds is not None
-            and self.rate_limit_wait_budget_seconds < 0
-        ):
-            raise ValueError(
-                "Route rate_limit_wait_budget_seconds must be non-negative."
-            )
-
-
-@dataclass(frozen=True)
-class ProviderSpec:
-    name: str
-    display_name: str
-    official: bool
-    domains: tuple[str, ...]
-    doi_prefixes: tuple[str, ...]
-    publisher_aliases: tuple[str, ...]
-    asset_default: AssetDefault
-    probe_capability: str
-    provider_managed_abstract_only: bool
-    client_factory_path: str
-    status_order: int
-    domain_suffixes: tuple[str, ...] = ()
-    base_domains: tuple[str, ...] = ()
-    html_path_templates: tuple[str, ...] = ()
-    xml_path_templates: tuple[str, ...] = ()
-    landing_path_templates: tuple[str, ...] = ()
-    pdf_path_templates: tuple[str, ...] = ()
-    pdf_source_path_templates: tuple[PdfSourcePathTemplate, ...] = ()
-    crossref_pdf_position: int = 0
-    api_hosts: tuple[str, ...] = ()
-    api_url_templates: tuple[tuple[str, str], ...] = ()
-    sensitive_headers: tuple[str, ...] = ()
-    metadata_probe_short_circuit: MetadataProbeShortCircuit | str | None = None
-    persist_provider_html: bool = False
-    xml_root_tags: tuple[str, ...] = ()
-    xml_file_tokens: tuple[str, ...] = ()
-    emits_html_managed_marker: bool = True
-    html_capable: bool = True
-    body_text_thresholds: BodyTextThresholds = DEFAULT_BODY_TEXT_THRESHOLDS
-    env_requirements: tuple[str, ...] = ()
-    requires_playwright: bool = False
-    requires_browser_runtime: bool = False
-    batch_concurrency: int | None = None
-    routes: tuple[ProviderRouteSpec, ...] = ()
-
-    def __post_init__(self) -> None:
-        if self.requires_playwright and not self.requires_browser_runtime:
-            object.__setattr__(self, "requires_browser_runtime", True)
-        effective_batch_concurrency = self.batch_concurrency
-        if effective_batch_concurrency is None:
-            effective_batch_concurrency = 1 if self.requires_browser_runtime else 2
-            object.__setattr__(self, "batch_concurrency", effective_batch_concurrency)
-        if isinstance(effective_batch_concurrency, bool) or not (
-            1 <= effective_batch_concurrency <= 8
-        ):
-            raise ValueError("batch_concurrency must be an integer from 1 to 8.")
-        if not self.routes:
-            routes: list[ProviderRouteSpec] = [
-                ProviderRouteSpec(name="metadata", kind="metadata")
-            ]
-            if self.html_capable:
-                routes.append(
-                    ProviderRouteSpec(
-                        name=(
-                            "browser_html"
-                            if self.requires_browser_runtime
-                            else "direct_html"
-                        ),
-                        kind="html",
-                        browser_required=self.requires_browser_runtime,
-                        browser_preflight=self.requires_browser_runtime,
-                        auth_supported=self.requires_browser_runtime,
-                        requires_playwright=self.requires_playwright,
-                        concurrency=1 if self.requires_browser_runtime else 2,
-                    )
-                )
-            if self.xml_path_templates:
-                routes.append(ProviderRouteSpec(name="xml", kind="xml"))
-            if self.pdf_path_templates or self.pdf_source_path_templates:
-                browser_backed_pdf = self.requires_browser_runtime
-                routes.append(
-                    ProviderRouteSpec(
-                        name="browser_pdf" if browser_backed_pdf else "direct_pdf",
-                        kind="pdf",
-                        browser_required=browser_backed_pdf,
-                        browser_preflight=browser_backed_pdf,
-                        auth_supported=browser_backed_pdf,
-                        requires_playwright=browser_backed_pdf,
-                        requires_pdf_conversion=True,
-                        concurrency=1 if browser_backed_pdf else 2,
-                    )
-                )
-            object.__setattr__(self, "routes", tuple(routes))
-        if self.requires_browser_runtime and not any(
-            route.browser_required or route.browser_optional for route in self.routes
-        ):
-            object.__setattr__(
-                self,
-                "routes",
-                (
-                    *self.routes,
-                    ProviderRouteSpec(
-                        name="browser_html",
-                        kind="html",
-                        browser_required=True,
-                        browser_preflight=True,
-                        auth_supported=True,
-                        requires_playwright=True,
-                        concurrency=1,
-                    ),
-                ),
-            )
-        route_names = [route.name for route in self.routes]
-        if len(route_names) != len(set(route_names)):
-            raise ValueError("Provider route names must be unique.")
-        object.__setattr__(
-            self,
-            "routes",
-            tuple(
-                replace(
-                    route,
-                    order=index if route.order is None else route.order,
-                    hosts=route.hosts or self.domains,
-                    asset_scope=route.asset_scope or self.asset_default,
-                    timeout_seconds=route.timeout_seconds
-                    or _default_route_timeout(route),
-                    concurrency=route.concurrency
-                    or (1 if route.browser_required or route.browser_optional else 2),
-                    rate_limit_wait_budget_seconds=(
-                        route.rate_limit_wait_budget_seconds
-                        if route.rate_limit_wait_budget_seconds is not None
-                        else 5.0
-                    ),
-                    transient_retry_categories=(
-                        route.transient_retry_categories
-                        or (
-                            "timeout",
-                            "connection_reset",
-                            "connection_closed",
-                            "temporary_dns",
-                        )
-                    ),
-                    rate_policy=route.rate_policy or "shared_host_cooldown",
-                    required_packages=route.required_packages
-                    or _default_route_packages(route),
-                    acceptance_policy=route.acceptance_policy
-                    or _default_route_acceptance(route.kind),
-                )
-                for index, route in enumerate(self.routes)
-            ),
-        )
-        route_orders = [route.order for route in self.routes]
-        if route_orders != list(range(len(self.routes))):
-            raise ValueError(
-                "Provider route order must be unique and contiguous from zero."
-            )
-
-    def to_dict(self) -> dict[str, object]:
-        return asdict(self)
-
-
-def _default_route_timeout(route: ProviderRouteSpec) -> int:
-    if route.browser_required or route.browser_optional:
-        return 120
-    return 120 if route.kind == "pdf" else 20
-
-
-def _default_route_packages(route: ProviderRouteSpec) -> tuple[str, ...]:
-    packages: list[str] = []
-    if route.requires_playwright:
-        packages.append("camoufox")
-    if route.requires_pdf_conversion:
-        packages.append("pymupdf4llm")
-    return tuple(packages)
-
-
-def _default_route_acceptance(kind: ProviderRouteKind) -> str:
-    return {
-        "metadata": "metadata_identity",
-        "html": "provider_html_body",
-        "xml": "structured_xml_body",
-        "pdf": "validated_pdf",
-        "assets": "validated_asset",
-    }[kind]
-
-
-_METADATA_PROBE_SHORT_CIRCUITS: dict[str, MetadataProbeShortCircuit] = {}
-_PROVIDER_CATALOG_CACHE: MappingABC[str, ProviderSpec] | None = None
-_SOURCE_PROVIDER_MAP_CACHE: MappingABC[str, str] | None = None
-
-
-def _registered_provider_bundles():
-    import paper_fetch.providers as providers
-
-    providers.import_provider_entry_modules()
-    from .providers._registry import iter_provider_bundles
-
-    return tuple(iter_provider_bundles())
-
-
-def _build_provider_catalog() -> MappingABC[str, ProviderSpec]:
-    return MappingProxyType(
-        {
-            bundle.catalog.name: bundle.catalog
-            for bundle in _registered_provider_bundles()
-        }
-    )
-
-
-def _provider_catalog_map() -> MappingABC[str, ProviderSpec]:
-    global _PROVIDER_CATALOG_CACHE
-    catalog = _PROVIDER_CATALOG_CACHE
-    if catalog is None:
-        catalog = _build_provider_catalog()
-        import paper_fetch.providers as providers
-
-        if getattr(providers, "_PROVIDER_ENTRY_IMPORTS_COMPLETE", False):
-            _PROVIDER_CATALOG_CACHE = catalog
-    return catalog
-
-
-class _ProviderCatalogMapping(MappingABC[str, ProviderSpec]):
-    def __getitem__(self, key: str) -> ProviderSpec:
-        return _provider_catalog_map()[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(_provider_catalog_map())
-
-    def __len__(self) -> int:
-        return len(_provider_catalog_map())
-
-
-PROVIDER_CATALOG: MappingABC[str, ProviderSpec] = _ProviderCatalogMapping()
-
-
-def _build_source_provider_map() -> MappingABC[str, str]:
-    return MappingProxyType(
-        {
-            source: bundle.catalog.name
-            for bundle in _registered_provider_bundles()
-            for source in bundle.sources
-        }
-    )
-
-
-def _source_provider_map() -> MappingABC[str, str]:
-    global _SOURCE_PROVIDER_MAP_CACHE
-    source_map = _SOURCE_PROVIDER_MAP_CACHE
-    if source_map is None:
-        source_map = _build_source_provider_map()
-        import paper_fetch.providers as providers
-
-        if getattr(providers, "_PROVIDER_ENTRY_IMPORTS_COMPLETE", False):
-            _SOURCE_PROVIDER_MAP_CACHE = source_map
-    return source_map
-
-
-class _SourceProviderMapping(MappingABC[str, str]):
-    def __getitem__(self, key: str) -> str:
-        return _source_provider_map()[key]
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(_source_provider_map())
-
-    def __len__(self) -> int:
-        return len(_source_provider_map())
-
-
-SOURCE_PROVIDER_MAP: MappingABC[str, str] = _SourceProviderMapping()
 
 
 def _normalize_catalog_token(value: str | None) -> str:
@@ -436,6 +95,213 @@ def provider_routes(provider_name: str | None) -> tuple[ProviderRouteSpec, ...]:
     return spec.routes if spec is not None else ()
 
 
+def provider_route(
+    provider_name: str | None, route_name: str | None
+) -> ProviderRouteSpec | None:
+    normalized_route = _normalize_catalog_token(route_name)
+    return next(
+        (
+            route
+            for route in provider_routes(provider_name)
+            if route.name == normalized_route
+        ),
+        None,
+    )
+
+
+def _template_hostname(template: str | None) -> str:
+    value = str(template or "").strip()
+    if "://" not in value:
+        return ""
+    return _normalize_hostname(urllib.parse.urlsplit(value).hostname)
+
+
+def _compiled_provider_hosts(
+    spec: ProviderSpec,
+    route: ProviderRouteSpec,
+) -> tuple[str, ...]:
+    """Return every catalog-declared network identity for a route.
+
+    These values remain useful for routing, governance, and explicit caller
+    policy construction, but compiling a provider route does not automatically
+    authorize them for HTTP requests.
+    """
+
+    candidates = [
+        *route.hosts,
+        *spec.domains,
+        *spec.domain_suffixes,
+        *spec.base_domains,
+        *spec.api_hosts,
+        *(source.domain for source in spec.pdf_source_path_templates),
+        *(_template_hostname(template) for _name, template in spec.api_url_templates),
+        *(
+            _template_hostname(template)
+            for template in (
+                *spec.html_path_templates,
+                *spec.xml_path_templates,
+                *spec.landing_path_templates,
+                *spec.pdf_path_templates,
+            )
+        ),
+    ]
+    return tuple(
+        dict.fromkeys(
+            host for value in candidates if (host := _normalize_hostname(value))
+        )
+    )
+
+
+def compile_route_execution_policy(
+    provider_name: str,
+    route_name: str,
+) -> RouteExecutionPolicy:
+    """Compile the sole catalog-to-runtime policy for an exact provider route."""
+
+    normalized_provider = _normalize_catalog_token(provider_name)
+    spec = _provider_spec(normalized_provider)
+    if spec is None:
+        raise ValueError(f"Unknown provider route policy: {provider_name!r}")
+    route = provider_route(normalized_provider, route_name)
+    if route is None:
+        raise ValueError(
+            f"Unknown provider route policy: {normalized_provider}:{route_name}"
+        )
+    timeout_seconds = int(route.timeout_seconds or _default_route_timeout(route))
+    concurrency = int(route.concurrency or 1)
+    qps_values = (float(route.qps),) if route.qps is not None else ()
+    qps = min(qps_values) if qps_values else None
+    transient_categories = tuple(
+        dict.fromkeys(
+            category
+            for raw_category in route.transient_retry_categories
+            if (category := _normalize_catalog_token(raw_category))
+        )
+    )
+    wait_budget = float(route.rate_limit_wait_budget_seconds or 0.0)
+    transient_retries = int(route.transient_retries or 0)
+    rate_limit_retries = int(route.rate_limit_retries or 0)
+    sensitive_headers = tuple(
+        dict.fromkeys(
+            header
+            for raw_header in spec.sensitive_headers
+            if (header := _normalize_catalog_token(raw_header))
+        )
+    )
+    return RouteExecutionPolicy(
+        provider=normalized_provider,
+        route=route.name,
+        kind=route.kind,
+        hosts=_compiled_provider_hosts(spec, route),
+        sensitive_headers=sensitive_headers,
+        timeout_seconds=timeout_seconds,
+        concurrency=concurrency,
+        qps=qps,
+        minimum_interval_seconds=(1.0 / qps if qps is not None else 0.0),
+        rate_limit_wait_budget_seconds=wait_budget,
+        transient_retry_categories=transient_categories,
+        transient_retries=transient_retries,
+        rate_limit_retries=rate_limit_retries,
+        acceptance_policy=route.acceptance_policy,
+        asset_scope=route.asset_scope or spec.asset_default,
+    )
+
+
+def compile_route_execution_policy_for_kind(
+    provider_name: str,
+    kind: ProviderRouteKind,
+    *,
+    prefer_transport: ProviderRouteTransport | None = None,
+) -> RouteExecutionPolicy:
+    """Compile the first catalog route for a runtime representation kind."""
+
+    candidates = [
+        route
+        for route in provider_routes(provider_name)
+        if route.kind == kind
+        and (prefer_transport is None or route.transport == prefer_transport)
+    ]
+    if not candidates and prefer_transport is not None:
+        candidates = [
+            route for route in provider_routes(provider_name) if route.kind == kind
+        ]
+    if not candidates:
+        raise ValueError(f"No {kind!r} route declared for provider: {provider_name!r}")
+    selected = min(candidates, key=lambda route: int(route.order or 0))
+    return compile_route_execution_policy(provider_name, selected.name)
+
+
+def effective_route_asset_scope(
+    requested: AssetDefault | None,
+    *,
+    provider_name: str | None,
+    route_name: str | None = None,
+) -> AssetDefault:
+    """Merge the public asset profile with the compiled route default.
+
+    An explicit ``none|body|all`` remains a user override for compatibility.
+    When the caller leaves the profile unset, the exact route's compiled
+    ``asset_scope`` selects execution; unknown providers fail closed.
+    """
+
+    if requested is not None:
+        return requested
+    normalized_provider = _normalize_catalog_token(provider_name)
+    if not normalized_provider:
+        return "none"
+    try:
+        compiled = (
+            compile_route_execution_policy(normalized_provider, route_name)
+            if route_name
+            else compile_route_execution_policy_for_kind(normalized_provider, "assets")
+        )
+    except ValueError:
+        return "none"
+    return compiled.asset_scope
+
+
+def acquisition_for_provider_route(
+    provider_name: str | None,
+    route_name: str | None,
+    *,
+    fallback_used: bool = False,
+) -> AcquisitionProvenance | None:
+    """Build exact public acquisition provenance from the route catalog."""
+
+    normalized_provider = _normalize_catalog_token(provider_name)
+    route = provider_route(normalized_provider, route_name)
+    if (
+        not normalized_provider
+        or route is None
+        or route.kind == "assets"
+        or route.transport is None
+    ):
+        return None
+    return AcquisitionProvenance(
+        provider=normalized_provider,
+        route=route.name,
+        representation=route.kind,
+        transport=route.transport,
+        fallback_used=fallback_used,
+    )
+
+
+def acquisition_matches_provider_route(
+    acquisition: AcquisitionProvenance | None,
+) -> bool:
+    """Validate an acquisition object against the authoritative route catalog."""
+
+    if acquisition is None:
+        return False
+    route = provider_route(acquisition.provider, acquisition.route)
+    return bool(
+        route is not None
+        and route.kind != "assets"
+        and route.kind == acquisition.representation
+        and route.transport == acquisition.transport
+    )
+
+
 def provider_has_browser_route(provider_name: str | None) -> bool:
     return any(
         route.browser_required or route.browser_optional
@@ -445,6 +311,14 @@ def provider_has_browser_route(provider_name: str | None) -> bool:
 
 def provider_requires_browser(provider_name: str | None) -> bool:
     return any(route.browser_required for route in provider_routes(provider_name))
+
+
+def provider_has_optional_browser_route(provider_name: str | None) -> bool:
+    return any(route.browser_optional for route in provider_routes(provider_name))
+
+
+def provider_requires_playwright(provider_name: str | None) -> bool:
+    return any(route.requires_playwright for route in provider_routes(provider_name))
 
 
 def provider_supports_browser_preflight(provider_name: str | None) -> bool:
@@ -558,47 +432,14 @@ def provider_sensitive_header_names() -> frozenset[str]:
     )
 
 
-def _load_callable(callback_path: str) -> MetadataProbeShortCircuit:
-    module_path, _, attribute = callback_path.partition(":")
-    if not module_path or not attribute:
-        raise ValueError(f"Invalid provider callback path: {callback_path!r}")
-    module = importlib.import_module(module_path)
-    callback = getattr(module, attribute)
-    if not callable(callback):
-        raise TypeError(f"Provider callback path is not callable: {callback_path!r}")
-    return callback
-
-
-def register_metadata_probe_short_circuit(
-    provider_name: str,
-    callback: MetadataProbeShortCircuit,
-) -> None:
-    normalized = _normalize_catalog_token(provider_name)
-    if not normalized:
-        raise ValueError(
-            "Provider name is required for metadata probe short-circuit registration."
-        )
-    if not callable(callback):
-        raise TypeError("Metadata probe short-circuit must be callable.")
-    _METADATA_PROBE_SHORT_CIRCUITS[normalized] = callback
-
-
 def provider_metadata_probe_short_circuit(
     provider_name: str | None,
 ) -> MetadataProbeShortCircuit | None:
     normalized = _normalize_catalog_token(provider_name)
     if not normalized:
         return None
-    callback = _METADATA_PROBE_SHORT_CIRCUITS.get(normalized)
-    if callback is not None:
-        return callback
-    spec = _provider_spec(normalized)
-    declared = spec.metadata_probe_short_circuit if spec is not None else None
-    if declared is None:
-        return None
-    callback = _load_callable(declared) if isinstance(declared, str) else declared
-    _METADATA_PROBE_SHORT_CIRCUITS[normalized] = callback
-    return callback
+    bundle = PROVIDER_BUNDLE_MAP.get(normalized)
+    return bundle.metadata_probe_short_circuit if bundle is not None else None
 
 
 def provider_persists_provider_html(provider_name: str | None) -> bool:
@@ -740,6 +581,20 @@ def ordered_provider_specs() -> tuple[ProviderSpec, ...]:
     return tuple(sorted(PROVIDER_CATALOG.values(), key=lambda spec: spec.status_order))
 
 
+def identity_ordered_provider_specs() -> tuple[ProviderSpec, ...]:
+    """Return deterministic identity precedence for the conflict-free catalog."""
+
+    return tuple(
+        sorted(
+            PROVIDER_CATALOG.values(),
+            key=lambda spec: (
+                spec.status_order,
+                spec.name,
+            ),
+        )
+    )
+
+
 def provider_names() -> tuple[str, ...]:
     return tuple(spec.name for spec in ordered_provider_specs())
 
@@ -817,9 +672,22 @@ def provider_supports_metadata_api_probe(provider_name: str | None) -> bool:
     return provider_probe_capability(provider_name) == "metadata_api"
 
 
-def doi_prefix_provider_map() -> dict[str, str]:
-    return {
-        prefix: spec.name
-        for spec in ordered_provider_specs()
-        for prefix in spec.doi_prefixes
+PROVIDER_BUNDLES = tuple(
+    sorted(
+        load_builtin_provider_bundles(),
+        key=lambda bundle: bundle.catalog.status_order,
+    )
+)
+PROVIDER_BUNDLE_MAP = MappingProxyType(
+    {bundle.catalog.name: bundle for bundle in PROVIDER_BUNDLES}
+)
+PROVIDER_CATALOG: MappingABC[str, ProviderSpec] = MappingProxyType(
+    {name: bundle.catalog for name, bundle in PROVIDER_BUNDLE_MAP.items()}
+)
+SOURCE_PROVIDER_MAP: MappingABC[str, str] = MappingProxyType(
+    {
+        source: bundle.catalog.name
+        for bundle in PROVIDER_BUNDLES
+        for source in bundle.sources
     }
+)

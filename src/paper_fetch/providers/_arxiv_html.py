@@ -9,6 +9,7 @@ from collections.abc import Mapping
 import re
 
 from ..common_patterns import WORD_TOKEN_PATTERN
+from ..formula.validation import formula_document, formula_diagnostics
 from ..extraction.html._runtime import clean_markdown
 from ..extraction.html.html_tags import HTML_DROP_TAGS
 from ..extraction.html.semantics import (
@@ -25,8 +26,7 @@ from ..extraction.html.tables import (
 from ..models.markdown import normalize_markdown_text
 from ..metadata.types import ProviderMetadata
 from ..quality.html_availability import assess_plain_text_fulltext_availability
-from ..quality.reason_codes import FULLTEXT
-from ..reason_codes import NO_RESULT
+from ..reason_codes import FULLTEXT, NO_RESULT
 from ..utils import normalize_text
 from ._arxiv_parsing import ARXIV_HTML_PARSER
 from ._html_section_markdown import (
@@ -45,10 +45,10 @@ _ARXIV_AR5IV_SELECTORS: Mapping[str, tuple[str, ...]] = {
     "watermark": ("#watermark-tr", ".ltx_page_header", ".ltx_page_footer"),
     "frontmatter_noise": (
         *_ARXIV_BASE_CHROME_SELECTORS,
-        "math",
         ".ltx_note",
         ".ltx_contact",
         ".ltx_author_notes",
+        ".ltx_pubnotes",
         ".ltx_role_email",
         ".ltx_role_orcid",
         ".ltx_role_affiliation",
@@ -73,7 +73,7 @@ _ARXIV_AR5IV_SELECTORS: Mapping[str, tuple[str, ...]] = {
     "reference_title": (".ltx_bib_title",),
     "algorithm_listing": ("div.ltx_listing",),
     "latexml_error_nodes": (".ltx_ERROR", ".undefined"),
-    "math_nodes": ("math.ltx_Math",),
+    "math_nodes": ("math.ltx_Math, math.ltx_math_unparsed",),
     "note_nodes": ("span.ltx_note",),
     "note_markers": (".ltx_note_mark", ".ltx_tag_note"),
     "note_content": (".ltx_note_content",),
@@ -244,14 +244,14 @@ def _split_markdown_block_around_placeholder(
     while placeholder in remaining:
         before, remaining = remaining.split(placeholder, 1)
         if normalize_text(before):
-            pieces.append(normalize_markdown_text(before))
+            pieces.append(before.strip("\r\n"))
         pieces.extend(
-            normalize_markdown_text(part)
+            part.strip("\r\n")
             for part in re.split(r"\n\s*\n", replacement)
             if normalize_text(part)
         )
     if normalize_text(remaining):
-        pieces.append(normalize_markdown_text(remaining))
+        pieces.append(remaining.strip("\r\n"))
     return pieces
 
 
@@ -284,7 +284,7 @@ def _inject_arxiv_semantic_blocks(
         and placeholder not in markdown_text
     }
     blocks = [
-        normalize_markdown_text(block)
+        block.strip("\r\n")
         for block in re.split(r"\n\s*\n", markdown_text)
         if normalize_text(block)
     ]
@@ -340,7 +340,7 @@ def _inject_arxiv_semantic_blocks(
 
 def _clean_arxiv_html_markdown_noise(markdown_text: str) -> str:
     blocks = [
-        normalize_markdown_text(block)
+        block.strip("\r\n")
         for block in re.split(r"\n\s*\n", markdown_text)
         if normalize_text(block)
     ]
@@ -398,6 +398,8 @@ def _arxiv_heading_in_skipped_hint_scope(node: Any, article: Any) -> bool:
 def _arxiv_section_hint_kind(
     node: Any, heading: str, *, title: str | None
 ) -> str | None:
+    if normalize_text(heading).casefold() == "notes":
+        return "body"
     node_name = normalize_text(getattr(node, "name", "") or "").lower()
     category = heading_category(node_name, heading, title=title)
     if category in {"abstract", "front_matter"}:
@@ -445,6 +447,7 @@ def _collect_arxiv_html_section_hints(
     return hints
 
 
+@formula_document(new_document=True)
 def _extract_arxiv_html_markdown(
     html_text: str,
     source_url: str,
@@ -472,19 +475,25 @@ def _extract_arxiv_html_markdown(
         _prepare_arxiv_semantic_blocks,
     )
 
+    from ..extraction.html.object_links import prepare_retained_object_links
+
+    prepare_retained_object_links(article, source_url)
     html_frontmatter = _extract_arxiv_html_frontmatter(
         soup,
         article,
         source_url,
         metadata=metadata,
     )
+    from ._arxiv_graphics import prepare_arxiv_graphics
+
+    prepare_arxiv_graphics(article, source_url)
     noise_diagnostics = _clean_official_html_latexml_noise(article)
     extracted_references = _extract_arxiv_html_references(article)
     extracted_assets = _extract_arxiv_html_assets(str(article), source_url)
-    semantic_preparation = _prepare_arxiv_semantic_blocks(article, soup)
     inline_figure_diagnostics = _annotate_arxiv_inline_figure_images(
         article, extracted_assets, source_url
     )
+    semantic_preparation = _prepare_arxiv_semantic_blocks(article, soup)
 
     for selector in _arxiv_ar5iv_selectors("article_chrome"):
         for node in article.select(selector):
@@ -555,6 +564,11 @@ def _extract_arxiv_html_markdown(
     diagnostics["semantic_losses"] = {
         "table_fallback_count": semantic_loss_count,
         "table_semantic_loss_count": semantic_loss_count,
+        "formula_diagnostics": formula_diagnostics(),
+        "formula_fallback_count": sum(
+            bool(item["source_tex"]) and (bool(item["backend"]) or not item["valid"])
+            for item in formula_diagnostics()
+        ),
     }
     merged_metadata = _merge_arxiv_metadata_layers(
         metadata,

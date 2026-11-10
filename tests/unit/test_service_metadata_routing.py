@@ -1,7 +1,6 @@
-# ruff: noqa: F403,F405
 from __future__ import annotations
-
-from ._service_support import *
+from tests.support._service_support import *
+# ruff: noqa: F403,F405
 
 
 class ServiceMetadataRoutingTests(unittest.TestCase):
@@ -20,7 +19,7 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
             paper_fetch.fetch_metadata_for_resolved_query(
                 resolved,
                 clients={
-                    "elsevier": StubProvider(
+                    "elsevier": FixtureProvider(
                         metadata={
                             "provider": "elsevier",
                             "official_provider": True,
@@ -32,7 +31,7 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                             "references": [],
                         }
                     ),
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -79,12 +78,12 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
             paper_fetch.fetch_metadata_for_resolved_query(
                 resolved,
                 clients={
-                    "springer": StubProvider(
+                    "springer": FixtureProvider(
                         metadata=paper_fetch.ProviderFailure(
                             "not_supported", "Springer metadata probe is not supported."
                         )
                     ),
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -128,38 +127,40 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                 strategy=paper_fetch.FetchStrategy(
                     preferred_providers=["elsevier"],
                 ),
-                clients={
-                    "elsevier": StubProvider(
-                        metadata={
-                            "provider": "elsevier",
-                            "official_provider": True,
-                            "doi": "10.1006/jaer.1996.0085",
-                            "title": "Official Elsevier Title",
-                            "landing_page_url": "https://linkinghub.elsevier.com/retrieve/pii/S0021863496900852",
-                            "fulltext_links": [],
-                            "references": [],
-                        },
-                        raw_payload=RawFulltextPayload(
-                            provider="elsevier",
-                            source_url="https://api.elsevier.com/content/article/doi/10.1006%2Fjaer.1996.0085",
-                            content_type="text/xml",
-                            body=b"<xml/>",
+                context=RuntimeContext(
+                    clients={
+                        "elsevier": FixtureProvider(
+                            metadata={
+                                "provider": "elsevier",
+                                "official_provider": True,
+                                "doi": "10.1006/jaer.1996.0085",
+                                "title": "Official Elsevier Title",
+                                "landing_page_url": "https://linkinghub.elsevier.com/retrieve/pii/S0021863496900852",
+                                "fulltext_links": [],
+                                "references": [],
+                            },
+                            raw_payload=RawFulltextPayload(
+                                provider="elsevier",
+                                source_url="https://api.elsevier.com/content/article/doi/10.1006%2Fjaer.1996.0085",
+                                content_type="text/xml",
+                                body=b"<xml/>",
+                            ),
+                            article=official_article,
                         ),
-                        article=official_article,
-                    ),
-                    "crossref": StubProvider(
-                        metadata={
-                            "provider": "crossref",
-                            "official_provider": False,
-                            "doi": "10.1006/jaer.1996.0085",
-                            "title": "Crossref Title",
-                            "publisher": "Elsevier BV",
-                            "landing_page_url": "https://linkinghub.elsevier.com/retrieve/pii/S0021863496900852",
-                            "fulltext_links": [],
-                            "references": [],
-                        }
-                    ),
-                },
+                        "crossref": FixtureProvider(
+                            metadata={
+                                "provider": "crossref",
+                                "official_provider": False,
+                                "doi": "10.1006/jaer.1996.0085",
+                                "title": "Crossref Title",
+                                "publisher": "Elsevier BV",
+                                "landing_page_url": "https://linkinghub.elsevier.com/retrieve/pii/S0021863496900852",
+                                "fulltext_links": [],
+                                "references": [],
+                            }
+                        ),
+                    }
+                ),
             ).article
         finally:
             paper_fetch.resolve_paper = original_resolve
@@ -190,7 +191,7 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
             article = fetch_paper_model(
                 "10.1006/jaer.1996.0085",
                 clients={
-                    "elsevier": StubProvider(
+                    "elsevier": FixtureProvider(
                         metadata=paper_fetch.ProviderFailure(
                             "no_result", "Elsevier metadata probe missed."
                         ),
@@ -202,7 +203,7 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                         ),
                         article=official_article,
                     ),
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -243,37 +244,39 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                 strategy=paper_fetch.FetchStrategy(
                     preferred_providers=["crossref"],
                 ),
-                clients={
-                    "elsevier": StubProvider(
-                        metadata={
-                            "provider": "elsevier",
-                            "official_provider": True,
-                            "doi": "10.1016/test",
-                            "title": "Official Elsevier Title",
-                            "landing_page_url": "https://example.test/article",
-                            "fulltext_links": [],
-                            "references": [],
-                        },
-                        raw_payload=RawFulltextPayload(
-                            provider="elsevier",
-                            source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
-                            content_type="text/xml",
-                            body=b"<xml/>",
+                context=RuntimeContext(
+                    clients={
+                        "elsevier": FixtureProvider(
+                            metadata={
+                                "provider": "elsevier",
+                                "official_provider": True,
+                                "doi": "10.1016/test",
+                                "title": "Official Elsevier Title",
+                                "landing_page_url": "https://example.test/article",
+                                "fulltext_links": [],
+                                "references": [],
+                            },
+                            raw_payload=RawFulltextPayload(
+                                provider="elsevier",
+                                source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
+                                content_type="text/xml",
+                                body=b"<xml/>",
+                            ),
+                            article=sample_article(),
                         ),
-                        article=sample_article(),
-                    ),
-                    "crossref": StubProvider(
-                        metadata={
-                            "provider": "crossref",
-                            "official_provider": False,
-                            "doi": "10.1016/test",
-                            "title": "Crossref Title",
-                            "landing_page_url": "https://example.test/article",
-                            "fulltext_links": [],
-                            "references": [],
-                        }
-                    ),
-                },
+                        "crossref": FixtureProvider(
+                            metadata={
+                                "provider": "crossref",
+                                "official_provider": False,
+                                "doi": "10.1016/test",
+                                "title": "Crossref Title",
+                                "landing_page_url": "https://example.test/article",
+                                "fulltext_links": [],
+                                "references": [],
+                            }
+                        ),
+                    }
+                ),
             )
         finally:
             paper_fetch.resolve_paper = original_resolve
@@ -309,31 +312,33 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                 "10.1111/test",
                 modes={"markdown"},
                 strategy=paper_fetch.FetchStrategy(),
-                clients={
-                    "wiley": StubProvider(
-                        metadata=paper_fetch.ProviderFailure(
-                            "not_supported", "No official metadata."
+                context=RuntimeContext(
+                    clients={
+                        "wiley": FixtureProvider(
+                            metadata=paper_fetch.ProviderFailure(
+                                "not_supported", "No official metadata."
+                            ),
+                            raw_payload=RawFulltextPayload(
+                                provider="wiley",
+                                source_url="https://example.test/wiley.pdf",
+                                content_type="application/pdf",
+                                body=b"%PDF-1.4",
+                            ),
+                            article=official_article,
                         ),
-                        raw_payload=RawFulltextPayload(
-                            provider="wiley",
-                            source_url="https://example.test/wiley.pdf",
-                            content_type="application/pdf",
-                            body=b"%PDF-1.4",
+                        "crossref": FixtureProvider(
+                            metadata={
+                                "provider": "crossref",
+                                "official_provider": False,
+                                "doi": "10.1111/test",
+                                "title": "Example Article",
+                                "landing_page_url": "https://example.test/wiley",
+                                "fulltext_links": [],
+                                "references": [],
+                            }
                         ),
-                        article=official_article,
-                    ),
-                    "crossref": StubProvider(
-                        metadata={
-                            "provider": "crossref",
-                            "official_provider": False,
-                            "doi": "10.1111/test",
-                            "title": "Example Article",
-                            "landing_page_url": "https://example.test/wiley",
-                            "fulltext_links": [],
-                            "references": [],
-                        }
-                    ),
-                },
+                    }
+                ),
             )
         finally:
             paper_fetch.resolve_paper = original_resolve
@@ -341,8 +346,11 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
         self.assertEqual(
             set(envelope.to_dict().keys()),
             {
+                "target",
+                "supplementary",
                 "doi",
                 "source",
+                "acquisition",
                 "has_fulltext",
                 "content_kind",
                 "has_abstract",
@@ -381,73 +389,77 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                 "10.1016/test",
                 modes={"article"},
                 strategy=paper_fetch.FetchStrategy(),
-                clients={
-                    "elsevier": StubProvider(
-                        metadata={
-                            "provider": "elsevier",
-                            "official_provider": True,
-                            "doi": "10.1016/test",
-                            "title": "Example Article",
-                            "landing_page_url": "https://example.test/article",
-                            "fulltext_links": [],
-                            "references": [],
-                        },
-                        raw_payload=RawFulltextPayload(
-                            provider="elsevier",
-                            source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
-                            content_type="text/xml",
-                            body=b"<xml/>",
+                context=RuntimeContext(
+                    clients={
+                        "elsevier": FixtureProvider(
+                            metadata={
+                                "provider": "elsevier",
+                                "official_provider": True,
+                                "doi": "10.1016/test",
+                                "title": "Example Article",
+                                "landing_page_url": "https://example.test/article",
+                                "fulltext_links": [],
+                                "references": [],
+                            },
+                            raw_payload=RawFulltextPayload(
+                                provider="elsevier",
+                                source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
+                                content_type="text/xml",
+                                body=b"<xml/>",
+                            ),
+                            article=official_article,
                         ),
-                        article=official_article,
-                    ),
-                    "crossref": StubProvider(
-                        metadata={
-                            "provider": "crossref",
-                            "official_provider": False,
-                            "doi": "10.1016/test",
-                            "title": "Example Article",
-                            "landing_page_url": "https://example.test/article",
-                            "fulltext_links": [],
-                            "references": [],
-                        }
-                    ),
-                },
+                        "crossref": FixtureProvider(
+                            metadata={
+                                "provider": "crossref",
+                                "official_provider": False,
+                                "doi": "10.1016/test",
+                                "title": "Example Article",
+                                "landing_page_url": "https://example.test/article",
+                                "fulltext_links": [],
+                                "references": [],
+                            }
+                        ),
+                    }
+                ),
             )
             with_metadata = _fetch_paper(
                 "10.1016/test",
                 modes={"article", "metadata"},
                 strategy=paper_fetch.FetchStrategy(),
-                clients={
-                    "elsevier": StubProvider(
-                        metadata={
-                            "provider": "elsevier",
-                            "official_provider": True,
-                            "doi": "10.1016/test",
-                            "title": "Example Article",
-                            "landing_page_url": "https://example.test/article",
-                            "fulltext_links": [],
-                            "references": [],
-                        },
-                        raw_payload=RawFulltextPayload(
-                            provider="elsevier",
-                            source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
-                            content_type="text/xml",
-                            body=b"<xml/>",
+                context=RuntimeContext(
+                    clients={
+                        "elsevier": FixtureProvider(
+                            metadata={
+                                "provider": "elsevier",
+                                "official_provider": True,
+                                "doi": "10.1016/test",
+                                "title": "Example Article",
+                                "landing_page_url": "https://example.test/article",
+                                "fulltext_links": [],
+                                "references": [],
+                            },
+                            raw_payload=RawFulltextPayload(
+                                provider="elsevier",
+                                source_url="https://api.elsevier.com/content/article/doi/10.1016%2Ftest",
+                                content_type="text/xml",
+                                body=b"<xml/>",
+                            ),
+                            article=official_article,
                         ),
-                        article=official_article,
-                    ),
-                    "crossref": StubProvider(
-                        metadata={
-                            "provider": "crossref",
-                            "official_provider": False,
-                            "doi": "10.1016/test",
-                            "title": "Example Article",
-                            "landing_page_url": "https://example.test/article",
-                            "fulltext_links": [],
-                            "references": [],
-                        }
-                    ),
-                },
+                        "crossref": FixtureProvider(
+                            metadata={
+                                "provider": "crossref",
+                                "official_provider": False,
+                                "doi": "10.1016/test",
+                                "title": "Example Article",
+                                "landing_page_url": "https://example.test/article",
+                                "fulltext_links": [],
+                                "references": [],
+                            }
+                        ),
+                    }
+                ),
             )
         finally:
             paper_fetch.resolve_paper = original_resolve
@@ -475,7 +487,7 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
             article = fetch_paper_model(
                 "10.1000/test",
                 clients={
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -517,34 +529,36 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                     strategy=paper_fetch.FetchStrategy(
                         allow_metadata_only_fallback=False,
                     ),
-                    clients={
-                        "elsevier": StubProvider(
-                            metadata={
-                                "provider": "elsevier",
-                                "official_provider": True,
-                                "doi": "10.1016/test",
-                                "title": "Example Article",
-                                "landing_page_url": "https://example.test/article",
-                                "fulltext_links": [],
-                                "references": [],
-                            },
-                            raw_error=paper_fetch.ProviderFailure(
-                                "no_result", "No full text."
+                    context=RuntimeContext(
+                        clients={
+                            "elsevier": FixtureProvider(
+                                metadata={
+                                    "provider": "elsevier",
+                                    "official_provider": True,
+                                    "doi": "10.1016/test",
+                                    "title": "Example Article",
+                                    "landing_page_url": "https://example.test/article",
+                                    "fulltext_links": [],
+                                    "references": [],
+                                },
+                                raw_error=paper_fetch.ProviderFailure(
+                                    "no_result", "No full text."
+                                ),
                             ),
-                        ),
-                        "crossref": StubProvider(
-                            metadata={
-                                "provider": "crossref",
-                                "official_provider": False,
-                                "doi": "10.1016/test",
-                                "title": "Example Article",
-                                "landing_page_url": "https://example.test/article",
-                                "abstract": "Fallback abstract",
-                                "fulltext_links": [],
-                                "references": [],
-                            }
-                        ),
-                    },
+                            "crossref": FixtureProvider(
+                                metadata={
+                                    "provider": "crossref",
+                                    "official_provider": False,
+                                    "doi": "10.1016/test",
+                                    "title": "Example Article",
+                                    "landing_page_url": "https://example.test/article",
+                                    "abstract": "Fallback abstract",
+                                    "fulltext_links": [],
+                                    "references": [],
+                                }
+                            ),
+                        }
+                    ),
                 )
         finally:
             paper_fetch.resolve_paper = original_resolve
@@ -570,7 +584,7 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
             article = fetch_paper_model(
                 doi,
                 clients={
-                    "elsevier": StubProvider(
+                    "elsevier": FixtureProvider(
                         metadata={
                             "provider": "elsevier",
                             "official_provider": True,
@@ -582,7 +596,7 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                             "Elsevier did not expose this migrated article.",
                         ),
                     ),
-                    "springer": StubProvider(
+                    "springer": FixtureProvider(
                         metadata={
                             "provider": "springer",
                             "official_provider": True,
@@ -612,8 +626,10 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
             article.quality.source_trail,
         )
 
-    def test_fulltext_access_boundary_stops_ranked_provider_fallback(self) -> None:
-        class CountingProvider(StubProvider):
+    def test_weak_conflicting_access_boundary_continues_to_strong_doi_provider(
+        self,
+    ) -> None:
+        class CountingProvider(FixtureProvider):
             def __init__(self, **kwargs):
                 super().__init__(**kwargs)
                 self.raw_calls = 0
@@ -635,6 +651,9 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
             provider_hint="elsevier",
             confidence=1.0,
         )
+        springer_article = sample_article()
+        springer_article.doi = doi
+        springer_article.source = "springer_html"
         second = CountingProvider(
             metadata={
                 "provider": "springer",
@@ -642,7 +661,13 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                 "doi": doi,
                 "title": "Protected Article",
             },
-            raw_error=AssertionError("second provider must not be attempted"),
+            raw_payload=RawFulltextPayload(
+                provider="springer",
+                source_url="https://link.springer.com/article/test",
+                content_type="text/html",
+                body=b"<article>full text</article>",
+            ),
+            article=springer_article,
         )
         original_resolve = paper_fetch.resolve_paper
         try:
@@ -650,7 +675,7 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
             article = fetch_paper_model(
                 doi,
                 clients={
-                    "elsevier": StubProvider(
+                    "elsevier": FixtureProvider(
                         metadata={
                             "provider": "elsevier",
                             "official_provider": True,
@@ -660,6 +685,64 @@ class ServiceMetadataRoutingTests(unittest.TestCase):
                         raw_error=paper_fetch.ProviderFailure(
                             "no_access",
                             "Authentication is required.",
+                        ),
+                    ),
+                    "springer": second,
+                },
+            )
+        finally:
+            paper_fetch.resolve_paper = original_resolve
+
+        self.assertEqual(article.source, "springer_html")
+        self.assertEqual(second.raw_calls, 1)
+        self.assertIn(
+            "route:provider_candidate_elsevier_access_boundary_weak_continue",
+            article.quality.source_trail,
+        )
+        self.assertIn(
+            "route:provider_candidate_springer_identity_strong",
+            article.quality.source_trail,
+        )
+
+    def test_strong_doi_provider_access_boundary_stops_weaker_candidate(self) -> None:
+        class CountingProvider(FixtureProvider):
+            def __init__(self, **kwargs):
+                super().__init__(**kwargs)
+                self.raw_calls = 0
+
+            def fetch_raw_fulltext(self, doi, metadata, *, context=None):
+                self.raw_calls += 1
+                return super().fetch_raw_fulltext(doi, metadata, context=context)
+
+        doi = "10.1016/j.example.2026.1"
+        resolved = paper_fetch.ResolvedQuery(
+            query=doi,
+            query_kind="doi",
+            doi=doi,
+            landing_url="https://linkinghub.elsevier.com/retrieve/pii/test",
+            provider_hint="elsevier",
+            confidence=1.0,
+        )
+        second = CountingProvider(
+            metadata={"provider": "springer", "doi": doi},
+            raw_error=AssertionError("weak second provider must not be attempted"),
+        )
+        original_resolve = paper_fetch.resolve_paper
+        try:
+            paper_fetch.resolve_paper = lambda *args, **kwargs: resolved
+            article = fetch_paper_model(
+                doi,
+                clients={
+                    "elsevier": FixtureProvider(
+                        metadata={
+                            "provider": "elsevier",
+                            "official_provider": True,
+                            "doi": doi,
+                            "title": "Protected Article",
+                            "publisher": "Springer Nature",
+                        },
+                        raw_error=paper_fetch.ProviderFailure(
+                            "no_access", "Authentication is required."
                         ),
                     ),
                     "springer": second,

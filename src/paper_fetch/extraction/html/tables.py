@@ -10,15 +10,13 @@ from ..table_grid import (
     TableCell,
     TableConversionReason,
     TableRow,
-    expand_table_grid,
-    flatten_header_rows,
     normalize_table,
 )
 from ..markdown_render import table_format as markdown_table_format
 from ...models import normalize_markdown_text
 from ...utils import normalize_text
+from ...markdown.images import render_markdown_image
 from .inline import (
-    normalize_html_inline_text,
     render_html_inline_node,
     wrap_html_inline_text_fragment,
 )
@@ -32,16 +30,68 @@ RenderInlineTextFn = Callable[[Any], str]
 CleanMarkdownFn = Callable[[str], str]
 
 
-def normalize_table_inline_text(value: str) -> str:
-    return normalize_html_inline_text(value, policy="table_cell")
-
-
 def wrap_table_text_fragment(text: str, marker: str | None) -> str:
     return wrap_html_inline_text_fragment(text, marker)
 
 
 def render_table_inline_node(node: Any, *, text_style: str | None = None) -> str:
-    return render_html_inline_node(node, policy="table_cell", text_style=text_style)
+    def image_markdown(child: Any) -> str | None:
+        if isinstance(child, Tag) and child.name == "a" and child.get("href"):
+            from urllib.parse import quote
+
+            href = quote(str(child["href"]), safe="/:#?=&%+@;,~!$*'[]")
+            content = deepcopy(child)
+            content.name = "span"
+            label = render_html_inline_node(
+                content,
+                policy="table_cell",
+                text_style=text_style,
+                raw_markdown_from_node=image_markdown,
+            )
+            return label if href == "#" else f"[{label}]({href})"
+        from ..markdown_render.formulas import (
+            is_mathjax_tex_node,
+            is_html_formula_container,
+            render_html_formula_container,
+        )
+
+        if isinstance(child, Tag) and (
+            child.name == "math"
+            or is_mathjax_tex_node(child)
+            or is_html_formula_container(child)
+        ):
+            return render_html_formula_container(child) or None
+        if isinstance(child, Tag) and child.name == "img":
+            url = next(
+                (
+                    str(child[key])
+                    for key in ("src", "data-src", "data-lsrc")
+                    if child.get(key)
+                ),
+                "",
+            )
+            if url:
+                return render_markdown_image(
+                    "image", str(child.get("alt") or "Image"), url
+                )
+        return None
+
+    from copy import deepcopy
+
+    node = deepcopy(node)
+    if isinstance(node, Tag):
+        for block in node.find_all(["p", "div"]):
+            block.insert_before(
+                Tag(name="br")
+            ) if block.previous_sibling is not None else None
+        for bold in node.select(".ltx_font_bold"):
+            bold.name = "strong"
+    return render_html_inline_node(
+        node,
+        policy="table_cell",
+        text_style=text_style,
+        raw_markdown_from_node=image_markdown,
+    )
 
 
 def render_table_inline_text(node: Any) -> str:
@@ -158,17 +208,6 @@ def _table_rows_to_ir(
     )
 
 
-def _table_cell_from_ir(cell: TableCell) -> dict[str, Any]:
-    return {
-        "text": cell.text,
-        "is_header": cell.is_header,
-        "is_header_candidate": cell.is_header_candidate,
-        "rowspan": 1,
-        "colspan": 1,
-        "span_valid": True,
-    }
-
-
 def table_header_row_count(table: Tag, rows: list[list[dict[str, Any]]]) -> int:
     thead = table.find("thead")
     if isinstance(thead, Tag):
@@ -225,40 +264,6 @@ def leading_full_width_spanner_rows(
         lifted.append(text)
         index += 1
     return lifted, rows[index:]
-
-
-def expanded_table_matrix(
-    rows: list[list[dict[str, Any]]],
-) -> list[list[dict[str, Any]]] | None:
-    grid = expand_table_grid(_table_rows_to_ir(rows))
-    if grid.matrix is None:
-        return None
-    return [[_table_cell_from_ir(cell) for cell in row] for row in grid.matrix]
-
-
-def flatten_table_header_rows(rows: list[list[dict[str, Any]]]) -> list[str]:
-    return list(
-        flatten_header_rows(
-            [tuple(_table_cell_to_ir(cell) for cell in row) for row in rows]
-        )
-    )
-
-
-def normalize_table_header_rows(
-    rows: list[list[dict[str, Any]]],
-) -> list[list[dict[str, Any]]]:
-    if len(rows) <= 1:
-        return rows
-    first_row = rows[0]
-    first_texts = [normalize_text(str(cell.get("text") or "")) for cell in first_row]
-    if not first_texts or any(not text for text in first_texts):
-        return rows
-    if len(set(first_texts)) != 1:
-        return rows
-    next_row_texts = [normalize_text(str(cell.get("text") or "")) for cell in rows[1]]
-    if not any(next_row_texts):
-        return rows
-    return rows[1:]
 
 
 def table_headers_and_data(
@@ -383,10 +388,7 @@ def render_table_markdown(
         header_row = [header for header in headers]
         body_rows: list[list[str]] = []
         for row in data_rows:
-            cells = [normalize_text(str(cell.get("text") or "")) for cell in row]
-            nonempty_cells = [cell for cell in cells if cell]
-            if len(nonempty_cells) > 1 and len(set(nonempty_cells)) == 1:
-                cells = [nonempty_cells[0], *[""] * (len(cells) - 1)]
+            cells = [str(cell.get("text") or "") for cell in row]
             body_rows.append(cells + [""] * max(0, len(header_row) - len(cells)))
         lines.extend(render_aligned_markdown_table([header_row, *body_rows]))
         return "\n".join(lines)
@@ -432,7 +434,7 @@ def inject_inline_table_blocks(
         return markdown_text
 
     blocks = [
-        normalize_markdown_text(block)
+        block.strip("\r\n")
         for block in re.split(r"\n\s*\n", markdown_text)
         if normalize_text(block)
     ]
@@ -446,7 +448,7 @@ def inject_inline_table_blocks(
             injected.append(block)
             continue
         injected.extend(
-            normalize_markdown_text(part)
+            part.strip("\r\n")
             for part in re.split(r"\n\s*\n", replacement)
             if normalize_text(part)
         )

@@ -11,7 +11,6 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 INSTALLER_MANIFEST_FILE="$REPO_DIR/installer/manifest.json"
 MACOS_MINIMUM_OS_VERSION="15.0"
 CAMOUFOX_PYTHON_PACKAGE_VERSION=""
-PAPER_FETCH_OFFLINE_TOOLING_REVISION="${PAPER_FETCH_OFFLINE_TOOLING_REVISION:-}"
 STAGING_OWNERSHIP_MARKER_NAME=".paper-fetch-offline-staging-owner"
 STAGING_OWNERSHIP_MARKER_MAGIC="paper-fetch-offline-staging-v1"
 
@@ -74,31 +73,6 @@ if not soabi.startswith(f"{expected_soabi}-"):
     raise SystemExit(1)
 
 print(f"cp{sys.version_info.major}{sys.version_info.minor}")
-PY
-}
-
-locked_camoufox_version() {
-  "$PYTHON_BIN" - "$REPO_DIR/uv.lock" <<'PY'
-from __future__ import annotations
-
-from pathlib import Path
-import sys
-import tomllib
-
-lock_path = Path(sys.argv[1])
-with lock_path.open("rb") as handle:
-    lock = tomllib.load(handle)
-matches = [
-    str(package.get("version") or "").strip()
-    for package in lock.get("package", [])
-    if str(package.get("name") or "").casefold() == "camoufox"
-]
-if len(matches) != 1 or not matches[0]:
-    raise SystemExit(
-        "uv.lock must contain exactly one versioned Camoufox package; "
-        f"found {len(matches)}"
-    )
-print(matches[0])
 PY
 }
 
@@ -175,12 +149,6 @@ validate_package_name() {
       die "Unsafe package name: $package_name"
       ;;
   esac
-}
-
-validate_tooling_revision() {
-  [ -z "$PAPER_FETCH_OFFLINE_TOOLING_REVISION" ] && return 0
-  [[ "$PAPER_FETCH_OFFLINE_TOOLING_REVISION" =~ ^[0-9A-Fa-f]{40}$ ]] \
-    || die "PAPER_FETCH_OFFLINE_TOOLING_REVISION must be a 40-character hexadecimal Git revision."
 }
 
 canonical_path() {
@@ -289,7 +257,6 @@ prepare_owned_staging() {
 }
 
 [ -z "$PACKAGE_NAME" ] || validate_package_name "$PACKAGE_NAME"
-validate_tooling_revision
 
 project_version() {
   "$PYTHON_BIN" -c 'import pathlib, sys, tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding="utf-8"))["project"]["version"])' "$REPO_DIR/pyproject.toml"
@@ -311,12 +278,13 @@ print(value)
 copy_runtime_assets() {
   local staging="$1"
   log "Copying runtime installer assets"
-  mkdir -p "$staging/installer" "$staging/skills"
+  mkdir -p "$staging/installer" "$staging/scripts" "$staging/skills"
   cp "$REPO_DIR/install-offline.sh" "$staging/install-offline.sh"
   chmod +x "$staging/install-offline.sh"
   cp "$REPO_DIR/.env.example" "$staging/.env.example"
   cp "$REPO_DIR/LICENSE" "$staging/LICENSE"
   cp "$INSTALLER_MANIFEST_FILE" "$staging/installer/manifest.json"
+  cp "$REPO_DIR/scripts/skill_integrity.py" "$staging/scripts/skill_integrity.py"
   cp -a "$REPO_DIR/skills/paper-fetch-skill" "$staging/skills/"
 }
 
@@ -345,8 +313,7 @@ build_project_runtime() {
   "$PYTHON_BIN" -m pip download \
     --dest "$wheelhouse" \
     --only-binary=:all: \
-    "${wheels[0]}[full]" \
-    "camoufox==$CAMOUFOX_PYTHON_PACKAGE_VERSION"
+    "${wheels[0]}[full]"
 
   shopt -s nullglob
   local camoufox_wheels=("$wheelhouse"/camoufox-*.whl)
@@ -354,7 +321,8 @@ build_project_runtime() {
   [ "${#camoufox_wheels[@]}" -eq 1 ] \
     || die "Expected one Camoufox dependency wheel, found ${#camoufox_wheels[@]}."
 
-  "$PYTHON_BIN" - "${camoufox_wheels[0]}" "$CAMOUFOX_PYTHON_PACKAGE_VERSION" <<'PY'
+  CAMOUFOX_PYTHON_PACKAGE_VERSION="$(
+    "$PYTHON_BIN" - "${camoufox_wheels[0]}" <<'PY'
 from __future__ import annotations
 
 from email.parser import BytesParser
@@ -363,7 +331,6 @@ import sys
 from zipfile import ZipFile
 
 wheel = Path(sys.argv[1])
-expected_version = sys.argv[2]
 with ZipFile(wheel) as archive:
     candidates = []
     for name in archive.namelist():
@@ -378,12 +345,14 @@ if len(candidates) != 1:
         "Camoufox wheel must contain exactly one Camoufox distribution; "
         f"found {len(candidates)} in {wheel.name}"
     )
-if candidates[0] != expected_version:
+resolved_version = candidates[0].strip()
+if not resolved_version:
     raise SystemExit(
-        f"Camoufox dependency wheel must be exactly {expected_version}; "
-        f"found {candidates[0] or '<missing>'} in {wheel.name}"
+        f"Camoufox dependency wheel has no version in {wheel.name}"
     )
+print(resolved_version)
 PY
+  )" || die "Could not resolve the Camoufox package version from its wheel metadata."
 
   log "Installing project runtime into package"
   PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
@@ -415,7 +384,7 @@ if len(matches) != 1:
     )
 if matches[0].version != expected_version:
     raise SystemExit(
-        f"Installed Camoufox runtime must be exactly {expected_version}; "
+        f"Installed Camoufox runtime must match resolved wheel version {expected_version}; "
         f"found {matches[0].version or '<missing>'}"
     )
 PY
@@ -424,7 +393,7 @@ PY
   "$PYTHON_BIN" -m compileall -q "$site_packages"
 
   PYTHONPATH="$site_packages${PYTHONPATH:+:$PYTHONPATH}" \
-    "$PYTHON_BIN" -X utf8 -c 'import camoufox; import playwright; import pymupdf; import paper_fetch; import paper_fetch.mcp.server; from paper_fetch.runtime_browser import BrowserContextManager; assert hasattr(camoufox, "Camoufox"); assert BrowserContextManager is not None'
+    "$PYTHON_BIN" -X utf8 -c 'import camoufox; import playwright; import pymupdf; import paper_fetch; import paper_fetch.mcp.server; from paper_fetch.providers.browser_runtime.camoufox_manager import CamoufoxBrowserManager; assert hasattr(camoufox, "Camoufox"); assert CamoufoxBrowserManager is not None'
 
   staging_is_owned "$staging" "$package_name" \
     || die "Offline staging ownership changed during runtime assembly: $staging"
@@ -534,6 +503,9 @@ PY
   printf '<math><mi>x</mi></math>' \
     | "$node_bin" "$formula_tools/mathml_to_latex_cli.mjs" \
     | grep -q 'x'
+  printf '%s\n' '{"id":1,"session":"offline-smoke","expression":"\\mathbbm{1}+\\textdegree","displayMode":false}' \
+    | "$node_bin" "$formula_tools/tex_validation_worker.mjs" \
+    | "$PYTHON_BIN" -c 'import json,sys; result=json.load(sys.stdin); assert result["ok"] and result["valid"], result'
 }
 
 copy_macos_library_licenses() {
@@ -714,16 +686,22 @@ This package includes an installed Python runtime under `runtime/site-packages`,
 The offline build does not bundle Ghostscript/libvips from the build host PATH; AMS EPS/TIFF source figure conversion falls back to webpage JPG/PNG candidates when those tools are unavailable.
 The `bin/` directory exposes paper-fetch commands only; it does not include a generic `python` wrapper.
 It does not redistribute the Camoufox browser binary for browser-backed providers.
-`paper-fetch` does not download that binary automatically during fetch. While
-still online, run `./runtime/paper-fetch-python -m camoufox fetch` to download
-the Camoufox runtime, then run `./bin/paper-fetch browser-preflight` to verify
-it before moving the installation to a fully offline host.
+After core smoke checks, browsers are prepared by default, including non-interactive installs.
+Use `--skip-browser-prepare` to skip preparation. System packages retain their existing permission rules.
+The optional wizard configures credentials and image tools. Failures preserve the core installation.
+Before moving fully offline, run `./runtime/paper-fetch-python -m paper_fetch.offline_setup --install-root . --prepare-browsers all`.
 EOF
 
   printf '\n%s\n\n' "$install_line" >> "$staging/README.offline.md"
 
   cat >> "$staging/README.offline.md" <<'EOF'
-Browser-backed providers use native Camoufox.
+On Linux x64, PNAS and Elsevier browser routes use managed Camoufox and Byparr;
+other browser routes use Camoufox. macOS uses Camoufox and skips Elsevier browser routes.
+Linux x64 bundles pinned Byparr source and private Python dependencies under
+`runtime/browser-components/byparr/` on Linux and macOS.
+Preparation manages Camoufox binaries/fingerprint models shared with Byparr.
+Only successful online checks establish a 24-hour reuse window; failures/cancellation can retry.
+See `browser-setup-results.txt`, or rerun the shared preparation command above.
 Set `PAPER_FETCH_BROWSER_HEADLESS=false` only when running with a display-capable session.
 
 The installer writes `PAPER_FETCH_BROWSER_HEADLESS=true` into `offline.env`. It does not override Camoufox's generated Firefox user agent or fingerprint settings.
@@ -799,14 +777,14 @@ write_manifest_and_checksums() {
   git_revision="$(git -C "$REPO_DIR" rev-parse HEAD 2>/dev/null || true)"
   skill_name="$(installer_manifest_value skill.name)"
   skill_bundle_json="$(
-    "$PYTHON_BIN" "$REPO_DIR/src/paper_fetch/skill_integrity.py" build \
+    "$PYTHON_BIN" "$REPO_DIR/scripts/skill_integrity.py" build \
       --skill-dir "$staging/skills/$skill_name" \
       --name "$skill_name" \
       --root "skills/$skill_name"
   )"
 
   log "Writing manifest and checksums"
-  "$PYTHON_BIN" - "$staging" "$version" "$git_revision" "$target_platform" "$target_arch" "$python_tag" "$minimum_os_version" "$INSTALLER_MANIFEST_FILE" "$skill_bundle_json" "$PAPER_FETCH_OFFLINE_TOOLING_REVISION" "$CAMOUFOX_PYTHON_PACKAGE_VERSION" <<'PY'
+  "$PYTHON_BIN" - "$staging" "$version" "$git_revision" "$target_platform" "$target_arch" "$python_tag" "$minimum_os_version" "$INSTALLER_MANIFEST_FILE" "$skill_bundle_json" "$CAMOUFOX_PYTHON_PACKAGE_VERSION" <<'PY'
 from __future__ import annotations
 
 from importlib.metadata import distributions
@@ -825,8 +803,7 @@ python_tag = sys.argv[6]
 minimum_os_version = sys.argv[7] or None
 installer_manifest = json.loads(Path(sys.argv[8]).read_text(encoding="utf-8"))
 skill_bundle = json.loads(sys.argv[9])
-tooling_revision = sys.argv[10] or None
-expected_camoufox_version = sys.argv[11]
+resolved_camoufox_version = sys.argv[10]
 site_packages = staging / "runtime" / "site-packages"
 installed_packages = sorted(path.name for path in site_packages.glob("*.dist-info"))
 camoufox_distributions = [
@@ -840,9 +817,9 @@ if len(camoufox_distributions) != 1:
         f"found {len(camoufox_distributions)}"
     )
 camoufox_version = camoufox_distributions[0].version
-if camoufox_version != expected_camoufox_version:
+if camoufox_version != resolved_camoufox_version:
     raise SystemExit(
-        f"Offline manifest requires Camoufox {expected_camoufox_version}; "
+        f"Offline manifest requires resolved Camoufox {resolved_camoufox_version}; "
         f"found {camoufox_version or '<missing>'}"
     )
 manifest_name_key = f"{target_platform}_manifest_name"
@@ -854,11 +831,6 @@ payload = {
     "version": version,
     "built_at_utc": datetime.now(UTC).replace(microsecond=0).isoformat().replace("+00:00", "Z"),
     "git_revision": git_revision,
-    **(
-        {"tooling_revision": tooling_revision}
-        if tooling_revision is not None
-        else {}
-    ),
     "target": {
         "platform": target_platform,
         "arch": target_arch,
@@ -893,7 +865,38 @@ payload = {
 
 PY
 
+  "$PYTHON_BIN" "$REPO_DIR/scripts/generate_offline_evidence.py" \
+    --staging "$staging" \
+    --site-packages "$staging/runtime/site-packages" \
+    --offline-manifest "$staging/offline-manifest.json" \
+    --output-dir "$staging" \
+    --target "$target_platform-$target_arch-$python_tag" \
+    --cyclonedx-python "$PYTHON_BIN"
+
   write_checksums "$staging"
+}
+
+publish_dependency_evidence() {
+  local staging="$1"
+  local output_dir="$2"
+  local target="$3"
+  local source destination temporary
+  mkdir -p "$output_dir"
+  for evidence in \
+    "dependency-manifest.json:dependency-manifest.json" \
+    "paper-fetch-sbom.cdx.json:sbom.cdx.json"
+  do
+    source="$staging/${evidence%%:*}"
+    destination="$output_dir/paper-fetch-evidence-$target.${evidence#*:}"
+    temporary="$(mktemp "$output_dir/.paper-fetch-evidence.XXXXXX")"
+    install -m 0644 "$source" "$temporary"
+    "$PYTHON_BIN" - "$temporary" "$destination" <<'PY'
+import os
+import sys
+
+os.replace(sys.argv[1], sys.argv[2])
+PY
+  done
 }
 
 create_self_extracting_installer() (
@@ -1048,11 +1051,13 @@ main() {
     die "Offline output directory must not equal or be inside staging: $OUTPUT_DIR"
   fi
   version="$(project_version)"
-  CAMOUFOX_PYTHON_PACKAGE_VERSION="$(locked_camoufox_version)" \
-    || die "Could not resolve the locked Camoufox package version from uv.lock."
 
   copy_runtime_assets "$staging"
   build_project_runtime "$staging" "$package_name"
+  if [ "$target_platform" = "linux" ] || [ "$target_platform" = "macos" ]; then
+    PYTHONPATH="$staging/runtime/site-packages" "$PYTHON_BIN" "$REPO_DIR/scripts/build_browser_components.py" \
+      --destination "$staging/runtime/browser-components/byparr" >/dev/null
+  fi
   sign_macos_playwright_node "$staging" "$target_platform"
   bundle_formula_tools "$staging"
   bundle_image_tools "$staging"
@@ -1070,6 +1075,10 @@ main() {
   else
     create_self_extracting_installer "$BUILD_DIR" "$package_name" "$OUTPUT_DIR"
   fi
+  publish_dependency_evidence \
+    "$staging" \
+    "$OUTPUT_DIR" \
+    "$target_platform-$target_arch-$python_tag"
 }
 
 main "$@"

@@ -1,7 +1,8 @@
-# ruff: noqa: F403,F405
 from __future__ import annotations
-
-from ._service_support import *
+from unittest import mock
+from paper_fetch.providers.protocols import FulltextProvider
+from tests.support._service_support import *
+# ruff: noqa: F403,F405
 
 
 class ServiceRuntimeTests(unittest.TestCase):
@@ -16,7 +17,7 @@ class ServiceRuntimeTests(unittest.TestCase):
             provider_hint="science",
             confidence=1.0,
         )
-        crossref = StubProvider(
+        crossref = FixtureProvider(
             metadata={
                 "provider": "crossref",
                 "official_provider": False,
@@ -47,7 +48,7 @@ class ServiceRuntimeTests(unittest.TestCase):
                 ),
                 clients={
                     "crossref": crossref,
-                    "science": StubProvider(
+                    "science": FixtureProvider(
                         raw_payload=_typed_payload(
                             provider="science",
                             source_url=resolved.landing_url,
@@ -106,7 +107,7 @@ class ServiceRuntimeTests(unittest.TestCase):
                     }
                 ),
                 clients={
-                    "science": StubProvider(
+                    "science": FixtureProvider(
                         raw_payload=_typed_payload(
                             provider="science",
                             source_url=landing_url,
@@ -159,8 +160,8 @@ class ServiceRuntimeTests(unittest.TestCase):
             confidence=1.0,
         )
 
-        def counting_crossref(counter: dict[str, int]) -> StubProvider:
-            provider = StubProvider(
+        def counting_crossref(counter: dict[str, int]) -> FixtureProvider:
+            provider = FixtureProvider(
                 metadata={
                     "provider": "crossref",
                     "official_provider": False,
@@ -207,17 +208,21 @@ class ServiceRuntimeTests(unittest.TestCase):
             contextless_counter = {"count": 0}
             _probe_has_fulltext(
                 resolved.query,
-                transport=FixtureHtmlTransport(
-                    {resolved.landing_url: {"body": b"<html><body /></html>"}}
+                context=RuntimeContext(
+                    transport=FixtureHtmlTransport(
+                        {resolved.landing_url: {"body": b"<html><body /></html>"}}
+                    ),
+                    clients={"crossref": counting_crossref(contextless_counter)},
                 ),
-                clients={"crossref": counting_crossref(contextless_counter)},
             )
             _probe_has_fulltext(
                 resolved.query,
-                transport=FixtureHtmlTransport(
-                    {resolved.landing_url: {"body": b"<html><body /></html>"}}
+                context=RuntimeContext(
+                    transport=FixtureHtmlTransport(
+                        {resolved.landing_url: {"body": b"<html><body /></html>"}}
+                    ),
+                    clients={"crossref": counting_crossref(contextless_counter)},
                 ),
-                clients={"crossref": counting_crossref(contextless_counter)},
             )
         finally:
             paper_fetch.resolve_paper = original_resolve
@@ -225,7 +230,7 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertEqual(different_context_counter["count"], 2)
         self.assertEqual(contextless_counter["count"], 2)
 
-    def test_fetch_paper_uses_runtime_context_dependencies_when_legacy_keywords_are_omitted(
+    def test_fetch_paper_uses_runtime_context_dependencies(
         self,
     ) -> None:
         resolved = paper_fetch.ResolvedQuery(
@@ -242,15 +247,16 @@ class ServiceRuntimeTests(unittest.TestCase):
         runtime_env = {"CROSSREF_MAILTO": "runtime@example.test"}
         original_resolve = paper_fetch.resolve_paper
         try:
-            paper_fetch.resolve_paper = lambda query, *, transport=None, env=None: (
-                captured.update({"transport": transport, "env": env}) or resolved
+            paper_fetch.resolve_paper = lambda query, *, context=None: (
+                captured.update({"transport": context.transport, "env": context.env})
+                or resolved
             )
             with tempfile.TemporaryDirectory() as tmpdir:
                 context = RuntimeContext(
                     env=runtime_env,
                     transport=runtime_transport,
                     clients={
-                        "science": StubProvider(
+                        "science": FixtureProvider(
                             raw_payload=_typed_payload(
                                 provider="science",
                                 source_url=resolved.landing_url,
@@ -285,149 +291,20 @@ class ServiceRuntimeTests(unittest.TestCase):
         self.assertEqual(captured["env"], runtime_env)
         self.assertEqual(asset_output_dirs, [context.download_dir])
 
-    def test_provider_client_fetch_result_accumulates_asset_timing(self) -> None:
-        class TimedProvider(ProviderClient):
-            name = "timed"
-
-            def fetch_raw_fulltext(self, doi, metadata, *, context=None):
-                return _typed_payload(
-                    provider="timed",
-                    source_url="https://example.test/article",
-                    content_type="text/xml",
-                    body=b"<xml/>",
-                    route_kind="official",
-                )
-
-            def to_article_model(
-                self,
-                metadata,
-                raw_payload,
-                *,
-                downloaded_assets=None,
-                asset_failures=None,
-                context=None,
-            ):
-                return sample_article()
-
-            def download_related_assets(
-                self,
-                doi,
-                metadata,
-                raw_payload,
-                output_dir,
-                *,
-                asset_profile="all",
-                context=None,
-            ):
-                return {"assets": [], "asset_failures": []}
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            context = RuntimeContext(env={}, download_dir=Path(tmpdir))
-            original_monotonic = runtime_module.time.monotonic
-            monotonic_values = iter([100.0, 100.2])
-            try:
-                runtime_module.time.monotonic = lambda: next(monotonic_values)
-                TimedProvider().fetch_result(
-                    "10.1000/timed",
-                    {"title": "Timed"},
-                    Path(tmpdir),
-                    asset_profile="body",
-                    context=context,
-                )
-            finally:
-                runtime_module.time.monotonic = original_monotonic
-
-        self.assertEqual(context.stage_timings["asset_seconds"], 0.2)
-
-    def test_raw_fulltext_provider_branch_accumulates_asset_timing(self) -> None:
-        class RawTimedProvider:
-            name = "raw_timed"
-
-            def fetch_raw_fulltext(self, doi, metadata, *, context=None):
-                return _typed_payload(
-                    provider="raw_timed",
-                    source_url="https://example.test/article",
-                    content_type="text/xml",
-                    body=b"<xml/>",
-                    route_kind="official",
-                )
-
-            def to_article_model(
-                self,
-                metadata,
-                raw_payload,
-                *,
-                downloaded_assets=None,
-                asset_failures=None,
-                context=None,
-            ):
-                return sample_article()
-
-            def download_related_assets(
-                self,
-                doi,
-                metadata,
-                raw_payload,
-                output_dir,
-                *,
-                asset_profile="all",
-                context=None,
-            ):
-                return {"assets": [], "asset_failures": []}
-
-            def asset_download_failure_warning(self, exc):
-                return str(exc)
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            context = RuntimeContext(env={}, download_dir=Path(tmpdir))
-            artifact_store = ArtifactStore.from_download_dir(Path(tmpdir))
-            original_monotonic = runtime_module.time.monotonic
-            monotonic_values = iter([200.0, 200.3])
-            try:
-                runtime_module.time.monotonic = lambda: next(monotonic_values)
-                _provider_fetch_result(
-                    RawTimedProvider(),
-                    doi="10.1000/raw-timed",
-                    metadata={"title": "Raw Timed"},
-                    artifact_store=artifact_store,
-                    asset_profile="body",
-                    context=context,
-                )
-            finally:
-                runtime_module.time.monotonic = original_monotonic
-
-        self.assertEqual(context.stage_timings["asset_seconds"], 0.3)
-
     def test_provider_fetch_result_passes_artifact_store_to_fulltext_provider(
         self,
     ) -> None:
-        seen: dict[str, object] = {}
-
-        class RecordingProvider:
-            name = "recording"
-
-            def fetch_result(
-                self,
-                doi,
-                metadata,
-                output_dir,
-                *,
-                asset_profile="none",
-                artifact_store=None,
-                context=None,
-            ):
-                seen["output_dir"] = output_dir
-                seen["artifact_store"] = artifact_store
-                seen["context"] = context
-                return ProviderFetchResult(
-                    provider="recording", article=sample_article()
-                )
+        provider = mock.Mock(spec=FulltextProvider)
+        provider.name = "recording"
+        provider.fetch_result.return_value = ProviderFetchResult(
+            provider="recording", article=sample_article()
+        )
 
         with tempfile.TemporaryDirectory() as tmpdir:
             artifact_store = ArtifactStore.from_download_dir(Path(tmpdir))
             context = RuntimeContext(env={}, download_dir=Path(tmpdir))
             _provider_fetch_result(
-                RecordingProvider(),
+                provider,
                 doi="10.1000/recording",
                 metadata={"title": "Recording"},
                 artifact_store=artifact_store,
@@ -435,158 +312,10 @@ class ServiceRuntimeTests(unittest.TestCase):
                 context=context,
             )
 
-        self.assertEqual(seen["output_dir"], artifact_store.download_dir)
-        self.assertIs(seen["artifact_store"], artifact_store)
-        self.assertIs(seen["context"], context)
-
-    def test_fetch_paper_rejects_legacy_runtime_keywords(self) -> None:
-        with self.assertRaises(TypeError):
-            paper_fetch.fetch_paper("10.1126/science.override", clients={})
-
-        with self.assertRaises(TypeError):
-            paper_fetch.fetch_paper(
-                "10.1126/science.override", download_dir=Path("/tmp/paper-fetch-test")
-            )
-
-    def test_probe_has_fulltext_rejects_legacy_runtime_keywords(self) -> None:
-        with self.assertRaises(TypeError):
-            paper_fetch.probe_has_fulltext("10.1126/science.override", clients={})
-
-    def test_artifact_store_preserves_provider_payload_and_springer_html_markers(
-        self,
-    ) -> None:
-        pdf_content = ProviderContent(
-            route_kind="pdf_fallback",
-            source_url="https://example.test/article.pdf",
-            content_type="application/pdf",
-            body=fulltext_pdf_bytes(),
-            needs_local_copy=True,
-        )
-        html_content = ProviderContent(
-            route_kind="html",
-            source_url="https://www.nature.com/articles/example",
-            content_type="text/html; charset=utf-8",
-            body=b"<html><body>Springer article</body></html>",
-        )
-
-        skipped_warnings, skipped_trail = ArtifactStore.from_download_dir(
-            None
-        ).save_provider_payload(
-            "wiley",
-            content=pdf_content,
-            doi="10.1111/example",
-            metadata={"title": "Example Article"},
-        )
-        self.assertEqual(
-            skipped_warnings,
-            [
-                "Wiley official PDF/binary was not written to disk because --no-download was set."
-            ],
-        )
-        self.assertEqual(skipped_trail, ["download:wiley_skipped"])
-        ieee_skipped_warnings, ieee_skipped_trail = ArtifactStore.from_download_dir(
-            None
-        ).save_provider_payload(
-            "ieee",
-            content=pdf_content,
-            doi="10.1109/example",
-            metadata={"title": "IEEE Example"},
-        )
-        self.assertEqual(
-            ieee_skipped_warnings,
-            [
-                "IEEE official PDF/binary was not written to disk because --no-download was set."
-            ],
-        )
-        self.assertEqual(ieee_skipped_trail, ["download:ieee_skipped"])
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = ArtifactStore.from_download_dir(Path(tmpdir))
-            saved_warnings, saved_trail = store.save_provider_payload(
-                "wiley",
-                content=pdf_content,
-                doi="10.1111/example",
-                metadata={"title": "Example Article"},
-            )
-            html_warnings, html_trail = store.save_provider_html_payload(
-                "springer",
-                content=html_content,
-                doi="10.1007/example",
-                metadata={"title": "Springer Example"},
-            )
-            wiley_html_warnings, wiley_html_trail = store.save_provider_html_payload(
-                "wiley",
-                content=html_content,
-                doi="10.1111/example",
-                metadata={"title": "Wiley Example"},
-            )
-
-            saved_paths = list(Path(tmpdir).glob("*"))
-
-        self.assertEqual(saved_trail, ["download:wiley_saved"])
-        self.assertTrue(
-            any(
-                "Wiley official full text was downloaded as PDF/binary to" in item
-                for item in saved_warnings
-            )
-        )
-        self.assertEqual(html_warnings, [])
-        self.assertEqual(html_trail, ["download:springer_html_saved"])
-        self.assertEqual(wiley_html_warnings, [])
-        self.assertEqual(wiley_html_trail, [])
-        self.assertTrue(any(path.name.endswith(".pdf") for path in saved_paths))
-        self.assertTrue(
-            any(path.name.endswith("_original.html") for path in saved_paths)
-        )
-
-    def test_artifact_store_markdown_assets_keeps_pdf_fallback_but_skips_raw_html(
-        self,
-    ) -> None:
-        pdf_content = ProviderContent(
-            route_kind="pdf_fallback",
-            source_url="https://example.test/article.pdf",
-            content_type="application/pdf",
-            body=fulltext_pdf_bytes(),
-            needs_local_copy=True,
-        )
-        html_content = ProviderContent(
-            route_kind="html",
-            source_url="https://www.nature.com/articles/example",
-            content_type="text/html; charset=utf-8",
-            body=b"<html><body>Springer article</body></html>",
-        )
-
-        with tempfile.TemporaryDirectory() as tmpdir:
-            store = ArtifactStore.from_download_dir(
-                Path(tmpdir), artifact_mode="markdown-assets"
-            )
-            saved_warnings, saved_trail = store.save_provider_payload(
-                "wiley",
-                content=pdf_content,
-                doi="10.1111/example",
-                metadata={"title": "Example Article"},
-            )
-            html_warnings, html_trail = store.save_provider_html_payload(
-                "springer",
-                content=html_content,
-                doi="10.1007/example",
-                metadata={"title": "Springer Example"},
-            )
-            saved_paths = list(Path(tmpdir).glob("*"))
-
-        self.assertEqual(saved_trail, ["download:wiley_saved"])
-        self.assertTrue(
-            any(
-                "Wiley official full text was downloaded as PDF/binary to" in item
-                for item in saved_warnings
-            )
-        )
-        self.assertEqual(html_warnings, [])
-        self.assertEqual(html_trail, [])
-        self.assertTrue(any(path.name.endswith(".pdf") for path in saved_paths))
-        self.assertFalse(
-            any(path.name.endswith("_original.html") for path in saved_paths)
-        )
+        args, kwargs = provider.fetch_result.call_args
+        self.assertEqual(args[2], artifact_store.download_dir)
+        self.assertIs(kwargs["artifact_store"], artifact_store)
+        self.assertIs(kwargs["context"], context)
 
     def test_artifact_store_uses_payload_merged_metadata_for_pdf_payload_filename(
         self,

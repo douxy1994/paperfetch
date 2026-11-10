@@ -8,10 +8,12 @@ from typing import Any
 from collections.abc import Mapping
 
 from ....provider_catalog import provider_body_text_thresholds
+from ....http import RequestCancelledError
 from ....utils import normalize_text
 import contextlib
 
 ATYPON_BODY_READY_SELECTORS: Mapping[str, tuple[str, ...]] = {
+    "elsevier": ("#body",),
     "annualreviews": (
         "#itemFullTextId",
         "#html_fulltext",
@@ -30,9 +32,10 @@ ATYPON_BODY_READY_SELECTORS: Mapping[str, tuple[str, ...]] = {
         ".article-view",
     ),
     "pnas": (
-        ".article__fulltext",
-        ".article-content",
-        ".core-container",
+        "#bodymatter [data-extent='bodymatter'][property='articleBody']",
+        "#bodymatter [property='articleBody']",
+        "#bodymatter [data-extent='bodymatter']",
+        "#bodymatter",
     ),
     "ams": (
         "#articleBody",
@@ -81,8 +84,16 @@ ATYPON_BODY_READY_SELECTORS: Mapping[str, tuple[str, ...]] = {
 
 _BODY_READY_POLL_INTERVAL_MS = 750
 _BODY_READY_SCRIPT = """
-({ selectors, minChars }) => {
+({ selectors, minChars, provider }) => {
   const normalize = (value) => (value || "").replace(/\\s+/g, " ").trim();
+  if (provider === "aip" && location.hostname === "pubs.aip.org"
+      && location.pathname.replace(/\\/$/, "") === "/crawlprevention/governor") {
+    const evidence = normalize(document.title + " " + (document.body?.innerText || "")).toLowerCase();
+    if (evidence.includes("validate user") || evidence.includes("not a robot")
+        || evidence.includes("不是机器人")) {
+      return { ready: false, blockingReason: "cloudflare_challenge" };
+    }
+  }
   let best = null;
   for (const selector of selectors || []) {
     let nodes = [];
@@ -92,9 +103,12 @@ _BODY_READY_SCRIPT = """
       continue;
     }
     for (const node of nodes) {
-      const text = normalize(node.innerText || node.textContent || "");
+      const text = normalize(provider === "pnas"
+        ? node.textContent : (node.innerText || node.textContent || ""));
       const textLength = text.length;
-      const paragraphCount = node.querySelectorAll("p").length;
+      const paragraphCount = node.querySelectorAll(
+        provider === "pnas" ? "p, [role='paragraph']" : "p"
+      ).length;
       const headingCount = node.querySelectorAll("h1,h2,h3,h4,h5,h6,[role='heading']").length;
       const ready = textLength >= minChars && (paragraphCount >= 2 || headingCount >= 1);
       const fingerprint = [
@@ -144,6 +158,7 @@ class BodyDomReadinessResult:
     heading_count: int = 0
     fingerprint: str = ""
     elapsed_ms: int = 0
+    blocking_reason: str | None = None
 
 
 def atypon_body_ready_selectors(provider: str | None) -> tuple[str, ...]:
@@ -180,6 +195,12 @@ def _coerce_readiness_payload(
         heading_count=max(0, safe_int(payload.get("headingCount"))),
         fingerprint=normalize_text(str(payload.get("fingerprint") or "")),
         elapsed_ms=elapsed_ms,
+        blocking_reason=(
+            "cloudflare_challenge"
+            if provider == "aip"
+            and payload.get("blockingReason") == "cloudflare_challenge"
+            else None
+        ),
     )
 
 
@@ -189,6 +210,7 @@ def wait_for_atypon_body_dom_ready(
     *,
     timeout_seconds: float,
     poll_interval_ms: int = _BODY_READY_POLL_INTERVAL_MS,
+    cancel_check: Any = None,
 ) -> BodyDomReadinessResult:
     normalized_provider = normalize_text(provider).lower()
     selectors = atypon_body_ready_selectors(normalized_provider)
@@ -213,11 +235,19 @@ def wait_for_atypon_body_dom_ready(
     )
 
     while True:
+        if callable(cancel_check):
+            cancel_check()
         try:
             payload = evaluate(
                 _BODY_READY_SCRIPT,
-                {"selectors": list(selectors), "minChars": min_chars},
+                {
+                    "selectors": list(selectors),
+                    "minChars": min_chars,
+                    "provider": normalized_provider,
+                },
             )
+        except RequestCancelledError:
+            raise
         except Exception:
             payload = None
         elapsed_ms = max(0, int((time.monotonic() - started_at) * 1000))
@@ -227,6 +257,8 @@ def wait_for_atypon_body_dom_ready(
             elapsed_ms=elapsed_ms,
         )
         last_result = current
+        if current.blocking_reason:
+            return current
         if current.ready and current.fingerprint:
             if current.fingerprint == previous_ready_fingerprint:
                 return current

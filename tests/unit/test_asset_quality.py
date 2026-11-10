@@ -5,17 +5,15 @@ import hashlib
 from pathlib import Path
 
 from paper_fetch.artifacts import ArtifactStore
-from paper_fetch.mcp.fetch_cache import quality_from_payload
 from paper_fetch.models import (
     ArticleModel,
     Asset,
-    AssetQualitySummary,
     FetchEnvelope,
     Metadata,
     Quality,
     Section,
 )
-from paper_fetch.providers import _ams_html
+from paper_fetch.providers import _ams_assets
 from paper_fetch.quality.assets import (
     build_asset_quality_summary,
     logical_asset_kind,
@@ -153,6 +151,100 @@ def test_placeholder_signals_are_suspected_and_never_delete_files(
     assert {path: path.read_bytes() for path in paths} == before
 
 
+def test_formula_dimensions_and_duplicate_hashes_are_not_placeholder_signals(
+    tmp_path: Path,
+) -> None:
+    tiny_formula = tmp_path / "tiny-formula.svg"
+    duplicate_one = tmp_path / "formula-one.png"
+    duplicate_two = tmp_path / "formula-two.png"
+    tiny_formula.write_bytes(_svg(1, 1))
+    duplicate_one.write_bytes(VALID_PNG.read_bytes())
+    duplicate_two.write_bytes(VALID_PNG.read_bytes())
+
+    summary = build_asset_quality_summary(
+        [
+            Asset(
+                kind="formula",
+                heading="Formula 1",
+                path=str(tiny_formula),
+                download_tier="preview",
+                preview_accepted=True,
+            ),
+            Asset(
+                kind="formula",
+                heading="Formula 2",
+                path=str(duplicate_one),
+                download_tier="preview",
+                preview_accepted=True,
+            ),
+            Asset(
+                kind="formula",
+                heading="Formula 3",
+                path=str(duplicate_two),
+                download_tier="preview",
+                preview_accepted=True,
+            ),
+        ],
+        asset_profile="body",
+        archive_enabled=True,
+    )
+
+    assert summary.preview == 3
+    assert summary.accepted_preview == 3
+    assert summary.fallback_preview == 0
+    assert summary.placeholder_suspected == 0
+    assert summary.issue_codes == []
+    assert all(item.status == "available" for item in summary.diagnostics)
+    assert all(
+        "tiny_dimensions" not in item.suspected_reasons
+        and "duplicate_sha256" not in item.suspected_reasons
+        for item in summary.diagnostics
+    )
+
+
+def test_formula_payload_and_path_failures_remain_diagnostic(
+    tmp_path: Path,
+) -> None:
+    zero = tmp_path / "zero-formula.png"
+    blank = tmp_path / "Blank.svg"
+    invalid = tmp_path / "invalid-formula.png"
+    missing = tmp_path / "missing-formula.png"
+    zero.write_bytes(b"")
+    blank.write_bytes(_svg(120, 80))
+    invalid.write_bytes(b"<html>not an image</html>" * 2)
+
+    summary = build_asset_quality_summary(
+        [
+            Asset(kind="formula", heading="Formula 1", path=str(zero)),
+            Asset(
+                kind="formula",
+                heading="Formula 2",
+                url="https://example.test/assets/Blank.svg",
+                path=str(blank),
+            ),
+            Asset(kind="formula", heading="Formula 3", path=str(invalid)),
+            Asset(kind="formula", heading="Formula 4", path=str(missing)),
+        ],
+        asset_profile="body",
+        archive_enabled=True,
+    )
+
+    assert [item.status for item in summary.diagnostics] == [
+        "placeholder_suspected",
+        "placeholder_suspected",
+        "placeholder_suspected",
+        "failed",
+    ]
+    assert {"zero_byte", "invalid_mime"} <= set(
+        summary.diagnostics[0].suspected_reasons
+    )
+    assert summary.diagnostics[1].suspected_reasons == ["blank_url"]
+    assert "invalid_mime" in summary.diagnostics[2].suspected_reasons
+    assert summary.diagnostics[3].failure_code == "missing_path"
+    assert summary.placeholder_suspected == 3
+    assert summary.failed == 1
+
+
 def test_none_and_no_archive_policy_are_distinct_from_failures() -> None:
     assets = [
         Asset(
@@ -226,7 +318,7 @@ def test_missing_path_and_explicit_failure_are_definite_and_classified(
 
 def test_ams_body_figures_formulas_and_tables_keep_separate_kinds() -> None:
     source_url = "https://journals.ametsoc.org/view/journals/clim/37/24/article.xml"
-    ams_assets = _ams_html.scoped_asset_extractor(
+    ams_assets = _ams_assets.scoped_asset_extractor(
         """
         <article><section>
           <figure id="fig1">
@@ -487,20 +579,34 @@ def test_artifact_store_audit_records_policy_without_mutating_text_quality(
     ) == content_facts
 
 
-def test_asset_summary_model_and_legacy_cache_payloads_are_compatible() -> None:
+def test_asset_summary_round_trips_through_current_model() -> None:
     summary = build_asset_quality_summary(
         [], asset_profile="none", archive_enabled=False
     )
     restored = Quality(asset_summary=asdict(summary))  # type: ignore[arg-type]
-    legacy_model = Quality(asset_summary={})  # type: ignore[arg-type]
-    legacy_cache = quality_from_payload(
-        {
-            "has_fulltext": True,
-            "content_kind": "fulltext",
-            "has_abstract": True,
-        }
-    )
-
     assert restored.asset_summary == summary
-    assert legacy_model.asset_summary == AssetQualitySummary()
-    assert legacy_cache.asset_summary == AssetQualitySummary()
+
+
+def test_provider_preview_failure_policy_does_not_change_other_assets():
+    from paper_fetch.models.builders import _asset_from_entry
+    from paper_fetch.quality.assets import preview_asset_is_accepted
+
+    for provider in ("wiley", "oxfordacademic", "science", None):
+        for kind in ("figure", "formula", "unknown"):
+            entry = {
+                "kind": kind,
+                "download_tier": "preview",
+                "preview_accepted": False,
+                "width": 1200,
+                "height": 900,
+                "recovery_attempts": [
+                    {"stage": "preview_fallback", "provider": provider}
+                ],
+            }
+            expected = not (
+                provider in {"wiley", "oxfordacademic"} and kind == "figure"
+            )
+            assert preview_asset_is_accepted(entry) is expected
+            asset = _asset_from_entry(entry, kind=kind, heading_fallback="Asset")
+            assert asset.preview_accepted is expected
+            assert preview_asset_is_accepted(asset) is expected

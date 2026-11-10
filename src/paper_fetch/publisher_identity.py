@@ -16,22 +16,11 @@ from rapidfuzz.fuzz import ratio
 
 from .normalize_journal_name import normalize_journal_name
 from .utils import normalize_text
-from .provider_catalog import (
-    doi_prefix_provider_map,
-    ordered_provider_specs,
-    provider_domain_matches,
-    provider_html_path_templates,
-    provider_landing_path_templates,
-    provider_pdf_path_templates,
-    provider_xml_path_templates,
-)
 
 PUBLISHER_PROVIDER_MAP: dict[str, str] | None = None
-DOI_PREFIX_PROVIDER_MAP: dict[str, str] | None = None
 URL_DOI_ROUTE_SUFFIXES_BY_PROVIDER: dict[str, frozenset[str]] = {}
 URL_DOI_EXTENSION_SUFFIXES_BY_PROVIDER: dict[str, frozenset[str]] = {}
 DOI_CORE_PATTERN = r"10\.\d{4,9}/[^\s\"'<>]+"
-ASCII_DOI_CORE_PATTERN = r"10\.\d{4,9}/[!-~]+"
 DOI_PATTERN = re.compile(DOI_CORE_PATTERN, flags=re.IGNORECASE)
 SICI_DOI_PATTERN = re.compile(
     r"10\.\d{4,9}/"
@@ -161,6 +150,13 @@ def _url_doi_extension_suffixes_from_template(template: str) -> frozenset[str]:
 
 
 def _provider_url_doi_templates(provider: str | None) -> tuple[str, ...]:
+    from .provider_catalog import (
+        provider_html_path_templates,
+        provider_landing_path_templates,
+        provider_pdf_path_templates,
+        provider_xml_path_templates,
+    )
+
     if not provider:
         return ()
     return (
@@ -240,38 +236,69 @@ def extract_doi_from_url(url: str | None) -> str | None:
 
 
 def infer_provider_from_doi(doi: str | None) -> str | None:
+    from .provider_catalog import identity_ordered_provider_specs
+
     normalized = normalize_doi(doi)
-    global DOI_PREFIX_PROVIDER_MAP
-    if DOI_PREFIX_PROVIDER_MAP is None:
-        DOI_PREFIX_PROVIDER_MAP = doi_prefix_provider_map()
-    for prefix, provider in DOI_PREFIX_PROVIDER_MAP.items():
-        if normalized.startswith(prefix):
-            return provider
+    matches = [
+        (len(prefix), -spec.status_order, spec.name)
+        for spec in identity_ordered_provider_specs()
+        for raw_prefix in spec.doi_prefixes
+        if (prefix := str(raw_prefix or "").strip().lower())
+        and normalized.startswith(prefix)
+    ]
+    if matches:
+        return max(matches)[-1]
     return None
 
 
 def infer_provider_from_publisher(publisher: str | None) -> str | None:
+    from .provider_catalog import identity_ordered_provider_specs
+
     if not publisher:
         return None
     normalized = normalize_journal_name(publisher)
     global PUBLISHER_PROVIDER_MAP
     if PUBLISHER_PROVIDER_MAP is None:
-        PUBLISHER_PROVIDER_MAP = {
-            normalize_journal_name(alias): spec.name
-            for spec in ordered_provider_specs()
-            for alias in spec.publisher_aliases
-        }
+        PUBLISHER_PROVIDER_MAP = {}
+        for spec in identity_ordered_provider_specs():
+            for alias in (spec.display_name, *spec.publisher_aliases):
+                normalized_alias = normalize_journal_name(alias)
+                if normalized_alias:
+                    PUBLISHER_PROVIDER_MAP.setdefault(normalized_alias, spec.name)
     return PUBLISHER_PROVIDER_MAP.get(normalized)
 
 
 def infer_provider_from_url(url: str | None) -> str | None:
+    from .provider_catalog import (
+        identity_ordered_provider_specs,
+        provider_domain_matches,
+    )
+
     if not url:
         return None
     hostname = (urllib.parse.urlparse(url).hostname or "").lower()
-    for spec in ordered_provider_specs():
+    for spec in identity_ordered_provider_specs():
         if provider_domain_matches(spec.name, hostname):
             return spec.name
     return None
+
+
+def _ordered_provider_signals(
+    *,
+    landing_urls: list[str | None] | None = None,
+    publishers: list[str | None] | None = None,
+    doi: str | None = None,
+) -> list[tuple[str, str]]:
+    signals: list[tuple[str, str]] = []
+    for url in landing_urls or []:
+        if provider := infer_provider_from_url(url):
+            signals.append((provider, "domain"))
+    for publisher in publishers or []:
+        if provider := infer_provider_from_publisher(publisher):
+            signals.append((provider, "publisher"))
+    if provider := infer_provider_from_doi(doi):
+        signals.append((provider, "doi"))
+    return signals
 
 
 def ordered_provider_candidates(
@@ -282,23 +309,66 @@ def ordered_provider_candidates(
 ) -> list[tuple[str, str]]:
     candidates: list[tuple[str, str]] = []
     seen: set[str] = set()
-
-    for url in landing_urls or []:
-        provider = infer_provider_from_url(url)
-        if provider and provider not in seen:
-            seen.add(provider)
-            candidates.append((provider, "domain"))
-
-    for publisher in publishers or []:
-        provider = infer_provider_from_publisher(publisher)
-        if provider and provider not in seen:
-            seen.add(provider)
-            candidates.append((provider, "publisher"))
-
-    provider = infer_provider_from_doi(doi)
-    if provider and provider not in seen:
-        candidates.append((provider, "doi"))
+    for provider, signal in _ordered_provider_signals(
+        landing_urls=landing_urls,
+        publishers=publishers,
+        doi=doi,
+    ):
+        if provider in seen:
+            continue
+        seen.add(provider)
+        candidates.append((provider, signal))
     return candidates
+
+
+@dataclass(frozen=True)
+class ProviderIdentityCandidate:
+    """Provider routing evidence with explicit access-boundary strength."""
+
+    provider: str
+    signal: str
+    strength: str
+
+
+def ordered_provider_candidate_evidence(
+    *,
+    landing_urls: list[str | None] | None = None,
+    publishers: list[str | None] | None = None,
+    doi: str | None = None,
+) -> list[ProviderIdentityCandidate]:
+    """Return ordered candidates without discarding contradictory signals.
+
+    A DOI-prefix match is strong.  Without one, two independent catalog
+    signals agreeing on the same provider are strong; a domain or publisher
+    signal alone remains weak and therefore cannot turn ``no_access`` into a
+    global waterfall stop.
+    """
+
+    ordered = _ordered_provider_signals(
+        landing_urls=landing_urls,
+        publishers=publishers,
+        doi=doi,
+    )
+    signals_by_provider: dict[str, set[str]] = {}
+    for provider, signal in ordered:
+        signals_by_provider.setdefault(provider, set()).add(signal)
+
+    result: list[ProviderIdentityCandidate] = []
+    seen: set[str] = set()
+    for provider, signal in ordered:
+        if provider in seen:
+            continue
+        seen.add(provider)
+        signals = signals_by_provider[provider]
+        strong = "doi" in signals or len(signals) >= 2
+        result.append(
+            ProviderIdentityCandidate(
+                provider=provider,
+                signal=signal,
+                strength="strong" if strong else "weak",
+            )
+        )
+    return result
 
 
 def infer_provider_from_signals(

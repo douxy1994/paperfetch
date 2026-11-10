@@ -87,15 +87,6 @@ def render_elsevier_table_results(
     return [_render_parsed_elsevier_table(parsed) for parsed in parsed_groups]
 
 
-def render_elsevier_table_result(table: ET.Element | None) -> ElsevierTableRenderResult:
-    """Return the first logical group for legacy internal callers."""
-
-    results = render_elsevier_table_results(table)
-    if results:
-        return results[0]
-    return ElsevierTableRenderResult(headers=[], rows=[], prefix_rows=[])
-
-
 def resolve_elsevier_table_locator(table: ET.Element | None) -> str:
     if table is None:
         return ""
@@ -151,10 +142,17 @@ def paragraph_mentions_table(text: str, heading: str) -> bool:
     if not token:
         return False
     pattern = re.compile(
-        rf"\btab(?:le)?\.?\s*{re.escape(token)}(?:[a-z](?!\w))?",
+        rf"\btab(?:le)?\.?\s*{re.escape(token)}(?:[a-z])?(?!\w)",
         flags=re.IGNORECASE,
     )
-    return bool(pattern.search(text))
+    for match in pattern.finditer(text):
+        # A main-table fallback must not consume an appendix/supplement callout.
+        if re.search(r"(?:supplementary|appendix)\s*$", text[: match.start()], re.I):
+            continue
+        if re.match(r"\s+(?:of|in)\s+(?:the\s+)?appendix\b", text[match.end() :], re.I):
+            continue
+        return True
+    return False
 
 
 def should_render_elsevier_table_entry(

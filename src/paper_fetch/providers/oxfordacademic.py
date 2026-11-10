@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from ..quality.access_boundary import propagate_paywall
+
+from ..quality.access_boundary import raise_for_paywall
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from collections.abc import Mapping, Sequence
-from urllib.parse import quote, urljoin
+from urllib.parse import parse_qsl, quote, urljoin, urlparse
 
 from ..config import (
     build_publisher_user_agent,
@@ -15,7 +19,9 @@ from ..config import (
 from ..extraction.html.assets import (
     FIGURE_KIND,
     SUPPLEMENTARY_KIND,
+    AssetDownloadOptions,
     download_assets,
+    filter_assets_for_profile,
     html_asset_identity_key,
     split_body_and_supplementary_assets,
 )
@@ -34,6 +40,7 @@ from ..http import (
     PDF_MIME_TYPE,
     RequestFailure,
 )
+from ..http.provider_policy import provider_request_policy
 from ..http.headers import header_value
 from ..models import (
     AssetProfile,
@@ -41,13 +48,14 @@ from ..models import (
     article_from_markdown,
     metadata_only_article,
 )
-from ..provider_catalog import BodyTextThresholds, ProviderSpec
+from ..models.render import rewrite_markdown_asset_links
+from ..provider_contracts import BodyTextThresholds, ProviderRouteSpec, ProviderSpec
 from ..pdf_limits import pdf_max_bytes
 from ..publisher_identity import normalize_doi
 from ..reason_codes import NO_RESULT, OK, PDF_FALLBACK
 from ..runtime import RuntimeContext
 from ..tracing import download_marker, fulltext_marker, trace_from_markers
-from ..utils import empty_asset_results, normalize_text
+from ..utils import empty_asset_results, extend_unique, normalize_text
 from ..quality.html_availability import (
     HtmlQualityAssessor,
     availability_failure_message,
@@ -63,7 +71,7 @@ from ._pdf_common import (
     pdf_fetch_result_warnings,
     pdf_fetch_result_from_response,
 )
-from ._registry import ProviderBundle, register_provider_bundle
+from ._registry import ProviderBundle
 from ._waterfall import (
     DEFAULT_WATERFALL_CONTINUE_CODES,
     ProviderWaterfallState,
@@ -83,60 +91,6 @@ from .base import (
 )
 
 
-register_provider_bundle(
-    ProviderBundle(
-        catalog=ProviderSpec(
-            name="oxfordacademic",
-            display_name="Oxford Academic",
-            official=True,
-            domains=("academic.oup.com",),
-            doi_prefixes=("10.1093/",),
-            publisher_aliases=(
-                "oxford academic",
-                "oxford university press",
-                "oxford university press (oup)",
-                "oup",
-            ),
-            asset_default="body",
-            probe_capability="routing_signal",
-            provider_managed_abstract_only=False,
-            client_factory_path="paper_fetch.providers.oxfordacademic:OxfordAcademicClient",
-            status_order=14,
-            base_domains=("academic.oup.com",),
-            pdf_path_templates=(
-                "/doi/pdf/{doi}",
-                "/doi/epdf/{doi}",
-            ),
-            requires_playwright=False,
-            requires_browser_runtime=False,
-            body_text_thresholds=BodyTextThresholds(min_chars=1200),
-        ),
-        html_rules=ProviderHtmlRules(
-            name="oxfordacademic",
-            noise_profile=oxford_html.OXFORDACADEMIC_NOISE_PROFILE,
-            cleanup=ProviderCleanupRules(
-                markdown_promo_tokens=oxford_html.OXFORDACADEMIC_MARKDOWN_PROMO_TOKENS,
-                extraction_cleanup_selectors=oxford_html.OXFORDACADEMIC_EXTRACTION_CLEANUP_SELECTORS,
-            ),
-            front_matter=ProviderFrontMatterRules(
-                exact_texts=oxford_html.OXFORDACADEMIC_FRONT_MATTER_EXACT_TEXTS,
-                contains_tokens=oxford_html.OXFORDACADEMIC_FRONT_MATTER_CONTAINS_TOKENS,
-                publication_keywords=oxford_html.OXFORDACADEMIC_FRONT_MATTER_PUBLICATION_KEYWORDS,
-            ),
-            assets=ProviderAssetRules(
-                supplementary_text_tokens=oxford_html.OXFORDACADEMIC_SUPPLEMENTARY_TEXT_TOKENS,
-            ),
-            availability=AvailabilityPolicy(
-                name="oxfordacademic",
-                site_rule_overrides=oxford_html.OXFORDACADEMIC_SITE_RULE_OVERRIDES,
-                no_signals=True,
-            ),
-        ),
-        sources=("oxfordacademic_html", "oxfordacademic_pdf"),
-    )
-)
-
-
 @dataclass(frozen=True)
 class OxfordAcademicArticleAttempt:
     doi: str
@@ -148,32 +102,32 @@ class OxfordAcademicArticleAttempt:
     metadata: dict[str, Any]
 
 
-def _append_unique(values: list[str], candidate: str | None) -> None:
-    normalized = normalize_text(candidate)
-    if normalized and normalized not in values:
-        values.append(normalized)
-
-
-def _filter_oxford_assets(
-    assets: Sequence[Mapping[str, Any]],
-    *,
-    asset_profile: AssetProfile,
-) -> list[dict[str, Any]]:
-    if asset_profile == "none":
-        return []
-    filtered: list[dict[str, Any]] = []
-    for item in assets:
-        asset = dict(item)
-        kind = normalize_text(
-            str(asset.get("kind") or asset.get("asset_type") or "")
-        ).lower()
-        section = normalize_text(str(asset.get("section") or "")).lower()
-        if asset_profile != "all" and (
-            kind == "supplementary" or section == "supplementary"
-        ):
-            continue
-        filtered.append(asset)
-    return filtered
+def _oxford_asset_identity(asset: Mapping[str, Any]) -> object:
+    # A viewer page can contain several subpanels. Their explicit binary
+    # objects remain separate, including when they share that viewer URL.
+    identity = (
+        normalize_text(
+            str(
+                asset.get("original_url")
+                or asset.get("full_size_url")
+                or asset.get("url")
+                or ""
+            )
+        )
+        if asset.get("kind") == "figure"
+        else ""
+    ) or html_asset_identity_key(asset)
+    parsed = urlparse(identity)
+    # Only compare identities here: every request/provenance URL retains its
+    # original signature. Preserve the full path/rendition and other parameters.
+    if asset.get("kind") == "figure" and parsed.hostname == "oup.silverchair-cdn.com":
+        query = tuple(
+            (key, value)
+            for key, value in parse_qsl(parsed.query, keep_blank_values=True)
+            if key.lower() not in {"expires", "signature", "key-pair-id", "policy"}
+        )
+        return (parsed.scheme, parsed.netloc, parsed.path, query)
+    return identity
 
 
 def _merge_oxford_assets(
@@ -181,10 +135,10 @@ def _merge_oxford_assets(
     downloaded_assets: Sequence[Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     merged: list[dict[str, Any]] = []
-    by_identity: dict[str, dict[str, Any]] = {}
+    by_identity: dict[object, dict[str, Any]] = {}
     for item in [*extracted_assets, *downloaded_assets]:
         asset = dict(item)
-        identity = html_asset_identity_key(asset)
+        identity = _oxford_asset_identity(asset)
         existing = by_identity.get(identity) if identity else None
         if existing is not None:
             existing.update(asset)
@@ -246,10 +200,10 @@ class OxfordAcademicClient(ProviderClient):
                 oxford_html.is_oxfordacademic_url(value)
                 and "/article-pdf/" not in value.lower()
             ):
-                _append_unique(candidates, value)
+                extend_unique(candidates, [value])
         if normalized_doi:
-            _append_unique(
-                candidates, f"https://doi.org/{quote(normalized_doi, safe='/')}"
+            extend_unique(
+                candidates, [f"https://doi.org/{quote(normalized_doi, safe='/')}"]
             )
         return candidates
 
@@ -281,11 +235,20 @@ class OxfordAcademicClient(ProviderClient):
                     requested_url,
                     transport=self.transport,
                     headers=self._html_headers(),
-                    timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
-                    retry_on_transient=True,
                     max_redirects=self.landing_max_redirects,
+                    request_policy=provider_request_policy(
+                        self.name,
+                        "direct_html",
+                        base=HttpRequestPolicy(follow_redirects=False),
+                    ),
                 )
             except RequestFailure as exc:
+                raise_for_paywall(
+                    exc.body,
+                    metadata={**metadata, "doi": doi},
+                    source_url=str(exc.url or requested_url),
+                    provider=self.name,
+                )
                 last_failure = map_request_failure(exc)
                 continue
             content_type = header_value(landing.headers, "content-type", "text/html")
@@ -324,6 +287,12 @@ class OxfordAcademicClient(ProviderClient):
         context: RuntimeContext | None = None,
     ) -> RawFulltextPayload:
         del context
+        raise_for_paywall(
+            attempt.html_text,
+            metadata=attempt.metadata,
+            source_url=attempt.final_url,
+            provider=self.name,
+        )
         extraction = oxford_html.extract_markdown(
             attempt.html_text,
             attempt.final_url,
@@ -349,6 +318,7 @@ class OxfordAcademicClient(ProviderClient):
         return build_provider_payload(
             provider=self.name,
             route_kind="html",
+            route_name="direct_html",
             source_url=attempt.final_url,
             content_type=content_type,
             body=extraction.html_text.encode("utf-8"),
@@ -359,6 +329,7 @@ class OxfordAcademicClient(ProviderClient):
                 "extraction": {
                     "abstract_sections": extraction.abstract_sections,
                     "section_hints": extraction.section_hints,
+                    "source_mathml_error_count": extraction.source_mathml_error_count,
                 },
             },
             reason="Downloaded full text from the Oxford Academic public article HTML route.",
@@ -372,17 +343,21 @@ class OxfordAcademicClient(ProviderClient):
         maximum_pdf_bytes = pdf_max_bytes()
         current_url = url
         response: Mapping[str, Any] = {}
+        request_policy = provider_request_policy(
+            self.name,
+            "direct_pdf",
+            base=HttpRequestPolicy(
+                follow_redirects=False,
+                max_response_bytes=maximum_pdf_bytes,
+                max_compressed_response_bytes=maximum_pdf_bytes,
+            ),
+        )
         for redirect_count in range(self.landing_max_redirects + 1):
             response = self.transport.request(
                 "GET",
                 current_url,
                 headers=headers,
-                timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
-                retry_on_transient=True,
-                request_policy=HttpRequestPolicy(
-                    max_response_bytes=maximum_pdf_bytes,
-                    max_compressed_response_bytes=maximum_pdf_bytes,
-                ),
+                request_policy=request_policy,
             )
             response = dict(response)
             response["url"] = urljoin(
@@ -446,6 +421,7 @@ class OxfordAcademicClient(ProviderClient):
                 )
                 continue
             except PdfFetchFailure as exc:
+                propagate_paywall(exc)
                 last_failure = exc
                 continue
 
@@ -455,6 +431,7 @@ class OxfordAcademicClient(ProviderClient):
             return build_provider_payload(
                 provider=self.name,
                 route_kind=PDF_FALLBACK,
+                route_name="direct_pdf",
                 source_url=pdf_result.final_url,
                 content_type=PDF_MIME_TYPE,
                 body=pdf_result.pdf_bytes,
@@ -472,7 +449,7 @@ class OxfordAcademicClient(ProviderClient):
                 suggested_filename=pdf_result.suggested_filename,
                 extracted_assets=pdf_fetch_result_assets(pdf_result),
                 html_failure_message=html_failure_message,
-                content_needs_local_copy=True,
+                needs_local_copy=True,
                 warnings=[
                     *pdf_fetch_result_warnings(pdf_result),
                     "Full text was extracted from Oxford Academic PDF fallback after the HTML route was not usable.",
@@ -481,7 +458,6 @@ class OxfordAcademicClient(ProviderClient):
                     *list(html_trace_markers),
                     fulltext_marker(self.name, "ok", route=PDF_FALLBACK),
                 ],
-                needs_local_copy=True,
             )
 
         raise ProviderFailure(
@@ -508,6 +484,7 @@ class OxfordAcademicClient(ProviderClient):
         try:
             article_attempt = self._fetch_article_attempt(normalized_doi, metadata)
         except ProviderFailure as exc:
+            propagate_paywall(exc)
             article_fetch_failure = exc
 
         def run_article_html(_state: ProviderWaterfallState) -> RawFulltextPayload:
@@ -548,7 +525,7 @@ class OxfordAcademicClient(ProviderClient):
                 source_url=source_url,
                 html_text=html_text,
                 html_failure_message=html_failure_message,
-                html_trace_markers=state.source_markers(),
+                html_trace_markers=state.source_trail,
                 context=runtime_context,
             )
 
@@ -572,13 +549,14 @@ class OxfordAcademicClient(ProviderClient):
                 combined.code,
                 "Oxford Academic full text could not be retrieved. " + combined.message,
                 warnings=state.warnings,
-                source_trail=state.source_markers(),
+                source_trail=state.source_trail,
             )
 
         return run_provider_waterfall(
             [
                 ProviderWaterfallStep(
                     label="article_html",
+                    route_name="direct_html",
                     run=run_article_html,
                     failure_marker=fulltext_marker(self.name, "fail", route="html"),
                     success_markers=(fulltext_marker(self.name, "ok", route="html"),),
@@ -589,6 +567,7 @@ class OxfordAcademicClient(ProviderClient):
                 ),
                 ProviderWaterfallStep(
                     label="pdf_fallback",
+                    route_name="direct_pdf",
                     run=run_pdf_fallback,
                     failure_marker=fulltext_marker(
                         self.name, "fail", route=PDF_FALLBACK
@@ -624,6 +603,7 @@ class OxfordAcademicClient(ProviderClient):
         return extraction.markdown_text, {
             "abstract_sections": extraction.abstract_sections,
             "section_hints": extraction.section_hints,
+            "source_mathml_error_count": extraction.source_mathml_error_count,
             "extracted_assets": extraction.extracted_assets,
         }
 
@@ -650,8 +630,8 @@ class OxfordAcademicClient(ProviderClient):
             or metadata
             or {}
         )
-        markdown_text = normalize_text(
-            content.markdown_text if content is not None else ""
+        markdown_text = str(
+            (content.markdown_text if content is not None else "") or ""
         )
         if not markdown_text:
             return metadata_only_article(
@@ -671,6 +651,8 @@ class OxfordAcademicClient(ProviderClient):
             list(content.extracted_assets if content is not None else []),
             list(downloaded_assets or []),
         )
+        if source == "oxfordacademic_html":
+            markdown_text = rewrite_markdown_asset_links(markdown_text, assets)
         article = article_from_markdown(
             source=source,
             metadata=merged_metadata,
@@ -679,7 +661,12 @@ class OxfordAcademicClient(ProviderClient):
             abstract_sections=list(extraction.get("abstract_sections") or []),
             section_hints=list(extraction.get("section_hints") or []),
             assets=assets,
-            warnings=list(raw_payload.warnings),
+            warnings=[
+                *list(raw_payload.warnings),
+                *oxford_html.source_mathml_warnings(
+                    int(extraction.get("source_mathml_error_count") or 0)
+                ),
+            ],
             trace=raw_payload.trace,
             availability_diagnostics=availability
             if isinstance(availability, Mapping)
@@ -709,7 +696,7 @@ class OxfordAcademicClient(ProviderClient):
         ).lower()
         if route == PDF_FALLBACK:
             return empty_asset_results()
-        extracted_assets = _filter_oxford_assets(
+        extracted_assets = filter_assets_for_profile(
             list(content.extracted_assets if content is not None else []),
             asset_profile=asset_profile,
         )
@@ -742,13 +729,32 @@ class OxfordAcademicClient(ProviderClient):
                 output_dir=output_dir,
                 user_agent=self.user_agent,
                 asset_profile=asset_profile,
-                headers=self._asset_headers(),
-                asset_download_concurrency=concurrency,
-                fetch_policy="direct_then_browser",
+                options=AssetDownloadOptions(
+                    headers=self._asset_headers(),
+                    asset_download_concurrency=concurrency,
+                    fetch_policy="direct_then_browser",
+                    provider_name="oxfordacademic",
+                    runtime_context=context,
+                ),
             )
             if body_images
             else empty_asset_results()
         )
+        for asset in body_result["assets"]:
+            if (
+                asset.get("kind") == "figure"
+                and asset.get("download_tier") == "preview"
+            ):
+                asset["preview_accepted"] = False
+                asset["recovery_attempts"] = [
+                    *list(asset.get("recovery_attempts") or []),
+                    {
+                        "provider": self.name,
+                        "stage": "preview_fallback",
+                        "outcome": "ok",
+                        "reason": "full_size_unavailable",
+                    },
+                ]
         supplementary_result = (
             download_assets(
                 SUPPLEMENTARY_KIND,
@@ -758,9 +764,13 @@ class OxfordAcademicClient(ProviderClient):
                 output_dir=output_dir,
                 user_agent=self.user_agent,
                 asset_profile=asset_profile,
-                headers=self._asset_headers(),
-                asset_download_concurrency=concurrency,
-                fetch_policy="direct_then_browser",
+                options=AssetDownloadOptions(
+                    headers=self._asset_headers(),
+                    asset_download_concurrency=concurrency,
+                    fetch_policy="direct_then_browser",
+                    provider_name="oxfordacademic",
+                    runtime_context=context,
+                ),
             )
             if supplementary_assets and asset_profile == "all"
             else empty_asset_results()
@@ -807,3 +817,72 @@ class OxfordAcademicClient(ProviderClient):
 
 
 __all__ = ["OxfordAcademicClient"]
+
+
+PROVIDER_BUNDLE = ProviderBundle(
+    client_factory=OxfordAcademicClient,
+    catalog=ProviderSpec(
+        name="oxfordacademic",
+        display_name="Oxford Academic",
+        official=True,
+        domains=("academic.oup.com",),
+        doi_prefixes=("10.1093/",),
+        publisher_aliases=(
+            "oxford academic",
+            "oxford university press",
+            "oxford university press (oup)",
+            "oup",
+        ),
+        asset_default="body",
+        probe_capability="routing_signal",
+        provider_managed_abstract_only=False,
+        status_order=14,
+        base_domains=("academic.oup.com",),
+        pdf_path_templates=(
+            "/doi/pdf/{doi}",
+            "/doi/epdf/{doi}",
+        ),
+        body_text_thresholds=BodyTextThresholds(min_chars=1200),
+        routes=(
+            ProviderRouteSpec(name="metadata", kind="metadata"),
+            ProviderRouteSpec(
+                name="direct_html",
+                kind="html",
+                timeout_seconds=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+            ),
+            ProviderRouteSpec(
+                name="direct_pdf",
+                kind="pdf",
+                requires_pdf_conversion=True,
+            ),
+            ProviderRouteSpec(
+                name="assets",
+                kind="assets",
+                timeout_seconds=20,
+                concurrency=2,
+                transient_retries=2,
+            ),
+        ),
+    ),
+    html_rules=ProviderHtmlRules(
+        name="oxfordacademic",
+        noise_profile=oxford_html.OXFORDACADEMIC_NOISE_PROFILE,
+        cleanup=ProviderCleanupRules(
+            markdown_promo_tokens=oxford_html.OXFORDACADEMIC_MARKDOWN_PROMO_TOKENS,
+            extraction_cleanup_selectors=oxford_html.OXFORDACADEMIC_EXTRACTION_CLEANUP_SELECTORS,
+        ),
+        front_matter=ProviderFrontMatterRules(
+            exact_texts=oxford_html.OXFORDACADEMIC_FRONT_MATTER_EXACT_TEXTS,
+            contains_tokens=oxford_html.OXFORDACADEMIC_FRONT_MATTER_CONTAINS_TOKENS,
+            publication_keywords=oxford_html.OXFORDACADEMIC_FRONT_MATTER_PUBLICATION_KEYWORDS,
+        ),
+        assets=ProviderAssetRules(
+            supplementary_text_tokens=oxford_html.OXFORDACADEMIC_SUPPLEMENTARY_TEXT_TOKENS,
+        ),
+        availability=AvailabilityPolicy(
+            name="oxfordacademic",
+            site_rule_overrides=oxford_html.OXFORDACADEMIC_SITE_RULE_OVERRIDES,
+        ),
+    ),
+    sources=("oxfordacademic_html", "oxfordacademic_pdf"),
+)

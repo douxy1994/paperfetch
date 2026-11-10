@@ -200,3 +200,62 @@ def test_cookie_filter_enforces_domain_path_and_secure_scope() -> None:
         )
         is None
     )
+
+
+def test_cookie_jar_preserves_host_only_scope_and_rfc_path_boundary() -> None:
+    cookies = [
+        {
+            "name": "host_only",
+            "value": "yes",
+            "domain": "publisher.example",
+            "path": "/foo",
+        },
+        {
+            "name": "domain_cookie",
+            "value": "yes",
+            "domain": ".publisher.example",
+            "path": "/foo",
+        },
+    ]
+
+    assert (
+        requester.cookie_header_for_url(cookies, "https://publisher.example/foo/bar")
+        == "host_only=yes; domain_cookie=yes"
+    )
+    assert (
+        requester.cookie_header_for_url(
+            cookies, "https://cdn.publisher.example/foo/bar"
+        )
+        == "domain_cookie=yes"
+    )
+    assert (
+        requester.cookie_header_for_url(cookies, "https://publisher.example/foobar")
+        is None
+    )
+
+
+def test_cookie_seeded_opener_imports_browser_cookie_into_cookie_jar() -> None:
+    opener = requester.build_cookie_seeded_opener(
+        [],
+        headers={},
+        timeout=1,
+        browser_cookies=[
+            {
+                "name": "session",
+                "value": "secret",
+                "domain": "publisher.example",
+                "path": "/article",
+                "secure": True,
+            }
+        ],
+    )
+
+    assert opener is not None
+    processor = next(
+        handler
+        for handler in opener.handlers
+        if isinstance(handler, urllib.request.HTTPCookieProcessor)
+    )
+    request = urllib.request.Request("https://publisher.example/article/1")
+    processor.cookiejar.add_cookie_header(request)
+    assert request.get_header("Cookie") == "session=secret"

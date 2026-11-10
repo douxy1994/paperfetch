@@ -1,65 +1,30 @@
 from __future__ import annotations
-
 import re
 from pathlib import Path
-
-import yaml
-from tests.golden_criteria import golden_criteria_asset
-
+import pytest
 from paper_fetch.http import HttpTransport
 from paper_fetch.providers.base import ProviderContent, RawFulltextPayload
-from paper_fetch.provider_catalog import PROVIDER_CATALOG, SOURCE_PROVIDER_MAP
+from paper_fetch.provider_catalog import SOURCE_PROVIDER_MAP
 from paper_fetch.providers import _oxfordacademic_html
 from paper_fetch.providers._registry import provider_bundle
 from paper_fetch.providers.oxfordacademic import OxfordAcademicClient
-from tests.unit._atypon_browser_workflow_provider_support import png_header
-from tests.unit._paper_fetch_support import FixtureHtmlTransport, http_response
+from tests.support._atypon_browser_workflow_provider_support import png_header
+from tests.support._paper_fetch_support import FixtureHtmlTransport, http_response
 
 
 HTML_DOI = "10.1093/bioinformatics/btaa161"
 FIGURE_DOI = "10.1093/bioinformatics/btaa823"
 PDF_DOI = "10.1093/bioinformatics/btaa153"
-REPO_ROOT = Path(__file__).resolve().parents[2]
-
-
-def _render_markdown_for_fixture(doi: str) -> str:
-    return golden_criteria_asset(doi, "extracted.md").read_text(
-        encoding="utf-8",
-        errors="ignore",
-    )
-
-
-def _extract_html_fixture() -> _oxfordacademic_html.OxfordAcademicExtraction:
-    html_text = golden_criteria_asset(HTML_DOI, "original.html").read_text(
-        encoding="utf-8",
-        errors="ignore",
-    )
-    return _oxfordacademic_html.extract_markdown(
-        html_text,
-        "https://academic.oup.com/bioinformatics/article/36/11/3409/5802463",
-        metadata={"doi": HTML_DOI},
-    )
 
 
 def test_provider_bundle_is_registered() -> None:
     bundle = provider_bundle("oxfordacademic")
 
-    assert PROVIDER_CATALOG["oxfordacademic"].client_factory_path.endswith(
-        "OxfordAcademicClient"
-    )
+    assert bundle.client_factory is OxfordAcademicClient
     assert SOURCE_PROVIDER_MAP["oxfordacademic_html"] == "oxfordacademic"
     assert SOURCE_PROVIDER_MAP["oxfordacademic_pdf"] == "oxfordacademic"
     assert bundle.html_rules is not None
     assert bundle.html_rules.name == "oxfordacademic"
-
-
-def test_provider_helper_extracts_markdown_from_html_fixture() -> None:
-    extraction = _extract_html_fixture()
-
-    assert "## Abstract" in extraction.markdown_text
-    assert "Table 4" in extraction.markdown_text
-    assert "Article metrics" not in extraction.markdown_text
-    assert extraction.extracted_assets
 
 
 def test_client_pdf_candidates_keep_article_pdf_url_and_doi_templates() -> None:
@@ -171,149 +136,77 @@ def test_html_asset_download_supports_none_body_and_all_profiles(
     assert str(body_result["assets"][0]["path"]) in rendered
 
 
-def test_markdown_contract_structure_fixture() -> None:
-    # markdown-review: purpose=structure doi=10.1093/bioinformatics/btaa161
-    markdown = _render_markdown_for_fixture(HTML_DOI)
-    assert "## Abstract" in markdown
-    assert "## 1 Introduction" in markdown
-    assert "Download PDF" not in markdown
-    assert "Article metrics" not in markdown
-
-
-def test_article_html_route_contract_fixture_meets_minimum_body_shape() -> None:
-    # route-contract: article_html public article container, metadata and body sections
-    manifest = yaml.safe_load(
-        (REPO_ROOT / "onboarding" / "manifests" / "oxfordacademic.yml").read_text(
-            encoding="utf-8"
-        )
+@pytest.mark.parametrize("downloaded_count", [2, 1, 0], ids=["all", "partial", "none"])
+def test_html_preview_images_stay_inline_after_model_rendering(
+    tmp_path: Path,
+    downloaded_count: int,
+) -> None:
+    source_url = "https://academic.oup.com/example"
+    assets = [
+        {
+            "kind": "figure",
+            "heading": f"Figure {number}",
+            "url": f"https://oup.silverchair-cdn.com/article/f{number}.jpeg",
+            "original_url": f"https://oup.silverchair-cdn.com/article/f{number}.jpeg",
+            "preview_url": f"https://oup.silverchair-cdn.com/article/m_f{number}.jpeg",
+            "section": "body",
+        }
+        for number in (1, 2)
+    ]
+    markdown = "## Results\n\n" + "\n\n".join(
+        f"Before figure {number}.\n\n![Figure {number}]({asset['preview_url']})"
+        f"\n\nAfter figure {number}."
+        for number, asset in enumerate(assets, 1)
     )
-    html_text = golden_criteria_asset(HTML_DOI, "original.html").read_text(
-        encoding="utf-8",
-        errors="ignore",
+    raw_payload = RawFulltextPayload(
+        provider="oxfordacademic",
+        source_url=source_url,
+        content_type="text/html",
+        body=b"<article>body</article>",
+        content=ProviderContent(
+            route_kind="html",
+            source_url=source_url,
+            content_type="text/html",
+            body=b"<article>body</article>",
+            markdown_text=markdown,
+            extracted_assets=assets,
+        ),
     )
-    extraction = _oxfordacademic_html.extract_markdown(
-        html_text,
-        "https://academic.oup.com/bioinformatics/article/36/11/3409/5802463",
-        metadata={"doi": HTML_DOI},
-    )
-    article_contract = manifest["route_contract"]["article_html"]
-
-    assert ".article-body" in html_text or "widget-ArticleFulltext" in html_text
-    assert extraction.metadata.get("title") or extraction.metadata.get("doi")
-    assert len(extraction.markdown_text) >= article_contract["min_body_chars"]
-    assert extraction.section_hints
-    for blocked in article_contract["reject_if_any"]:
-        assert blocked not in extraction.markdown_text.lower()
-
-
-def test_markdown_contract_table_fixture() -> None:
-    # markdown-review: purpose=table doi=10.1093/bioinformatics/btaa161
-    markdown = _render_markdown_for_fixture(HTML_DOI)
-    assert "Table 4" in markdown
-    assert "Number of features selected" in markdown
-    assert re.search(r"(?m)^\|.+\|$", markdown)
-    assert "Google Scholar" not in markdown
-    assert "Download Citation" not in markdown
-
-
-def test_markdown_contract_formula_fixture() -> None:
-    # markdown-review: purpose=formula doi=10.1093/bioinformatics/btaa161
-    markdown = _render_markdown_for_fixture(HTML_DOI)
-    assert "Equation" in markdown
-    assert "Kullback" in markdown
-    assert re.search(r"(?:Equation|\$\$|R\^\{2\}|I _\{YP\})", markdown)
-    assert "[Formula unavailable]" not in markdown
-    assert "Article metrics" not in markdown
-
-
-def test_oxford_formula_paragraphs_keep_inline_prose_together() -> None:
-    extraction = _extract_html_fixture()
-    markdown = extraction.markdown_text
-
-    assert "at time\n\nt\n\nfor covariate" not in markdown
-    assert "\n\nz, with\n\n" not in markdown
-    assert "\n\nB\n\n-spline" not in markdown
-    assert "$$" in markdown
-    assert "(1)" in markdown
-    assert "at time t for covariate vector z, with" in markdown
-    assert "cubic B-spline approximation" in markdown
-
-
-def test_markdown_contract_figure_fixture() -> None:
-    # markdown-review: purpose=figure doi=10.1093/bioinformatics/btaa823
-    markdown = _render_markdown_for_fixture(FIGURE_DOI)
-    assert "Fig. 4" in markdown
-    assert "Basic TM on abstracts and full-texts" in markdown
-    assert re.search(r"(?:!\[Figure|!\[Image|Fig\.\s*4)", markdown)
-    assert "![Formula]" not in markdown
-    assert "Article Metrics" not in markdown
-    assert "Download Citation" not in markdown
-    assert "Badal V.D. et al. (2015)" in markdown
-    assert "Text mining for protein docking" in markdown
-    assert not re.search(r"\bcitation_[A-Za-z0-9_]+=", markdown)
-
-
-def test_figure_fixture_stage_asset_contract_is_inline_body_image() -> None:
-    manifest = yaml.safe_load(
-        (REPO_ROOT / "onboarding" / "manifests" / "oxfordacademic.yml").read_text(
-            encoding="utf-8"
-        )
-    )
-    figure_contract = manifest["asset_contract"]["figures"]
-    markdown = _render_markdown_for_fixture(FIGURE_DOI)
-    body_before_references = markdown.split("## References", 1)[0]
-    image_match = re.search(
-        r"!\[(?:Figure|Image)[^\]]*\]\(([^)]+)\)", body_before_references
+    downloaded_assets = []
+    for number, asset in enumerate(assets[:downloaded_count], 1):
+        path = tmp_path / f"figure-{number}.png"
+        path.write_bytes(png_header(16, 12) + b"oxford-figure")
+        downloaded_assets.append({**asset, "path": str(path)})
+    failures = (
+        [{"kind": "figure", "url": assets[1]["url"], "reason": "download_failed"}]
+        if downloaded_count == 1
+        else []
     )
 
-    assert figure_contract["inline"] == "body"
-    assert figure_contract["download"] == "not_applicable"
-    assert figure_contract["exception_reason"]
-    assert not (
-        golden_criteria_asset(FIGURE_DOI, "extracted.md").parent / "body_assets"
-    ).exists()
-    assert image_match is not None
-    assert "oup.silverchair-cdn.com" in image_match.group(1)
+    article = OxfordAcademicClient(HttpTransport(), {}).to_article_model(
+        {"doi": HTML_DOI, "title": "Example"},
+        raw_payload,
+        downloaded_assets=downloaded_assets or None,
+        asset_failures=failures,
+    )
+    rendered = article.to_ai_markdown(
+        include_refs="all", asset_profile="body", max_tokens="full_text"
+    )
 
-
-def test_markdown_contract_supplementary_fixture() -> None:
-    # markdown-review: purpose=supplementary doi=10.1093/bioinformatics/btaa161
-    markdown = _render_markdown_for_fixture(HTML_DOI)
-    assert "Supplementary data" in markdown
-    assert "btaa161_Supplementary_Materials" in markdown
-    assert "Download Citation" not in markdown
-    assert "Google Scholar" not in markdown
-
-
-def test_markdown_contract_references_fixture() -> None:
-    # markdown-review: purpose=references doi=10.1093/bioinformatics/btaa161
-    markdown = _render_markdown_for_fixture(HTML_DOI)
-    assert "## References" in markdown
-    assert "Allison" in markdown
-    assert "Allison P.D. (1995)" in markdown
-    assert "Survival Analysis Using SAS" in markdown
-    assert "Google Scholar" not in markdown
-    assert "Download Citation" not in markdown
-    assert "citation_title=" not in markdown
-    assert "citation_author=" not in markdown
-    assert "citation_journal_title=" not in markdown
-    assert "citation_year=" not in markdown
-    assert not re.search(r"\bcitation_[A-Za-z0-9_]+=", markdown)
-
-
-def test_oxford_references_prefer_visible_html_reference_text() -> None:
-    extraction = _extract_html_fixture()
-    references = extraction.metadata.get("references")
-
-    assert isinstance(references, list)
-    assert len(references) == 43
-    first = references[0]
-    assert first["label"] == "1."
-    assert first["raw"].startswith("Allison P.D. (1995)")
-    assert "Survival Analysis Using SAS" in first["raw"]
-    assert "citation_title=" not in str(references)
-    assert "citation_author=" not in str(references)
-    assert not re.search(r"\bcitation_[A-Za-z0-9_]+=", str(references))
+    assert article.quality.asset_failures == failures
+    assert sum(bool(asset.path) for asset in article.assets) == downloaded_count
+    for number, asset in enumerate(assets, 1):
+        if number <= downloaded_count:
+            target = downloaded_assets[number - 1]["path"]
+            assert asset["preview_url"] not in rendered
+            assert rendered.count(f"]({target})") == 1
+        else:
+            target = asset["preview_url"]
+            assert str(tmp_path / f"figure-{number}.png") not in rendered
+        assert (
+            f"Before figure {number}.\n\n![Figure {number}]({target})"
+            f"\n\nAfter figure {number}."
+        ) in rendered
 
 
 def test_oxford_reference_meta_fallback_strips_citation_keys() -> None:
@@ -341,42 +234,21 @@ def test_oxford_reference_meta_fallback_strips_citation_keys() -> None:
     assert not re.search(r"\bcitation_[A-Za-z0-9_]+=", str(references))
 
 
-def test_pdf_fallback_fixture_is_captured_pdf() -> None:
-    # fixture-capture: purpose=pdf_fallback doi=10.1093/bioinformatics/btaa153
-    manifest = yaml.safe_load(
-        (REPO_ROOT / "onboarding" / "manifests" / "oxfordacademic.yml").read_text(
-            encoding="utf-8"
-        )
+def test_oxford_attachment_identity_preserves_non_signature_parameters() -> None:
+    url = "https://oup.silverchair-cdn.com/oup/backfile/supp.pdf"
+    html = f"""
+    <article><a href="{url}?part=1&amp;Signature=old">Supplementary figure</a>
+    <a href="javascript:;">Supplementary Data</a>
+    <a href="https://academic.oup.com/article-pdf/1/main.pdf">Download PDF</a>
+    <a href="https://example.org/reference.pdf">Reference</a></article>
+    <div class="dataSuppLink"><a href="{url}?part=1&amp;Signature=new&amp;Expires=123">File 1</a></div>
+    <div class="dataSuppLink"><a href="{url}?part=2&amp;Signature=second">File 2</a></div>
+    """
+    result = _oxfordacademic_html.extract_markdown(
+        html, "https://academic.oup.com/article/1", metadata={}
     )
-    pdf_contract = manifest["route_contract"]["pdf_fallback"]
-    body = golden_criteria_asset(PDF_DOI, "original.pdf").read_bytes()
-
-    assert pdf_contract["require_pdf_magic"] is True
-    assert pdf_contract["reject_html_wrapper"] is True
-    assert body.startswith(b"%PDF-")
-    assert len(body) > 100_000
-
-
-def test_markdown_contract_pdf_fallback_fixture() -> None:
-    # markdown-review: purpose=pdf_fallback doi=10.1093/bioinformatics/btaa153
-    markdown = _render_markdown_for_fixture(PDF_DOI)
-    assert "MIXnorm: normalizing RNA-seq data from formalin-fixed" in markdown
-    assert "## Abstract" in markdown
-    assert "MIXnorm" in markdown
-    assert "# Untitled Article" not in markdown
-    assert "Google Scholar" not in markdown
-    assert "View Article Abstract" not in markdown
-
-
-def test_metadata_only_route_contract_is_declared() -> None:
-    # route-contract: metadata_only metadata fallback fabricated body text
-    manifest = yaml.safe_load(
-        (REPO_ROOT / "onboarding" / "manifests" / "oxfordacademic.yml").read_text(
-            encoding="utf-8"
-        )
-    )
-    assert "metadata_only" in manifest["main_path"]
-    assert (
-        "fabricated body text"
-        in manifest["route_contract"]["metadata_only"]["reject_if_any"]
-    )
+    assets = [a for a in result.extracted_assets if a["kind"] == "supplementary"]
+    assert [a["url"] for a in assets] == [
+        url + "?part=1&Signature=new&Expires=123",
+        url + "?part=2&Signature=second",
+    ]

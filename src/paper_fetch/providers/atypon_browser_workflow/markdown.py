@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import asdict
+import copy
+
+from ...models import SemanticLosses
+from ...formula.validation import formula_document, capture_formula_diagnostics
 from typing import Any
 
 from ...metadata.types import ProviderMetadata
@@ -43,8 +48,10 @@ from .profile import (
 )
 
 from bs4 import BeautifulSoup, Tag
+from .._html_section_markdown import render_html_fragment_markdown
 
 
+@formula_document(new_document=True)
 def extract_browser_workflow_markdown(
     html_text: str,
     source_url: str,
@@ -53,8 +60,12 @@ def extract_browser_workflow_markdown(
     metadata: ProviderMetadata | Mapping[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     soup = BeautifulSoup(html_text, choose_parser())
+    from ...extraction.html.object_links import prepare_retained_object_links
+
+    prepare_retained_object_links(soup, source_url)
     title = extract_page_title(soup)
     title = _preferred_title_from_metadata(title, metadata)
+    title = " ".join((title or "").split())
     container_policy = _container_selection_policy(publisher)
     container = select_best_container(soup, publisher, policy=container_policy)
     if container is None:
@@ -67,10 +78,13 @@ def extract_browser_workflow_markdown(
     clean_container(
         container, publisher, drop_profile=HTML_CONTAINER_DROP_BROWSER_WORKFLOW
     )
-    availability_container_html = str(container)
+    availability_dom = BeautifulSoup("", choose_parser())
+    availability_dom.append(copy.deepcopy(container))
     from ...extraction.html.assets import extract_figure_assets
 
     profile = _publisher_profile(publisher)
+    if profile.prepare_source_images is not None:
+        profile.prepare_source_images(container, source_url)
     asset_container = _clone_container(container)
     _normalize_abstract_blocks(asset_container)
     hook = profile.dom_hooks.asset_figure_extraction
@@ -81,7 +95,13 @@ def extract_browser_workflow_markdown(
         _content_fragment_html(asset_container, publisher=publisher), source_url
     )
 
-    table_entries = _normalize_special_blocks(container, publisher)
+    from urllib.parse import urljoin
+
+    for anchor in container.select("a[href]"):
+        if not str(anchor["href"]).startswith(("#", "javascript:")):
+            anchor["href"] = urljoin(source_url, str(anchor["href"]))
+    losses = SemanticLosses()
+    table_entries = _normalize_special_blocks(container, publisher, losses)
     abstract_sections = _abstract_section_payloads(container)
     abstract_block_texts = _abstract_block_texts_from_payloads(abstract_sections)
     body_container = _clone_container(container)
@@ -101,6 +121,7 @@ def extract_browser_workflow_markdown(
         trafilatura_backend=None,
         noise_profile=noise_profile,
         cleaned_html=True,
+        renderer=render_html_fragment_markdown,
     )
     if abstract_sections:
         markdown = _ensure_body_markdown_heading(markdown, title=title)
@@ -132,7 +153,7 @@ def extract_browser_workflow_markdown(
         markdown,
         quality_metadata,
         html_text=html_text,
-        structure_html_text=availability_container_html,
+        structure_dom=availability_dom,
         title=title,
         final_url=source_url,
         container_tag=container.name,
@@ -145,7 +166,9 @@ def extract_browser_workflow_markdown(
             diagnostics.reason, availability_failure_message(diagnostics)
         )
 
+    capture_formula_diagnostics(losses, count_fallbacks=True)
     extraction_payload = {
+        "semantic_losses": asdict(losses),
         "title": title,
         "abstract_text": normalize_text(abstract_sections[0]["text"])
         if abstract_sections
@@ -193,23 +216,7 @@ def _preferred_title_from_metadata(
 
 
 def _clone_container(container: Tag) -> Tag:
-    clone_soup = BeautifulSoup(
-        f'<div data-paper-fetch-clone-root="1">{container}</div>',
-        choose_parser(),
-    )
-    clone_root = clone_soup.select_one('[data-paper-fetch-clone-root="1"]')
-    if not isinstance(clone_root, Tag):
-        raise HtmlExtractionFailure(
-            "article_container_clone_failed",
-            "Could not prepare an isolated article container for extraction.",
-        )
-    for child in clone_root.children:
-        if isinstance(child, Tag):
-            return child
-    raise HtmlExtractionFailure(
-        "article_container_clone_failed",
-        "Could not prepare an isolated article container for extraction.",
-    )
+    return copy.deepcopy(container)
 
 
 def _title_is_doi(title: str | None, metadata: Mapping[str, Any]) -> bool:

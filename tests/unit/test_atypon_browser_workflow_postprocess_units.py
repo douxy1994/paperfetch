@@ -1,20 +1,40 @@
 from __future__ import annotations
-
-import unittest
-
-from bs4 import BeautifulSoup
-
+from __future__ import annotations
+from tests.golden_criteria import golden_criteria_scenario_asset
 from paper_fetch.providers.atypon_browser_workflow import (
     extract_atypon_browser_workflow_markdown,
+)
+import unittest
+from bs4 import BeautifulSoup
+from paper_fetch.providers.atypon_browser_workflow.postprocess import (
+    _postprocess_browser_workflow_markdown,
 )
 from paper_fetch.providers import _science_html
 from paper_fetch.providers.atypon_browser_workflow import (
     normalization as atypon_browser_workflow_normalization,
 )
-from tests.golden_criteria import golden_criteria_scenario_asset
 
 
 class AtyponBrowserWorkflowPostprocessUnitTests(unittest.TestCase):
+    def test_postprocess_preserves_complete_display_math_block(self) -> None:
+        markdown = _postprocess_browser_workflow_markdown(
+            """
+# Example Article
+
+## Results
+
+This body sentence establishes the main article content.
+
+$$
+E = MC^2
+$$
+            """,
+            title="Example Article",
+            publisher="wiley",
+        )
+
+        self.assertIn("$$\nE = MC^2\n$$", markdown)
+
     def test_figure_like_nodes_uses_registered_teaser_filter(self) -> None:
         soup = BeautifulSoup(
             """
@@ -294,7 +314,6 @@ class AtyponBrowserWorkflowPostprocessUnitTests(unittest.TestCase):
     def test_extract_atypon_browser_workflow_markdown_falls_back_complex_table_to_bullets(
         self,
     ) -> None:
-        """rule: rule-table-flatten-or-list"""
         html = golden_criteria_scenario_asset(
             "table_flatten_or_list", "complex_table.html"
         ).read_text(encoding="utf-8")
@@ -313,6 +332,9 @@ class AtyponBrowserWorkflowPostprocessUnitTests(unittest.TestCase):
         self.assertIn("- Group: Group A; Values: Alpha / Beta", markdown)
         self.assertNotIn("| Group | Values |", markdown)
 
+
+if __name__ == "__main__":
+    unittest.main()
 
 if __name__ == "__main__":
     unittest.main()

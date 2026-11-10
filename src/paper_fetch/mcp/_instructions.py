@@ -6,6 +6,7 @@ from ..reason_codes import ERROR, NO_ACCESS, RATE_LIMITED
 from .provider_catalog import PROVIDER_CATALOG_RESOURCE_URI
 
 DEFAULT_FETCH_VALUES: tuple[tuple[str, str], ...] = (
+    ("target", '"paper"'),
     ("modes", '["article", "markdown"]'),
     ("strategy.asset_profile", "null (provider default)"),
     ("strategy.allow_metadata_only_fallback", "true"),
@@ -25,10 +26,6 @@ DEFAULT_FETCH_NOTES: tuple[str, ...] = (
 )
 
 SKILL_ENVIRONMENT_VARIABLES: tuple[tuple[str, str], ...] = (
-    (
-        "PAPER_FETCH_BROWSER_BACKEND",
-        "Selects the Camoufox browser backend; any other value is rejected.",
-    ),
     (
         "PAPER_FETCH_BROWSER_HEADLESS",
         "Generic headed/headless setting for the selected managed browser backend.",
@@ -85,28 +82,41 @@ def server_instructions() -> str:
     return (
         "Resolve, inspect, cache, or fetch papers by DOI, landing URL, or title. Resolve "
         "ambiguous identities before fetching; use compact request-sensitive cache checks "
-        "before network work. Tool payloads have schema_version=2 and structured errors. "
+        "before network work. The nine tools return schema_version=2 payloads and structured errors. "
+        "batch_check(queries=[query]) handles single-paper and batch probes; mode defaults to "
+        "metadata and only metadata is accepted. Inspect results[0].probe_state and "
+        "results[0].error for a single probe. The standalone has_fulltext tool and article "
+        "check mode are removed. For body checks without disk output, use batch_fetch with "
+        "modes=[article], detail=compact, save_markdown=false, no_download=true, "
+        "prefer_cache=false, artifact_mode=none, strategy.asset_profile=none, and no "
+        "batch_results; judge each result by acceptance. "
+        "fetch_paper and batch_fetch accept target=paper|supplementary (default paper). "
+        "Supplementary tasks discover materials without a body, preserve per-item failures, and use content_requested=false acceptance. "
         "fetch_paper defaults to article+markdown, provider-default assets, metadata-only "
         "fallback enabled, full text, cache preference off, downloads on, and "
         "artifact_mode=markdown-assets. Fetch and batch calls may access remote services; "
         "fetch_paper and batch_fetch may write provider artifacts/cache or explicit outputs, "
         "while browser_preflight may open publisher pages and save filtered storage-state. "
+        "Every fetch checks managed Camoufox at request start, including HTTP/cache hits; batches check once. Default: official/prerelease with camoufox==0.5.9 selects the latest compatible stable or prerelease browser in upstream order; official/stable excludes prereleases. Explicit channel/pins take priority. Updates reuse a valid local runtime on failure; otherwise HTTP/cache can continue and browser launch reports the saved failure. Core without browser dependencies and explicit executables skip managed updates. "
         "provider_status is local/static; "
         "browser_preflight is live and never performs PDF fallback or automatic auth. Do not "
         "bypass login, challenge, paywall, or entitlement boundaries. Read current provider, "
         f"source, runtime, preflight, and asset-default facts from {PROVIDER_CATALOG_RESOURCE_URI}. "
-        "summarize_paper and verify_citation_list are prompt templates. Supporting clients "
-        "receive progress/log updates for fetch, browser preflight, and batch work."
+        "Supporting clients receive progress/log updates for fetch, browser preflight, "
+        "and batch work."
     )
 
 
 def fetch_tool_description() -> str:
     return (
         "Fetch one paper as structured article, Markdown, and/or metadata with provenance, "
+        "or use target=supplementary for independent material discovery/download without a body or body PDF. "
+        "target defaults to paper; supplementary ignores body asset/render options, returns a structured supplementary list "
+        "and a material-only Markdown index. Empty complete discovery returns no_result; no_download returns unarchived links. "
         "quality, trace, and token estimates. Defaults are modes=article+markdown, "
         "provider-default assets, metadata-only fallback enabled, include_refs=null, "
         "max_tokens=full_text, prefer_cache=false, no_download=false, "
-        "artifact_mode=markdown-assets, and save_markdown=false. The call may access remote "
+        "artifact_mode=markdown-assets and save_markdown=false. The call may access remote "
         "services and write provider artifacts, assets, and an MCP cache sidecar. "
         "no_download=true suppresses those writes; save_markdown=true is an explicit separate "
         "write and returns a path instead of inline full text. artifact_mode=none suppresses "

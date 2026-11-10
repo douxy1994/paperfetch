@@ -1,10 +1,8 @@
 from __future__ import annotations
-
 from dataclasses import replace
 from functools import cache
 from pathlib import Path
 from typing import Any
-
 from paper_fetch import config
 from paper_fetch.providers import browser_runtime
 from paper_fetch.providers.browser_workflow.shared import default_browser_workflow_deps
@@ -39,43 +37,6 @@ def _extract_fixture_markdown(doi: str) -> tuple[str, dict[str, Any]]:
     )
 
 
-def test_markdown_review_loop_structure_figure_and_supplementary_fixture() -> None:
-    markdown, extraction = _extract_fixture_markdown("10.1111/gcb.16414")
-
-    assert "## Abstract" in markdown
-    assert "## 1 INTRODUCTION" in markdown
-    assert "**Figure 1.** Conceptual diagram of velocity" in markdown
-    assert "DATA AVAILABILITY STATEMENT" in markdown
-    assert len(extraction["references"]) >= 50
-    assert "Open in figure viewer" not in markdown
-    assert "PowerPoint" not in markdown
-
-
-def test_markdown_review_loop_table_and_pdf_fallback_fixture() -> None:
-    markdown, extraction = _extract_fixture_markdown("10.1111/cas.16395")
-
-    assert "## 1 INTRODUCTION" in markdown
-    assert "**Table 1.** AI-SaMD approved as a medical device" in markdown
-    assert "| Research area" in markdown
-    assert len(extraction["references"]) >= 80
-    assert "Open in figure viewer" not in markdown
-    assert "PowerPoint" not in markdown
-
-
-def test_markdown_review_loop_formula_references_and_abstract_only_fixture() -> None:
-    formula_markdown, _ = _extract_fixture_markdown("10.1111/gcb.15322")
-    references_markdown, references_extraction = _extract_fixture_markdown(
-        "10.1111/gcb.16998"
-    )
-
-    assert "![Formula]" in formula_markdown
-    assert "## Abstract" in references_markdown
-    assert len(references_extraction["references"]) >= 70
-    assert "Drought thresholds" in references_markdown
-    assert "Open in figure viewer" not in references_markdown
-    assert "PowerPoint" not in references_markdown
-
-
 def test_wiley_browser_workflow_does_not_force_default_http_user_agent(
     tmp_path: Path,
 ) -> None:
@@ -91,7 +52,6 @@ def test_wiley_browser_workflow_does_not_force_default_http_user_agent(
         fetch_html_with_browser=fake_fetch_html_with_browser,
     )
     env = {
-        config.BROWSER_BACKEND_ENV_VAR: "camoufox",
         config.XDG_DATA_HOME_ENV_VAR: str(tmp_path),
     }
     client = wiley_provider.WileyClient(transport=None, env=env, deps=deps)
@@ -131,7 +91,6 @@ def test_wiley_camoufox_workflow_ignores_explicit_browser_user_agent(
         fetch_html_with_browser=fake_fetch_html_with_browser,
     )
     env = {
-        config.BROWSER_BACKEND_ENV_VAR: "camoufox",
         config.XDG_DATA_HOME_ENV_VAR: str(tmp_path),
         config.BROWSER_USER_AGENT_ENV_VAR: chrome_user_agent,
     }

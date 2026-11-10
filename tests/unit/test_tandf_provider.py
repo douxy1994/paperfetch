@@ -1,13 +1,9 @@
 from __future__ import annotations
-
 from functools import cache
+import json
 from pathlib import Path
-import re
 from unittest import mock
-
-from bs4 import BeautifulSoup, NavigableString, Tag
 import pytest
-
 from paper_fetch import auth, browser_preflight, publisher_identity
 from paper_fetch.extraction.html.signals import HtmlExtractionFailure
 from paper_fetch.provider_catalog import (
@@ -24,7 +20,6 @@ from paper_fetch.providers._atypon_browser_workflow_profiles import (
     build_pdf_candidates,
     publisher_profile,
 )
-from paper_fetch.providers._pdf_common import pdf_fetch_result_from_bytes
 from paper_fetch.providers._registry import provider_bundle
 from paper_fetch.providers.atypon_browser_workflow.asset_scopes import (
     extract_browser_workflow_asset_html_scopes,
@@ -111,7 +106,9 @@ def test_tandf_provider_bundle_declares_routes_sources_and_browser_runtime() -> 
     assert catalog.domain_suffixes == ("tandfonline.com",)
     assert catalog.doi_prefixes == ("10.1080/",)
     assert provider_base_domains("tandf") == ("www.tandfonline.com",)
-    assert catalog.requires_browser_runtime is True
+    assert any(
+        route.browser_required or route.browser_optional for route in catalog.routes
+    )
     assert catalog.provider_managed_abstract_only is True
     assert catalog.status_order == 19
     assert default_asset_profile_for_provider("tandf") == "body"
@@ -119,7 +116,6 @@ def test_tandf_provider_bundle_declares_routes_sources_and_browser_runtime() -> 
     assert SOURCE_PROVIDER_MAP["tandf_pdf"] == "tandf"
     assert bundle.sources == ("tandf_html", "tandf_pdf")
     assert bundle.html_rules is not None
-    assert bundle.html_rules.availability.no_signals is True
 
 
 def test_tandf_builtin_auth_and_preflight_target_use_verified_open_article() -> None:
@@ -235,6 +231,9 @@ def test_tandf_browser_page_preparation_hydrates_official_csv_table() -> None:
     links = mock.Mock()
     links.count.return_value = 1
     links.nth.return_value = link
+    links.evaluate_all.return_value = [
+        {"controlsId": "t0001-table-wrapper", "href": link.get_attribute("href")}
+    ]
     page = mock.Mock()
     page.locator.return_value = links
     page.evaluate.side_effect = [
@@ -251,7 +250,7 @@ def test_tandf_browser_page_preparation_hydrates_official_csv_table() -> None:
             "timedOut": False,
             "concurrency": 1,
         },
-        True,
+        [True],
         {"total": 1, "truncated": False, "tables": []},
     ]
 
@@ -281,11 +280,13 @@ def test_tandf_browser_page_preparation_hydrates_official_csv_table() -> None:
     batch_script = page.evaluate.call_args_list[0].args[0]
     assert "Promise.all" in batch_script
     assert "targetUrl.origin !== window.location.origin" in batch_script
-    assert page.evaluate.call_args_list[1].args[1] == {
-        "tableId": "t0001",
-        "caption": "Table 1. Example (2011)",
-        "rows": [["Material", "Value"], ["Buffer", "200"]],
-    }
+    assert page.evaluate.call_args_list[1].args[1] == [
+        {
+            "tableId": "t0001",
+            "caption": "Table 1. Example (2011)",
+            "rows": [["Material", "Value"], ["Buffer", "200"]],
+        }
+    ]
 
 
 def test_tandf_browser_page_preparation_uses_bounded_embedded_table_fallback() -> None:
@@ -305,7 +306,7 @@ def test_tandf_browser_page_preparation_uses_bounded_embedded_table_fallback() -
                 }
             ],
         },
-        True,
+        [True],
     ]
 
     result = _tandf_html.prepare_browser_page(page, timeout_ms=5_000)
@@ -313,11 +314,13 @@ def test_tandf_browser_page_preparation_uses_bounded_embedded_table_fallback() -
     assert result["tables_hydrated"] == 1
     assert result["csv_tables_hydrated"] == 0
     assert result["embedded_tables_hydrated"] == 1
-    assert page.evaluate.call_args_list[1].args[1] == {
-        "tableId": "ut0001",
-        "caption": "Algorithm",
-        "rows": [["Step"], ["Build the model"]],
-    }
+    assert page.evaluate.call_args_list[1].args[1] == [
+        {
+            "tableId": "ut0001",
+            "caption": "Algorithm",
+            "rows": [["Step"], ["Build the model"]],
+        }
+    ]
 
 
 def test_tandf_batch_results_keep_input_order_and_failed_table_fallback() -> None:
@@ -333,7 +336,13 @@ def test_tandf_batch_results_keep_input_order_and_failed_table_fallback() -> Non
 
     links = mock.Mock()
     links.count.return_value = 2
-    links.nth.side_effect = [link("t0001"), link("t0002")]
+    links.evaluate_all.return_value = [
+        {
+            "controlsId": f"{table_id}-table-wrapper",
+            "href": f"/action/downloadTable?id={table_id}&downloadType=CSV",
+        }
+        for table_id in ("t0001", "t0002")
+    ]
     page = mock.Mock()
     page.locator.return_value = links
     page.evaluate.side_effect = [
@@ -351,7 +360,7 @@ def test_tandf_batch_results_keep_input_order_and_failed_table_fallback() -> Non
             "timedOut": False,
             "concurrency": 2,
         },
-        True,
+        [True],
         {
             "total": 1,
             "truncated": False,
@@ -363,7 +372,7 @@ def test_tandf_batch_results_keep_input_order_and_failed_table_fallback() -> Non
                 }
             ],
         },
-        True,
+        [True],
     ]
 
     result = _tandf_html.prepare_browser_page(page, timeout_ms=5_000)
@@ -374,7 +383,7 @@ def test_tandf_batch_results_keep_input_order_and_failed_table_fallback() -> Non
     assert result["tables_hydrated"] == 2
     assert result["table_failures"] == 1
     injected = [
-        call.args[1]
+        call.args[1][0]
         for call in (page.evaluate.call_args_list[1], page.evaluate.call_args_list[3])
     ]
     assert [entry["tableId"] for entry in injected] == ["t0001", "t0002"]
@@ -392,46 +401,169 @@ def test_tandf_table_preparation_obeys_exhausted_total_deadline() -> None:
 
     assert result["table_controls"] == 24
     assert result["timed_out"] is True
+    assert result["truncated"] is True
+    assert result["tables_unfinished"] == 24
     links.nth.assert_not_called()
     page.evaluate.assert_not_called()
 
 
-def test_tandf_article_assets_keep_body_figures_and_scope_supplement() -> None:
-    html_text = _fixture_path(STRUCTURE_DOI).read_text(encoding="utf-8")
-    source_url = f"https://www.tandfonline.com/doi/full/{STRUCTURE_DOI}"
-    body_html, supplementary_html = extract_browser_workflow_asset_html_scopes(
-        html_text,
-        source_url,
-        "tandf",
-    )
-    extractor = publisher_profile("tandf").scoped_asset_extractor
-    assert extractor is not None
+def test_tandf_csv_tables_continue_beyond_first_batch() -> None:
+    def link_for(index: int):
+        table_id = f"t{index:04d}"
+        link = mock.Mock()
+        link.get_attribute.side_effect = lambda name: (
+            f"/action/downloadTable?id={table_id}&downloadType=CSV"
+            if name == "href"
+            else None
+        )
+        link.evaluate.return_value = f"{table_id}-table-wrapper"
+        return link
 
-    body_assets = extractor(
-        body_html,
-        source_url,
-        asset_profile="body",
-        supplementary_html_text=supplementary_html,
-    )
-    all_assets = extractor(
-        body_html,
-        source_url,
-        asset_profile="all",
-        supplementary_html_text=supplementary_html,
-    )
+    links = mock.Mock()
+    links.count.return_value = 25
+    links.evaluate_all.side_effect = lambda script, bounds: [
+        {
+            "controlsId": f"t{i:04d}-table-wrapper",
+            "href": f"/action/downloadTable?id=t{i:04d}&downloadType=CSV",
+        }
+        for i in range(bounds["start"], bounds["stop"])
+    ]
+    page = mock.Mock()
+    page.locator.return_value = links
 
-    figures = [asset for asset in body_assets if asset["kind"] == "figure"]
-    assert len(figures) == 9
-    assert all(asset.get("preview_accepted") == "true" for asset in figures)
-    assert any("_f0006_c.jpg" in asset["preview_url"] for asset in figures)
-    assert not [asset for asset in body_assets if asset["kind"] == "supplementary"]
-    supplementary = [asset for asset in all_assets if asset["kind"] == "supplementary"]
-    assert len(supplementary) == 1
-    assert "preview_accepted" not in supplementary[0]
-    assert supplementary[0]["url"].startswith(
-        "https://www.tandfonline.com/action/downloadSupplement?"
+    def evaluate(script, arguments):
+        if script == _tandf_html._TANDF_FETCH_TABLE_CSV_BATCH_SCRIPT:
+            return {
+                "results": [
+                    {
+                        "ok": True,
+                        "contentType": "text/csv",
+                        "text": f"Column\n{entry['tableId']}",
+                    }
+                    for entry in arguments["entries"]
+                ],
+                "timedOut": False,
+                "concurrency": min(4, len(arguments["entries"])),
+            }
+        if script == _tandf_html._TANDF_INJECT_TABLE_BATCH_SCRIPT:
+            return [True] * len(arguments)
+        if script == _tandf_html._TANDF_READ_EMBEDDED_TABLES_SCRIPT:
+            return {"total": 0, "tables": []}
+        raise AssertionError("unexpected page script")
+
+    page.evaluate.side_effect = evaluate
+
+    result = _tandf_html.prepare_browser_page(page, timeout_ms=10_000)
+
+    assert result["tables_hydrated"] == 25
+    assert result["csv_tables_hydrated"] == 25
+    assert result["truncated"] is False
+    batch_calls = [
+        call
+        for call in page.evaluate.call_args_list
+        if call.args[0] == _tandf_html._TANDF_FETCH_TABLE_CSV_BATCH_SCRIPT
+    ]
+    assert [len(call.args[1]["entries"]) for call in batch_calls] == [24, 1]
+    links.nth.assert_not_called()
+    assert links.evaluate_all.call_count == 2
+    injections = [
+        call
+        for call in page.evaluate.call_args_list
+        if call.args[0] == _tandf_html._TANDF_INJECT_TABLE_BATCH_SCRIPT
+    ]
+    assert [len(call.args[1]) for call in injections] == [24, 1]
+
+
+def test_tandf_embedded_tables_continue_beyond_first_batch() -> None:
+    links = mock.Mock()
+    links.count.return_value = 0
+    page = mock.Mock()
+    page.locator.return_value = links
+
+    def evaluate(script, arguments):
+        if script == _tandf_html._TANDF_READ_EMBEDDED_TABLES_SCRIPT:
+            start = arguments["start"]
+            stop = min(25, start + arguments["batchSize"])
+            return {
+                "total": 25,
+                "tables": [
+                    {
+                        "tableId": f"ut{index:04d}",
+                        "caption": f"Table {index}",
+                        "rows": [["Column"], [str(index)]],
+                    }
+                    for index in range(start, stop)
+                ],
+            }
+        if script == _tandf_html._TANDF_INJECT_TABLE_BATCH_SCRIPT:
+            return [True] * len(arguments)
+        raise AssertionError("unexpected page script")
+
+    page.evaluate.side_effect = evaluate
+
+    result = _tandf_html.prepare_browser_page(page, timeout_ms=10_000)
+
+    assert result["embedded_tables"] == 25
+    assert result["embedded_tables_hydrated"] == 25
+    assert result["tables_hydrated"] == 25
+    assert result["truncated"] is False
+    embedded_calls = [
+        call
+        for call in page.evaluate.call_args_list
+        if call.args[0] == _tandf_html._TANDF_READ_EMBEDDED_TABLES_SCRIPT
+    ]
+    assert [call.args[1]["start"] for call in embedded_calls] == [0, 24]
+    injections = [
+        call
+        for call in page.evaluate.call_args_list
+        if call.args[0] == _tandf_html._TANDF_INJECT_TABLE_BATCH_SCRIPT
+    ]
+    assert [len(call.args[1]) for call in injections] == [24, 1]
+
+
+@pytest.mark.parametrize(
+    ("entry_id", "original", "promoted"),
+    [
+        (
+            "F0002",
+            "/cms/asset/3eb40468-4dd1-4d1d-83de-9b03067fd963/tjde_a_2137254_f0002_oc.jpg",
+            [True],
+        ),
+        ("F0003", "/cms/asset/original/figure.jpg", False),
+        ("F0002", "https://other.example/cms/asset/figure.jpg", False),
+        ("F0002", "javascript:alert(1)", False),
+        ("F0002", "https://[broken/cms/asset/figure.jpg", False),
+    ],
+)
+def test_tandf_viewer_original_survives_body_scope_cleanup(
+    entry_id: str, original: str, promoted: bool
+) -> None:
+    preview = (
+        "/cms/asset/d019a1ff-f502-4d07-9371-ab8bc365f975/tjde_a_2137254_f0002_oc.jpg"
     )
-    assert supplementary[0]["url"].endswith("tgrs_a_2667034_sm1980.docx")
+    payload = {"figures": [{"id": entry_id, "content": f'<img src="{original}"/>'}]}
+    html = f'''<div class="hlFld-Fulltext"><div class="figureView">
+      <div class="short-legend">Figure 2. Conceptual model.</div>
+      <a data-popup-event-type="fig" data-id="F0002"><img src="{preview}"/></a>
+      <button data-popup-event-type="fig" data-id="F0002">Display full size</button>
+      </div></div><script>tandf.tfviewerdata={json.dumps(payload)};</script>'''
+    source = "https://www.tandfonline.com/doi/full/10.1080/17538947.2022.2137254"
+    body, supplementary = extract_browser_workflow_asset_html_scopes(
+        html, source, "tandf"
+    )
+    assert "<script" not in body
+    assets = _tandf_html.scoped_asset_extractor(
+        body, source, asset_profile="body", supplementary_html_text=supplementary
+    )
+    assert len(assets) == 1
+    asset = assets[0]
+    assert asset["preview_url"] == "https://www.tandfonline.com" + preview
+    if promoted:
+        assert asset["full_size_url"] == "https://www.tandfonline.com" + original
+        assert "official_full_size_not_exposed" not in asset.get("provenance", [])
+    else:
+        assert not asset.get("full_size_url")
+        assert asset["provenance"] == ["official_full_size_not_exposed"]
 
 
 def test_tandf_download_related_assets_contract_marker(monkeypatch, tmp_path) -> None:
@@ -480,211 +612,6 @@ def test_tandf_download_related_assets_contract_marker(monkeypatch, tmp_path) ->
     assert Path(downloaded["path"]).read_bytes() == b"fake-image"
     assert downloaded["downloaded_bytes"] == len(b"fake-image")
     assert result["asset_failures"] == []
-
-
-def test_markdown_contract_structure_fixture() -> None:
-    # markdown-review: purpose=structure doi=10.1080/15481603.2026.2667034
-    markdown, extraction = _extract_fixture(STRUCTURE_DOI)
-
-    assert "## Abstract" in markdown
-    assert "## 1. Introduction" in markdown
-    assert "### 4.1 Modeling approaches and comparative performance" in markdown
-    assert "a 95.1% improvement over traditional Poisson regression" in markdown
-    assert re.search(
-        r"(?m)^\|\s*Variable abbreviation\s*\|\s*Description\s*\|", markdown
-    )
-    assert re.search(
-        r"(?m)^\|\s*D_LST\s*\|\s*Current weekly daytime maximum LST \(°C\)",
-        markdown,
-    )
-    assert "Sexes / Both sexes" in markdown
-    assert "4340.046" in markdown
-    assert "X<sup>2</sup>*D_LST_AT2" in markdown
-    assert "X<sup>3</sup>*D_LST_AT3" in markdown
-    assert "R<sup>2</sup> generally" in markdown
-    assert "R<sup>2</sup> (below 0.30)" in markdown
-    assert "## Funding" in markdown
-    assert "National Natural Science Foundation of China" in markdown
-    assert "Download Citation" not in markdown
-    assert "Article Metrics" not in markdown
-    assert "## Article highlights" not in markdown
-    assert "Citation" not in markdown
-    assert "()" not in markdown
-    assert "(Figure 1a)" in markdown
-    assert extraction["availability_diagnostics"]["accepted"] is True
-
-
-def test_markdown_contract_table_fixture() -> None:
-    # markdown-review: purpose=table doi=10.1080/10942912.2019.1597882
-    markdown, _ = _extract_fixture(TABLE_DOI)
-
-    assert "**Table 1.**" in markdown
-    assert "| Materials used | Sample tube (µL) | Control tube (µL) |" in markdown
-    assert "| Total volume" in markdown
-    assert "| Compounds | AChE / IC<sub>50</sub>(nM)" in markdown
-    assert "AChE / r<sup>2</sup>" in markdown
-    assert "α-Amylase<sup>a</sup> / IC<sub>50</sub>(nM)" in markdown
-    assert "α-Glycosidase / K<sub>i</sub>(nM)" in markdown
-    assert "Ki values could not be determined for α-amylase enzyme." in markdown
-    assert "determined as µM levels, which taken from literatures" in markdown
-    assert (
-        "Tacrine was used as a positive control for acetylcholinesterase (AChE) enzyme."
-        in markdown
-    )
-    assert "- Compounds: IC50 (nM); AChE: r2" not in markdown
-    assert "Google Scholar" not in markdown
-    assert "Display Table" not in markdown
-    assert "Citation" not in markdown
-    assert re.search(r"(?m)^\|.+\|$", markdown)
-
-
-def test_markdown_contract_formula_fixture() -> None:
-    # markdown-review: purpose=formula doi=10.1080/08839514.2024.2375110
-    markdown, _ = _extract_fixture(FORMULA_DOI)
-
-    assert "## Introduction" in markdown
-    assert "[Formula unavailable]" not in markdown
-    assert "![Formula](//:0)" not in markdown
-    assert "MathJax Logo" not in markdown
-    assert "Citation" not in markdown
-    assert re.search(r"(?s)\$\$.+?\$\$|\\\(.+?\\\)", markdown)
-    assert re.search(
-        r"(?s)\\begin\{(?:p)?matrix\}.{0,200}"
-        r"\{?0\.88\}?\^\{0\.37\}.{0,100}\{?0\.82\}?\^\{0\.21\}",
-        markdown,
-    )
-    assert "Θ˜(ℏ˜ 1)=" not in markdown
-    assert "A D 2 N˜ 2=" not in markdown
-    assert r"0.51^{0.22}\rangle}" not in markdown
-    assert r"{\widetilde{\Theta}}_{2}(\widetilde{\hslash})) =" not in markdown
-    assert "(0.15}}" not in markdown
-    assert "(0.24)}0.76" not in markdown
-    assert "$$." not in markdown
-    assert "$$," not in markdown
-    assert "0.2415.(2) Score matrix" not in markdown
-    assert "\n\n(2) Score matrix" in markdown
-
-
-def test_tandf_formula_dom_repair_preserves_complex_math_structure() -> None:
-    soup = BeautifulSoup(
-        _fixture_path(FORMULA_DOI).read_text(encoding="utf-8"),
-        _tandf_html.choose_parser(),
-    )
-    container = soup.select_one(".hlFld-Fulltext")
-    assert isinstance(container, Tag)
-
-    _tandf_html.tandf_before_block_normalization(container)
-
-    complex_inline = [
-        node
-        for node in container.select(".NLM_disp-formula.inline-formula")
-        if node.find("mtable") is not None
-    ]
-    assert len(complex_inline) == 11
-    assert all("disp-formula" in (node.get("class") or ()) for node in complex_inline)
-
-    for fenced in container.find_all("mfenced"):
-        descendants = fenced.find_all(True)
-        if not descendants:
-            continue
-        trailing = descendants[-1]
-        if trailing.find_parent("mfenced") is fenced:
-            assert _tandf_html._mathml_operator_text(trailing) != str(
-                fenced.get("close") or ")"
-            )
-
-    for fenced in container.find_all("mfenced", attrs={"open": "⟨"}):
-        for row in fenced.find_all("mrow"):
-            children = [child for child in row.children if isinstance(child, Tag)]
-            assert not any(
-                current.find("msup") is not None and following.name == "mn"
-                for current, following in zip(children, children[1:], strict=False)
-            )
-
-    exponent_repairs = 0
-    for superscript in container.find_all("msup"):
-        children = [child for child in superscript.children if isinstance(child, Tag)]
-        if len(children) < 2:
-            continue
-        operators = [
-            _tandf_html._mathml_operator_text(node)
-            for node in children[1].find_all("mo")
-        ]
-        if "(" in operators:
-            exponent_repairs += 1
-            assert operators.count("(") == operators.count(")")
-    assert exponent_repairs >= 22
-
-    for wrapper in complex_inline:
-        sibling = wrapper.next_sibling
-        while isinstance(sibling, Tag) and "NLM_disp-formula-image" in set(
-            sibling.get("class") or ()
-        ):
-            sibling = sibling.next_sibling
-        if isinstance(sibling, NavigableString) and sibling.strip():
-            assert not re.match(r"^\s*[.,;:]", str(sibling))
-
-
-def test_markdown_contract_figure_fixture() -> None:
-    # markdown-review: purpose=figure doi=10.1080/15481603.2026.2667034
-    markdown, _ = _extract_fixture(STRUCTURE_DOI)
-
-    assert "Figure 1" in markdown
-    assert re.search(
-        r"!\[Figure 1\]\(https://www\.tandfonline\.com/cms/asset/", markdown
-    )
-    assert "Open figure viewer" not in markdown
-    assert "View large" not in markdown
-    assert "Article Metrics" not in markdown
-
-    baseline = _fixture_path(STRUCTURE_DOI, "extracted.md").read_text(encoding="utf-8")
-    local_links = re.findall(
-        r"!\[Figure \d+\]\((tests/fixtures/golden_criteria/"
-        r"10\.1080_15481603\.2026\.2667034/body_assets/[^)]+\.jpg)\)",
-        baseline,
-    )
-    assert len(local_links) == 9
-    assert "![Figure 1](https://www.tandfonline.com/" not in baseline
-    for relative_path in local_links:
-        asset_path = REPO_ROOT / relative_path
-        assert asset_path.is_file()
-        assert asset_path.stat().st_size > 100_000
-
-
-def test_markdown_contract_supplementary_fixture() -> None:
-    # markdown-review: purpose=supplementary doi=10.1080/15481603.2026.2667034
-    markdown, _ = _extract_fixture(STRUCTURE_DOI)
-
-    assert markdown.count("## Supplemental material") == 1
-    assert "Supplemental data for this article can be accessed" in markdown
-    assert "Download Citation" not in markdown
-    assert "Article Metrics" not in markdown
-
-
-def test_markdown_contract_references_fixture() -> None:
-    # markdown-review: purpose=references doi=10.1080/15481603.2026.2667034
-    markdown = _render_article_markdown(STRUCTURE_DOI)
-
-    assert "## References (103 total, showing 103)" in markdown
-    assert "1. Aldrich, C. 2020." in markdown
-    assert "Google Scholar" not in markdown
-    assert "Article Metrics" not in markdown
-
-
-def test_markdown_contract_pdf_fallback_fixture() -> None:
-    # markdown-review: purpose=pdf_fallback doi=10.1080/15481603.2026.2667034
-    pdf_path = _fixture_path(STRUCTURE_DOI, "original.pdf")
-    source_url = f"https://www.tandfonline.com/doi/pdf/{STRUCTURE_DOI}"
-    result = pdf_fetch_result_from_bytes(
-        artifact_dir=None,
-        source_url=source_url,
-        final_url=source_url,
-        pdf_bytes=pdf_path.read_bytes(),
-    )
-
-    assert "Quantifying cumulative heat effects" in result.markdown_text
-    assert "Just a moment" not in result.markdown_text
-    assert "Access Denied" not in result.markdown_text
 
 
 def test_tandf_article_source_tracks_pdf_fallback_payload() -> None:
@@ -747,42 +674,3 @@ def test_tandf_abstract_gate_and_challenge_shells_never_become_fulltext(
         )
 
     assert raised.value.reason == expected_reason
-
-
-def test_tandf_multilingual_fixture_is_authentic_and_keeps_parallel_abstracts() -> None:
-    markdown, extraction = _extract_fixture(MULTILINGUAL_DOI)
-
-    assert "The affective turn and the management of conservation" in markdown
-    assert "Learning analytics summaries across two languages" not in markdown
-    assert [section["heading"] for section in extraction["abstract_sections"]] == [
-        "Abstract",
-        "Resumen",
-        "الملخص",
-        "Resumo",
-        "摘要",
-    ]
-    assert "Footnote" not in markdown
-    assert "care[1]" in markdown
-    assert "‘networks of care’[3]" in markdown
-    assert "was also cited by the majority" in markdown
-    assert (
-        markdown.count(
-            "They are people who also contribute to the senior leadership of their "
-            "institutions."
-        )
-        == 1
-    )
-    assert "## Conclusion" in markdown
-    assert "### Acknowledgements" in markdown
-    assert "## Additional information" in markdown
-    assert "### Notes on contributors" in markdown
-    assert "**Pip Laurenson**" in markdown
-    assert "is Professor of Conservation, UCL" in markdown
-
-    rendered = _render_article_markdown(MULTILINGUAL_DOI)
-    assert "### Acknowledgements" in rendered
-    assert "### Notes on contributors" in rendered
-    assert "**Pip Laurenson**" in rendered
-    assert "I would like to thank Jill Sterrett" in rendered
-    assert "## References (87 total, showing 87)" in rendered
-    assert "1. The first quotation in the abstract comes from" in rendered

@@ -3,14 +3,21 @@
 from __future__ import annotations
 
 import json
-from dataclasses import asdict, dataclass, field
+from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ..acquisition import (
+    AcquisitionProvenance,
+    AcquisitionRepresentation,
+    AcquisitionTransport,
+    coerce_acquisition_provenance,
+)
 from ..tracing import TraceEvent, source_trail_from_trace, trace_from_markers
 from ..utils import normalize_text
 
 SourceKind = Literal[
     "elsevier_xml",
+    "elsevier_html",
     "elsevier_pdf",
     "springer_html",
     "springer_pdf",
@@ -85,7 +92,8 @@ QualityConfidence = Literal["high", "medium", "low"]
 
 
 TRUNCATION_WARNING = "Output truncated to satisfy token budget."
-EXTRACTION_REVISION = 4
+# 7.0 changes HTML/XML extraction and confirmed access-stop semantics across providers.
+EXTRACTION_REVISION = 11
 
 
 @dataclass
@@ -161,6 +169,7 @@ class Asset:
     final_fetcher: str | None = None
     recovery_attempts: list[dict[str, Any]] = field(default_factory=list)
     provenance: list[str] = field(default_factory=list)
+    asset_timing: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
@@ -261,11 +270,11 @@ class BodyQualityMetrics:
 @dataclass
 class SemanticLosses:
     table_fallback_count: int = 0
-    table_lossy_count: int = 0
     table_layout_degraded_count: int = 0
     table_semantic_loss_count: int = 0
     formula_fallback_count: int = 0
     formula_missing_count: int = 0
+    formula_diagnostics: list[dict[str, Any]] = field(default_factory=list)
 
 
 @dataclass
@@ -372,11 +381,59 @@ class RenderContext:
             self.warnings.append(TRUNCATION_WARNING)
 
 
+_FETCH_ENVELOPE_QUALITY_FIELDS = frozenset(
+    {
+        "has_fulltext",
+        "content_kind",
+        "has_abstract",
+        "warnings",
+        "source_trail",
+        "token_estimate",
+        "token_estimate_breakdown",
+    }
+)
+
+
 @dataclass
+class SupplementaryResult:
+    assets: list[dict[str, Any]] = field(default_factory=list)
+    asset_failures: list[dict[str, Any]] = field(default_factory=list)
+    discovery_complete: bool = False
+    identity_verified: bool = False
+    source_urls: list[str] = field(default_factory=list)
+
+    @property
+    def status(self) -> str:
+        if self.discovery_complete and not self.assets and not self.asset_failures:
+            return "no_result"
+        local = sum(bool(asset.get("path")) for asset in self.assets)
+        if (
+            self.discovery_complete
+            and local == len(self.assets)
+            and not self.asset_failures
+        ):
+            return "complete"
+        if local or (self.assets and not self.asset_failures):
+            return "degraded"
+        return str(
+            next(
+                (
+                    item.get("reason")
+                    for item in self.asset_failures
+                    if item.get("reason")
+                ),
+                "error",
+            )
+        )
+
+
+@dataclass(kw_only=True)
 class FetchEnvelope:
     doi: str | None
     source: str
     has_fulltext: bool
+    target: Literal["paper", "supplementary"] = "paper"
+    supplementary: SupplementaryResult | None = None
     content_kind: ContentKind = "metadata_only"
     has_abstract: bool = False
     warnings: list[str] = field(default_factory=list)
@@ -391,61 +448,91 @@ class FetchEnvelope:
     markdown: str | None = None
     metadata: Metadata | None = None
     diagnostic_artifacts: list[dict[str, Any]] = field(default_factory=list)
+    acquisition: AcquisitionProvenance | None = None
+
+    def __getattribute__(self, name: str) -> Any:
+        if name in _FETCH_ENVELOPE_QUALITY_FIELDS:
+            state = object.__getattribute__(self, "__dict__")
+            quality = state.get("quality")
+            if quality is not None:
+                return getattr(quality, name)
+        return object.__getattribute__(self, name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in _FETCH_ENVELOPE_QUALITY_FIELDS:
+            state = object.__getattribute__(self, "__dict__")
+            quality = state.get("quality")
+            if quality is not None and name not in state:
+                setattr(quality, name, value)
+                return
+        object.__setattr__(self, name, value)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        from .codec import model_to_payload
+
+        return model_to_payload(self)
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
 
     def __post_init__(self) -> None:
-        from .quality import _clone_quality, _dedupe_strings
+        from .quality import _dedupe_strings
         from .tokens import coerce_token_estimate_breakdown
 
+        state = object.__getattribute__(self, "__dict__")
+        has_fulltext = bool(state["has_fulltext"])
+        content_kind = state["content_kind"]
+        has_abstract = bool(state["has_abstract"])
+        warnings = state["warnings"]
+        source_trail = state["source_trail"]
+        token_estimate = int(state["token_estimate"])
+        token_estimate_breakdown = state["token_estimate_breakdown"]
+        self.acquisition = coerce_acquisition_provenance(self.acquisition)
         if self.article is not None:
-            self.quality = _clone_quality(self.article.quality)
-        if self.trace and not self.source_trail:
-            self.source_trail = source_trail_from_trace(self.trace)
-        elif self.source_trail and not self.trace:
-            self.trace = trace_from_markers(self.source_trail)
-        if self.content_kind == "fulltext":
-            self.has_fulltext = True
-        elif self.content_kind == "abstract_only":
-            self.has_fulltext = False
-            self.has_abstract = True
-        elif self.has_fulltext:
-            self.content_kind = "fulltext"
-        elif self.has_abstract:
-            self.content_kind = "abstract_only"
-        self.quality.has_fulltext = self.quality.has_fulltext or self.has_fulltext
-        if self.content_kind != "metadata_only":
-            self.quality.content_kind = self.content_kind
-        self.quality.has_abstract = self.quality.has_abstract or self.has_abstract
-        self.quality.warnings = _dedupe_strings(
-            [*self.quality.warnings, *self.warnings]
-        )
+            self.quality = self.article.quality
+            if self.acquisition is None:
+                self.acquisition = self.article.acquisition
+            elif self.article.acquisition is None:
+                self.article.acquisition = self.acquisition
+            elif self.article.acquisition != self.acquisition:
+                raise ValueError(
+                    "FetchEnvelope and ArticleModel acquisition provenance must match."
+                )
+        if self.trace and not source_trail:
+            source_trail = source_trail_from_trace(self.trace)
+        elif source_trail and not self.trace:
+            self.trace = trace_from_markers(source_trail)
+        if content_kind == "fulltext":
+            has_fulltext = True
+        elif content_kind == "abstract_only":
+            has_fulltext = False
+            has_abstract = True
+        elif has_fulltext:
+            content_kind = "fulltext"
+        elif has_abstract:
+            content_kind = "abstract_only"
+        self.quality.has_fulltext = self.quality.has_fulltext or has_fulltext
+        if content_kind != "metadata_only":
+            self.quality.content_kind = content_kind
+        self.quality.has_abstract = self.quality.has_abstract or has_abstract
+        self.quality.warnings = _dedupe_strings([*self.quality.warnings, *warnings])
         self.quality.source_trail = _dedupe_strings(
-            [*self.quality.source_trail, *self.source_trail]
+            [*self.quality.source_trail, *source_trail]
         )
-        if self.token_estimate and not self.quality.token_estimate:
-            self.quality.token_estimate = self.token_estimate
+        if token_estimate and not self.quality.token_estimate:
+            self.quality.token_estimate = token_estimate
         if (
-            self.token_estimate_breakdown != TokenEstimateBreakdown()
+            token_estimate_breakdown != TokenEstimateBreakdown()
             and self.quality.token_estimate_breakdown == TokenEstimateBreakdown()
         ):
             self.quality.token_estimate_breakdown = coerce_token_estimate_breakdown(
-                self.token_estimate_breakdown
+                token_estimate_breakdown
             )
-        self.has_fulltext = self.quality.has_fulltext
-        self.content_kind = self.quality.content_kind
-        self.has_abstract = self.quality.has_abstract
-        self.warnings = list(self.quality.warnings)
-        self.source_trail = list(self.quality.source_trail)
-        self.token_estimate = self.quality.token_estimate
-        self.token_estimate_breakdown = self.quality.token_estimate_breakdown
+        for name in _FETCH_ENVELOPE_QUALITY_FIELDS:
+            state.pop(name, None)
 
 
-@dataclass
+@dataclass(kw_only=True)
 class ArticleModel:
     doi: str | None
     source: SourceKind
@@ -456,9 +543,12 @@ class ArticleModel:
     quality: Quality = field(
         default_factory=lambda: Quality(has_fulltext=False, token_estimate=0)
     )
+    acquisition: AcquisitionProvenance | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        from .codec import model_to_payload
+
+        return model_to_payload(self)
 
     def to_json(self) -> str:
         return json.dumps(self.to_dict(), ensure_ascii=False, indent=2)
@@ -467,6 +557,7 @@ class ArticleModel:
         from .quality import apply_quality_assessment, classify_content
         from .sections import first_abstract_text
 
+        self.acquisition = coerce_acquisition_provenance(self.acquisition)
         abstract_text = first_abstract_text(
             abstract_text=self.metadata.abstract, sections=self.sections
         )
@@ -509,6 +600,9 @@ class ArticleModel:
             render_table_asset_groups,
         )
 
+        from ..acquisition import is_pdf_article
+
+        preserve_pdf = is_pdf_article(self)
         warnings = list(self.quality.warnings)
         render_plan = _build_markdown_render_plan(
             self,
@@ -537,7 +631,9 @@ class ArticleModel:
             context=context,
             preserve_source_order=True,
         )
-        if render_plan.abstract_sections:
+        if preserve_pdf:
+            pass
+        elif render_plan.abstract_sections:
             _append_sections_with_budget(
                 lines,
                 sections=render_plan.abstract_sections,
@@ -557,6 +653,7 @@ class ArticleModel:
             sections=render_plan.body_sections + render_plan.retained_sections,
             level_shift=render_plan.level_shift,
             context=context,
+            preserve_text=preserve_pdf,
         )
 
         append_asset_block_with_budget(
@@ -591,12 +688,23 @@ class ArticleModel:
         )
 
         context.finalize_warnings()
-        return "\n".join(lines).strip() + "\n"
+        if preserve_pdf:
+            return "\n".join(lines) + "\n"
+        markdown = "\n".join(lines).strip() + "\n"
+        from ..provider_catalog import provider_render_policy_for_source
+
+        policy = provider_render_policy_for_source(self.source)
+        if policy is not None and policy.finalize_markdown is not None:
+            markdown = policy.finalize_markdown(markdown)
+        return markdown
 
 
 __all__ = [
     "EXTRACTION_REVISION",
     "TRUNCATION_WARNING",
+    "AcquisitionProvenance",
+    "AcquisitionRepresentation",
+    "AcquisitionTransport",
     "ArticleModel",
     "Asset",
     "AssetDiagnostic",
@@ -622,5 +730,7 @@ __all__ = [
     "SectionHint",
     "SemanticLosses",
     "SourceKind",
+    "SupplementaryResult",
     "TokenEstimateBreakdown",
+    "coerce_acquisition_provenance",
 ]

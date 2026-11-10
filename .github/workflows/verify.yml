@@ -1,0 +1,236 @@
+name: Verify source
+
+on:
+  workflow_call:
+    inputs:
+      ref:
+        description: Immutable source commit to verify
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  quality:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python-deps
+        with:
+          python-version: "3.11"
+      - name: Check lockfile freshness
+        run: uv lock --check
+      - name: Static quality gates
+        run: |
+          uv run ruff format --check .
+          uv run ruff check .
+          PYTHONPATH=src uv run mypy src/paper_fetch
+          uv run python scripts/sync_version.py --check
+      - name: Audit locked dependencies
+        run: |
+          uv export --locked --all-extras --format requirements-txt \
+            --no-hashes --no-emit-project \
+            --output-file "$RUNNER_TEMP/locked-requirements.txt"
+          uv run python -m pip_audit \
+            --requirement "$RUNNER_TEMP/locked-requirements.txt" \
+            --progress-spinner off
+
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python-deps
+        with:
+          python-version: "3.11"
+          full: "true"
+      - name: Full unit suite
+        run: PYTHONPATH=src uv run python -m pytest tests/unit -q
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python-deps
+        with:
+          python-version: "3.11"
+          full: "true"
+      - name: Set up pinned Haskell toolchain
+        id: formula-haskell
+        uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
+        with:
+          ghc-version: "9.14.1"
+          cabal-version: "3.18.1.0"
+      - name: Cache Cabal formula dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.formula-haskell.outputs.cabal-store }}
+          key: cabal-${{ runner.os }}-${{ runner.arch }}-ghc-9.14.1-texmath-0.13.3
+      - name: Prepare both real formula backends
+        run: |
+          PYTHONPATH=src uv run python - <<'PY'
+          from pathlib import Path
+          from paper_fetch.formula.install import ensure_mathml_to_latex, ensure_texmath
+          target = Path(".formula-tools").resolve()
+          target.mkdir(exist_ok=True)
+          assert ensure_texmath(target), "texmath installation failed"
+          assert ensure_mathml_to_latex(target, install_node=True), "Node formula backend installation failed"
+          PY
+      - run: PYTHONPATH=src uv run python -m pytest tests/integration -q
+        env:
+          PAPER_FETCH_FORMULA_TOOLS_DIR: ${{ github.workspace }}/.formula-tools
+
+  python-boundaries:
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.14"]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python-deps
+        with:
+          python-version: ${{ matrix.python-version }}
+          full: "true"
+      - name: Run core unit boundary
+        run: |
+          PYTHONPATH=src uv run python -m pytest -q \
+            tests/unit/test_acquisition_provenance.py \
+            tests/unit/test_config.py \
+            tests/unit/test_mcp_fetch_acceptance.py \
+            tests/unit/test_models_render.py \
+            tests/unit/test_provider_catalog.py \
+            tests/unit/test_table_grid.py
+      - name: Build wheel
+        run: uv build --wheel
+      - name: Smoke isolated core and full wheel installs
+        shell: bash
+        run: |
+          set -euo pipefail
+          wheel="$(find dist -maxdepth 1 -name '*.whl' -print -quit)"
+          for install_kind in core full; do
+            venv="$RUNNER_TEMP/wheel-smoke-$install_kind"
+            python -m venv "$venv"
+            smoke_python="$venv/bin/python"
+            if [ "$install_kind" = "full" ]; then
+              "$smoke_python" -m pip install "$wheel[full]"
+            else
+              "$smoke_python" -m pip install "$wheel"
+            fi
+            "$smoke_python" -c "import paper_fetch; print(paper_fetch.__version__)"
+            "$smoke_python" -c "from importlib.metadata import version; from paper_fetch.mcp.server import build_server; assert version('mcp').split('.', 1)[0] == '2'; assert build_server().name == 'paper-fetch'"
+            "$smoke_python" -m paper_fetch.cli --version
+            if [ "$install_kind" = "full" ]; then
+              "$smoke_python" -c "import camoufox, fitz, invisible_playwright, lxml, playwright, pymupdf4llm, trafilatura"
+            else
+              "$smoke_python" -c "import importlib.util; assert all(importlib.util.find_spec(name) is None for name in ('camoufox', 'fitz', 'invisible_playwright', 'lxml', 'playwright', 'pymupdf4llm', 'trafilatura'))"
+            fi
+          done
+
+  package:
+    uses: ./.github/workflows/package.yml
+    with:
+      ref: ${{ inputs.ref }}
+
+  macos-native:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          ref: ${{ inputs.ref }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-python-deps
+        with:
+          python-version: "3.14"
+          full: "true"
+      - name: Validate macOS adaptation contract
+        run: uv run python scripts/validate_macos_adaptation.py
+      - name: Require native Apple Silicon runner
+        run: test "$(uname -m)" = "arm64"
+      - name: Prepare latest compatible Camoufox runtime (including prereleases) and fingerprint model
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          PYTHONPATH=src uv run python - <<'PY'
+          from paper_fetch.providers.browser_runtime.preparation import prepare_camoufox_managed_runtime
+          from camoufox.fpgen_model import ensure_fpgen_model
+          assert prepare_camoufox_managed_runtime().valid
+          ensure_fpgen_model()
+          from pathlib import Path
+          import os
+          from paper_fetch.providers.browser_runtime.byparr_preparation import prepare_source, PreparationBudget
+          prepare_source(Path(os.environ["RUNNER_TEMP"]) / "byparr-tests", PreparationBudget(600))
+          PY
+      - name: Verify shared Camoufox and Byparr contexts on native macOS
+        env:
+          PAPER_FETCH_TEST_BYPARR_CACHE: ${{ runner.temp }}/byparr-tests
+          # Each launch also probes the host GPU with an owned browser.
+          PYTEST_XDIST_AUTO_NUM_WORKERS: "2"
+        run: PYTHONPATH=src uv run python -m pytest tests/integration/test_pnas_byparr.py -q
+      - name: Verify official Camoufox macOS bundle contexts
+        env:
+          PAPER_FETCH_RUN_NATIVE_CAMOUFOX_TEST: "1"
+        run: >-
+          PYTHONPATH=src uv run python -m pytest
+          tests/integration/test_camoufox_native_macos.py -q -n 0
+      - name: Verify provider page preparation on native macOS
+        run: |
+          PYTHONPATH=src uv run python -m pytest -q \
+            tests/unit/test_camoufox_backend.py::test_camoufox_provider_page_preparation_runs_before_html_capture \
+            tests/unit/test_tandf_provider.py::test_tandf_browser_page_preparation_hydrates_official_csv_table \
+            tests/unit/test_tandf_provider.py::test_tandf_browser_page_preparation_uses_bounded_embedded_table_fallback
+      - name: Verify native macOS filesystem alias semantics
+        run: |
+          PYTHONPATH=src uv run python -m pytest \
+            tests/unit/test_cache_index_semantics.py::CacheIndexSemanticsTests::test_cache_scope_accepts_equivalent_filesystem_alias_for_root \
+            -q
+      - name: Set up pinned Haskell toolchain
+        id: formula-haskell
+        uses: haskell-actions/setup@0f8e8c99d88aeb3fbfd523f1ef2c6f762d10d64d # v2.12.1
+        with:
+          ghc-version: "9.14.1"
+          cabal-version: "3.18.1.0"
+      - name: Cache Cabal formula dependencies
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ${{ steps.formula-haskell.outputs.cabal-store }}
+          key: cabal-macOS-ARM64-ghc-9.14.1-texmath-0.13.3
+      - name: Build native macOS arm64 offline package
+        env:
+          PYTHON_BIN: .venv/bin/python
+          MACOSX_DEPLOYMENT_TARGET: "15.0"
+        run: |
+          scripts/build-offline-package.sh --output-dir dist
+          test -f dist/paper-fetch-skill-offline-macos-arm64-cp314.tar.gz
+      - name: Verify native macOS package
+        env:
+          PAPER_FETCH_OFFLINE_SKIP_FETCH_SMOKE: "1"
+        run: |
+          scripts/verify-offline-package.sh \
+            dist/paper-fetch-skill-offline-macos-arm64-cp314.tar.gz
+      - name: Scan native macOS artifact for secret values
+        id: secret_scan_macos_native
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: >-
+          python scripts/scan_artifacts_for_secrets.py
+          --env-var GITHUB_TOKEN
+          --root dist/paper-fetch-skill-offline-macos-arm64-cp314.tar.gz
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: ${{ steps.secret_scan_macos_native.outcome == 'success' }}
+        with:
+          name: macos-offline-native-cp314
+          path: dist/paper-fetch-skill-offline-macos-arm64-cp314.tar.gz
+          if-no-files-found: error

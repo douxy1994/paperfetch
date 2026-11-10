@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from collections.abc import Mapping
 
@@ -304,8 +305,8 @@ class ProviderWaterfallRunnerTests(unittest.TestCase):
                 "fulltext",
                 "template_html",
                 "fail",
-                code="managed_chrome_cdp_timeout",
-                message="CDP endpoint timed out.",
+                code="browser_runtime_prepare_timeout",
+                message="Camoufox runtime preparation timed out.",
             )
         ]
 
@@ -325,133 +326,8 @@ class ProviderWaterfallRunnerTests(unittest.TestCase):
             for event in result.trace
             if event.marker() == "fulltext:template_html_fail"
         )
-        self.assertEqual(html_event.code, "managed_chrome_cdp_timeout")
-        self.assertEqual(html_event.message, "CDP endpoint timed out.")
-
-
-class RawFulltextPayloadMetadataCompatibilityTests(unittest.TestCase):
-    def test_metadata_magic_keys_are_not_ingested_as_structured_payload_fields(
-        self,
-    ) -> None:
-        payload = RawFulltextPayload(
-            provider="template",
-            source_url="https://example.test/article",
-            content_type="text/html",
-            body=b"<html></html>",
-            metadata={
-                "route": "html",
-                "reason": "legacy reason",
-                "markdown_text": "# Legacy\n\nBody text",
-                "merged_metadata": {"title": "Merged Legacy Title"},
-                "availability_diagnostics": {
-                    "accepted": True,
-                    "reason": "body_sufficient",
-                },
-                "html_fetcher": "camoufox",
-                "browser_context_seed": {
-                    "browser_final_url": "https://example.test/final"
-                },
-                "suggested_filename": "legacy.html",
-                "html_failure_reason": "abstract_only",
-                "html_failure_message": "HTML exposed only abstract content.",
-                "extracted_assets": [
-                    {"kind": "figure", "url": "https://example.test/f1.png"}
-                ],
-                "warnings": ["legacy warning"],
-                "source_trail": ["fulltext:template_html_ok"],
-                "custom_passthrough": "kept",
-            },
-        )
-
-        self.assertIsNone(payload.content)
-        self.assertEqual(payload.warnings, [])
-        self.assertEqual(payload.trace, [])
-        self.assertIsNone(payload.merged_metadata)
-        for key in (
-            "route",
-            "reason",
-            "markdown_text",
-            "merged_metadata",
-            "availability_diagnostics",
-            "html_fetcher",
-            "browser_context_seed",
-            "suggested_filename",
-            "html_failure_reason",
-            "html_failure_message",
-            "extracted_assets",
-            "warnings",
-            "source_trail",
-        ):
-            self.assertNotIn(key, payload.metadata)
-        self.assertEqual(payload.metadata["custom_passthrough"], "kept")
-
-    def test_metadata_export_is_derived_from_typed_payload_fields(self) -> None:
-        body = b"<html></html>"
-        payload = RawFulltextPayload(
-            provider="template",
-            source_url="https://example.test/article",
-            content_type="text/html",
-            body=body,
-            content=ProviderContent(
-                route_kind="html",
-                source_url="https://example.test/article",
-                content_type="text/html",
-                body=body,
-                markdown_text="# Typed\n\nBody text",
-                merged_metadata={"title": "Merged Typed Title"},
-                diagnostics={
-                    "availability_diagnostics": {
-                        "accepted": True,
-                        "reason": "body_sufficient",
-                    }
-                },
-                reason="typed reason",
-                fetcher="camoufox",
-                browser_context_seed={
-                    "browser_final_url": "https://example.test/final"
-                },
-                suggested_filename="typed.html",
-                html_failure_reason="abstract_only",
-                html_failure_message="HTML exposed only abstract content.",
-                extracted_assets=[
-                    {"kind": "figure", "url": "https://example.test/f1.png"}
-                ],
-            ),
-            warnings=["typed warning"],
-            trace=trace_from_markers(["fulltext:template_html_ok"]),
-            metadata={"custom_passthrough": "kept"},
-        )
-
-        self.assertEqual(payload.metadata["route"], "html")
-        self.assertEqual(payload.metadata["reason"], "typed reason")
-        self.assertEqual(payload.metadata["markdown_text"], "# Typed\n\nBody text")
-        self.assertEqual(
-            payload.metadata["merged_metadata"], {"title": "Merged Typed Title"}
-        )
-        self.assertEqual(
-            payload.metadata["availability_diagnostics"],
-            {"accepted": True, "reason": "body_sufficient"},
-        )
-        self.assertEqual(payload.metadata["html_fetcher"], "camoufox")
-        self.assertEqual(
-            payload.metadata["browser_context_seed"],
-            {"browser_final_url": "https://example.test/final"},
-        )
-        self.assertEqual(payload.metadata["suggested_filename"], "typed.html")
-        self.assertEqual(payload.metadata["html_failure_reason"], "abstract_only")
-        self.assertEqual(
-            payload.metadata["html_failure_message"],
-            "HTML exposed only abstract content.",
-        )
-        self.assertEqual(
-            payload.metadata["extracted_assets"],
-            [{"kind": "figure", "url": "https://example.test/f1.png"}],
-        )
-        self.assertEqual(payload.metadata["warnings"], ["typed warning"])
-        self.assertEqual(
-            payload.metadata["source_trail"], ["fulltext:template_html_ok"]
-        )
-        self.assertEqual(payload.metadata["custom_passthrough"], "kept")
+        self.assertEqual(html_event.code, "browser_runtime_prepare_timeout")
+        self.assertEqual(html_event.message, "Camoufox runtime preparation timed out.")
 
 
 class _TemplateClient(ProviderClient):
@@ -503,6 +379,40 @@ class _TemplateClient(ProviderClient):
 
 
 class ProviderFetchResultTemplateTests(unittest.TestCase):
+    def test_base_fetch_result_returns_content_updated_by_asset_hook(self) -> None:
+        final_markdown = "# Template Article\n\n## Results\n\nFinal body " * 80
+
+        class UpdatingAssetClient(_TemplateClient):
+            def download_related_assets(
+                self,
+                doi,
+                metadata,
+                raw_payload,
+                output_dir,
+                *,
+                asset_profile="all",
+                context=None,
+            ):
+                del doi, metadata, output_dir, asset_profile, context
+                raw_payload.content = replace(
+                    raw_payload.content,
+                    markdown_text=final_markdown,
+                    source_url="https://example.test/final",
+                )
+                return {"assets": [], "asset_failures": []}
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            result = UpdatingAssetClient().fetch_result(
+                "10.5555/template",
+                {"doi": "10.5555/template", "title": "Template Article"},
+                Path(tmpdir),
+                asset_profile="body",
+            )
+
+        self.assertEqual(result.content.source_url, "https://example.test/final")
+        self.assertEqual(result.content.markdown_text, final_markdown)
+        self.assertIn("Final body", result.article.to_ai_markdown())
+
     def test_base_fetch_result_auto_converts_html_fulltext_to_markdown(self) -> None:
         body = (
             "<html><body><article><h1>Auto HTML Article</h1><h2>Results</h2><p>"
@@ -539,7 +449,6 @@ class ProviderFetchResultTemplateTests(unittest.TestCase):
         self.assertIn("Automatic conversion works", result.article.to_ai_markdown())
 
     def test_base_fetch_result_decodes_html_with_payload_charset(self) -> None:
-        """rule: rule-html-byte-decoding-and-cleanup-bounds"""
         body = (
             "<html><body><article><h1>Charset Article</h1><h2>Results</h2><p>"
             + ("Café conversion works. " * 80)
@@ -582,12 +491,19 @@ class ProviderFetchResultTemplateTests(unittest.TestCase):
             body="<article>body</article>",
             parser="BeautifulSoup:html.parser",
         )
-        context.set_parse_cache(key, {"authors": ["Alice Example"]})
-
-        cached = context.get_parse_cache(key)
+        cached = context.get_or_set_parse_cache(
+            key,
+            lambda: {"authors": ["Alice Example"]},
+        )
         cached["authors"].append("Mutation")
 
-        self.assertEqual(context.get_parse_cache(key), {"authors": ["Alice Example"]})
+        self.assertEqual(
+            context.get_or_set_parse_cache(
+                key,
+                lambda: self.fail("cached parse factory should not run"),
+            ),
+            {"authors": ["Alice Example"]},
+        )
 
     def test_base_fetch_result_uses_asset_failure_warning_hook(self) -> None:
         client = _TemplateClient()

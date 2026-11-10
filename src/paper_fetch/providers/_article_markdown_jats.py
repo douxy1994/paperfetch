@@ -10,8 +10,9 @@ import re
 import xml.etree.ElementTree as ET
 
 from ..models import SemanticLosses
+from ..formula.validation import formula_document, capture_formula_diagnostics
 from ..publisher_identity import extract_doi, normalize_doi
-from ..quality.reason_codes import (
+from ..reason_codes import (
     STRUCTURED_ARTICLE_NOT_FULLTEXT,
     STRUCTURED_MISSING_BODY_SECTIONS,
 )
@@ -24,7 +25,10 @@ from ._article_markdown_common import (
     first_descendant,
     iter_children,
     iter_descendants,
+    join_xml_inline_parts,
+    _normalize_xml_character_data,
     normalize_lines,
+    normalize_inline_markup_text,
     render_figure_block,
     render_inline_text,
     render_table_block,
@@ -291,31 +295,22 @@ def _render_inline_child_without_tail(
     source_url: str = "",
     formula_renders: list[FormulaRenderResult] | None = None,
 ) -> str:
-    tail = child.tail
-    child.tail = None
-    try:
-        rendered = render_inline_text(
-            child,
-            skip_local_names=JATS_BLOCK_LOCAL_NAMES,
-            formula_renders=formula_renders,
-            source_url=source_url,
-        )
-    finally:
-        child.tail = tail
-    local_name = xml_local_name(child.tag)
-    if local_name == "italic" and rendered:
-        return f"*{rendered}*"
-    if local_name == "bold" and rendered:
-        return f"**{rendered}**"
-    if local_name == "sub" and rendered:
-        return f"<sub>{rendered}</sub>"
-    if local_name == "sup" and rendered:
-        return f"<sup>{rendered}</sup>"
-    return rendered
+    from copy import deepcopy
+
+    wrapper = ET.Element("p")
+    clone = deepcopy(child)
+    clone.tail = None
+    wrapper.append(clone)
+    return render_inline_text(
+        wrapper,
+        skip_local_names=JATS_BLOCK_LOCAL_NAMES,
+        formula_renders=formula_renders,
+        source_url=source_url,
+    )
 
 
 def _flush_paragraph_parts(lines: list[str], parts: list[str]) -> None:
-    text = normalize_text("".join(parts))
+    text = normalize_inline_markup_text(join_xml_inline_parts(parts))
     parts.clear()
     if text:
         lines.extend([text, ""])
@@ -357,7 +352,18 @@ def _append_embedded_block(
     if local_name == "list":
         list_type = normalize_text(str(node.get("list-type") or "")).lower()
         lines.extend(
-            _render_list(node, ordered=list_type in {"order", "ordered", "decimal"})
+            _render_list(
+                node,
+                ordered=list_type in {"order", "ordered", "decimal"},
+                render_item=lambda item: _render_blocks(
+                    item,
+                    heading_level=2,
+                    source_url=source_url,
+                    assets=assets,
+                    table_entries=table_entries,
+                    formula_renders=formula_renders,
+                ),
+            )
         )
         return True
     return False
@@ -371,6 +377,24 @@ def _render_paragraph_block(
     table_entries: list[dict[str, Any]],
     formula_renders: list[FormulaRenderResult],
 ) -> list[str]:
+    children = list(paragraph)
+    if (
+        children
+        and not (paragraph.text or "").strip()
+        and all(
+            xml_local_name(child.tag) in {"monospace", "break"}
+            and not (child.tail or "").strip()
+            for child in children
+        )
+    ):
+        code = "".join(
+            "\n" if xml_local_name(child.tag) == "break" else "".join(child.itertext())
+            for child in children
+        )
+        fence = "`" * max(
+            3, max((len(m[0]) + 1 for m in re.finditer(r"`+", code)), default=0)
+        )
+        return [fence, code, fence, ""]
     embedded_blocks = {
         id(child)
         for child in iter_children(paragraph)
@@ -386,7 +410,7 @@ def _render_paragraph_block(
         return [text, ""] if text else []
 
     lines: list[str] = []
-    paragraph_parts: list[str] = [paragraph.text or ""]
+    paragraph_parts: list[str] = [_normalize_xml_character_data(paragraph.text)]
     for child in iter_children(paragraph):
         if id(child) in embedded_blocks:
             _flush_paragraph_parts(lines, paragraph_parts)
@@ -407,7 +431,7 @@ def _render_paragraph_block(
                 )
             )
         if child.tail:
-            paragraph_parts.append(child.tail)
+            paragraph_parts.append(_normalize_xml_character_data(child.tail))
     _flush_paragraph_parts(lines, paragraph_parts)
     return lines
 
@@ -480,11 +504,22 @@ def _render_blocks(
                 formula_renders=formula_renders,
             )
             continue
+        if local_name in {"supplementary-material", "inline-supplementary-material"}:
+            continue
         if local_name == "list":
             list_type = normalize_text(str(child.get("list-type") or "")).lower()
             lines.extend(
                 _render_list(
-                    child, ordered=list_type in {"order", "ordered", "decimal"}
+                    child,
+                    ordered=list_type in {"order", "ordered", "decimal"},
+                    render_item=lambda item: _render_blocks(
+                        item,
+                        heading_level=heading_level,
+                        source_url=source_url,
+                        assets=assets,
+                        table_entries=table_entries,
+                        formula_renders=formula_renders,
+                    ),
                 )
             )
             continue
@@ -564,7 +599,7 @@ def _back_matter_lines(
     lines: list[str] = []
     for child in iter_children(back):
         local_name = xml_local_name(child.tag)
-        if local_name in {"notes", "ack"}:
+        if local_name in {"notes", "ack", "sec"}:
             child_lines = _render_blocks(
                 child,
                 heading_level=3,
@@ -623,6 +658,10 @@ def extract_jats_references(root: ET.Element) -> list[dict[str, Any]]:
         citation = first_child(ref, "mixed-citation")
         if citation is None:
             citation = first_child(ref, "element-citation")
+        if citation is None:
+            citation = first_child(ref, "citation")
+        if citation is None:
+            citation = ref
         body = normalize_text(
             render_inline_text(citation)
             if citation is not None
@@ -648,6 +687,7 @@ def extract_jats_references(root: ET.Element) -> list[dict[str, Any]]:
     return references
 
 
+@formula_document(new_document=True)
 def parse_jats_xml(
     xml_body: bytes,
     *,
@@ -745,8 +785,6 @@ def parse_jats_xml(
             table_entry_semantic_count(
                 entry,
                 "_table_fallback_count",
-                fallback=normalize_text(str(entry.get("table_render_kind") or ""))
-                in {"fallback", "structured_list"},
             )
             for entry in table_entries
         ),
@@ -754,7 +792,6 @@ def parse_jats_xml(
             table_entry_semantic_count(
                 entry,
                 "_table_layout_degraded_count",
-                fallback=bool(normalize_text(str(entry.get("lossy_message") or ""))),
             )
             for entry in table_entries
         ),
@@ -769,6 +806,7 @@ def parse_jats_xml(
             if getattr(result, "fallback_kind", None) == "missing"
         ),
     )
+    capture_formula_diagnostics(semantic_losses)
     return JatsExtraction(
         metadata=metadata,
         abstract_sections=abstract_sections,

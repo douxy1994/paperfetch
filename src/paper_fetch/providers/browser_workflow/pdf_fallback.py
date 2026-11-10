@@ -5,15 +5,12 @@ from __future__ import annotations
 from typing import Any
 from collections.abc import Mapping, Sequence
 
-from ...http import PDF_MIME_TYPE, RequestCancelledError
+from ...http import PDF_MIME_TYPE
 from ...runtime import RuntimeContext
 from ...tracing import trace_event, trace_from_markers
 from ...reason_codes import PDF_FALLBACK
 from .._pdf_fallback import PdfRequestContext
 from ..base import ProviderContent, RawFulltextPayload
-from ..browser_runtime.api import (
-    storage_state_path as browser_runtime_storage_state_path,
-)
 from .._pdf_common import (
     pdf_asset_output_dir,
     pdf_asset_profile_from_context,
@@ -21,19 +18,6 @@ from .._pdf_common import (
 )
 from .fetchers import _choose_browser_seed_url
 from .shared import BrowserWorkflowDeps, default_browser_workflow_deps
-
-
-def _runtime_storage_state_path(runtime: Any) -> Any | None:
-    if runtime is None:
-        return None
-    path = browser_runtime_storage_state_path(runtime)
-    return path if path is not None and path.is_file() else None
-
-
-def _raise_if_cancelled(context: RuntimeContext | None) -> None:
-    cancel_check = getattr(context, "cancel_check", None)
-    if callable(cancel_check) and cancel_check() is True:
-        raise RequestCancelledError("Request cancelled.")
 
 
 def fetch_seeded_browser_pdf_payload(
@@ -48,6 +32,7 @@ def fetch_seeded_browser_pdf_payload(
     browser_context_seed: Mapping[str, Any] | None,
     html_failure_reason: str | None,
     html_failure_message: str | None,
+    expected_title: str | None = None,
     html_failure_diagnostics: Mapping[str, Any] | None = None,
     warnings: list[str] | None = None,
     success_source_trail: list[str] | None = None,
@@ -56,7 +41,8 @@ def fetch_seeded_browser_pdf_payload(
     context: RuntimeContext | None = None,
     deps: BrowserWorkflowDeps | None = None,
 ) -> RawFulltextPayload:
-    _raise_if_cancelled(context)
+    if context is not None:
+        context.raise_if_cancelled()
     deps = deps or default_browser_workflow_deps()
     context_warmer = deps.warm_browser_context
     if deps.pdf_browser_context_seed is not deps.warm_browser_context:
@@ -66,15 +52,21 @@ def fetch_seeded_browser_pdf_payload(
 
         if deps.warm_browser_context is default_warm_browser_context:
             context_warmer = deps.pdf_browser_context_seed
-    pdf_context_seed = context_warmer(
-        pdf_candidates,
-        publisher=provider,
-        config=runtime,
-        browser_context_seed=browser_context_seed,
-        runtime_context=context,
-        lightweight=True,
-    )
-    _raise_if_cancelled(context)
+    if provider == "elsevier":
+        # HTML already owns this Chrome session. Navigating a PDF merely to warm
+        # it can start a download before the PDF fetcher installs its listener.
+        pdf_context_seed = dict(browser_context_seed or {})
+    else:
+        pdf_context_seed = context_warmer(
+            pdf_candidates,
+            publisher=provider,
+            config=runtime,
+            browser_context_seed=browser_context_seed,
+            runtime_context=context,
+            lightweight=True,
+        )
+    if context is not None:
+        context.raise_if_cancelled()
     seed_url = _choose_browser_seed_url(
         (browser_context_seed or {}).get("browser_final_url"),
         html_candidates[0] if html_candidates else None,
@@ -91,23 +83,22 @@ def fetch_seeded_browser_pdf_payload(
         browser_cookies=seeded_browser_cookies,
         browser_user_agent=pdf_context_seed.get("browser_user_agent")
         or getattr(runtime, "user_agent", None),
-        headless=runtime.headless,
         referer=seed_url,
-        binary_path=getattr(runtime, "binary_path", None),
-        cdp_endpoint=getattr(runtime, "cdp_endpoint", None),
-        external_new_context=getattr(runtime, "external_new_context", False),
-        profile_dir=getattr(runtime, "profile_dir", None),
-        user_data_dir=getattr(runtime, "user_data_dir", None),
-        storage_state_path=_runtime_storage_state_path(runtime),
         browser_config=runtime,
         seed_urls=seed_urls,
         allow_pdf_only=True,
         request=PdfRequestContext(
-            expected_identity={"doi": doi} if doi else None,
+            expected_identity={
+                **({"doi": doi} if doi else {}),
+                **({"title": expected_title} if expected_title else {}),
+            }
+            if doi or expected_title
+            else None,
             runtime=context,
         ),
     )
-    _raise_if_cancelled(context)
+    if context is not None:
+        context.raise_if_cancelled()
     payload_warnings = [str(item) for item in warnings or [] if str(item).strip()]
     pdf_result_warnings = getattr(pdf_result, "warnings", [])
     if isinstance(pdf_result_warnings, Sequence) and not isinstance(
@@ -133,9 +124,6 @@ def fetch_seeded_browser_pdf_payload(
     pdf_diagnostics = getattr(pdf_result, "diagnostics", None)
     return RawFulltextPayload(
         provider=provider,
-        source_url=pdf_result.final_url,
-        content_type=PDF_MIME_TYPE,
-        body=pdf_result.pdf_bytes,
         content=ProviderContent(
             route_kind=PDF_FALLBACK,
             source_url=pdf_result.final_url,
@@ -156,8 +144,8 @@ def fetch_seeded_browser_pdf_payload(
             html_failure_message=html_failure_message,
             suggested_filename=pdf_result.suggested_filename,
             extracted_assets=pdf_fetch_result_assets(pdf_result),
+            needs_local_copy=True,
         ),
         warnings=payload_warnings,
         trace=payload_trace,
-        needs_local_copy=True,
     )

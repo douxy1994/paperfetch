@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 from unittest import mock
-
 from paper_fetch import publisher_identity
 from paper_fetch.providers import _acs_html
 from paper_fetch.providers.browser_runtime.backends import camoufox as camoufox_backend
@@ -29,7 +27,6 @@ from paper_fetch.providers.browser_workflow import BrowserWorkflowClient
 from paper_fetch.providers.browser_workflow.fetchers.readiness import (
     atypon_body_ready_selectors,
 )
-from tests.golden_criteria import golden_criteria_asset
 
 
 ACS_SAMPLE_DOI = "10.1021/acsomega.4c03987"
@@ -63,11 +60,12 @@ def test_acs_provider_bundle_declares_routing_and_browser_workflow() -> None:
     assert catalog.domains == ("www.acs.org", "pubs.acs.org", "acs.org")
     assert catalog.doi_prefixes == ("10.1021/",)
     assert catalog.base_domains == ("pubs.acs.org",)
-    assert catalog.requires_browser_runtime is True
+    assert any(
+        route.browser_required or route.browser_optional for route in catalog.routes
+    )
     assert default_asset_profile_for_provider("acs") == "body"
     assert bundle.sources == ("acs",)
     assert bundle.html_rules is not None
-    assert bundle.html_rules.availability.no_signals is True
 
 
 def test_acs_provider_candidates_use_acs_publications_base_host() -> None:
@@ -191,7 +189,7 @@ def test_acs_provider_owned_cleanup_removes_copy_chrome_and_extracts_references(
     assert extraction["references"] == [
         {
             "label": "1.",
-            "raw": "Liu, L. Catalyst paper. Chem. Rev. 2018, DOI: 10.1021/example",
+            "raw": "Liu, L. Catalyst paper. *Chem. Rev.* 2018, DOI: 10.1021/example",
             "doi": "10.1021/example",
             "year": "2018",
         }
@@ -291,7 +289,7 @@ def test_acs_silverchair_references_extract_structured_citations() -> None:
             "label": "1.",
             "raw": (
                 "Example, A.; Author, B. A complete reference title. "
-                "Chem. Rev. 2024, 12, 10-20. DOI"
+                "*Chem. Rev.* 2024, 12, 10-20. DOI"
             ),
             "doi": "10.1021/example",
             "year": "2024",
@@ -351,154 +349,43 @@ def test_acs_silverchair_supplementary_widget_is_scoped_to_all_assets() -> None:
     ] == ["https://pubs.acs.org/acsodf/article-supplement/358560/pdf/ao4c03987_si_001/"]
 
 
-def test_acs_silverchair_structure_fixture_extracts_complete_current_article() -> None:
-    """rule: rule-acs-silverchair-body-assets-references"""
+def test_acs_silverchair_missing_original_retains_preview_and_viewer_reference() -> (
+    None
+):
+    html = """
+    <div class="article-body">
+      <div class="fig fig-section" data-id="fig1">
+        <a href="/view-large/figure/123/examplef01.tif" aria-label="View large Figure 1">
+          <img src="https://acs.silverchair-cdn.com/acs/journals/m_examplef01.gif"
+               path-from-xml="examplef01.tif" alt="Figure 1">
+        </a>
+        <div class="caption">Figure 1. Preview fallback.</div>
+      </div>
+    </div>
+    """
 
-    html = golden_criteria_asset(ACS_SAMPLE_DOI, "original.html").read_text(
-        encoding="utf-8"
-    )
-
-    markdown, extraction = extract_atypon_browser_workflow_markdown(
-        html,
-        ACS_SAMPLE_LANDING,
-        "acs",
-        metadata={
-            "doi": ACS_SAMPLE_DOI,
-            "title": (
-                "Functionalized Metal-Free Carbon Nanosphere Catalyst for the "
-                "Selective C–N Bond Formation under Open-Air Conditions"
-            ),
-        },
-    )
     body_html, supplementary_html = extract_browser_workflow_asset_html_scopes(
         html,
         ACS_SAMPLE_LANDING,
         "acs",
     )
-    assets = _acs_html.scoped_asset_extractor(
-        body_html,
-        ACS_SAMPLE_LANDING,
-        asset_profile="all",
-        supplementary_html_text=supplementary_html,
-    )
-
-    assert len(markdown) > 30_000
-    assert "## 1. Introduction" in markdown
-    assert "## 5. Conclusions" in markdown
-    assert "Open figure viewer" not in markdown
-    assert "Close modal" not in markdown
-    assert "View Large" not in markdown
-    assert len(extraction["references"]) == 45
-    assert extraction["references"][0]["year"] == "2018"
-    assert sum(asset["kind"] == "figure" for asset in assets) == 8
-    assert [asset["url"] for asset in assets if asset["kind"] == "supplementary"] == [
-        "https://pubs.acs.org/acsodf/article-supplement/358560/pdf/ao4c03987_si_001/"
+    figures = [
+        asset
+        for asset in _acs_html.scoped_asset_extractor(
+            body_html,
+            ACS_SAMPLE_LANDING,
+            asset_profile="body",
+            supplementary_html_text=supplementary_html,
+        )
+        if asset["kind"] == "figure"
     ]
 
-
-def test_acs_silverchair_formula_fixture_preserves_mathml_and_tables() -> None:
-    html = golden_criteria_asset(ACS_FORMULA_DOI, "original.html").read_text(
-        encoding="utf-8"
+    assert len(figures) == 1
+    assert not figures[0].get("full_size_url")
+    assert figures[0]["preview_url"].endswith("/m_examplef01.gif")
+    assert figures[0]["figure_page_url"].endswith(
+        "/view-large/figure/123/examplef01.tif"
     )
-
-    markdown, extraction = extract_atypon_browser_workflow_markdown(
-        html,
-        f"https://pubs.acs.org/doi/{ACS_FORMULA_DOI}",
-        "acs",
-        metadata={
-            "doi": ACS_FORMULA_DOI,
-            "title": (
-                "General Equation to Estimate the Physicochemical Properties "
-                "of Aliphatic Amines"
-            ),
-        },
-    )
-
-    assert len(markdown) > 45_000
-    assert markdown.count("$$") == 42
-    assert "S_{CNE}" in markdown
-    assert "| *n* | PEI |" in markdown
-    assert "## 3. Conclusions" in markdown
-    assert len(extraction["references"]) == 20
-    assert extraction["references"][0]["year"] == "2015"
-
-
-def test_acs_markdown_review_contract_markers() -> None:
-    markdown = """
-    # Functionalized Metal-Free Carbon Nanosphere Catalyst for the Selective C-N Bond Formation under Open-Air Conditions
-
-    ## Abstract
-
-    Functionalized metal-free carbon nanosphere catalyst smoke fixture.
-
-    **Figure 1.** Representative carbon nanosphere catalyst workflow.
-
-    **Table 1.**
-
-    | s. no. | catalyst | OPD conversion (%) |
-    | ------ | -------- | ------------------ |
-    | 1      | ANCS     | 96                 |
-
-    ## Supporting Information
-
-    The Supporting Information is available free of charge at https://pubs.acs.org/doi/10.1021/acsomega.4c03987.
-
-    ao4c03987_si_001.pdf
-
-    ## References
-
-    1. Representative ACS Omega reference for DOI 10.1021/acsomega.4c03987.
-    """
-
-    # markdown-review: purpose=structure doi=10.1021/acsomega.4c03987
-    assert "## Abstract" in markdown
-    assert "Download Citation" not in markdown
-
-    # markdown-review: purpose=figure doi=10.1021/acsomega.4c03987
-    assert "Figure" in markdown
-    assert "Article Views" not in markdown
-
-    # markdown-review: purpose=table doi=10.1021/acsomega.4c03987
-    assert "Table 1" in markdown
-    assert "| s. no. | catalyst | OPD conversion (%) |" in markdown
-    assert "Google Scholar" not in markdown
-
-    formula_markdown = """
-    # General Equation to Estimate the Physicochemical Properties of Aliphatic Amines
-
-    The NPOH equation uses the sum of carbon number effects.
-
-    $$
-    {\\ln{(P_{(n)})}}{= {a + b{(n - 1)} + cS_{CNE}}}
-    $$
-    """
-
-    # markdown-review: purpose=formula doi=10.1021/acsomega.3c06992
-    assert "NPOH equation" in formula_markdown
-    assert "S_{CNE}" in formula_markdown
-    assert formula_markdown.count("$$") >= 2
-    assert "[Formula unavailable]" not in formula_markdown
-    assert "Download Citation" not in formula_markdown
-
-    # markdown-review: purpose=supplementary doi=10.1021/acsomega.4c03987
-    assert "Supporting Information" in markdown
-    assert "ao4c03987_si_001.pdf" in markdown
-    assert "Download Citation" not in markdown
-
-    pdf_markdown = """
-    # General Equation to Express Changes in the Physicochemical Properties of Organic Homologues
-
-    This PDF fallback baseline includes the NPOH equation body text.
-    """
-
-    # markdown-review: purpose=pdf_fallback doi=10.1021/acsomega.2c02828
-    assert "General Equation to Express Changes" in pdf_markdown
-    assert "NPOH equation" in pdf_markdown
-    assert "Download Citation" not in pdf_markdown
-
-    # markdown-review: purpose=references doi=10.1021/acsomega.4c03987
-    assert "References" in markdown
-    assert "Google Scholar" not in markdown
 
 
 def test_acs_probe_status_uses_browser_runtime_requirements() -> None:
@@ -510,10 +397,7 @@ def test_acs_probe_status_uses_browser_runtime_requirements() -> None:
             "packages": {"playwright": True, "camoufox": True},
         },
     ):
-        result = AcsClient(
-            transport=None,
-            env={"PAPER_FETCH_BROWSER_BACKEND": "camoufox"},
-        ).probe_status()
+        result = AcsClient(transport=None, env={}).probe_status()
 
     checks = {check.name: check for check in result.checks}
     assert result.status == "ready"

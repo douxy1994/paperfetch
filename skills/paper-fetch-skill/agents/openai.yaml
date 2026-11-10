@@ -1,0 +1,6 @@
+interface:
+  display_name: "Paper Fetch"
+  short_description: "Fetch known papers and verify full-text availability"
+  default_prompt: "Use $paper-fetch-skill to fetch and verify the papers I provide, or check full-text availability when I request a probe."
+policy:
+  allow_implicit_invocation: true

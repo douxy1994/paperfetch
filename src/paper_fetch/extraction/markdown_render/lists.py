@@ -2,19 +2,27 @@
 
 from __future__ import annotations
 
-from ...utils import normalize_text
 from ._ir import MarkdownList
 
 
-def render_list(lst: MarkdownList) -> list[str]:
+def render_list(lst: MarkdownList, *, markers: list[str] | None = None) -> list[str]:
     lines: list[str] = []
     index = 1
-    for item in lst.items:
-        text = normalize_text(item)
+    for item_index, item in enumerate(lst.items):
+        text = item.strip()
         if not text:
             continue
-        marker = f"{index}." if lst.ordered else "-"
-        lines.append(f"{marker} {text}")
+        marker = (
+            markers[item_index]
+            if markers is not None
+            else f"{index}."
+            if lst.ordered
+            else "-"
+        )
+        first, *continuation = text.splitlines()
+        lines.append(f"{marker} {first}")
+        indent = " " * (len(marker) + 1)
+        lines.extend(indent + line if line else "" for line in continuation)
         index += 1
     if lines:
         lines.append("")

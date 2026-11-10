@@ -2,15 +2,13 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 import hashlib
 import math
-from typing import Any
 import urllib.parse
 from collections.abc import Iterable, Mapping
 
-from .reason_codes import NOT_CONFIGURED, OK, PARTIAL, RATE_LIMITED
-from .quality.reason_codes import ABSTRACT_ONLY
+from .reason_codes import ABSTRACT_ONLY, NOT_CONFIGURED, OK, PARTIAL, RATE_LIMITED
 from .utils import normalize_text
 
 _OUTCOMELESS_MARKER_OUTCOMES = {"", "info", "selected", "done"}
@@ -97,22 +95,6 @@ class _TraceAttemptBucket:
     durations_ms: list[float] = field(default_factory=list)
 
 
-_TRACE_CONTEXT_FIELDS = frozenset(TraceContext.__dataclass_fields__)
-
-
-def _coerce_trace_context(
-    context: TraceContext | None,
-    legacy_fields: Mapping[str, Any],
-) -> TraceContext:
-    unexpected = sorted(set(legacy_fields) - _TRACE_CONTEXT_FIELDS)
-    if unexpected:
-        names = ", ".join(unexpected)
-        raise TypeError(f"unexpected trace context field(s): {names}")
-    if not legacy_fields:
-        return context or TraceContext()
-    return replace(context or TraceContext(), **legacy_fields)
-
-
 def trace_event(
     stage: str,
     component: str,
@@ -121,9 +103,8 @@ def trace_event(
     code: str | None = None,
     message: str | None = None,
     context: TraceContext | None = None,
-    **legacy_fields: Any,
 ) -> TraceEvent:
-    trace_context = _coerce_trace_context(context, legacy_fields)
+    trace_context = context or TraceContext()
     safe_target, inferred_target_digest = _safe_trace_target(trace_context.target)
     return TraceEvent(
         stage=normalize_text(stage).lower(),
@@ -243,6 +224,39 @@ def source_trail_from_trace(
         if marker and marker not in markers:
             markers.append(marker)
     return markers
+
+
+def acquisition_fallback_used(
+    trace: Iterable[TraceEvent],
+    *,
+    source_trail: Iterable[str] = (),
+) -> bool:
+    """Return whether content acquisition reached a fallback or failed route."""
+
+    failure_outcomes = {
+        "fail",
+        "error",
+        "negative",
+        "not_usable",
+        "unavailable",
+        NOT_CONFIGURED,
+        RATE_LIMITED,
+    }
+    for event in trace:
+        stage = normalize_text(event.stage).lower()
+        outcome = normalize_text(event.outcome).lower()
+        if stage == "fallback":
+            return True
+        if stage == "fulltext" and outcome in failure_outcomes:
+            return True
+    for event in trace_from_markers(tuple(source_trail)):
+        stage = normalize_text(event.stage).lower()
+        outcome = normalize_text(event.outcome).lower()
+        if stage == "fallback":
+            return True
+        if stage == "fulltext" and outcome in failure_outcomes:
+            return True
+    return False
 
 
 def trace_from_markers(markers: list[str] | tuple[str, ...] | None) -> list[TraceEvent]:

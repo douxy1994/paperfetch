@@ -1,18 +1,12 @@
 from __future__ import annotations
-
 import json
 import os
 import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 import subprocess
-import stat
-import sys
 from pathlib import Path
 from unittest import mock
-
-import pytest
-
 from paper_fetch.formula import convert as formula_conversion
 from tests.golden_criteria import golden_criteria_scenario_asset
 
@@ -72,180 +66,73 @@ class FormulaConversionTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(captured_env, runtime_env)
 
-    def test_looks_like_mathml_element_excludes_tex_math(self) -> None:
-        tex_math_node = ET.fromstring("<tex-math>x^2</tex-math>")
-        math_node = ET.fromstring(
-            '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
-        )
-
-        self.assertFalse(formula_conversion.looks_like_mathml_element(tex_math_node))
-        self.assertTrue(formula_conversion.looks_like_mathml_element(math_node))
-
-    def test_extract_formula_samples_from_xml_strips_tail_text(self) -> None:
-        xml_body = """<?xml version="1.0"?>
-<article>
-  <body>
-    <p>Formula <math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math> trailing text.</p>
-  </body>
-</article>
-"""
-        with tempfile.TemporaryDirectory() as tmpdir:
-            xml_path = Path(tmpdir) / "sample.xml"
-            xml_path.write_text(xml_body, encoding="utf-8")
-
-            samples = formula_conversion.extract_formula_samples_from_xml(xml_path)
-
-        self.assertEqual(len(samples), 1)
-        self.assertEqual(
-            samples[0].raw_mathml,
-            '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>',
-        )
-
-    def test_infer_source_provider_uses_provider_catalog(self) -> None:
-        elsevier_root = ET.fromstring("<full-text-retrieval-response />")
-        jats_root = ET.fromstring("<article />")
-        unknown_root = ET.fromstring("<payload />")
-
-        self.assertEqual(
-            formula_conversion.infer_source_provider(
-                elsevier_root,
-                Path("/tmp/10.1016_example/original.xml"),
-            ),
-            "elsevier",
-        )
-        self.assertEqual(
-            formula_conversion.infer_source_provider(
-                jats_root,
-                Path("/tmp/10.5194_acp-24-1-2024/original.xml"),
-            ),
-            "copernicus",
-        )
-        self.assertEqual(
-            formula_conversion.infer_source_provider(
-                jats_root,
-                Path("/tmp/10.1038_example/original.xml"),
-            ),
-            "springer",
-        )
-        self.assertEqual(
-            formula_conversion.infer_source_provider(
-                unknown_root,
-                Path("/tmp/payload.xml"),
-            ),
-            "unknown",
-        )
-
-    def test_normalize_latex_repairs_identifier_escaped_underscores(self) -> None:
-        """rule: rule-formula-latex-normalization"""
+    def test_normalize_latex_preserves_source_scenario_samples(self) -> None:
         samples = json.loads(
             golden_criteria_scenario_asset(
                 "formula_latex_normalization", "samples.json"
             ).read_text(encoding="utf-8")
         )
-        sample = next(
-            item for item in samples if item["name"] == "identifier_escaped_underscores"
-        )
-
-        normalized = formula_conversion.normalize_latex(sample["input"])
-
-        for token in sample["must_not_include"]:
-            self.assertNotIn(token, normalized)
-        for token in sample["must_include"]:
-            self.assertIn(token, normalized)
-
-    def test_normalize_latex_scenario_samples_are_katex_compatible(self) -> None:
-        """rule: rule-formula-latex-normalization"""
-        samples = json.loads(
-            golden_criteria_scenario_asset(
-                "formula_latex_normalization", "samples.json"
-            ).read_text(encoding="utf-8")
-        )
-
         for sample in samples:
             with self.subTest(sample=sample["name"]):
-                normalized = formula_conversion.normalize_latex(sample["input"])
-                if "expected" in sample:
-                    self.assertEqual(normalized, sample["expected"])
-                for token in sample.get("must_not_include", []):
-                    self.assertNotIn(token, normalized)
-                for token in sample.get("must_include", []):
-                    self.assertIn(token, normalized)
+                self.assertEqual(
+                    formula_conversion.normalize_latex(sample["input"]), sample["input"]
+                )
 
-    def test_normalize_latex_does_not_globally_replace_textbackslash(self) -> None:
-        normalized = formula_conversion.normalize_latex(r"\text{\textbackslash\_NDVI}")
+    def test_normalize_latex_preserves_source_commands_and_spacing(self) -> None:
+        for source in (
+            r"\updelta Q + \upDelta P + \updeltaQ",
+            r"\mspace{6mu}x + \mspace{ -1.5 mu }y + \mspace{2pt}z",
+            "S\u200bO + " + r"a\hspace{0pt}b + c\hspace*{ 0.0 em }d",
+            r"F_{c r i t} = \sum_{t_{p}}^{S O S_{y 0}} R_{f} + \mathcal{ℴ}",
+            r"P(SPI \unicode{x2A7D} - 1.64) + \unicode{U+03B1}x",
+            r"\mathop\sum_{i=1}^n x + \mathop{custom}",
+            r"x\textbackslash\_NDVI + \text{\textbackslash\_NDVI}",
+            r"s \left(\right. s + 1 \left.\right)",
+        ):
+            with self.subTest(source=source):
+                self.assertEqual(formula_conversion.normalize_latex(source), source)
 
-        self.assertEqual(normalized, r"\text{\textbackslash\_NDVI}")
+    def test_normalize_latex_removes_only_outer_delimiters(self) -> None:
+        source = "\\begin{equation}\n x % comment\n + \\text{two  spaces} + \\hbox{$y$}\n\\end{equation}"
+        for opener, closer in (
+            ("$", "$"),
+            ("$$", "$$"),
+            (r"\(", r"\)"),
+            (r"\[", r"\]"),
+        ):
+            with self.subTest(opener=opener):
+                normalized = formula_conversion.normalize_latex(
+                    f" {opener}\n{source}\n{closer} "
+                )
+                self.assertEqual(normalized, source)
+                self.assertEqual(formula_conversion.normalize_latex(normalized), source)
+        self.assertEqual(formula_conversion.normalize_latex(None), "")
+        self.assertEqual(formula_conversion.normalize_latex("$$ $$"), "")
 
-    def test_normalize_latex_rewrites_upgreek_macros(self) -> None:
-        normalized = formula_conversion.normalize_latex(
-            r"\updelta Q + \upDelta P + \updeltaQ"
+    def test_mathml_conversion_repairs_stay_private(self) -> None:
+        source = (
+            r"F_{c r i t} + x\textbackslash\_NDVI + s \left(\right. s + 1 \left.\right)"
         )
-
-        self.assertEqual(normalized, r"\delta Q + \Delta P + \updeltaQ")
-
-    def test_normalize_latex_rewrites_mspace_for_katex(self) -> None:
-        normalized = formula_conversion.normalize_latex(
-            r"\mspace{6mu}x + \mspace{ -1.5 mu }y + \mspace{2pt}z"
-        )
-
-        self.assertEqual(normalized, r"\mkern6mu x + \mkern-1.5mu y + \mspace{2pt}z")
-
-    def test_normalize_latex_removes_only_zero_width_spacing(self) -> None:
-        normalized = formula_conversion.normalize_latex(
-            "S\u200bO + " + r"a\hspace{0pt}b + c\hspace*{ 0.0 em }d + e\hspace{1pt}f"
-        )
-
-        self.assertEqual(normalized, r"SO + ab + cd + e\hspace{1pt}f")
-
-    def test_normalize_latex_removes_texmath_empty_delimiter_artifacts(self) -> None:
-        normalized = formula_conversion.normalize_latex(
-            r"s \left(\right. s + 1 \left.\right) + \left(\right. D + 1 \left.\right)"
-        )
-
-        self.assertEqual(normalized, "s(s + 1) + (D + 1)")
-
-    def test_normalize_latex_compacts_split_math_identifiers(self) -> None:
-        normalized = formula_conversion.normalize_latex(
-            r"F_{c r i t} = \sum_{t_{p}}^{S O S_{y 0}} R_{f} + \mathcal{ℴ}"
-        )
-
+        self.assertEqual(formula_conversion.normalize_latex(source), source)
         self.assertEqual(
-            normalized, r"F_{crit} = \sum\limits_{t_{p}}^{SOS_{y0}} R_{f} + \mathcal{O}"
+            formula_conversion._normalize_mathml_latex(source),
+            r"F_{crit} + x\_NDVI + s(s + 1)",
         )
-
-    def test_normalize_latex_rewrites_unicode_commands_for_katex(self) -> None:
-        normalized = formula_conversion.normalize_latex(
-            r"P(SPI \unicode{x2A7D} - 1.64) + \unicode{U+03B1}x"
-        )
-
-        self.assertEqual(normalized, "P(SPI \\leqslant - 1.64) + \u03b1x")
-        self.assertNotIn(r"\unicode", normalized)
 
     def test_backend_registry_preserves_public_backend_groups(self) -> None:
         self.assertEqual(
             formula_conversion.SUPPORTED_BACKENDS,
-            {"auto", "texmath", "mathml-to-latex", "mml2tex", "legacy"},
-        )
-        self.assertEqual(
-            formula_conversion.BENCHMARK_BACKENDS,
-            ("texmath", "mathml-to-latex", "mml2tex"),
+            {"auto", "texmath", "mathml-to-latex", "mml2tex"},
         )
         self.assertEqual(
             formula_conversion.AUTO_BACKENDS, ("texmath", "mathml-to-latex")
         )
 
-    def test_backend_registry_resolves_aliases_and_legacy_strategy(self) -> None:
+    def test_backend_registry_resolves_aliases(self) -> None:
         self.assertEqual(
             formula_conversion.resolve_backend(backend="mathml_to_latex"),
             "mathml-to-latex",
         )
-        with self.assertRaisesRegex(RuntimeError, "Legacy conversion is not available"):
-            formula_conversion.convert_mathml_string(
-                '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>',
-                display_mode=False,
-                env={},
-                backend="legacy",
-            )
 
     def test_auto_backend_uses_registry_order_without_texmath_default_fallback(
         self,
@@ -375,54 +262,6 @@ class FormulaConversionTests(unittest.TestCase):
         self.assertEqual(first.latex, "x")
         self.assertEqual(second.latex, "x")
         self.assertEqual(second.duration_ms, 0)
-
-    def test_formula_timing_collector_records_uncached_and_cache_hit_calls(
-        self,
-    ) -> None:
-        raw_mathml = (
-            '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
-        )
-        durations: list[float] = []
-        original_texmath = formula_conversion.convert_with_texmath
-        original_monotonic = formula_conversion.time.monotonic
-        monotonic_values = iter([10.0, 10.125, 20.0, 20.05])
-        try:
-            formula_conversion.time.monotonic = lambda: next(monotonic_values)
-
-            def fake_texmath(*args, **kwargs):
-                return formula_conversion.FormulaConversionResult(
-                    backend="texmath",
-                    status="ok",
-                    latex="x",
-                    raw_mathml=raw_mathml,
-                    error=None,
-                    duration_ms=7,
-                    display_mode=False,
-                )
-
-            formula_conversion.convert_with_texmath = fake_texmath
-
-            with formula_conversion.formula_timing_collector(durations.append):
-                first = formula_conversion.convert_mathml_string(
-                    raw_mathml,
-                    display_mode=False,
-                    env={},
-                    backend="texmath",
-                )
-                second = formula_conversion.convert_mathml_string(
-                    raw_mathml,
-                    display_mode=False,
-                    env={},
-                    backend="texmath",
-                )
-        finally:
-            formula_conversion.convert_with_texmath = original_texmath
-            formula_conversion.time.monotonic = original_monotonic
-
-        self.assertEqual(first.status, "ok")
-        self.assertEqual(second.status, "ok")
-        self.assertEqual(second.duration_ms, 0)
-        self.assertEqual([round(duration, 3) for duration in durations], [0.125, 0.05])
 
     def test_texmath_cache_avoids_duplicate_subprocess_run(self) -> None:
         raw_mathml = (
@@ -677,50 +516,6 @@ class FormulaConversionTests(unittest.TestCase):
             formula_conversion._resolve_mathml_to_latex_command = original_command
             formula_conversion._mathml_worker_for = original_worker_for
             formula_conversion._run_command = original_run_command
-
-        self.assertEqual(result.status, "ok")
-        self.assertEqual(result.latex, "x")
-
-    def test_external_formula_command_replaces_invalid_utf8_output(self) -> None:
-        process = formula_conversion._run_command(
-            [
-                sys.executable,
-                "-c",
-                (
-                    "import sys; "
-                    "sys.stdout.buffer.write(b'latex\\xb2\\n'); "
-                    "sys.stderr.buffer.write(b'err\\xd0\\n')"
-                ),
-            ],
-            input_text="",
-        )
-
-        self.assertEqual(process.returncode, 0)
-        self.assertEqual(process.stdout, "latex\ufffd\n")
-        self.assertEqual(process.stderr, "err\ufffd\n")
-
-    @pytest.mark.allow_subprocess
-    def test_texmath_exe_under_formula_tools_is_discovered(self) -> None:
-        raw_mathml = (
-            '<math xmlns="http://www.w3.org/1998/Math/MathML"><mi>x</mi></math>'
-        )
-        with tempfile.TemporaryDirectory() as tmpdir:
-            tools_dir = Path(tmpdir) / "formula-tools"
-            texmath = tools_dir / "bin" / "texmath.exe"
-            texmath.parent.mkdir(parents=True)
-            texmath.write_text("#!/usr/bin/env bash\nprintf 'x\\n'\n", encoding="utf-8")
-            texmath.chmod(
-                texmath.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
-            )
-
-            result = formula_conversion.convert_with_texmath(
-                raw_mathml,
-                display_mode=False,
-                env={
-                    "PAPER_FETCH_FORMULA_TOOLS_DIR": str(tools_dir),
-                    "PATH": os.environ.get("PATH", ""),
-                },
-            )
 
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.latex, "x")

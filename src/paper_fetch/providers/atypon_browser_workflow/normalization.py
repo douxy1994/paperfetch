@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import copy
 import os
 import urllib.parse
 from typing import Any
@@ -34,23 +35,14 @@ from ...extraction.html.shared import (
     soup_root as _soup_root,
 )
 from ...extraction.html.tables import (
-    escape_markdown_table_cell,
-    expanded_table_matrix,
-    flatten_table_header_rows,
-    normalize_table_inline_text,
-    render_aligned_markdown_table,
-    render_table_inline_node,
     render_table_inline_text,
     render_table_markdown,
-    table_cell_data,
-    table_header_row_count,
-    table_headers_and_data,
     table_placeholder,
-    table_rows,
     wrap_table_text_fragment,
 )
 from ...markdown.citations import numeric_citation_payload_from_html_node
 from ...markdown.images import render_markdown_image
+from ...models import SemanticLosses
 from ...utils import normalize_text
 from .._atypon_browser_workflow_profiles import publisher_profile as _publisher_profile
 from .formulas import (
@@ -70,7 +62,6 @@ from .formulas import (
     _looks_like_formula_image_node,
     _mathml_element_from_node,
     _normalize_display_formula_blocks,
-    _normalize_iop_inline_tex_formula_nodes,
     _normalize_inline_formula_image_nodes,
     _normalize_inline_math_nodes,
     _split_paragraph_display_formula_blocks,
@@ -83,14 +74,24 @@ from .profile import (
     _is_descendant,
 )
 
-from bs4 import NavigableString, Tag
-
-
-def _normalize_table_inline_text(value: str) -> str:
-    return normalize_table_inline_text(value)
+from bs4 import Tag
 
 
 def _numeric_citation_payload_from_inline_node(node: Any) -> str | None:
+    if isinstance(node, Tag) and any(
+        str(parent.get("id") or "") in {"acknowledgments", "acknowledgements"}
+        or set(parent.get("class", []))
+        & {
+            "notes",
+            "table-wrap-foot",
+            "html-table_foot",
+            "data-availability",
+            "code-availability",
+        }
+        for parent in node.parents
+        if isinstance(parent, Tag)
+    ):
+        return None
     return numeric_citation_payload_from_html_node(
         node,
         wrapper_tags=("sup", "i", "em"),
@@ -99,10 +100,6 @@ def _numeric_citation_payload_from_inline_node(node: Any) -> str | None:
 
 def _wrap_table_text_fragment(text: str, marker: str | None) -> str:
     return wrap_table_text_fragment(text, marker)
-
-
-def _render_table_inline_node(node: Any, *, text_style: str | None = None) -> str:
-    return render_table_inline_node(node, text_style=text_style)
 
 
 def _render_table_inline_text(node: Any) -> str:
@@ -132,10 +129,26 @@ def _render_non_table_inline_node(node: Any, *, text_style: str | None = None) -
 def _non_table_raw_markdown_from_node(node: Any) -> str | None:
     if (
         isinstance(node, Tag)
+        and node.name == "a"
+        and node.get("href")
+        and not str(node["href"]).startswith("javascript:")
+    ):
+        from copy import deepcopy
+
+        content = deepcopy(node)
+        content.name = "span"
+        label = _render_non_table_inline_node(content)
+        return label if node["href"] == "#" else f"[{label}]({node['href']})"
+    if (
+        isinstance(node, Tag)
         and normalize_text(node.name or "").lower() == "img"
         and _looks_like_formula_image_node(node)
     ):
         return _formula_image_markdown(node)
+    if isinstance(node, Tag) and node.name == "img" and node.get("src"):
+        return render_markdown_image(
+            "image", str(node.get("alt") or "Image"), str(node["src"])
+        )
     return None
 
 
@@ -162,20 +175,10 @@ def _join_non_table_text_fragments(fragments: list[str]) -> str:
 
 
 def _render_caption_text(node: Tag) -> str:
-    fragments: list[str] = []
-    direct_tag_children = 0
-    for child in node.children:
-        if NavigableString is not None and isinstance(child, NavigableString):
-            text = _wrap_table_text_fragment(str(child), None)
-        elif isinstance(child, Tag):
-            direct_tag_children += 1
-            text = _render_non_table_inline_fragment(child)
-        else:
-            text = ""
-        if text:
-            fragments.append(text)
-    if direct_tag_children > 1:
-        return _join_non_table_text_fragments(fragments)
+    node = copy.deepcopy(node)
+    for block in node.find_all(["div", "p"]):
+        block.insert_before(" ")
+        block.insert_after(" ")
     return _render_non_table_inline_text(node)
 
 
@@ -186,6 +189,10 @@ def _normalize_non_table_inline_blocks(container: Tag) -> None:
         if isinstance(node, Tag)
         and node.parent is not None
         and _is_non_table_paragraph_node(node)
+        and node.name != "li"
+        and node.find(["ul", "ol", "blockquote", "p", "div"]) is None
+        and node.get("data-paper-fetch-markdown") is None
+        and node.find_parent(attrs={"data-paper-fetch-markdown": "1"}) is None
     ]
     for node in _dedupe_top_level_nodes(candidates):
         if node.find_parent("table") is not None:
@@ -195,6 +202,7 @@ def _normalize_non_table_inline_blocks(container: Tag) -> None:
             continue
         node.clear()
         node.append(rendered)
+        node["data-paper-fetch-markdown"] = "1"
 
 
 def _normalize_abstract_blocks(container: Tag) -> None:
@@ -307,6 +315,8 @@ def _caption_label(node: Tag, *, kind: str) -> str:
     for candidate in (node.select_one(selector) for selector in selectors):
         if isinstance(candidate, Tag):
             text = _short_text(candidate)
+            if kind == "Table" and re.fullmatch(r"TABLE\s+[IVXLCDM]+\.?", text, re.I):
+                return text
             match = label_pattern.search(text)
             if match:
                 return f"{kind} {match.group(1)}."
@@ -565,44 +575,9 @@ def _normalize_boxed_text_blocks(container: Tag) -> None:
         for line in lines:
             paragraph = soup.new_tag("p")
             paragraph.string = line
+            paragraph["data-paper-fetch-markdown"] = "1"
             replacement.append(paragraph)
         target.replace_with(replacement)
-
-
-def _table_cell_data(cell: Tag) -> dict[str, Any]:
-    return table_cell_data(cell, render_inline_text=_render_table_inline_text)
-
-
-def _table_rows(table: Tag) -> list[list[dict[str, Any]]]:
-    return table_rows(table, render_inline_text=_render_table_inline_text)
-
-
-def _table_header_row_count(table: Tag, rows: list[list[dict[str, Any]]]) -> int:
-    return table_header_row_count(table, rows)
-
-
-def _expanded_table_matrix(
-    rows: list[list[dict[str, Any]]],
-) -> list[list[dict[str, Any]]] | None:
-    return expanded_table_matrix(rows)
-
-
-def _flatten_table_header_rows(rows: list[list[dict[str, Any]]]) -> list[str]:
-    return flatten_table_header_rows(rows)
-
-
-def _table_headers_and_data(
-    table: Tag,
-) -> tuple[list[str], list[list[dict[str, Any]]], bool]:
-    return table_headers_and_data(table, render_inline_text=_render_table_inline_text)
-
-
-def _escape_markdown_table_cell(text: str) -> str:
-    return escape_markdown_table_cell(text)
-
-
-def _render_aligned_markdown_table(matrix: list[list[str]]) -> list[str]:
-    return render_aligned_markdown_table(matrix)
 
 
 def _render_table_markdown(table_node: Tag, *, label: str, caption: str) -> str:
@@ -665,7 +640,9 @@ def _table_placeholder(index: int) -> str:
     return table_placeholder(index)
 
 
-def _normalize_table_blocks(container: Tag) -> list[dict[str, str]]:
+def _normalize_table_blocks(
+    container: Tag, publisher: str = ""
+) -> list[dict[str, str]]:
     soup = _soup_root(container)
     if soup is None:
         return []
@@ -676,7 +653,14 @@ def _normalize_table_blocks(container: Tag) -> list[dict[str, str]]:
             continue
         label = _caption_label(node, kind="Table")
         caption = _table_caption_text(node, label)
-        rendered_markdown = _render_table_markdown(node, label=label, caption=caption)
+        rendered_markdown = None
+        render_table = _publisher_profile(publisher).dom_hooks.render_table
+        if render_table is not None:
+            rendered_markdown = render_table(node, label=label, caption=caption)
+        if rendered_markdown is None:
+            rendered_markdown = _render_table_markdown(
+                node, label=label, caption=caption
+            )
         if not rendered_markdown:
             rendered_markdown = _render_table_image_markdown(
                 node,
@@ -685,9 +669,18 @@ def _normalize_table_blocks(container: Tag) -> list[dict[str, str]]:
             )
         if not rendered_markdown:
             continue
+        from .._html_section_markdown import render_retained_text_from_html
+
+        for foot in node.select(
+            ".table-wrap-foot, .tableWrapFooter, .table-foot, .tableFoot, .footnotes, .notes"
+        ):
+            notes = render_retained_text_from_html(foot)
+            if notes:
+                rendered_markdown += "\n\n" + notes
         placeholder = _table_placeholder(len(entries) + 1)
         block = soup.new_tag("p")
         block.string = placeholder
+        block["data-paper-fetch-markdown"] = "1"
         node.replace_with(block)
         entries.append({"placeholder": placeholder, "markdown": rendered_markdown})
     return entries
@@ -710,22 +703,26 @@ def _normalize_figure_blocks(container: Tag, publisher: str) -> None:
             continue
         block = soup.new_tag("p")
         block.string = f"**{label}** {caption}".strip()
+        block["data-paper-fetch-markdown"] = "1"
         node.replace_with(block)
 
 
-def _normalize_special_blocks(container: Tag, publisher: str) -> list[dict[str, str]]:
+def _normalize_special_blocks(
+    container: Tag, publisher: str, losses: SemanticLosses | None = None
+) -> list[dict[str, str]]:
     profile = _publisher_profile(publisher)
     hook = profile.dom_hooks.before_block_normalization
     if hook is not None:
         hook(container)
     _normalize_abstract_blocks(container)
-    _normalize_display_formula_blocks(container)
-    if normalize_text(publisher).lower() == "iop":
-        _normalize_iop_inline_tex_formula_nodes(container)
-    _normalize_inline_math_nodes(container)
-    _normalize_inline_formula_image_nodes(container)
+    _normalize_display_formula_blocks(container, losses)
+    hook = profile.dom_hooks.before_inline_formula_normalization
+    if hook is not None:
+        hook(container)
+    _normalize_inline_math_nodes(container, losses)
+    _normalize_inline_formula_image_nodes(container, losses)
     _normalize_boxed_text_blocks(container)
-    table_entries = _normalize_table_blocks(container)
+    table_entries = _normalize_table_blocks(container, publisher)
     _normalize_figure_blocks(container, publisher)
     _normalize_non_table_inline_blocks(container)
     hook = profile.dom_hooks.after_block_normalization
@@ -747,11 +744,8 @@ __all__ = [
     "_drop_front_matter_teaser_figures",
     "_drop_table_blocks",
     "_equation_label",
-    "_escape_markdown_table_cell",
-    "_expanded_table_matrix",
     "_figure_like_nodes",
     "_first_abstract_node",
-    "_flatten_table_header_rows",
     "_formula_image_markdown",
     "_formula_image_url_from_node",
     "_inline_math_replacement_target",
@@ -770,29 +764,21 @@ __all__ = [
     "_normalize_figure_blocks",
     "_normalize_inline_formula_image_nodes",
     "_normalize_inline_math_nodes",
-    "_normalize_iop_inline_tex_formula_nodes",
     "_normalize_non_table_inline_blocks",
     "_normalize_non_table_inline_text",
     "_normalize_special_blocks",
     "_normalize_table_blocks",
-    "_normalize_table_inline_text",
     "_numeric_citation_payload_from_inline_node",
-    "_render_aligned_markdown_table",
     "_render_caption_text",
     "_render_non_table_inline_fragment",
     "_render_non_table_inline_node",
     "_render_non_table_inline_text",
-    "_render_table_inline_node",
     "_render_table_inline_text",
     "_render_table_markdown",
     "_split_paragraph_display_formula_blocks",
     "_strip_caption_label",
     "_table_caption_text",
-    "_table_cell_data",
-    "_table_header_row_count",
-    "_table_headers_and_data",
     "_table_like_nodes",
     "_table_placeholder",
-    "_table_rows",
     "_wrap_table_text_fragment",
 ]

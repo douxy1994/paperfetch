@@ -14,7 +14,6 @@ from ...common_patterns import (
     SHORT_FIGURE_BASENAME_PATTERN,
 )
 from ...markdown.images import render_markdown_image
-from ...models import normalize_markdown_text
 from ...utils import normalize_text
 from .asset_fields import DEFAULT_ASSET_URL_FIELDS
 
@@ -172,6 +171,7 @@ def inline_figure_markdown_entries(
                 "caption": normalize_text(str(asset.get("caption") or "")),
                 "label_key": canonical_figure_label_from_asset(asset) or "",
                 "aliases": "\n".join(aliases),
+                "dom_id": normalize_text(str(asset.get("dom_id") or "")),
             }
         )
     return entries
@@ -186,12 +186,33 @@ def _base_panel_label_key(label_key: str) -> str | None:
     return f"figure {match.group(1).lower()}"
 
 
-def _figure_reference_label_keys(text: str) -> list[str]:
+def _figure_reference_label_keys(
+    text: str, targets: Mapping[str, str] | None = None
+) -> list[str]:
+    events: list[tuple[int, list[str]]] = []
+    for match in BODY_FIGURE_REFERENCE_PATTERN.finditer(text):
+        events.append(
+            (
+                match.start(),
+                [
+                    "figure " + number.lower()
+                    for number in FIGURE_REFERENCE_NUMBER_PATTERN.findall(
+                        match.group("numbers")
+                    )
+                ],
+            )
+        )
+    for link in re.finditer(r"(?<!!)\[[^\n]*?\]\(([^)]+)\)", text):
+        fragment = urllib.parse.unquote(
+            urllib.parse.urlsplit(link[1]).fragment
+        ).casefold()
+        label = (targets or {}).get(fragment)
+        if label:
+            events.append((link.start(), [label]))
     keys: list[str] = []
-    for match in BODY_FIGURE_REFERENCE_PATTERN.finditer(normalize_text(text)):
-        for number in FIGURE_REFERENCE_NUMBER_PATTERN.findall(match.group("numbers")):
-            label_key = f"figure {number.lower()}"
-            for candidate in (label_key, _base_panel_label_key(label_key)):
+    for _, labels in sorted(events, key=lambda event: event[0]):
+        for label in labels:
+            for candidate in (label, _base_panel_label_key(label)):
                 if candidate and candidate not in keys:
                     keys.append(candidate)
     return keys
@@ -234,6 +255,7 @@ def inject_inline_figure_links(
     *,
     figure_assets: Sequence[Mapping[str, Any]] | None,
     clean_markdown_fn: Callable[[str], str],
+    match_unlabeled_images_by_order: bool = True,
 ) -> str:
     entries = inline_figure_markdown_entries(figure_assets)
     if not entries:
@@ -241,7 +263,7 @@ def inject_inline_figure_links(
     has_labeled_entries = any(entry.get("label_key") for entry in entries)
 
     blocks = [
-        normalize_markdown_text(block)
+        block.strip("\r\n")
         for block in re.split(r"\n\s*\n", markdown_text)
         if normalize_text(block)
     ]
@@ -299,7 +321,10 @@ def inject_inline_figure_links(
                 entry = take_entry(index)
                 if entry is not None:
                     return entry
-        return take_entry_for_label(canonical_figure_label_from_image(alt_text, url))
+        label = canonical_figure_label_from_image(alt_text, url)
+        if label is None and not match_unlabeled_images_by_order:
+            return None
+        return take_entry_for_label(label)
 
     caption_label_keys: set[str] = set()
     existing_image_label_keys: set[str] = set()
@@ -327,6 +352,7 @@ def inject_inline_figure_links(
 
     for block in blocks:
         normalized_block = normalize_text(block)
+        indent = block[: len(block) - len(block.lstrip(" \t"))]
         current_heading_key = _heading_key(block)
         if current_heading_key is not None:
             active_heading_key = current_heading_key
@@ -350,7 +376,8 @@ def inject_inline_figure_links(
                     or "Figure"
                 )
                 injected.append(
-                    render_markdown_image("figure", heading, image_entry["url"])
+                    indent
+                    + render_markdown_image("figure", heading, image_entry["url"])
                 )
             else:
                 injected.append(block)
@@ -360,7 +387,7 @@ def inject_inline_figure_links(
             label = match.group(1).rstrip(".")
             caption_entry = take_entry_for_label(canonical_figure_label(label))
             if caption_entry is not None:
-                image_block = render_markdown_image(
+                image_block = indent + render_markdown_image(
                     "figure", label, caption_entry["url"]
                 )
                 if not injected or normalize_text(injected[-1]) != image_block:
@@ -370,7 +397,14 @@ def inject_inline_figure_links(
         injected.append(block)
         if not active_heading_allows_injection:
             continue
-        for label_key in _figure_reference_label_keys(normalized_block):
+        for label_key in _figure_reference_label_keys(
+            normalized_block,
+            {
+                entry["dom_id"].casefold(): entry["label_key"]
+                for entry in entries
+                if entry["dom_id"] and entry["label_key"]
+            },
+        ):
             if (
                 label_key in caption_label_keys
                 or label_key in existing_image_label_keys

@@ -1,53 +1,20 @@
-# Elsevier XML to Markdown Mapping
+# Elsevier XML 实现与规则索引
 
-This project renders Elsevier full text from the official Article Retrieval XML.
-Element and asset classification rules live in [`src/paper_fetch/providers/_elsevier_xml_rules.py`](../src/paper_fetch/providers/_elsevier_xml_rules.py), official object selection lives in [`src/paper_fetch/providers/_elsevier_objects.py`](../src/paper_fetch/providers/_elsevier_objects.py), and Markdown rendering lives in [`src/paper_fetch/providers/_article_markdown_elsevier.py`](../src/paper_fetch/providers/_article_markdown_elsevier.py).
+Elsevier XML 使用官方 Article Retrieval XML 的 Journal Article / CEP DTD 元素语义，
+资产来自 `<object>` 与 `attachment-metadata-doc`。元素分类与 Markdown 行为分别由以下代码和规则维护。
 
-## Basis
+| 实现 | 职责 |
+| --- | --- |
+| [_elsevier_xml_rules.py](../src/paper_fetch/providers/_elsevier_xml_rules.py) | `ELSEVIER_ELEMENT_RULES` 元素分类、忽略标题及资产角色 |
+| [_elsevier_objects.py](../src/paper_fetch/providers/_elsevier_objects.py) | 官方对象选择与候选优先级 |
+| [_article_markdown_elsevier.py](../src/paper_fetch/providers/_article_markdown_elsevier.py) | XML 遍历、段落与 display block 渲染 |
 
-- Elsevier Journal Article / CEP DTD element semantics
-- Elsevier Tag-by-Tag guidance for common-text (`ce:`) structures
-- Official asset references exposed through `<object>` and `attachment-metadata-doc`
+用户可见行为集中在[提取规则的 Elsevier 章节](../docs/extraction-rules.md#elsevier)：
 
-## Element Mapping
+- [公式与 locator 图片](../docs/extraction-rules.md#rule-elsevier-formula-rendering)、[共享 TeX 边界](../docs/extraction-rules.md#rule-formula-latex-normalization)。
+- [补充材料](../docs/extraction-rules.md#rule-elsevier-supplementary-materials)、[附录上下文](../docs/extraction-rules.md#rule-elsevier-appendix-context)、[图文摘要](../docs/extraction-rules.md#rule-elsevier-graphical-abstract)。
+- [图表原位渲染](../docs/extraction-rules.md#rule-elsevier-inline-figure-table-placement)、[已消费资产去重](../docs/extraction-rules.md#rule-elsevier-consumed-figure-table-dedup)。
+- [CALS table groups](../docs/extraction-rules.md#rule-xml-table-groups)、[复杂表格跨度](../docs/extraction-rules.md#rule-elsevier-complex-table-span-degradation)、[结构化参考文献](../docs/extraction-rules.md#rule-elsevier-xml-references)。
 
-- `ce:sections`, `ce:appendices`, `ce:appendix`: container only, recurse into children
-- `ce:section`, `ce:abstract-sec`: render heading from `ce:section-title` or `title`, then recurse
-- `ce:para`, `ce:simple-para`: render paragraph text, then render nested display blocks
-- `ce:display`: classify in this order
-  1. figure
-  2. table
-  3. supplementary `e-component`
-  4. formula / MathML / `tex-math`
-- `ce:figure`: render linked local image near the figure anchor or caption when a body or appendix image asset exists
-- `ce:table`: parse each `tgroup` with its own `cols` / `colspec` and render the groups in source order; table label, caption, and footnotes are emitted once, while a source prefix such as `(a) WBGT` stays immediately before its group
-- `ce:e-component`: omit from body Markdown, collect into `## Supplementary Materials`
-- `ce:formula`, `mml:math`, `ce:tex-math`: render as display math; when no mathematical expression is available, resolve a nested `link@locator` (or the basename of `xlink:href`) to the best official `<object>` image
-- `ce:inline-formula`: render inline math
-- `ce:bibliography` / `ce:bib-reference`: build structured numbered references before falling back to metadata references
-
-## Ignored Sections
-
-These section titles are intentionally omitted from body Markdown:
-
-- `Graphical abstract`
-- `Supplementary data`
-
-## Asset Rules
-
-- `gr*`: body figure image
-- `fx*`: appendix figure image by default; when referenced from a formula locator, classify it as a body formula image without changing ordinary appendix figures
-- `ga*`: graphical abstract image, never shown in `Additional Figures`
-- `tbl*`: table asset
-- `mmc*`, `si*`, `sup*`, `am`: supplementary material
-
-## Rendering Notes
-
-- Appendix figures stay in appendix context even if the body text mentions `Fig. A1`.
-- `Supplementary data` placeholder displays are not treated as formulas.
-- `Additional Figures` / `Additional Tables` only contain still-unused body assets.
-- Assets already rendered inline are marked as consumed by the article model and must not be appended again at the end.
-- Multiple CALS `tgroup` elements are never forced into one rectangular grid. Each successful `exact` / `normalized` group avoids degradation; each group that truly falls back to a readable list contributes one `table_fallback_count` and one `table_layout_degraded_count`. A failed group does not downgrade successful sibling groups.
-- Formula output goes through shared LaTeX normalization after backend conversion. Publisher-specific `\updelta`-style upright Greek macros become standard KaTeX macros, and `\mspace{Nmu}` becomes `\mkernNmu`.
-- Formula object images are fidelity fallbacks, not OCR input. A downloaded local path wins over the official remote URL; either image increments `formula_fallback_count`, keeps overall quality `degraded`, and does not increment `formula_missing_count`. A visible unavailable placeholder remains mandatory when neither an expression nor a matching object exists.
-- References extracted from XML should keep original order and numbering. Missing DOI/page/year fields are left missing rather than invented.
+[ScienceDirect HTML 解析](../docs/extraction-rules.md#sciencedirect-html-专用解析)单独定义 HTML 专用行为。
+XML 模型转换无网络副作用；验收后的参考文献 DOI 补全由获取流程负责。

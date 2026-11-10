@@ -7,15 +7,19 @@ from copy import deepcopy
 import csv
 from functools import partial
 import io
+import json
 import re
 import time
 from typing import Any
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 from bs4 import BeautifulSoup, NavigableString, Tag
 
 from ..extraction.html.parsing import choose_parser
 from ..models import normalize_markdown_text
+from ..provider_catalog import host_matches_domain
+from ._reference_doi import reference_doi
+from ..reason_codes import OFFICIAL_FULL_SIZE_NOT_EXPOSED
 from ..utils import normalize_text
 from ._html_authors import (
     AuthorExtractionPipeline,
@@ -147,22 +151,18 @@ _TANDF_TABLE_DOWNLOAD_SELECTOR = (
     '.tableDownloadOption[id$="-table-wrapper"] '
     'a[href*="/action/downloadTable"][href*="downloadType=CSV"]'
 )
-_TANDF_MAX_DYNAMIC_TABLES = 24
+_TANDF_TABLE_BATCH_SIZE = 24
 _TANDF_MAX_TABLE_ROWS = 1_000
 _TANDF_MAX_TABLE_COLUMNS = 100
 _TANDF_MAX_TABLE_CSV_CHARS = 2_000_000
 _TANDF_TABLE_FETCH_MS = 2_000
 _TANDF_TABLE_FETCH_CONCURRENCY = 4
-_TANDF_ADJACENT_SENTENCE_RE = re.compile(
-    r"(?P<prefix>(?:^|(?<=[.!?])\s+))"
-    r"(?P<sentence>[^.!?\n]{40,}[.!?])\s+(?P=sentence)(?=\s|$)"
-)
 _TANDF_READ_EMBEDDED_TABLES_SCRIPT = r"""
-({ maxTables, maxRows, maxColumns, maxChars }) => {
+({ start, batchSize, maxRows, maxColumns, maxChars }) => {
   const source = window.tandf && window.tandf.tfviewerdata;
   const entries = source && Array.isArray(source.tables) ? source.tables : [];
   const tables = [];
-  entries.slice(0, maxTables).forEach((entry) => {
+  entries.slice(start, start + batchSize).forEach((entry) => {
     const tableId = entry && typeof entry.id === "string" ? entry.id : "";
     const content = entry && typeof entry.content === "string" ? entry.content : "";
     if (!/^[A-Za-z0-9_-]+$/.test(tableId) || !content || content.length > maxChars) {
@@ -191,7 +191,6 @@ _TANDF_READ_EMBEDDED_TABLES_SCRIPT = r"""
   });
   return {
     total: entries.length,
-    truncated: entries.length > maxTables,
     tables,
   };
 }
@@ -235,6 +234,7 @@ async ({ entries, perTableTimeoutMs, totalTimeoutMs, concurrency }) => {
         ok: response.ok,
         status: response.status,
         contentType: response.headers.get("content-type") || "",
+        headers: {'cf-mitigated': response.headers.get('cf-mitigated') || ''},
         text: await response.text(),
         caption: caption ? caption.textContent || "" : "",
       };
@@ -328,75 +328,135 @@ def _bounded_embedded_table(table: Tag) -> bool:
     return any(row.find(["th", "td"], recursive=False) is not None for row in rows)
 
 
-def _hydrate_tandf_embedded_tables(selected: Tag, root: Tag) -> int:
-    """Hydrate tables from the bounded same-page payload in replayed HTML."""
-
-    payload: Mapping[str, Any] | None = None
+def _tandf_viewer_payload(root: Tag) -> Mapping[str, Any]:
     for script in root.find_all("script"):
         script_text = script.string if script.string is not None else script.get_text()
         if "tandf.tfviewerdata" not in script_text:
             continue
         candidate = extract_assignment_json(script_text, "tandf.tfviewerdata")
         if isinstance(candidate, Mapping):
-            payload = candidate
-            break
-    if payload is None:
-        return 0
+            return candidate
+    return {}
 
+
+def _hydrate_tandf_figure_originals(selected: Tag, root: Tag) -> int:
+    """Associate popup originals with body figures before scripts are removed."""
+
+    entries = _tandf_viewer_payload(root).get("figures")
+    if not isinstance(entries, list):
+        return 0
+    originals: dict[str, set[str]] = {}
+    for entry in entries:
+        if not isinstance(entry, Mapping):
+            continue
+        figure_id = entry.get("id")
+        content = entry.get("content")
+        if (
+            not isinstance(figure_id, str)
+            or not re.fullmatch(r"[A-Za-z0-9_-]+", figure_id)
+            or not isinstance(content, str)
+            or len(content) > _TANDF_MAX_TABLE_CSV_CHARS
+        ):
+            continue
+        fragment = BeautifulSoup(content, choose_parser())
+        images = fragment.select("img[src]")
+        if len(images) != 1:
+            continue
+        try:
+            original = urljoin("https://www.tandfonline.com", str(images[0]["src"]))
+            parsed = urlparse(original)
+        except ValueError:
+            continue
+        if (
+            parsed.scheme != "https"
+            or not host_matches_domain(parsed.hostname, "tandfonline.com")
+            or not parsed.path.startswith("/cms/asset/")
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            continue
+        originals.setdefault(figure_id, set()).add(original)
+    hydrated = 0
+    for figure in selected.select(".figureView"):
+        ids = {
+            str(control.get("data-id"))
+            for control in figure.select('[data-popup-event-type="fig"][data-id]')
+        }
+        if len(ids) != 1:
+            continue
+        candidates = originals.get(ids.pop(), set())
+        images = figure.select("img[src]")
+        if len(candidates) != 1 or len(images) != 1:
+            continue
+        image = images[0]
+        original = next(iter(candidates))
+        preview = urljoin("https://www.tandfonline.com", str(image["src"]))
+        if original == preview or image.get("data-full-size"):
+            continue
+        image["data-full-size"] = original
+        hydrated += 1
+    return hydrated
+
+
+def _hydrate_tandf_embedded_tables(selected: Tag, root: Tag) -> int:
+    """Hydrate tables from the bounded same-page payload in replayed HTML."""
+
+    payload = _tandf_viewer_payload(root)
     entries = payload.get("tables")
     if not isinstance(entries, list):
         return 0
     hydrated = 0
-    for entry in entries[:_TANDF_MAX_DYNAMIC_TABLES]:
-        if not isinstance(entry, Mapping):
-            continue
-        table_id = normalize_text(str(entry.get("id") or ""))
-        content = str(entry.get("content") or "")
-        if (
-            not re.fullmatch(r"[A-Za-z0-9_-]+", table_id)
-            or not content
-            or len(content) > _TANDF_MAX_TABLE_CSV_CHARS
-        ):
-            continue
-        controls = selected.find(id=f"{table_id}-table-wrapper")
-        target = controls.find_parent(class_="tableView") if controls else None
-        if not isinstance(target, Tag):
-            continue
-        existing = target.find("table")
-        if (
-            isinstance(existing, Tag)
-            and normalize_text(
-                str(existing.get("data-paper-fetch-hydrated-table") or "")
+    for batch_start in range(0, len(entries), _TANDF_TABLE_BATCH_SIZE):
+        for entry in entries[batch_start : batch_start + _TANDF_TABLE_BATCH_SIZE]:
+            if not isinstance(entry, Mapping):
+                continue
+            table_id = normalize_text(str(entry.get("id") or ""))
+            content = str(entry.get("content") or "")
+            if (
+                not re.fullmatch(r"[A-Za-z0-9_-]+", table_id)
+                or not content
+                or len(content) > _TANDF_MAX_TABLE_CSV_CHARS
+            ):
+                continue
+            controls = selected.find(id=f"{table_id}-table-wrapper")
+            target = controls.find_parent(class_="tableView") if controls else None
+            if not isinstance(target, Tag):
+                continue
+            existing = target.find("table")
+            if (
+                isinstance(existing, Tag)
+                and normalize_text(
+                    str(existing.get("data-paper-fetch-hydrated-table") or "")
+                )
+                != table_id
+            ):
+                continue
+            fragment = BeautifulSoup(content, choose_parser())
+            table = fragment.find("table")
+            if not isinstance(table, Tag) or not _bounded_embedded_table(table):
+                continue
+            footnotes = fragment.select_one(".NLM_table-wrap-foot")
+            table["data-paper-fetch-hydrated-table"] = table_id
+            hydrated_table = table.extract()
+            if isinstance(existing, Tag):
+                # Browser capture intentionally injects a bounded row matrix.  The
+                # already-loaded publisher payload remains in the captured page and
+                # preserves richer rowspan/colspan semantics, so replay restores that
+                # representation before the shared table normalizer runs.
+                existing.replace_with(hydrated_table)
+            else:
+                target.append(hydrated_table)
+            previous_footnotes = selected.find(
+                attrs={"data-paper-fetch-hydrated-table-footnotes": table_id}
             )
-            != table_id
-        ):
-            continue
-        fragment = BeautifulSoup(content, choose_parser())
-        table = fragment.find("table")
-        if not isinstance(table, Tag) or not _bounded_embedded_table(table):
-            continue
-        footnotes = fragment.select_one(".NLM_table-wrap-foot")
-        table["data-paper-fetch-hydrated-table"] = table_id
-        hydrated_table = table.extract()
-        if isinstance(existing, Tag):
-            # Browser capture intentionally injects a bounded row matrix.  The
-            # already-loaded publisher payload remains in the captured page and
-            # preserves richer rowspan/colspan semantics, so replay restores that
-            # representation before the shared table normalizer runs.
-            existing.replace_with(hydrated_table)
-        else:
-            target.append(hydrated_table)
-        previous_footnotes = selected.find(
-            attrs={"data-paper-fetch-hydrated-table-footnotes": table_id}
-        )
-        if isinstance(previous_footnotes, Tag):
-            previous_footnotes.decompose()
-        if isinstance(footnotes, Tag):
-            footnotes["data-paper-fetch-hydrated-table-footnotes"] = table_id
-            # Keep notes adjacent to, but outside, the table-like container: the
-            # shared normalizer replaces that container with a Markdown placeholder.
-            target.insert_after(footnotes.extract())
-        hydrated += 1
+            if isinstance(previous_footnotes, Tag):
+                previous_footnotes.decompose()
+            if isinstance(footnotes, Tag):
+                footnotes["data-paper-fetch-hydrated-table-footnotes"] = table_id
+                # Keep notes adjacent to, but outside, the table-like container: the
+                # shared normalizer replaces that container with a Markdown placeholder.
+                target.insert_after(footnotes.extract())
+            hydrated += 1
     return hydrated
 
 
@@ -483,7 +543,7 @@ def _append_tandf_contributor_notes(selected: Tag, root: Tag) -> bool:
 
 
 def prepare_html_for_extraction(html_text: str) -> str:
-    """Materialize same-page tables and back matter before shared cleanup."""
+    """Materialize same-page tables, figure URLs and back matter before cleanup."""
 
     if not normalize_text(html_text):
         return html_text
@@ -492,9 +552,15 @@ def prepare_html_for_extraction(html_text: str) -> str:
     if not isinstance(selected, Tag):
         return html_text
     hydrated = _hydrate_tandf_embedded_tables(selected, soup)
+    figures_hydrated = _hydrate_tandf_figure_originals(selected, soup)
     funding_appended = _append_tandf_funding(selected, soup)
     contributors_appended = _append_tandf_contributor_notes(selected, soup)
-    if not hydrated and not funding_appended and not contributors_appended:
+    if (
+        not hydrated
+        and not figures_hydrated
+        and not funding_appended
+        and not contributors_appended
+    ):
         return html_text
     return str(soup)
 
@@ -513,60 +579,125 @@ def _decompose_matching(container: Any) -> None:
             node.decompose()
 
 
-def _drop_duplicate_highlights(container: Any) -> None:
+def prepare_source_images(container: Any, source_url: str) -> None:
+    """Recover explicit formula image sources before rendering/asset discovery."""
     if not isinstance(container, Tag):
         return
-    for node in list(container.select(".hlFld-Abstract")):
-        heading = node.find(re.compile(r"^h[1-6]$", flags=re.IGNORECASE))
-        heading_text = (
-            normalize_text(
-                heading.get_text(" ", strip=True) if isinstance(heading, Tag) else ""
-            )
-            .rstrip(".:")
-            .casefold()
+    for image in list(container.select("img[data-formula-source]")):
+        wrapper = image.find_parent(
+            class_=lambda value: value in {"NLM_disp-formula", "NLM_disp-formula-image"}
         )
-        if heading_text in {"article highlights", "highlights"}:
-            node.decompose()
-
-
-def _drop_adjacent_duplicate_tandf_sentences(container: Any) -> None:
-    if not isinstance(container, Tag):
-        return
-    for paragraph in container.find_all(["p", "li"]):
-        if paragraph.find_parent("math") is not None:
+        if wrapper is None:
             continue
-        for text_node in list(paragraph.find_all(string=True, recursive=False)):
-            text = str(text_node)
-            while True:
-                cleaned = _TANDF_ADJACENT_SENTENCE_RE.sub(
-                    lambda match: f"{match.group('prefix')}{match.group('sentence')}",
-                    text,
+        try:
+            data = json.loads(str(image["data-formula-source"]))
+        except (TypeError, ValueError):
+            data = {}
+        if not isinstance(data, dict):
+            data = {}
+        raw = str(data.get("src") or "") if data.get("type") == "image" else ""
+        url = urljoin(source_url, raw) if raw else ""
+        parsed = urlparse(url)
+        valid = bool(raw) and (
+            (
+                parsed.scheme in {"http", "https"}
+                and host_matches_domain(parsed.hostname or "", "tandfonline.com")
+            )
+            or (not source_url and raw.startswith("/cms/asset/"))
+        )
+        if valid:
+            image["src"] = url
+            image["class"] = [*image.get("class", []), "inline-equation"]
+            del image["data-formula-source"]
+        elif image.get("src") == "//:0":
+            wrapper["data-tandf-formula-placeholder"] = "true"
+            image.decompose()
+    # Keep actual TeX data through this provider's script/chrome cleanup.
+    from ..extraction.markdown_render.formulas import html_formula_latex_from_node
+
+    for wrapper in container.select(".NLM_disp-formula"):
+        for script in list(wrapper.select('script[type^="math/tex"]')):
+            latex = html_formula_latex_from_node(script)
+            if latex:
+                source = BeautifulSoup("<tex-math></tex-math>", choose_parser()).find(
+                    "tex-math"
                 )
-                if cleaned == text:
-                    break
-                text = cleaned
-            if text != str(text_node):
-                text_node.replace_with(text)
+                source.string = latex
+                script.replace_with(source)
 
 
 def _prefer_mathml_over_formula_placeholders(container: Any) -> None:
-    """Drop T&F's duplicate lazy images when the paired MathML is available."""
+    """Assign each adjacent image/MathJax pair one formula representation."""
 
     if not isinstance(container, Tag):
         return
+    from .atypon_browser_workflow.formulas import _structured_latex_from_math_node
+
     for image_fallback in list(container.select(".NLM_disp-formula-image")):
-        sibling = image_fallback.find_next_sibling()
+        sibling = image_fallback.next_sibling
+        while isinstance(sibling, NavigableString) and not str(sibling).strip():
+            sibling = sibling.next_sibling
         sibling_classes = (
             set(sibling.get("class") or ()) if isinstance(sibling, Tag) else set()
         )
-        if (
-            isinstance(sibling, Tag)
-            and "NLM_disp-formula" in sibling_classes
-            and sibling.find("math") is not None
-        ):
+        if isinstance(sibling, Tag) and "NLM_disp-formula" in sibling_classes:
+            latex = _structured_latex_from_math_node(
+                sibling, display_mode="disp-formula" in sibling_classes
+            )
+            if not latex:
+                image = image_fallback.find("img", src=True)
+                # CHTML glyph order is a display implementation, not source
+                # MathML/TeX. Use the paired publisher bitmap when available.
+                label = sibling.select_one(".disp_formula_label_div")
+                if label is not None:
+                    label.extract()
+                if image is not None and image.get("src") != "//:0":
+                    image.extract()
+                else:
+                    image = BeautifulSoup("<math></math>", choose_parser()).math
+                sibling.clear()
+                if label is not None:
+                    sibling.append(label)
+                sibling.append(image)
+            else:
+                for rendered in list(sibling.select("mjx-container")):
+                    if rendered.find("math") is None:
+                        rendered.decompose()
+                if (
+                    "disp-formula" not in sibling_classes
+                    and sibling.find("math") is None
+                ):
+                    from ..extraction.markdown_render.formulas import (
+                        render_inline_latex_markdown,
+                    )
+
+                    sibling.clear()
+                    sibling.append(render_inline_latex_markdown(latex))
+                    sibling["data-paper-fetch-markdown"] = "1"
+                    sibling.attrs.pop("data-tandf-formula-placeholder", None)
             image_fallback.decompose()
 
-    for math_container in container.select(".NLM_disp-formula"):
+    for math_container in container.select(
+        ".NLM_disp-formula, .NLM_disp-formula-image"
+    ):
+        if (
+            (
+                math_container.find("mjx-container") is not None
+                or math_container.get("data-tandf-formula-placeholder")
+            )
+            and not _structured_latex_from_math_node(math_container, display_mode=False)
+            and math_container.find("img", src=True) is None
+        ):
+            # A visual MathJax tree alone is not recoverable formula source.
+            for rendered in list(math_container.select("mjx-container")):
+                rendered.decompose()
+            if math_container.find("math") is None:
+                math_container.append(
+                    BeautifulSoup("<math></math>", choose_parser()).math
+                )
+        # This marker describes the input image, not the rendered formula.
+        # Consume it before shared normalization replaces MathML with Markdown.
+        math_container.attrs.pop("data-tandf-formula-placeholder", None)
         if math_container.find("math") is None:
             continue
         for placeholder in list(math_container.select('img[src="//:0"]')):
@@ -620,17 +751,48 @@ def _strip_promoted_formula_leading_punctuation(wrapper: Tag) -> None:
         return
 
 
+def _separate_tandf_inline_formula_punctuation(container: Tag) -> None:
+    for wrapper in container.select(".NLM_disp-formula"):
+        if "disp-formula" in (wrapper.get("class") or []):
+            continue
+        math = wrapper.find("math")
+        if not isinstance(math, Tag):
+            continue
+        children = [child for child in math.children if isinstance(child, Tag)]
+        trailing_space: list[Tag] = []
+        while children and children[-1].name == "mspace":
+            trailing_space.append(children.pop())
+        if (
+            children
+            and children[-1].name == "mo"
+            and children[-1].text in {",", ";", ":"}
+        ):
+            punctuation = children[-1].get_text()
+            children[-1].decompose()
+            for space in trailing_space:
+                space.decompose()
+            math.insert_after(punctuation + (" " if trailing_space else ""))
+
+
 def _normalize_tandf_formula_containers(container: Any) -> None:
     """Repair bounded publisher MathML artifacts before shared conversion."""
 
     if not isinstance(container, Tag):
         return
+    for wrapper in container.select(".NLM_disp-formula.disp-formula"):
+        label = wrapper.select_one(".disp_formula_label_div")
+        if isinstance(label, Tag):
+            number = re.fullmatch(r"\((\d+[A-Za-z]?)\)", normalize_text(label.text))
+            if number:
+                wrapper["data-equation-label"] = f"Equation {number.group(1)}."
     promoted_wrappers: list[Tag] = []
     for wrapper in container.select(".NLM_disp-formula"):
         if wrapper.find("mtable") is not None:
             classes = list(wrapper.get("class") or ())
             if "disp-formula" not in classes:
-                wrapper["class"] = [*classes, "disp-formula"]
+                wrapper["class"] = [c for c in classes if c != "inline-formula"] + [
+                    "disp-formula"
+                ]
                 promoted_wrappers.append(wrapper)
             _restore_tandf_complex_tuple_commas(wrapper)
     for wrapper in promoted_wrappers:
@@ -721,9 +883,7 @@ def _normalize_tandf_reference_controls(container: Any) -> None:
         node.decompose()
     for node in list(container.select("a[data-label='footnote']")):
         label = normalize_text(node.get_text(" ", strip=True))
-        if label:
-            node.replace_with(f"[{label}]")
-        else:
+        if not label:
             node.decompose()
     for node in list(container.select("button.ref.show-table-fig-ref")):
         label = normalize_text(node.get_text(" ", strip=True))
@@ -733,12 +893,88 @@ def _normalize_tandf_reference_controls(container: Any) -> None:
             node.decompose()
 
 
+def _drop_tandf_formula_previews(container: Tag) -> None:
+    for reference in container.select('a[data-label="equation"][data-rid]'):
+        target_id = reference.get("data-rid")
+        wrapper = reference.find_parent(class_="ref-lnk")
+        preview = wrapper.find_next_sibling() if isinstance(wrapper, Tag) else None
+        if (
+            isinstance(preview, Tag)
+            and preview.get("id") == target_id
+            and "hidden" in (preview.get("class") or [])
+            and preview.select_one(".NLM_disp-formula, .NLM_disp-formula-image")
+        ):
+            preview.decompose()
+
+
+def _normalize_tandf_subitem_headings(container: Tag) -> None:
+    for table in list(container.select("table.listgroup")):
+        rows = table.find_all("tr")
+        if len(rows) != 1:
+            continue
+        cells = rows[0].find_all("td", recursive=False)
+        if len(cells) != 2 or not re.fullmatch(
+            r"[a-z]\)", normalize_text(cells[0].text)
+        ):
+            continue
+        heading = cells[1].find(["b", "strong"])
+        if heading is None or normalize_text(heading.text) != normalize_text(
+            cells[1].text
+        ):
+            continue
+        paragraph = BeautifulSoup("<p><b></b></p>", choose_parser()).p
+        paragraph.b.string = (
+            f"{normalize_text(cells[0].text)} {normalize_text(heading.text)}"
+        )
+        table.replace_with(paragraph)
+    for paragraph in container.find_all("p"):
+        bolds = paragraph.find_all(["b", "strong"], recursive=False)
+        if len(bolds) == 2 and re.fullmatch(r"[a-z]\)", normalize_text(bolds[0].text)):
+            if normalize_text(paragraph.text) == " ".join(
+                normalize_text(b.text) for b in bolds
+            ):
+                bolds[0].string = normalize_text(paragraph.text)
+                bolds[1].decompose()
+
+
 def tandf_before_block_normalization(container: Any) -> None:
+    prepare_source_images(container, "")
+    _drop_tandf_formula_previews(container)
+    _normalize_tandf_subitem_headings(container)
+    for table in list(container.select("table.listgroup")):
+        factory = BeautifulSoup("", choose_parser())
+        rows = [
+            row for row in table.find_all("tr") if row.find_parent("table") is table
+        ]
+        labels = [row.find(["td", "th"]).get_text(strip=True) for row in rows]
+        ordered = bool(labels) and all(
+            re.fullmatch(r"\(?\d+[.)]?", label) for label in labels
+        )
+        wrapper = factory.new_tag("ol" if ordered else "ul")
+        for row, label in zip(rows, labels, strict=True):
+            cells = row.find_all(["td", "th"], recursive=False)
+            item = factory.new_tag("li")
+            if ordered:
+                match = re.search(r"\d+", label)
+                assert match is not None
+                item["value"] = match[0]
+            elif label not in {"•", "–", "-", "▪", ""}:
+                item["data-list-item-label"] = label
+            for cell in cells[1:]:
+                for child in list(cell.contents):
+                    item.append(child.extract())
+            wrapper.append(item)
+        table.replace_with(wrapper)
+        if wrapper.find_parent(class_="hlFld-Abstract") is not None:
+            from ._html_section_markdown import _render_html_list
+
+            block = factory.new_tag("p", attrs={"data-paper-fetch-markdown": "1"})
+            block.string = "\n".join(_render_html_list(wrapper, level=2))
+            wrapper.replace_with(block)
     _normalize_tandf_reference_controls(container)
     _decompose_matching(container)
-    _drop_duplicate_highlights(container)
-    _drop_adjacent_duplicate_tandf_sentences(container)
     _normalize_tandf_formula_containers(container)
+    _separate_tandf_inline_formula_punctuation(container)
     _prefer_mathml_over_formula_placeholders(container)
     _normalize_tandf_figure_containers(container)
     _normalize_tandf_table_containers(container)
@@ -749,6 +985,7 @@ def tandf_body_container(container: Any) -> None:
 
 
 def tandf_asset_body_container(container: Any) -> None:
+    prepare_source_images(container, "")
     _decompose_matching(container)
     _prefer_mathml_over_formula_placeholders(container)
     _normalize_tandf_figure_containers(container)
@@ -779,6 +1016,7 @@ def tandf_normalize_markdown(markdown_text: str) -> str:
     """Remove article-control blocks left after structural DOM cleanup."""
 
     text = _CHROME_BLOCK_RE.sub("\n", markdown_text)
+    text = text.replace("\u2063", "")
     text = _EMPTY_SUPPLEMENTARY_HEADING_RE.sub("", text)
     text = text.replace("X2*D_LST_AT2", "X<sup>2</sup>*D_LST_AT2")
     text = text.replace("X3*D_LST_AT3", "X<sup>3</sup>*D_LST_AT3")
@@ -819,6 +1057,23 @@ def tandf_classify_heading(heading: str, title: str | None) -> str | None:
     return None
 
 
+def _append_tandf_frontnotes(selected: Tag, root: Tag) -> None:
+    if selected.select_one("#inline_frontnotes") is not None:
+        return
+    heading = root.find(id="inline_frontnotes")
+    if heading is None or heading.get_text(strip=True).casefold() != "notes":
+        return
+    section = Tag(name="section")
+    section.append(deepcopy(heading))
+    for sibling in heading.next_siblings:
+        if isinstance(sibling, Tag):
+            if sibling.name in {"h2", "section"}:
+                break
+            section.append(deepcopy(sibling))
+    if section.find(id=re.compile(r"^FN")) is not None:
+        selected.append(section)
+
+
 def refine_selected_container(node: Tag, **_kwargs: Any) -> Tag:
     """Keep T&F extraction inside the full-text fragment, not page-level chrome."""
 
@@ -829,8 +1084,10 @@ def refine_selected_container(node: Tag, **_kwargs: Any) -> Tag:
         candidate = node.select_one(".hlFld-Fulltext")
         selected = candidate if isinstance(candidate, Tag) else node
     _hydrate_tandf_embedded_tables(selected, root)
+    _hydrate_tandf_figure_originals(selected, root)
     _append_tandf_funding(selected, root)
     _append_tandf_contributor_notes(selected, root)
+    _append_tandf_frontnotes(selected, root)
     # Availability cleanup removes interactive buttons before block normalization,
     # so preserve their visible article cross-reference labels at selection time.
     _normalize_tandf_reference_controls(selected)
@@ -845,25 +1102,31 @@ def _tandf_table_deadline(timeout_ms: int | None) -> float | None:
 
 def _collect_tandf_csv_table_entries(
     links: Any,
-    count: int,
+    start: int,
+    stop: int,
     deadline: float | None,
     result: dict[str, Any],
 ) -> list[dict[str, str]]:
     entries: list[dict[str, str]] = []
-    for index in range(min(count, _TANDF_MAX_DYNAMIC_TABLES)):
+    controls = links.evaluate_all(
+        """(nodes, bounds) => nodes.slice(bounds.start, bounds.stop).map(node => ({
+            controlsId: node.id || (node.parentElement && node.parentElement.id) || '',
+            href: node.getAttribute('href') || ''
+        }))""",
+        {"start": start, "stop": stop},
+    )
+    for index, control in enumerate(controls, start=start):
         if deadline is not None and time.monotonic() >= deadline:
             result["timed_out"] = True
-            break
-        link = links.nth(index)
-        controls_id = normalize_text(
-            str(
-                link.get_attribute("id")
-                or link.evaluate("node => node.parentElement.id")
-                or ""
+            result["truncated"] = True
+            result["tables_unfinished"] = result.get("tables_unfinished", 0) + (
+                stop - index
             )
+            break
+        table_id = normalize_text(str(control.get("controlsId") or "")).removesuffix(
+            "-table-wrapper"
         )
-        table_id = controls_id.removesuffix("-table-wrapper")
-        href = normalize_text(str(link.get_attribute("href") or ""))
+        href = normalize_text(str(control.get("href") or ""))
         if not re.fullmatch(r"[A-Za-z0-9_-]+", table_id):
             result["table_failures"] += 1
             continue
@@ -898,6 +1161,9 @@ def _fetch_tandf_csv_table_batch(
     if remaining_ms <= 0:
         result["timed_out"] = True
         return []
+    recovery_deadline = min(
+        deadline or float("inf"), time.monotonic() + remaining_ms / 1000
+    )
     try:
         batch = page.evaluate(
             _TANDF_FETCH_TABLE_CSV_BATCH_SCRIPT,
@@ -910,15 +1176,47 @@ def _fetch_tandf_csv_table_batch(
         )
     except Exception:
         return []
+    raw_results: object
     if isinstance(batch, list):
-        return batch
-    if not isinstance(batch, Mapping):
+        raw_results = batch
+    elif isinstance(batch, Mapping):
+        if batch.get("timedOut"):
+            result["timed_out"] = True
+        result["table_fetch_concurrency"] = max(0, int(batch.get("concurrency") or 0))
+        raw_results = batch.get("results")
+    else:
         return []
-    if batch.get("timedOut"):
-        result["timed_out"] = True
-    result["table_fetch_concurrency"] = max(0, int(batch.get("concurrency") or 0))
-    raw_results = batch.get("results")
-    return raw_results if isinstance(raw_results, list) else []
+    if not isinstance(raw_results, list):
+        return []
+    from .browser_runtime.navigation import recover_get_result, navigator_for
+
+    if navigator_for(page) is None:
+        return raw_results
+    for index, response in enumerate(raw_results):
+        if not isinstance(response, dict):
+            continue
+        entry = entries[index]
+        if recover_get_result(
+            page, urljoin(page.url, entry["href"]), response, deadline=recovery_deadline
+        ):
+            remaining = int((recovery_deadline - time.monotonic()) * 1000)
+            if remaining <= 0:
+                break
+            retried = page.evaluate(
+                _TANDF_FETCH_TABLE_CSV_BATCH_SCRIPT,
+                {
+                    "entries": [entry],
+                    "perTableTimeoutMs": min(_TANDF_TABLE_FETCH_MS, remaining),
+                    "totalTimeoutMs": remaining,
+                    "concurrency": 1,
+                },
+            )
+            retried = (
+                retried.get("results", []) if isinstance(retried, Mapping) else retried
+            )
+            if isinstance(retried, list) and retried:
+                raw_results[index] = {**retried[0], "index": index}
+    return raw_results
 
 
 def _tandf_csv_rows(response: Mapping[str, Any]) -> list[list[str]]:
@@ -943,6 +1241,41 @@ def _tandf_csv_rows(response: Mapping[str, Any]) -> list[list[str]]:
     return rows
 
 
+_TANDF_INJECT_TABLE_BATCH_SCRIPT = (
+    """entries => {
+    const inject = ("""
+    + _TANDF_INJECT_TABLE_SCRIPT
+    + """);
+    return entries.map(entry => { try { return Boolean(inject(entry)); } catch (error) { return false; } });
+}"""
+)
+
+
+def _apply_tandf_table_batch(
+    page: Any,
+    payloads: list[dict[str, Any]],
+    result: dict[str, Any],
+    counter: str,
+) -> set[str]:
+    if not payloads:
+        return set()
+    try:
+        applied = page.evaluate(_TANDF_INJECT_TABLE_BATCH_SCRIPT, payloads)
+    except Exception:
+        applied = []
+    if not isinstance(applied, list):
+        applied = []
+    hydrated: set[str] = set()
+    for index, payload in enumerate(payloads):
+        if index < len(applied) and applied[index]:
+            result["tables_hydrated"] += 1
+            result[counter] += 1
+            hydrated.add(payload["tableId"])
+        else:
+            result["table_failures"] += 1
+    return hydrated
+
+
 def _hydrate_tandf_csv_table_batch(
     page: Any,
     entries: list[dict[str, str]],
@@ -950,40 +1283,36 @@ def _hydrate_tandf_csv_table_batch(
     deadline: float | None,
     result: dict[str, Any],
 ) -> set[str]:
-    hydrated_table_ids: set[str] = set()
+    payloads: list[dict[str, Any]] = []
     for index, entry in enumerate(entries):
         if deadline is not None and time.monotonic() >= deadline:
             result["timed_out"] = True
             result["table_failures"] += len(entries) - index
+            result["tables_unfinished"] = result.get("tables_unfinished", 0) + (
+                len(entries) - index
+            )
             break
         response = batch_results[index] if index < len(batch_results) else None
-        table_id = entry["tableId"]
         try:
             if not isinstance(response, Mapping):
                 raise ValueError("T&F table CSV request was not successful")
-            rows = _tandf_csv_rows(response)
-            hydrated = bool(
-                page.evaluate(
-                    _TANDF_INJECT_TABLE_SCRIPT,
-                    {
-                        "tableId": table_id,
-                        "caption": _clean_tandf_accessible_control_text(
-                            response.get("caption")
-                        ),
-                        "rows": rows,
-                    },
-                )
+            payloads.append(
+                {
+                    "tableId": entry["tableId"],
+                    "caption": _clean_tandf_accessible_control_text(
+                        response.get("caption")
+                    ),
+                    "rows": _tandf_csv_rows(response),
+                }
             )
         except Exception:
             result["table_failures"] += 1
-            continue
-        if not hydrated:
-            result["table_failures"] += 1
-            continue
-        result["tables_hydrated"] += 1
-        result["csv_tables_hydrated"] += 1
-        hydrated_table_ids.add(table_id)
-    return hydrated_table_ids
+    if deadline is not None and time.monotonic() >= deadline:
+        result["timed_out"] = True
+        result["table_failures"] += len(payloads)
+        result["tables_unfinished"] = result.get("tables_unfinished", 0) + len(payloads)
+        return set()
+    return _apply_tandf_table_batch(page, payloads, result, "csv_tables_hydrated")
 
 
 def _tandf_embedded_rows(value: Any) -> list[list[str]]:
@@ -1008,59 +1337,72 @@ def _hydrate_tandf_embedded_tables_from_page(
 ) -> None:
     if deadline is not None and time.monotonic() >= deadline:
         result["timed_out"] = True
+        result["truncated"] = True
         return
-    try:
-        embedded = page.evaluate(
-            _TANDF_READ_EMBEDDED_TABLES_SCRIPT,
-            {
-                "maxTables": _TANDF_MAX_DYNAMIC_TABLES,
-                "maxRows": _TANDF_MAX_TABLE_ROWS,
-                "maxColumns": _TANDF_MAX_TABLE_COLUMNS,
-                "maxChars": _TANDF_MAX_TABLE_CSV_CHARS,
-            },
-        )
-    except Exception:
-        result["embedded_table_error"] = True
-        return
-    if not isinstance(embedded, Mapping):
-        return
-    result["embedded_tables"] = max(0, int(embedded.get("total") or 0))
-    result["truncated"] = bool(result["truncated"] or embedded.get("truncated"))
-    entries = embedded.get("tables")
-    if not isinstance(entries, list):
-        return
-    for entry in entries[:_TANDF_MAX_DYNAMIC_TABLES]:
-        if not isinstance(entry, Mapping):
-            result["table_failures"] += 1
-            continue
-        table_id = normalize_text(str(entry.get("tableId") or ""))
-        if table_id in hydrated_table_ids:
-            continue
-        rows = _tandf_embedded_rows(entry.get("rows"))
-        if not re.fullmatch(r"[A-Za-z0-9_-]+", table_id) or not rows:
-            result["table_failures"] += 1
-            continue
-        try:
-            hydrated = bool(
-                page.evaluate(
-                    _TANDF_INJECT_TABLE_SCRIPT,
-                    {
-                        "tableId": table_id,
-                        "caption": _clean_tandf_accessible_control_text(
-                            entry.get("caption")
-                        ),
-                        "rows": rows,
-                    },
+    start = 0
+    total: int | None = None
+    while total is None or start < total:
+        if deadline is not None and time.monotonic() >= deadline:
+            result["timed_out"] = True
+            result["truncated"] = True
+            if total is not None:
+                result["tables_unfinished"] = result.get("tables_unfinished", 0) + max(
+                    0, total - start
                 )
+            return
+        try:
+            embedded = page.evaluate(
+                _TANDF_READ_EMBEDDED_TABLES_SCRIPT,
+                {
+                    "start": start,
+                    "batchSize": _TANDF_TABLE_BATCH_SIZE,
+                    "maxRows": _TANDF_MAX_TABLE_ROWS,
+                    "maxColumns": _TANDF_MAX_TABLE_COLUMNS,
+                    "maxChars": _TANDF_MAX_TABLE_CSV_CHARS,
+                },
             )
         except Exception:
-            hydrated = False
-        if hydrated:
-            result["tables_hydrated"] += 1
-            result["embedded_tables_hydrated"] += 1
-            hydrated_table_ids.add(table_id)
-        else:
-            result["table_failures"] += 1
+            result["embedded_table_error"] = True
+            return
+        if not isinstance(embedded, Mapping):
+            return
+        total = max(0, int(embedded.get("total") or 0))
+        result["embedded_tables"] = total
+        entries = embedded.get("tables")
+        if not isinstance(entries, list):
+            return
+        payloads: list[dict[str, Any]] = []
+        for entry in entries:
+            if not isinstance(entry, Mapping):
+                result["table_failures"] += 1
+                continue
+            table_id = normalize_text(str(entry.get("tableId") or ""))
+            if table_id in hydrated_table_ids:
+                continue
+            rows = _tandf_embedded_rows(entry.get("rows"))
+            if not re.fullmatch(r"[A-Za-z0-9_-]+", table_id) or not rows:
+                result["table_failures"] += 1
+                continue
+            payloads.append(
+                {
+                    "tableId": table_id,
+                    "caption": _clean_tandf_accessible_control_text(
+                        entry.get("caption")
+                    ),
+                    "rows": rows,
+                }
+            )
+        if deadline is not None and time.monotonic() >= deadline:
+            result["timed_out"] = True
+            result["truncated"] = True
+            result["tables_unfinished"] = result.get("tables_unfinished", 0) + len(
+                payloads
+            )
+            return
+        hydrated_table_ids.update(
+            _apply_tandf_table_batch(page, payloads, result, "embedded_tables_hydrated")
+        )
+        start += _TANDF_TABLE_BATCH_SIZE
 
 
 def prepare_browser_page(
@@ -1087,17 +1429,34 @@ def prepare_browser_page(
     links = locator(_TANDF_TABLE_DOWNLOAD_SELECTOR)
     count = max(0, int(links.count()))
     result["table_controls"] = count
-    result["truncated"] = count > _TANDF_MAX_DYNAMIC_TABLES
     deadline = _tandf_table_deadline(timeout_ms)
-    entries = _collect_tandf_csv_table_entries(links, count, deadline, result)
-    batch_results = _fetch_tandf_csv_table_batch(page, entries, deadline, result)
-    hydrated_table_ids = _hydrate_tandf_csv_table_batch(
-        page,
-        entries,
-        batch_results,
-        deadline,
-        result,
-    )
+    hydrated_table_ids: set[str] = set()
+    for start in range(0, count, _TANDF_TABLE_BATCH_SIZE):
+        if deadline is not None and time.monotonic() >= deadline:
+            result["timed_out"] = True
+            result["truncated"] = True
+            result["tables_unfinished"] = result.get("tables_unfinished", 0) + (
+                count - start
+            )
+            break
+        stop = min(count, start + _TANDF_TABLE_BATCH_SIZE)
+        entries = _collect_tandf_csv_table_entries(links, start, stop, deadline, result)
+        batch_results = _fetch_tandf_csv_table_batch(page, entries, deadline, result)
+        hydrated_table_ids.update(
+            _hydrate_tandf_csv_table_batch(
+                page,
+                entries,
+                batch_results,
+                deadline,
+                result,
+            )
+        )
+        if result.get("timed_out"):
+            result["truncated"] = True
+            result["tables_unfinished"] = result.get("tables_unfinished", 0) + (
+                count - stop
+            )
+            break
     _hydrate_tandf_embedded_tables_from_page(
         page,
         hydrated_table_ids,
@@ -1121,6 +1480,13 @@ def extract_references(html_text: str) -> list[dict[str, str | None]]:
         for index, node in enumerate(
             soup.select(".summation-section > div[id^='FN']"), start=1
         ):
+            group = node.find_parent(class_="summation-section")
+            heading = group.find(["h2", "h3"]) if group is not None else None
+            if (
+                heading is not None
+                and heading.get_text(strip=True).casefold() == "notes"
+            ):
+                continue
             node.name = "li"
             node["data-bib-id"] = normalize_text(str(node.get("id") or index))
             first_text = next(
@@ -1134,7 +1500,34 @@ def extract_references(html_text: str) -> list[dict[str, str | None]]:
             if first_text is not None:
                 cleaned = re.sub(rf"^\s*{index}\s+", "", str(first_text), count=1)
                 first_text.replace_with(cleaned)
-    return extract_numbered_references_from_soup(soup)
+    references = extract_numbered_references_from_soup(soup)
+    # T&F linkouts use the current article's `doi` alongside a distinct
+    # `refDoi`/`doiOfLink` for the cited work. Only the latter identify references.
+    from ._html_references import _reference_doi
+
+    reference_dois: dict[str, str] = {}
+    direct_dois: dict[str, str | None] = {}
+    for index, node in enumerate(reference_nodes, start=1):
+        direct_dois[f"{index}."] = _reference_doi(node, include_text=False)
+        candidates = [
+            str(target.get("data-target") or "")
+            for target in node.select(".getFTR[data-target]")
+        ]
+        for anchor in node.select("a[href]"):
+            query = parse_qs(urlparse(str(anchor.get("href") or "")).query)
+            for key in ("refDoi", "doiOfLink"):
+                candidates.extend(query.get(key, []))
+        for candidate in candidates:
+            doi = reference_doi(candidate)
+            if doi:
+                reference_dois[f"{index}."] = doi
+                break
+    for reference in references:
+        label = str(reference.get("label") or "")
+        reference["doi"] = (
+            direct_dois.get(label) or reference_dois.get(label) or reference.get("doi")
+        )
+    return references
 
 
 def _normalize_tandf_section_hints(section_hints: Any) -> list[dict[str, Any]]:
@@ -1208,28 +1601,36 @@ def _extract_tandf_supplementary_assets(
 ) -> list[dict[str, str]]:
     from ..extraction.html import assets as html_assets
 
-    return [
+    assets = [
         asset
         for asset in html_assets.extract_supplementary_assets(html_text, source_url)
         if "/action/downloadsupplement" in normalize_text(asset.get("url")).lower()
     ]
+    for asset in assets:
+        filenames = parse_qs(urlparse(asset["url"]).query).get("file", [])
+        if len(filenames) == 1 and normalize_text(filenames[0]):
+            asset["filename_hint"] = filenames[0]
+    return assets
 
 
 def _mark_tandf_accepted_figure_previews(
-    assets: list[dict[str, str]],
-) -> list[dict[str, str]]:
-    marked: list[dict[str, str]] = []
+    assets: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    marked: list[dict[str, Any]] = []
     for asset in assets:
-        item = dict(asset)
+        item: dict[str, Any] = dict(asset)
         preview_url = normalize_text(item.get("preview_url"))
         parsed = urlparse(preview_url)
-        host = normalize_text(parsed.hostname).lower()
         if (
             normalize_text(item.get("kind")).lower() == "figure"
-            and (host == "tandfonline.com" or host.endswith(".tandfonline.com"))
+            and host_matches_domain(parsed.hostname, "tandfonline.com")
             and parsed.path.lower().startswith("/cms/asset/")
         ):
             item["preview_accepted"] = "true"
+            if not normalize_text(
+                str(item.get("full_size_url") or item.get("download_url") or "")
+            ):
+                item["provenance"] = [OFFICIAL_FULL_SIZE_NOT_EXPOSED]
         marked.append(item)
     return marked
 
@@ -1240,7 +1641,7 @@ def scoped_asset_extractor(
     *,
     asset_profile,
     supplementary_html_text: str | None = None,
-) -> list[dict[str, str]]:
+) -> list[dict[str, Any]]:
     from ._html_asset_engine import (
         HtmlAssetExtractionPolicy,
         extract_scoped_assets_with_policy,

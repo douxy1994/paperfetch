@@ -15,6 +15,35 @@ from tests.paths import REPO_ROOT
 
 
 class FetchCommonTests(unittest.TestCase):
+    def test_extract_year_from_publication_dates(self) -> None:
+        cases = [
+            ("20 October 2020", "2020"),
+            ("October 20, 2020", "2020"),
+            ("2020-10-20", "2020"),
+            ("2020", "2020"),
+            (" \t20 October 2020\n", "2020"),
+            (" \t2020\n", "2020"),
+            ("2020-10-20T12:34:56Z", "2020"),
+            ("Published 2020; revised 2021", "2020"),
+            (None, None),
+            ("", None),
+            (" \t\n", None),
+            ("October twenty", None),
+            ("20201", None),
+            ("12020", None),
+            ("1234567890", None),
+            ("Published 120201", None),
+        ]
+        for published, expected in cases:
+            with self.subTest(published=published):
+                year = utils._extract_year(published)
+                self.assertEqual(year, expected)
+                if expected is None:
+                    self.assertEqual(
+                        utils.format_paper_stem(["Annu Panwar"], year, "Title"),
+                        "Panwar_unknown_Title",
+                    )
+
     def test_sanitize_filename_truncates_long_values_with_stable_hash_suffix(
         self,
     ) -> None:
@@ -42,10 +71,13 @@ class FetchCommonTests(unittest.TestCase):
             pyproject = tomllib.load(handle)
 
         dependencies = list(pyproject["project"]["dependencies"])
+        dev_dependencies = list(pyproject["project"]["optional-dependencies"]["dev"])
 
         self.assertIn("pydantic>=2,<3", dependencies)
-        self.assertIn("packaging>=24,<27", dependencies)
         self.assertIn("urllib3>=2.2,<3", dependencies)
+        self.assertNotIn("packaging>=24,<27", dependencies)
+        self.assertIn("packaging>=24,<27", dev_dependencies)
+        self.assertNotIn("build>=1.2,<2", dev_dependencies)
         self.assertTrue(all("==" not in dependency for dependency in dependencies))
 
     def test_runtime_dependencies_do_not_include_pypi_arxiv_package(self) -> None:
@@ -65,7 +97,7 @@ class FetchCommonTests(unittest.TestCase):
 
         self.assertNotIn("arxiv", dependency_names)
 
-    def test_browser_extras_allow_locked_compatible_camoufox_api_version(self) -> None:
+    def test_browser_extras_require_compatible_camoufox_api_version(self) -> None:
         with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
             pyproject = tomllib.load(handle)
         with (REPO_ROOT / "uv.lock").open("rb") as handle:
@@ -79,7 +111,7 @@ class FetchCommonTests(unittest.TestCase):
                 for dependency in optional_dependencies[extra_name]
                 if Requirement(dependency).name.casefold() == "camoufox"
             ]
-            self.assertEqual(camoufox_requirements, ["camoufox>=0.5.4,<0.6"])
+            self.assertEqual(camoufox_requirements, ["camoufox==0.5.9"])
 
         camoufox_packages = [
             package
@@ -90,7 +122,7 @@ class FetchCommonTests(unittest.TestCase):
         locked_version = Version(camoufox_packages[0]["version"])
         self.assertIn(
             locked_version,
-            Requirement("camoufox>=0.5.4,<0.6").specifier,
+            Requirement("camoufox==0.5.9").specifier,
         )
 
         project_package = next(
@@ -110,8 +142,58 @@ class FetchCommonTests(unittest.TestCase):
             self.assertEqual(len(camoufox_edges), 1)
             self.assertEqual(
                 camoufox_edges[0].get("specifier"),
-                ">=0.5.4,<0.6",
+                "==0.5.9",
             )
+
+    def test_pdf_extras_require_coordinated_pymupdf_2_line(self) -> None:
+        with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+            pyproject = tomllib.load(handle)
+        with (REPO_ROOT / "uv.lock").open("rb") as handle:
+            uv_lock = tomllib.load(handle)
+
+        optional_dependencies = pyproject["project"]["optional-dependencies"]
+        for extra_name in ("pdf", "full"):
+            requirements = {
+                Requirement(dependency).name.casefold(): Requirement(dependency)
+                for dependency in optional_dependencies[extra_name]
+                if Requirement(dependency).name.casefold() in {"pymupdf", "pymupdf4llm"}
+            }
+            self.assertEqual(set(requirements), {"pymupdf", "pymupdf4llm"})
+            for requirement in requirements.values():
+                self.assertEqual(str(requirement.specifier), "<3,>=2")
+
+        for name in ("pymupdf", "pymupdf4llm", "pymupdf-layout"):
+            locked = [
+                package["version"]
+                for package in uv_lock["package"]
+                if package["name"].casefold() == name
+            ]
+            self.assertEqual(locked, ["2.1"])
+
+    def test_browser_engine_packages_use_exact_dependency_constraints(self) -> None:
+        with (REPO_ROOT / "pyproject.toml").open("rb") as handle:
+            pyproject = tomllib.load(handle)
+
+        project = pyproject["project"]
+        dependencies = list(project["dependencies"])
+        dependencies.extend(
+            dependency
+            for extra in project["optional-dependencies"].values()
+            for dependency in extra
+        )
+
+        pinned_versions = {"camoufox": "0.5.9", "invisible-playwright": "0.47.1"}
+        for dependency in dependencies:
+            requirement = Requirement(dependency)
+            operators = {specifier.operator for specifier in requirement.specifier}
+            self.assertTrue(requirement.specifier, dependency)
+            if requirement.name.casefold() in pinned_versions:
+                self.assertEqual(
+                    str(requirement.specifier),
+                    f"=={pinned_versions[requirement.name.casefold()]}",
+                )
+            else:
+                self.assertTrue(operators.isdisjoint({"==", "==="}), dependency)
 
     def test_article_markdown_common_reexports_shared_normalize_text(self) -> None:
         self.assertIs(markdown_common.normalize_text, utils.normalize_text)

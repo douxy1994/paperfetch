@@ -1,6 +1,4 @@
-# ruff: noqa: F403,F405
 from __future__ import annotations
-
 from paper_fetch.providers import _ieee_asset_identity
 from paper_fetch.providers import _ieee_asset_recovery
 from paper_fetch.providers import _ieee_supplementary
@@ -9,13 +7,40 @@ from paper_fetch.providers.browser_workflow.asset_download import (
     BrowserAssetRecoveryContext,
     run_browser_asset_download_attempt,
 )
-from tests.unit._atypon_browser_workflow_provider_support import png_header
-from tests.unit._browser_workflow_deps import browser_workflow_deps
-
-from ._ieee_provider_support import *
+from tests.support._atypon_browser_workflow_provider_support import png_header
+from tests.support._browser_workflow_deps import browser_workflow_deps
+from tests.support._ieee_provider_support import *
+# ruff: noqa: F403,F405
 
 
 class IeeeProviderAssetDownloadTests(unittest.TestCase):
+    def test_ieee_clicked_supplement_overlays_tracking_query_on_original(self):
+        url = "https://ieeexplore.ieee.org/ielx8/1/2/3/supp1.pdf"
+        other = "https://ieeexplore.ieee.org/ielx8/1/2/4/supp1.pdf"
+        extracted = [
+            {"kind": "supplementary", "url": url, "source_href": url},
+            {"kind": "supplementary", "url": other},
+        ]
+        downloaded = [
+            {
+                "kind": "supplementary",
+                "download_url": url,
+                "source_url": url + "?arnumber=3",
+                "original_url": url + "?arnumber=3",
+                "path": "/tmp/supp1.pdf",
+                "downloaded_bytes": 123,
+                "recovery_attempts": [{"stage": "page_click"}],
+            }
+        ]
+        result = _ieee_asset_identity.reconcile_ieee_downloaded_assets(
+            extracted, downloaded
+        )
+        self.assertEqual(len(result), 2)
+        self.assertEqual(result[0]["path"], "/tmp/supp1.pdf")
+        self.assertEqual(result[0]["source_href"], url)
+        self.assertEqual(result[0]["source_url"], url + "?arnumber=3")
+        self.assertNotIn("path", result[1])
+
     def test_ieee_reconciliation_overlays_large_recovery_on_one_logical_figure(
         self,
     ) -> None:
@@ -62,6 +87,17 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
                     {"stage": "preview_fallback", "reason": "recovered"},
                 ],
                 "provenance": ["ieee_browser_recovery"],
+                "asset_route": {
+                    "host": "ieeexplore.ieee.org",
+                    "route": "browser",
+                    "probe": True,
+                },
+                "asset_timing": {
+                    "candidate_resolution_ms": 1.25,
+                    "browser_recovery_ms": 12.5,
+                    "total_ms": 14.0,
+                    "status": "downloaded",
+                },
             }
         ]
 
@@ -80,6 +116,8 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
         self.assertEqual(figure["browser_backend"], "camoufox")
         self.assertEqual(figure["final_fetcher"], "camoufox")
         self.assertEqual(figure["recovery_attempts"][0]["status"], 403)
+        self.assertEqual(figure["asset_route"]["route"], "browser")
+        self.assertEqual(figure["asset_timing"]["candidate_resolution_ms"], 1.25)
         self.assertEqual(
             _ieee_asset_identity.ieee_asset_identity_key({"url": small}),
             _ieee_asset_identity.ieee_asset_identity_key({"url": large}),
@@ -188,9 +226,11 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
                 output_dir=Path(tmpdir),
                 user_agent="test-agent",
                 asset_profile="body",
-                candidate_builder=lambda *_args, **_kwargs: [large_url],
-                image_document_fetcher=fetcher,
-                fetch_policy="direct_then_browser",
+                options=html_assets.AssetDownloadOptions(
+                    candidate_builder=lambda *_args, **_kwargs: [large_url],
+                    image_document_fetcher=fetcher,
+                    fetch_policy="direct_then_browser",
+                ),
             )
 
         self.assertEqual(calls, [preview_url, large_url])
@@ -328,7 +368,7 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
                 recovery,
                 image_fetcher_factory=mock.Mock(return_value=image_fetcher),
                 file_fetcher_factory=mock.Mock(return_value=None),
-                opener_requester={
+                download_settings={
                     "transport": transport,
                     "asset_download_concurrency": 4,
                     "serial_browser_assets": True,
@@ -423,15 +463,22 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
                 )
 
         self.assertEqual(result, {"assets": [], "asset_failures": []})
-        mocked_download.assert_called_once()
-        self.assertIs(
-            mocked_download.call_args.args[0], _ieee_supplementary.FIGURE_KIND
+        self.assertEqual(mocked_download.call_count, 2)
+        self.assertTrue(
+            all(
+                call.args[0] is _ieee_supplementary.FIGURE_KIND
+                for call in mocked_download.call_args_list
+            )
         )
-        self.assertEqual(mocked_download.call_args.kwargs["seed_urls"], [landing_url])
         self.assertEqual(
-            mocked_download.call_args.kwargs["headers"]["Referer"], landing_url
+            mocked_download.call_args_list[0].kwargs["options"].headers["Referer"],
+            landing_url,
         )
-        passed_assets = mocked_download.call_args.kwargs["assets"]
+        passed_assets = [
+            asset
+            for call in mocked_download.call_args_list
+            for asset in call.kwargs["assets"]
+        ]
         self.assertEqual(
             [item["kind"] for item in passed_assets],
             ["figure", "table", "formula"],
@@ -536,25 +583,29 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
                 }
             raise AssertionError(f"Unexpected supplementary request: {url}")
 
-        with tempfile.TemporaryDirectory() as tmpdir:
-            with (
-                mock.patch.object(
-                    html_assets, "_build_cookie_seeded_opener", return_value=object()
-                ) as mocked_opener,
-                mock.patch.object(
-                    html_assets, "_request_with_opener", side_effect=opener_requester
-                ) as mocked_request,
-            ):
-                result = client.download_related_assets(
-                    doi,
-                    {"doi": doi, "landing_page_url": landing_url},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="all",
-                )
-                downloaded_paths_exist = all(
-                    Path(item["path"]).is_file() for item in result["assets"]
-                )
+        with (
+            tempfile.TemporaryDirectory() as tmpdir,
+            mock.patch(
+                "paper_fetch.providers.browser_workflow.fetchers.file.fetch_file_with_page_click",
+                side_effect=lambda _fetcher, url, _asset: transport.responses[
+                    ("GET", url)
+                ],
+            ),
+            mock.patch(
+                "paper_fetch.providers.browser_workflow.fetchers.file._SharedBrowserFileDocumentFetcher._ensure_context",
+                return_value=mock.Mock(),
+            ),
+        ):
+            result = client.download_related_assets(
+                doi,
+                {"doi": doi, "landing_page_url": landing_url},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="all",
+            )
+            downloaded_paths_exist = all(
+                Path(item["path"]).is_file() for item in result["assets"]
+            )
 
         self.assertEqual(result["asset_failures"], [])
         self.assertEqual(
@@ -567,8 +618,6 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
         self.assertEqual(result["assets"][3]["download_tier"], "supplementary_file")
         self.assertEqual(result["assets"][3]["content_type"], "video/mp4")
         self.assertTrue(downloaded_paths_exist)
-        mocked_request.assert_not_called()
-        mocked_opener.assert_not_called()
 
     def test_ieee_download_related_assets_downloads_mediastore_gifs_without_support_icon_failure(
         self,
@@ -627,27 +676,19 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
             raise AssertionError(f"Unexpected asset request: {url}")
 
         with tempfile.TemporaryDirectory() as tmpdir:
-            with (
-                mock.patch.object(
-                    html_assets, "_build_cookie_seeded_opener", return_value=object()
-                ) as mocked_opener,
-                mock.patch.object(
-                    html_assets, "_request_with_opener", side_effect=opener_requester
-                ) as mocked_request,
-            ):
-                result = client.download_related_assets(
-                    doi,
-                    {"doi": doi, "landing_page_url": landing_url},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="body",
-                    context=RuntimeContext(
-                        env={"PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY": "1"}
-                    ),
-                )
-                self.assertTrue(
-                    all(Path(item["path"]).is_file() for item in result["assets"])
-                )
+            result = client.download_related_assets(
+                doi,
+                {"doi": doi, "landing_page_url": landing_url},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="body",
+                context=RuntimeContext(
+                    env={"PAPER_FETCH_ASSET_DOWNLOAD_CONCURRENCY": "1"}
+                ),
+            )
+            self.assertTrue(
+                all(Path(item["path"]).is_file() for item in result["assets"])
+            )
 
         self.assertEqual(result["asset_failures"], [])
         self.assertEqual(len(result["assets"]), 2)
@@ -657,8 +698,6 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
         self.assertTrue(
             all(item["download_tier"] == "full_size" for item in result["assets"])
         )
-        mocked_request.assert_not_called()
-        mocked_opener.assert_not_called()
         self.assertFalse(
             any(
                 "/assets/img/icon.support.gif" in str(call["url"])
@@ -680,8 +719,13 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
             all(asset.download_tier == "full_size" for asset in body_article_assets)
         )
 
+    @mock.patch(
+        "paper_fetch.providers._playwright_browser.open_browser_context",
+        side_effect=RuntimeError("Mock browser unavailable"),
+    )
     def test_ieee_supplementary_download_failure_does_not_discard_body_assets(
         self,
+        _browser,
     ) -> None:
         doi = "10.1109/ACCESS.2024.3352924"
         article_number = "10388355"
@@ -770,22 +814,14 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
         )
         self.addCleanup(runtime_context.close)
         with tempfile.TemporaryDirectory() as tmpdir:
-            with (
-                mock.patch.object(
-                    html_assets, "_build_cookie_seeded_opener", return_value=object()
-                ),
-                mock.patch.object(
-                    html_assets, "_request_with_opener", side_effect=opener_requester
-                ),
-            ):
-                result = client.download_related_assets(
-                    doi,
-                    {"doi": doi, "landing_page_url": landing_url},
-                    raw_payload,
-                    Path(tmpdir),
-                    asset_profile="all",
-                    context=runtime_context,
-                )
+            result = client.download_related_assets(
+                doi,
+                {"doi": doi, "landing_page_url": landing_url},
+                raw_payload,
+                Path(tmpdir),
+                asset_profile="all",
+                context=runtime_context,
+            )
 
         self.assertEqual(
             [item["kind"] for item in result["assets"]], ["figure", "table"]
@@ -797,9 +833,13 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
         self.assertTrue(all(item["reason"] for item in result["asset_failures"]))
         self.assertTrue(
             all(
-                item.get("content_type") == "text/html; charset=utf-8"
+                item["reason"] == "browser_context_error"
+                and item["error_type"] == "RuntimeError"
                 for item in result["asset_failures"]
             )
+        )
+        self.assertTrue(
+            all("content_type" not in item for item in result["asset_failures"])
         )
         self.assertFalse(
             any(
@@ -814,3 +854,96 @@ class IeeeProviderAssetDownloadTests(unittest.TestCase):
             asset_failures=result["asset_failures"],
         )
         self.assertEqual(len(article.quality.asset_failures), 2)
+
+
+class IeeeArticleOriginalTests(unittest.TestCase):
+    def test_article_links_recover_figures_and_tables_without_reloading_seed(self):
+        page = mock.MagicMock()
+        context = mock.MagicMock()
+        session = _ieee_asset_recovery._SharedBrowserPageSession(
+            preserve_seed_page=True
+        )
+        session.bind(manager=None, context=context, page=page)
+        wrapped = mock.Mock(browser_backend="camoufox", requires_caller_thread=True)
+        fetcher = _ieee_asset_recovery._IeeePreviewWarmImageFetcher(wrapped, session)
+        original = "https://ieeexplore.ieee.org/mediastore/fig-large.gif"
+        preview = original.replace("large", "small")
+        for figure in (True, False, True):
+            with self.subTest(figure=figure):
+                page.locator.return_value.evaluate_all.return_value = [
+                    {
+                        "url": original,
+                        "href": "/mediastore/fig-large.gif",
+                        "figure": figure,
+                    }
+                ]
+                session.mark_navigation()
+                response = mock.Mock(url=original, status=200)
+                response.all_headers.return_value = {"content-type": "image/png"}
+                response.body.return_value = png_header(820, 219)
+                response.request.resource_type = "image" if figure else "document"
+                context.expect_event.return_value.__enter__.return_value.value = (
+                    response
+                )
+                result = fetcher(original, {"url": preview})
+                self.assertEqual(result["body"], response.body.return_value)
+                predicate = context.expect_event.call_args.kwargs["predicate"]
+                self.assertTrue(predicate(response))
+                self.assertFalse(predicate(mock.Mock(url=original + "other")))
+        self.assertEqual(wrapped.call_args_list, [mock.call(preview, {"url": preview})])
+        page.goto.assert_not_called()
+        page.expect_popup.return_value.__enter__.return_value.value.close.assert_called_once()
+        self.assertTrue(session.preserve_seed_page)
+
+    def test_missing_entry_and_invalid_original_keep_fallback_and_diagnostics(self):
+        for entry, body in (
+            (None, b""),
+            ({"href": "/large.gif", "figure": True}, b"<html>Error</html>"),
+            ({"href": "/large.gif", "figure": False}, None),
+        ):
+            with self.subTest(entry=entry):
+                page = mock.MagicMock()
+                context = mock.MagicMock()
+                session = _ieee_asset_recovery._SharedBrowserPageSession(
+                    preserve_seed_page=True
+                )
+                session.bind(manager=None, context=context, page=page)
+                page.locator.return_value.evaluate_all.return_value = (
+                    [{**entry, "url": "https://ieeexplore.ieee.org/large.gif"}]
+                    if entry
+                    else []
+                )
+                response = mock.Mock(
+                    url="https://ieeexplore.ieee.org/large.gif", status=200
+                )
+                response.all_headers.return_value = {"content-type": "image/gif"}
+                response.body.return_value = body
+                if body is None:
+                    response.body.side_effect = TimeoutError("original response failed")
+                context.expect_event.return_value.__enter__.return_value.value = (
+                    response
+                )
+                wrapped = mock.Mock(
+                    return_value=None,
+                    browser_backend="camoufox",
+                    requires_caller_thread=True,
+                )
+                wrapped.failure_for.return_value = {"reason": "non_image_response"}
+                fetcher = _ieee_asset_recovery._IeeePreviewWarmImageFetcher(
+                    wrapped, session
+                )
+                self.assertIsNone(
+                    fetcher(
+                        response.url, {"url": "https://ieeexplore.ieee.org/small.gif"}
+                    )
+                )
+                wrapped.assert_called_with(
+                    response.url, {"url": "https://ieeexplore.ieee.org/small.gif"}
+                )
+                self.assertEqual(
+                    fetcher.failure_for(response.url)["recovery_attempts"][0]["stage"],
+                    "article_original",
+                )
+                page.goto.assert_not_called()
+                if entry and not entry["figure"]:
+                    page.expect_popup.return_value.__enter__.return_value.value.close.assert_called_once()

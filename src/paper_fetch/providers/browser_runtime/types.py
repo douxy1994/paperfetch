@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Protocol, TypedDict
+from typing import Any, TypedDict
 
 
 @dataclass(frozen=True)
@@ -15,20 +15,21 @@ class BrowserRuntimeConfig:
     artifact_dir: Path
     headless: bool
     user_agent: str | None
-    backend: str
     timeout_ms: int = 120000
     binary_path: str | None = None
-    cdp_endpoint: str | None = None
-    external_new_context: bool = False
     profile_dir: Path | None = None
     user_data_dir: Path | None = None
     storage_state_path: Path | None = None
     persist_storage_state: bool = True
+    capability_storage_state_path: Path | None = None
+    backend: str = "byparr"
+    state_mode: str = "native"
+    component_cache_dir: Path | None = None
 
 
 @dataclass(frozen=True)
 class BrowserRuntimeSession:
-    """A fresh selected-backend browser context and its owning manager, if any."""
+    """A persistent browser context and its local owner, or None when borrowed."""
 
     backend: str
     context: Any
@@ -49,10 +50,12 @@ class BrowserHtmlReadiness:
 class BrowserHtmlFetchOptions:
     """Select specialized HTML-fetch result modes without widening the facade."""
 
+    supplementary_index: bool = False
     return_image_payload: bool = False
     return_screenshot: bool = False
     lightweight_seed_only: bool = False
     blocked_resource_types: frozenset[str] | tuple[str, ...] | None = None
+    empty_script_response_urls: frozenset[str] | tuple[str, ...] = frozenset()
     readiness_budget_seconds: float | None = None
     reuse_runtime_page: bool = False
 
@@ -126,7 +129,7 @@ class BrowserRuntimeFailure(Exception):
         self.details = dict(details or {})
 
 
-class BrowserImagePayload(TypedDict):
+class BrowserImagePayload(TypedDict, total=False):
     bodyB64: str
     contentType: str
     url: str
@@ -142,57 +145,3 @@ class BrowserContextSeed(TypedDict, total=False):
     paper_fetch_html_fetcher: str
     diagnostics: dict[str, Any]
     metadata: dict[str, Any]
-
-
-class BrowserRuntimeBackend(Protocol):
-    name: str
-
-    def load_runtime_config(
-        self,
-        env: Mapping[str, str],
-        *,
-        provider: str,
-        doi: str,
-        require_storage_state: bool = False,
-    ) -> BrowserRuntimeConfig: ...
-
-    def ensure_runtime_ready(self, config: BrowserRuntimeConfig) -> None: ...
-
-    def probe_runtime_status(
-        self,
-        env: Mapping[str, str],
-        *,
-        provider: str,
-        doi: str = "probe://browser/status",
-        deep: bool = False,
-    ) -> Any: ...
-
-    def fetch_html(
-        self,
-        candidate_urls: list[str],
-        *,
-        publisher: str,
-        config: BrowserRuntimeConfig,
-        **kwargs: Any,
-    ) -> BrowserFetchedHtml: ...
-
-    def warm_context(
-        self,
-        candidate_urls: list[str],
-        *,
-        publisher: str,
-        config: BrowserRuntimeConfig,
-        browser_context_seed: Mapping[str, Any] | None = None,
-        runtime_context: Any | None = None,
-        lightweight: bool = False,
-    ) -> BrowserWarmResult: ...
-
-    def storage_state_path(self, config: BrowserRuntimeConfig) -> Path | None: ...
-
-    def save_storage_state(
-        self,
-        context: Any,
-        config: BrowserRuntimeConfig,
-        *,
-        filter_url: str | None = None,
-    ) -> Mapping[str, Any]: ...

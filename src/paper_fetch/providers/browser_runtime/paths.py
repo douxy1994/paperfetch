@@ -28,7 +28,6 @@ from ...provider_catalog import (
     provider_domain_matches,
     provider_domains,
 )
-from ...runtime_browser import is_borrowed_browser_context
 from ...utils import normalize_text, sanitize_filename
 from .seed import filter_browser_cookies_for_url
 from .types import BrowserRuntimeConfig, BrowserStagedStorageState
@@ -48,8 +47,8 @@ def default_provider_user_data_dir(
     env: Mapping[str, str], *, provider: str, backend: str
 ) -> Path:
     provider_key = sanitize_filename(normalize_text(provider).lower() or "browser")
-    if normalize_text(backend).lower() == "camoufox":
-        provider_key = f"{provider_key}-camoufox"
+    if normalize_text(backend).lower() in {"camoufox", "byparr"}:
+        provider_key = f"{provider_key}-{backend.lower()}"
     return resolve_user_data_dir(env) / "publisher-browser-profiles" / provider_key
 
 
@@ -98,8 +97,6 @@ def runtime_with_default_storage_profile(
     env: Mapping[str, str],
     provider: str,
 ) -> BrowserRuntimeConfig:
-    if runtime.storage_state_path is not None:
-        return runtime
     if runtime.profile_dir is not None or runtime.user_data_dir is not None:
         return runtime
     from dataclasses import replace
@@ -107,7 +104,9 @@ def runtime_with_default_storage_profile(
     return replace(
         runtime,
         user_data_dir=default_provider_user_data_dir(
-            env, provider=provider, backend=runtime.backend
+            env,
+            provider=provider,
+            backend="camoufox" if runtime.state_mode == "native" else "byparr",
         ),
     )
 
@@ -365,7 +364,7 @@ def stage_storage_state(
         "saved": False,
         "path": str(path) if path is not None else None,
         "filtered": False,
-        "borrowed_context": bool(is_borrowed_browser_context(context)),
+        "borrowed_context": False,
     }
     if context is None or path is None:
         result["reason"] = "no_context_or_path"
@@ -469,6 +468,9 @@ def commit_staged_storage_state(
         "path": str(expected_path) if expected_path is not None else None,
         "filtered": stage is not None,
     }
+    if not config.persist_storage_state:
+        result.update(attempted=False, reason="storage_state_write_disabled")
+        return result
     if stage is None or expected_path is None:
         result["reason"] = "no_staged_state"
         return result
@@ -507,6 +509,12 @@ def commit_staged_storage_state(
                 filter_url=stage.filter_url,
             )
             _atomic_write_json(expected_path, merged)
+        recorder = getattr(runtime_context, "note_browser_json_export", None)
+        if callable(recorder):
+            try:
+                recorder(expected_path)
+            except Exception as exc:
+                result["profile_metadata_update_error"] = normalize_text(str(exc))
         result.update(
             {
                 "saved": True,
@@ -523,21 +531,3 @@ def commit_staged_storage_state(
         result["reason"] = "save_failed"
         result["error"] = normalize_text(str(exc)) or exc.__class__.__name__
         return result
-
-
-def save_storage_state(
-    context: Any,
-    config: BrowserRuntimeConfig,
-    *,
-    filter_url: str | None = None,
-) -> dict[str, Any]:
-    stage, staged_result = stage_storage_state(
-        context,
-        config,
-        filter_url=filter_url,
-    )
-    if stage is None:
-        return staged_result
-    committed = commit_staged_storage_state(stage, config)
-    committed["borrowed_context"] = staged_result["borrowed_context"]
-    return committed

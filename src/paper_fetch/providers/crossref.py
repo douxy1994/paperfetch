@@ -7,8 +7,8 @@ from collections.abc import Mapping
 from ..http import HttpTransport
 from ..metadata.crossref import CrossrefLookupClient
 from ..metadata.types import CrossrefMetadata
-from ..provider_catalog import ProviderSpec
-from ._registry import ProviderBundle, register_provider_bundle
+from ..provider_contracts import ProviderRouteSpec, ProviderSpec
+from ._registry import ProviderBundle
 from .base import (
     ProviderClient,
     ProviderStatusResult,
@@ -16,28 +16,6 @@ from .base import (
     summarize_capability_status,
 )
 from ..reason_codes import OK
-
-
-register_provider_bundle(
-    ProviderBundle(
-        catalog=ProviderSpec(
-            name="crossref",
-            display_name="Crossref",
-            official=False,
-            domains=(),
-            doi_prefixes=(),
-            publisher_aliases=(),
-            asset_default="none",
-            probe_capability="metadata_api",
-            provider_managed_abstract_only=False,
-            client_factory_path="paper_fetch.providers.crossref:CrossrefClient",
-            status_order=0,
-            html_capable=False,
-            sensitive_headers=("cr-clickthrough-client-token",),
-        ),
-        sources=("crossref_meta",),
-    )
-)
 
 
 class CrossrefClient(ProviderClient):
@@ -87,3 +65,25 @@ class CrossrefClient(ProviderClient):
             doi_prefix=doi_prefix,
             rows=rows,
         )
+
+
+PROVIDER_BUNDLE = ProviderBundle(
+    client_factory=CrossrefClient,
+    catalog=ProviderSpec(
+        name="crossref",
+        display_name="Crossref",
+        official=False,
+        domains=(),
+        doi_prefixes=(),
+        publisher_aliases=(),
+        asset_default="none",
+        probe_capability="metadata_api",
+        provider_managed_abstract_only=False,
+        status_order=0,
+        html_capable=False,
+        api_hosts=("api.crossref.org",),
+        sensitive_headers=("cr-clickthrough-client-token",),
+        routes=(ProviderRouteSpec(name="metadata", kind="metadata"),),
+    ),
+    sources=("crossref_meta",),
+)

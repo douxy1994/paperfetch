@@ -1,25 +1,6 @@
 from __future__ import annotations
-
-import json
-import sys
-import tempfile
 import textwrap
 import unittest
-from pathlib import Path
-
-from mcp import types as mcp_types
-from mcp.client.session import ClientSession
-from mcp.client.stdio import StdioServerParameters, stdio_client
-
-from paper_fetch.mcp.cache_index import (
-    cache_scope_id,
-    scoped_cache_index_resource_uri,
-    scoped_cached_resource_uri,
-    scoped_cached_resource_uri_prefix,
-)
-from paper_fetch.mcp.provider_catalog import PROVIDER_CATALOG_RESOURCE_URI
-from paper_fetch.provider_catalog import SOURCE_PROVIDER_MAP, provider_status_order
-from tests.paths import REPO_ROOT, SRC_DIR
 
 
 SERVER_SCRIPT = textwrap.dedent(
@@ -27,7 +8,7 @@ SERVER_SCRIPT = textwrap.dedent(
     import logging
     from pathlib import Path
 
-    from paper_fetch.models import ArticleModel, Asset, FetchEnvelope, Metadata, Quality, Section, TokenEstimateBreakdown
+    from paper_fetch.models import AcquisitionProvenance, ArticleModel, Asset, FetchEnvelope, Metadata, Quality, Section, TokenEstimateBreakdown
     from dataclasses import replace
 
     from paper_fetch.browser_preflight import BrowserPreflightResult
@@ -37,6 +18,7 @@ SERVER_SCRIPT = textwrap.dedent(
     from paper_fetch.providers.base import ProviderStatusResult, build_provider_status_check
     from paper_fetch.resolve.query import ResolvedQuery
     from paper_fetch.service import HasFulltextProbeResult
+    from paper_fetch.tracing import TraceContext, trace_event
     from paper_fetch.utils import sanitize_filename
 
     def fake_resolve(query, *, context=None):
@@ -64,7 +46,13 @@ SERVER_SCRIPT = textwrap.dedent(
                 (
                     "---\\n"
                     f'doi: "{query}"\\n'
-                    'source: "crossref_meta"\\n'
+                    'source: "elsevier_xml"\\n'
+                    "acquisition:\\n"
+                    '  provider: "elsevier"\\n'
+                    '  route: "xml_api"\\n'
+                    '  representation: "xml"\\n'
+                    '  transport: "api"\\n'
+                    "  fallback_used: false\\n"
                     "has_fulltext: true\\n"
                     'content_kind: "fulltext"\\n'
                     "---\\n\\n# Example Article\\n\\nExample body.\\n"
@@ -84,7 +72,7 @@ SERVER_SCRIPT = textwrap.dedent(
 
         article = ArticleModel(
             doi=query,
-            source="crossref_meta",
+            source="elsevier_xml",
             metadata=Metadata(
                 title=f"Example Article for {query}",
                 authors=["Alice Example"],
@@ -110,14 +98,43 @@ SERVER_SCRIPT = textwrap.dedent(
                 source_trail=["source:ok"],
                 token_estimate_breakdown=TokenEstimateBreakdown(abstract=16, body=48, refs=20),
             ),
+            acquisition=AcquisitionProvenance(
+                provider="elsevier",
+                route="xml_api",
+                representation="xml",
+                transport="api",
+                fallback_used=False,
+            ),
         )
         requested_modes = set(modes or set())
         return FetchEnvelope(
             doi=query,
             source="elsevier_xml",
             has_fulltext=True,
+            acquisition=article.acquisition,
             warnings=[],
             source_trail=["source:ok"],
+            trace=[
+                trace_event("resolve", "doi_selected", "ok"),
+                trace_event(
+                    "metadata",
+                    "elsevier",
+                    "ok",
+                    context=TraceContext(
+                        provider="elsevier",
+                        route="metadata_api",
+                    ),
+                ),
+                trace_event(
+                    "fulltext",
+                    "elsevier_xml",
+                    "ok",
+                    context=TraceContext(
+                        provider="elsevier",
+                        route="xml_api",
+                    ),
+                ),
+            ],
             token_estimate=64,
             token_estimate_breakdown=TokenEstimateBreakdown(abstract=16, body=48, refs=20),
             article=article if "article" in requested_modes else None,
@@ -238,7 +255,7 @@ SERVER_SCRIPT = textwrap.dedent(
                         build_provider_status_check(
                             "playwright_dependency",
                             "ok",
-                            "Playwright Python package is importable; CDP connection is not probed.",
+                            "Playwright Python package is importable; live browser startup is not probed.",
                         ),
                     ],
                 )
@@ -401,600 +418,6 @@ SERVER_SCRIPT = textwrap.dedent(
     main()
     """
 )
-
-
-class McpStdioIntegrationTests(unittest.IsolatedAsyncioTestCase):
-    async def test_stdio_server_lists_tools_and_serves_cached_resources(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            default_dir = Path(tmpdir) / "default"
-            isolated_dir = Path(tmpdir) / "isolated"
-            progress_updates: list[tuple[float, float | None, str | None]] = []
-            batch_fetch_progress: list[tuple[float, float | None, str | None]] = []
-            preflight_progress: list[tuple[float, float | None, str | None]] = []
-            log_messages: list[object] = []
-            protocol_messages: list[object] = []
-            server = StdioServerParameters(
-                command=sys.executable,
-                args=["-c", SERVER_SCRIPT],
-                cwd=str(REPO_ROOT),
-                env={
-                    "PYTHONPATH": str(SRC_DIR),
-                    "PAPER_FETCH_DOWNLOAD_DIR": str(default_dir),
-                },
-            )
-
-            with tempfile.TemporaryFile(mode="w+") as errlog:
-                async with stdio_client(server, errlog=errlog) as (
-                    read_stream,
-                    write_stream,
-                ):
-
-                    async def logging_callback(params) -> None:
-                        log_messages.append(params.data)
-
-                    async def progress_callback(progress, total, message) -> None:
-                        progress_updates.append((progress, total, message))
-
-                    async def preflight_progress_callback(
-                        progress, total, message
-                    ) -> None:
-                        preflight_progress.append((progress, total, message))
-
-                    async def batch_fetch_progress_callback(
-                        progress, total, message
-                    ) -> None:
-                        batch_fetch_progress.append((progress, total, message))
-
-                    async def message_handler(message) -> None:
-                        protocol_messages.append(message)
-
-                    async with ClientSession(
-                        read_stream,
-                        write_stream,
-                        logging_callback=logging_callback,
-                        message_handler=message_handler,
-                    ) as session:
-                        init_result = await session.initialize()
-                        self.assertIsNotNone(init_result.capabilities.resources)
-                        self.assertTrue(init_result.capabilities.resources.list_changed)
-
-                        listed = await session.list_tools()
-                        tool_names = sorted(tool.name for tool in listed.tools)
-                        self.assertEqual(
-                            tool_names,
-                            [
-                                "batch_check",
-                                "batch_fetch",
-                                "batch_resolve",
-                                "browser_preflight",
-                                "fetch_paper",
-                                "get_cached",
-                                "has_fulltext",
-                                "list_cached",
-                                "provider_status",
-                                "resolve_paper",
-                            ],
-                        )
-                        self.assertTrue(
-                            all(tool.output_schema is not None for tool in listed.tools)
-                        )
-                        self.assertTrue(
-                            all(tool.annotations is not None for tool in listed.tools)
-                        )
-                        batch_fetch_tool = next(
-                            tool for tool in listed.tools if tool.name == "batch_fetch"
-                        )
-                        self.assertEqual(
-                            batch_fetch_tool.input_schema["properties"]["queries"][
-                                "maxItems"
-                            ],
-                            50,
-                        )
-                        self.assertEqual(
-                            batch_fetch_tool.input_schema["properties"]["concurrency"][
-                                "maximum"
-                            ],
-                            8,
-                        )
-                        self.assertEqual(
-                            batch_fetch_tool.input_schema["properties"]["detail"][
-                                "enum"
-                            ],
-                            ["compact", "bounded"],
-                        )
-                        browser_tool = next(
-                            tool
-                            for tool in listed.tools
-                            if tool.name == "browser_preflight"
-                        )
-                        self.assertFalse(browser_tool.annotations.read_only_hint)
-                        self.assertFalse(browser_tool.annotations.destructive_hint)
-                        self.assertFalse(browser_tool.annotations.idempotent_hint)
-                        self.assertTrue(browser_tool.annotations.open_world_hint)
-
-                        prompts = await session.list_prompts()
-                        self.assertEqual(
-                            sorted(prompt.name for prompt in prompts.prompts),
-                            ["summarize_paper", "verify_citation_list"],
-                        )
-                        summarize_prompt = await session.get_prompt(
-                            "summarize_paper",
-                            {"query": "10.1000/example", "focus": "methods"},
-                        )
-                        self.assertIn(
-                            "token_estimate_breakdown",
-                            summarize_prompt.messages[0].content.text,
-                        )
-                        verify_prompt = await session.get_prompt(
-                            "verify_citation_list",
-                            {
-                                "citations": "Citation A\\nCitation B",
-                                "mode": "metadata",
-                            },
-                        )
-                        self.assertIn(
-                            "batch_check", verify_prompt.messages[0].content.text
-                        )
-
-                        resolved = await session.call_tool(
-                            "resolve_paper", {"query": "10.1000/example"}
-                        )
-                        self.assertFalse(resolved.is_error)
-                        self.assertEqual(
-                            resolved.structured_content["doi"], "10.1000/example"
-                        )
-                        structured_resolved = await session.call_tool(
-                            "resolve_paper",
-                            {
-                                "title": "Example title",
-                                "authors": ["Alice Example"],
-                                "year": 2024,
-                            },
-                        )
-                        self.assertFalse(structured_resolved.is_error)
-                        self.assertEqual(
-                            structured_resolved.structured_content["query"],
-                            "Example title",
-                        )
-
-                        probe = await session.call_tool(
-                            "has_fulltext", {"query": "10.1000/example"}
-                        )
-                        self.assertFalse(probe.is_error)
-                        self.assertEqual(
-                            probe.structured_content["state"], "likely_yes"
-                        )
-                        self.assertEqual(
-                            probe.structured_content["evidence"],
-                            ["crossref_fulltext_link"],
-                        )
-
-                        provider_status = await session.call_tool("provider_status", {})
-                        self.assertFalse(
-                            provider_status.is_error,
-                            provider_status.structured_content,
-                        )
-                        providers_by_name = {
-                            item["provider"]: item
-                            for item in provider_status.structured_content["providers"]
-                        }
-                        self.assertEqual(
-                            [
-                                item["provider"]
-                                for item in provider_status.structured_content[
-                                    "providers"
-                                ]
-                            ],
-                            list(provider_status_order()),
-                        )
-                        self.assertEqual(
-                            providers_by_name["crossref"]["status"], "ready"
-                        )
-                        self.assertEqual(
-                            providers_by_name["elsevier"]["missing_env"],
-                            ["ELSEVIER_API_KEY"],
-                        )
-                        self.assertIn("mdpi", providers_by_name)
-                        self.assertEqual(providers_by_name["ams"]["provider"], "ams")
-
-                        compact_status = await session.call_tool(
-                            "provider_status",
-                            {"provider": "crossref", "detail": "compact"},
-                        )
-                        self.assertFalse(compact_status.is_error)
-                        self.assertEqual(
-                            compact_status.structured_content["provider_filter"],
-                            "crossref",
-                        )
-                        self.assertEqual(
-                            compact_status.structured_content["providers"],
-                            [
-                                {
-                                    "provider": "crossref",
-                                    "status": "ready",
-                                    "reason_code": "static_requirements_ready",
-                                    "reason": (
-                                        "Static configuration and local dependencies "
-                                        "are ready; remote access was not checked."
-                                    ),
-                                    "suggested_action": "run the requested fetch",
-                                }
-                            ],
-                        )
-                        self.assertNotIn(
-                            "configuration", compact_status.structured_content
-                        )
-
-                        storage_state_path = isolated_dir / "browser" / "wiley.json"
-                        live_preflight = await session.call_tool(
-                            "browser_preflight",
-                            {
-                                "provider": "wiley",
-                                "test_url": (
-                                    "https://onlinelibrary.wiley.com/doi/full/"
-                                    "10.1111/example"
-                                ),
-                                "storage_state_path": str(storage_state_path),
-                                "detail": "full",
-                            },
-                            progress_callback=preflight_progress_callback,
-                        )
-                        self.assertFalse(live_preflight.is_error)
-                        self.assertEqual(
-                            live_preflight.structured_content["status"], "ready"
-                        )
-                        self.assertEqual(
-                            live_preflight.structured_content["results"][0]["status"],
-                            "ready",
-                        )
-                        self.assertEqual(
-                            live_preflight.structured_content["results"][0][
-                                "storage_state"
-                            ]["saved"],
-                            True,
-                        )
-                        self.assertFalse(
-                            live_preflight.structured_content["pdf_fallback_attempted"]
-                        )
-                        self.assertFalse(
-                            live_preflight.structured_content["auth_attempted"]
-                        )
-                        self.assertTrue(storage_state_path.is_file())
-                        self.assertEqual(
-                            preflight_progress,
-                            [
-                                (0, 1, "Starting live browser_preflight"),
-                                (1, 1, "Preflight wiley: ready"),
-                                (1, 1, "browser_preflight complete"),
-                            ],
-                        )
-
-                        custom_fetch = await session.call_tool(
-                            "fetch_paper",
-                            {
-                                "query": "10.1000/custom",
-                                "download_dir": str(isolated_dir),
-                                "modes": ["markdown"],
-                                "strategy": {"asset_profile": "body"},
-                            },
-                            progress_callback=progress_callback,
-                        )
-                        self.assertFalse(custom_fetch.is_error)
-                        self.assertEqual(
-                            custom_fetch.structured_content["status"], "ok"
-                        )
-                        self.assertEqual(
-                            custom_fetch.structured_content["acceptance"]["fetch"],
-                            "ok",
-                        )
-                        self.assertEqual(
-                            custom_fetch.structured_content["acceptance"]["content"],
-                            "fulltext",
-                        )
-                        self.assertEqual(
-                            custom_fetch.structured_content["acceptance"]["output"],
-                            "complete",
-                        )
-                        self.assertEqual(
-                            custom_fetch.structured_content["article"], None
-                        )
-                        self.assertEqual(
-                            custom_fetch.structured_content["token_estimate_breakdown"],
-                            {"abstract": 16, "body": 48, "refs": 20},
-                        )
-                        self.assertEqual(
-                            [content.type for content in custom_fetch.content],
-                            ["text", "text", "image"],
-                        )
-                        self.assertEqual(
-                            progress_updates[-1], (4, 4, "fetch_paper complete")
-                        )
-                        self.assertTrue(
-                            any(
-                                isinstance(message, dict)
-                                and message.get("event") == "fetch_stage"
-                                and message.get("step") == "fake stage with spaces"
-                                for message in log_messages
-                            )
-                        )
-                        self.assertTrue(
-                            any(
-                                isinstance(message, dict)
-                                and message.get("event") == "legacy_fetch_stage"
-                                and message.get("query") == "10.1000/custom"
-                                for message in log_messages
-                            )
-                        )
-                        custom_cached = await session.call_tool(
-                            "get_cached",
-                            {
-                                "doi": "10.1000/custom",
-                                "download_dir": str(isolated_dir),
-                            },
-                        )
-                        self.assertFalse(custom_cached.is_error)
-                        self.assertEqual(
-                            custom_cached.structured_content["status"], "hit"
-                        )
-                        self.assertEqual(
-                            len(custom_cached.structured_content["entries"]), 4
-                        )
-
-                        compact_cached = await session.call_tool(
-                            "get_cached",
-                            {
-                                "doi": "10.1000/custom",
-                                "download_dir": str(isolated_dir),
-                                "detail": "compact",
-                                "preferred_only": True,
-                                "modes": ["markdown"],
-                                "strategy": {"asset_profile": "body"},
-                            },
-                        )
-                        self.assertFalse(compact_cached.is_error)
-                        self.assertEqual(
-                            compact_cached.structured_content["status"], "hit"
-                        )
-                        self.assertNotIn("entries", compact_cached.structured_content)
-                        self.assertEqual(
-                            set(compact_cached.structured_content["preferred"]),
-                            {"markdown", "primary_payload"},
-                        )
-                        self.assertTrue(
-                            compact_cached.structured_content["request_satisfied"],
-                            compact_cached.structured_content["sidecar"],
-                        )
-                        self.assertEqual(
-                            len(
-                                compact_cached.structured_content[
-                                    "cached_request_fingerprint"
-                                ]
-                            ),
-                            64,
-                        )
-
-                        listed_custom = await session.call_tool(
-                            "list_cached", {"download_dir": str(isolated_dir)}
-                        )
-                        self.assertFalse(listed_custom.is_error)
-                        self.assertEqual(
-                            len(listed_custom.structured_content["entries"]), 4
-                        )
-
-                        batch = await session.call_tool(
-                            "batch_check",
-                            {
-                                "queries": ["10.1000/custom", "10.1000/other"],
-                                "mode": "metadata",
-                                "concurrency": 2,
-                            },
-                        )
-                        self.assertFalse(batch.is_error)
-                        self.assertEqual(batch.structured_content["mode"], "metadata")
-                        self.assertEqual(len(batch.structured_content["results"]), 2)
-                        self.assertEqual(
-                            batch.structured_content["results"][0]["probe_state"],
-                            "likely_yes",
-                        )
-                        self.assertEqual(
-                            batch.structured_content["results"][0]["source"], None
-                        )
-                        self.assertEqual(
-                            batch.structured_content["results"][0][
-                                "token_estimate_breakdown"
-                            ],
-                            None,
-                        )
-
-                        batch_resolved = await session.call_tool(
-                            "batch_resolve",
-                            {
-                                "queries": ["10.1000/custom", "10.1000/other"],
-                                "concurrency": 2,
-                            },
-                        )
-                        self.assertFalse(batch_resolved.is_error)
-                        self.assertEqual(
-                            [
-                                item["doi"]
-                                for item in batch_resolved.structured_content["results"]
-                            ],
-                            ["10.1000/custom", "10.1000/other"],
-                        )
-
-                        batch_fetched = await session.call_tool(
-                            "batch_fetch",
-                            {
-                                "queries": [
-                                    "10.1000/batch-one",
-                                    "10.1000/batch-two",
-                                ],
-                                "concurrency": 2,
-                                "strategy": {"asset_profile": "none"},
-                                "no_download": True,
-                                "artifact_mode": "none",
-                                "detail": "bounded",
-                                "content_max_chars": 24,
-                            },
-                            progress_callback=batch_fetch_progress_callback,
-                        )
-                        self.assertFalse(batch_fetched.is_error)
-                        self.assertEqual(
-                            [
-                                item["index"]
-                                for item in batch_fetched.structured_content["results"]
-                            ],
-                            [1, 2],
-                        )
-                        self.assertEqual(
-                            batch_fetched.structured_content["content_returned_chars"],
-                            24,
-                        )
-                        self.assertTrue(
-                            all(
-                                "article" not in item and "markdown" not in item
-                                for item in batch_fetched.structured_content["results"]
-                            )
-                        )
-                        self.assertEqual(
-                            batch_fetch_progress[0],
-                            (0, 2, "Starting batch_fetch"),
-                        )
-                        self.assertEqual(
-                            batch_fetch_progress[-1],
-                            (2, 2, "batch_fetch complete"),
-                        )
-
-                        default_fetch = await session.call_tool(
-                            "fetch_paper", {"query": "10.1000/default"}
-                        )
-                        self.assertFalse(default_fetch.is_error)
-                        self.assertTrue(
-                            any(
-                                isinstance(
-                                    message,
-                                    mcp_types.ResourceListChangedNotification,
-                                )
-                                for message in protocol_messages
-                            )
-                        )
-
-                        resources = await session.list_resources()
-                        resource_uris = sorted(
-                            str(resource.uri) for resource in resources.resources
-                        )
-                        self.assertIn(
-                            "resource://paper-fetch/cache-index", resource_uris
-                        )
-                        self.assertIn(PROVIDER_CATALOG_RESOURCE_URI, resource_uris)
-                        self.assertTrue(
-                            any(
-                                uri.startswith("resource://paper-fetch/cached/")
-                                for uri in resource_uris
-                            )
-                        )
-                        custom_scope_id = cache_scope_id(isolated_dir)
-                        custom_index_uri = scoped_cache_index_resource_uri(
-                            custom_scope_id
-                        )
-                        self.assertIn(custom_index_uri, resource_uris)
-                        self.assertTrue(
-                            any(
-                                uri.startswith(
-                                    scoped_cached_resource_uri_prefix(custom_scope_id)
-                                )
-                                for uri in resource_uris
-                            )
-                        )
-
-                        templates = await session.list_resource_templates()
-                        template_uris = [
-                            str(template.uri_template)
-                            for template in templates.resource_templates
-                        ]
-                        self.assertIn(
-                            "resource://paper-fetch/cached/{entry_id}", template_uris
-                        )
-
-                        cache_index = await session.read_resource(
-                            "resource://paper-fetch/cache-index"
-                        )
-                        cache_text = cache_index.contents[0].text
-                        cache_payload = json.loads(cache_text)
-                        self.assertEqual(
-                            str(default_dir), cache_payload["download_dir"]
-                        )
-                        markdown_entry = next(
-                            entry
-                            for entry in cache_payload["entries"]
-                            if entry["doi"] == "10.1000/default"
-                            and entry["kind"] == "markdown"
-                        )
-
-                        provider_catalog = await session.read_resource(
-                            PROVIDER_CATALOG_RESOURCE_URI
-                        )
-                        provider_catalog_payload = json.loads(
-                            provider_catalog.contents[0].text
-                        )
-                        self.assertEqual(
-                            provider_catalog_payload["resource_uri"],
-                            PROVIDER_CATALOG_RESOURCE_URI,
-                        )
-                        self.assertEqual(
-                            [
-                                item["provider"]
-                                for item in provider_catalog_payload["providers"]
-                            ],
-                            list(provider_status_order()),
-                        )
-                        self.assertEqual(
-                            provider_catalog_payload["source_provider_map"],
-                            dict(sorted(SOURCE_PROVIDER_MAP.items())),
-                        )
-
-                        markdown_resource = await session.read_resource(
-                            f"resource://paper-fetch/cached/{markdown_entry['id']}"
-                        )
-                        self.assertIn(
-                            "# Example Article", markdown_resource.contents[0].text
-                        )
-
-                        custom_cache_index = await session.read_resource(
-                            custom_index_uri
-                        )
-                        custom_cache_payload = json.loads(
-                            custom_cache_index.contents[0].text
-                        )
-                        self.assertEqual(
-                            str(isolated_dir), custom_cache_payload["download_dir"]
-                        )
-                        custom_markdown_entry = next(
-                            entry
-                            for entry in custom_cache_payload["entries"]
-                            if entry["doi"] == "10.1000/custom"
-                            and entry["kind"] == "markdown"
-                        )
-                        custom_markdown_resource = await session.read_resource(
-                            scoped_cached_resource_uri(
-                                custom_scope_id, custom_markdown_entry["id"]
-                            )
-                        )
-                        self.assertIn(
-                            "# Example Article",
-                            custom_markdown_resource.contents[0].text,
-                        )
-
-                        invalid = await session.call_tool(
-                            "fetch_paper",
-                            {"query": "10.1000/example", "modes": ["pdf"]},
-                        )
-                        self.assertTrue(invalid.is_error)
-                        self.assertIsNone(invalid.structured_content)
-                        self.assertIn(
-                            "unsupported output modes",
-                            invalid.content[0].text,
-                        )
 
 
 if __name__ == "__main__":

@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from ..quality.access_boundary import propagate_paywall
+
+from dataclasses import asdict, dataclass, replace
+import html
+import json
 from pathlib import PurePosixPath
 from typing import Any
 from collections.abc import Mapping, Sequence
@@ -14,8 +18,10 @@ from ..failure import FailureDiagnostics
 from ..extraction.html.assets import (
     FIGURE_KIND,
     SUPPLEMENTARY_KIND,
+    AssetDownloadOptions,
     download_assets,
-    html_asset_identity_key,
+    filter_assets_for_profile,
+    merge_extracted_and_downloaded_assets,
     split_body_and_supplementary_assets,
 )
 from ..extraction.html.availability_policy import AvailabilityPolicy
@@ -36,6 +42,7 @@ from ..models import (
 )
 from ..provider_catalog import (
     BodyTextThresholds,
+    ProviderRouteSpec,
     ProviderSpec,
     provider_body_text_thresholds,
 )
@@ -43,7 +50,7 @@ from ..publisher_identity import normalize_doi
 from ..reason_codes import NO_RESULT, OK, PDF_FALLBACK
 from ..runtime import RuntimeContext
 from ..tracing import download_marker, fulltext_marker, trace_from_markers
-from ..utils import empty_asset_results, normalize_text
+from ..utils import empty_asset_results, extend_unique, normalize_text
 from ._article_markdown_jats import assess_jats_body_availability, parse_jats_xml
 from ._payloads import build_provider_payload
 from ._pdf_common import (
@@ -54,7 +61,7 @@ from ._pdf_common import (
     pdf_fetch_result_warnings,
 )
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http
-from ._registry import ProviderBundle, register_provider_bundle
+from ._registry import ProviderBundle
 from .base import (
     ProviderArtifacts,
     ProviderClient,
@@ -66,53 +73,6 @@ from .base import (
     map_request_failure,
     summarize_capability_status,
 )
-
-
-register_provider_bundle(
-    ProviderBundle(
-        catalog=ProviderSpec(
-            name="frontiers",
-            display_name="Frontiers",
-            official=True,
-            domains=("www.frontiersin.org", "frontiersin.org"),
-            doi_prefixes=("10.3389/",),
-            publisher_aliases=(
-                "frontiers",
-                "frontiers media",
-                "frontiers media s.a.",
-                "frontiers media sa",
-            ),
-            asset_default="body",
-            probe_capability="routing_signal",
-            provider_managed_abstract_only=False,
-            client_factory_path="paper_fetch.providers.frontiers:FrontiersClient",
-            status_order=18,
-            base_domains=("www.frontiersin.org",),
-            landing_path_templates=("/articles/{doi}/full",),
-            xml_path_templates=("/journals/{journal_slug}/articles/{doi}/xml",),
-            pdf_path_templates=(
-                "/journals/{journal_slug}/articles/{doi}/pdf",
-                "/articles/{doi}/pdf",
-            ),
-            emits_html_managed_marker=False,
-            html_capable=False,
-            xml_root_tags=("article",),
-            xml_file_tokens=("10.3389", "frontiers"),
-            body_text_thresholds=BodyTextThresholds(min_chars=1200),
-        ),
-        html_rules=ProviderHtmlRules(
-            name="frontiers",
-            front_matter=ProviderFrontMatterRules(
-                exact_texts=(),
-                contains_tokens=(),
-                publication_keywords=("frontiers", "frontiers media"),
-            ),
-            availability=AvailabilityPolicy(name="frontiers", no_signals=True),
-        ),
-        sources=("frontiers_xml", "frontiers_pdf"),
-    )
-)
-
 
 FRONTIERS_HOST = "https://www.frontiersin.org"
 FRONTIERS_CANONICAL_ARTICLE_PATTERN = re.compile(
@@ -129,6 +89,15 @@ FRONTIERS_ARTICLE_ID_PATTERN = re.compile(
 )
 FRONTIERS_GRAPHIC_FILENAME_PATTERN = re.compile(
     r"(?P<article_id>\d+)-g\d+",
+    flags=re.IGNORECASE,
+)
+FRONTIERS_ORIGINAL_GRAPHIC_URL_PATTERN = re.compile(
+    r"https?://(?:www\.)?frontiersin\.org/files/Articles/"
+    r"\d+/xml-images/[^\"'<>?&#\s]+",
+    flags=re.IGNORECASE,
+)
+FRONTIERS_ORIGINAL_GRAPHIC_PATH_PATTERN = re.compile(
+    r"^/files/Articles/\d+/xml-images/[^/]+$",
     flags=re.IGNORECASE,
 )
 
@@ -168,12 +137,6 @@ def _is_frontiers_url(value: str | None) -> bool:
     parsed = urllib.parse.urlparse(normalize_text(value))
     host = normalize_text(parsed.hostname or "").lower()
     return host == "frontiersin.org" or host == "www.frontiersin.org"
-
-
-def _append_unique(values: list[str], candidate: str | None) -> None:
-    normalized = normalize_text(candidate)
-    if normalized and normalized not in values:
-        values.append(normalized)
 
 
 def _frontiers_legacy_landing_url(doi: str) -> str:
@@ -257,13 +220,13 @@ def _metadata_frontiers_urls(metadata: Mapping[str, Any]) -> list[str]:
     for key in ("landing_page_url", "source_url", "url"):
         value = normalize_text(str(metadata.get(key) or ""))
         if _is_frontiers_url(value):
-            _append_unique(urls, value)
+            extend_unique(urls, [value])
     for item in metadata.get("fulltext_links") or ():
         if not isinstance(item, Mapping):
             continue
         value = normalize_text(str(item.get("url") or ""))
         if _is_frontiers_url(value):
-            _append_unique(urls, value)
+            extend_unique(urls, [value])
     return urls
 
 
@@ -288,6 +251,107 @@ def _frontiers_graphic_url(*, doi: str | None, href: str | None) -> str:
     if not article_id:
         return ""
     return f"{FRONTIERS_HOST}/files/Articles/{article_id}/xml-images/{stem}.webp"
+
+
+def _frontiers_graphic_stem(value: str | None) -> str:
+    normalized = normalize_text(value)
+    if not normalized:
+        return ""
+    parsed = urllib.parse.urlparse(normalized)
+    filename = PurePosixPath(urllib.parse.unquote(parsed.path)).name
+    return filename.rsplit(".", 1)[0] if filename else ""
+
+
+def _is_frontiers_original_graphic_url(value: str | None) -> bool:
+    normalized = normalize_text(value)
+    if not normalized:
+        return False
+    parsed = urllib.parse.urlparse(normalized)
+    return (
+        parsed.scheme.lower() in {"http", "https"}
+        and _is_frontiers_url(normalized)
+        and bool(FRONTIERS_ORIGINAL_GRAPHIC_PATH_PATTERN.fullmatch(parsed.path))
+    )
+
+
+def _frontiers_original_graphics_from_landing(html_text: str) -> dict[str, str]:
+    original_graphics: dict[str, str] = {}
+    for match in FRONTIERS_ORIGINAL_GRAPHIC_URL_PATTERN.finditer(
+        html.unescape(str(html_text or ""))
+    ):
+        candidate = normalize_text(match.group(0))
+        stem = _frontiers_graphic_stem(candidate)
+        if stem and _is_frontiers_original_graphic_url(candidate):
+            original_graphics.setdefault(stem, candidate)
+    return original_graphics
+
+
+def _frontiers_asset_graphic_stems(asset: Mapping[str, Any]) -> list[str]:
+    stems: list[str] = []
+    for key in (
+        "download_url",
+        "full_size_url",
+        "url",
+        "original_url",
+        "link",
+        "preview_url",
+    ):
+        extend_unique(stems, [_frontiers_graphic_stem(str(asset.get(key) or ""))])
+    alternatives = asset.get("alternatives")
+    if isinstance(alternatives, Sequence) and not isinstance(
+        alternatives, (bytes, bytearray, str)
+    ):
+        for alternative in alternatives:
+            if not isinstance(alternative, Mapping):
+                continue
+            for key in ("url", "original_url"):
+                extend_unique(
+                    stems,
+                    [_frontiers_graphic_stem(str(alternative.get(key) or ""))],
+                )
+    return stems
+
+
+def _promote_frontiers_original_graphics(
+    assets: Sequence[Mapping[str, Any]],
+    *,
+    original_graphics: Mapping[str, str],
+) -> tuple[list[dict[str, Any]], dict[str, str]]:
+    promoted_assets: list[dict[str, Any]] = []
+    replacements: dict[str, str] = {}
+    for item in assets:
+        asset = dict(item)
+        kind = normalize_text(
+            str(asset.get("kind") or asset.get("asset_type") or "")
+        ).lower()
+        matched_url = ""
+        if kind in {"figure", "formula"}:
+            matched_url = next(
+                (
+                    normalize_text(original_graphics.get(stem))
+                    for stem in _frontiers_asset_graphic_stems(asset)
+                    if normalize_text(original_graphics.get(stem))
+                ),
+                "",
+            )
+        if matched_url:
+            for key in (
+                "download_url",
+                "full_size_url",
+                "url",
+                "original_url",
+                "link",
+                "preview_url",
+            ):
+                previous = normalize_text(str(asset.get(key) or ""))
+                if previous and previous != matched_url:
+                    replacements[previous] = matched_url
+            asset["link"] = matched_url
+            asset["original_url"] = matched_url
+            asset["download_url"] = matched_url
+            asset["full_size_url"] = matched_url
+        promoted_assets.append(asset)
+    return promoted_assets, replacements
 
 
 def _frontiers_supplementary_anchor(landing_url: str) -> str:
@@ -360,6 +424,13 @@ def _normalize_frontiers_extracted_assets(
                 asset["archive_state"] = "downloadable"
             elif supplementary_anchor:
                 asset["link"] = supplementary_anchor
+                asset["original_url"] = supplementary_anchor
+                if (
+                    source_href
+                    and str(asset.get("heading") or "").casefold()
+                    == "supplementary material"
+                ):
+                    asset["heading"] = f"Supplementary material ({source_href})"
                 asset["archive_state"] = "not_archived"
                 asset["not_archived_reason"] = (
                     "Frontiers supplementary entry did not expose a downloadable URL."
@@ -374,73 +445,33 @@ def _normalize_frontiers_extracted_assets(
     return normalized_assets, replacements
 
 
-def _merge_assets(
-    extracted_assets: Sequence[Mapping[str, Any]] | None,
-    downloaded_assets: Sequence[Mapping[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    by_identity: dict[str, dict[str, Any]] = {}
-    for item in extracted_assets or []:
-        asset = dict(item)
-        merged.append(asset)
-        identity = html_asset_identity_key(asset)
-        if identity:
-            by_identity[identity] = asset
-    for item in downloaded_assets or []:
-        asset = dict(item)
-        identity = html_asset_identity_key(asset)
-        existing = by_identity.get(identity) if identity else None
-        if existing is not None:
-            existing.update(asset)
-            continue
-        merged.append(asset)
-        if identity:
-            by_identity[identity] = asset
-    return merged
-
-
-def _filter_assets_for_profile(
-    assets: Sequence[Mapping[str, Any]] | None,
-    *,
-    asset_profile: AssetProfile,
-) -> list[dict[str, Any]]:
-    if asset_profile == "none":
-        return []
-    filtered: list[dict[str, Any]] = []
-    for item in assets or []:
-        asset = dict(item)
-        kind = normalize_text(
-            str(asset.get("kind") or asset.get("asset_type") or "")
-        ).lower()
-        section = normalize_text(str(asset.get("section") or "")).lower()
-        if asset_profile != "all" and (
-            kind == "supplementary" or section == "supplementary"
-        ):
-            continue
-        filtered.append(asset)
-    return filtered
-
-
 def _frontiers_figure_candidates(
     _transport, *, asset, user_agent, figure_page_fetcher=None
 ) -> list[str]:
     del _transport, user_agent, figure_page_fetcher
     candidates: list[str] = []
     doi = normalize_text(str(asset.get("doi") or ""))
-    for key in (
+    keys = (
         "download_url",
         "full_size_url",
         "url",
         "original_url",
         "link",
         "preview_url",
-    ):
-        value = normalize_text(str(asset.get(key) or ""))
+    )
+    values = [normalize_text(str(asset.get(key) or "")) for key in keys]
+    extend_unique(
+        candidates,
+        [value for value in values if _is_frontiers_original_graphic_url(value)],
+    )
+    for value in values:
         derived = _frontiers_graphic_url(doi=doi, href=value)
         if derived:
-            _append_unique(candidates, derived)
-        if value.startswith(("http://", "https://")):
-            _append_unique(candidates, value)
+            extend_unique(candidates, [derived])
+    extend_unique(
+        candidates,
+        [value for value in values if value.startswith(("http://", "https://"))],
+    )
     return candidates
 
 
@@ -488,16 +519,37 @@ class FrontiersClient(ProviderClient):
     def _asset_headers(self) -> dict[str, str]:
         return {"User-Agent": self.user_agent}
 
+    def _landing_original_graphics(self, landing_url: str) -> dict[str, str]:
+        if not _is_frontiers_url(landing_url):
+            return {}
+        try:
+            landing = fetch_landing_html(
+                landing_url,
+                transport=self.transport,
+                headers=self._landing_headers(),
+                timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+                retry_on_transient=True,
+                max_redirects=self.landing_max_redirects,
+            )
+        except (OSError, RequestFailure):
+            return {}
+        if int(landing.status_code or 200) >= 400:
+            return {}
+        content_type = header_value(landing.headers, "content-type", "text/html")
+        if "html" not in normalize_text(content_type).lower():
+            return {}
+        return _frontiers_original_graphics_from_landing(landing.html_text)
+
     def landing_candidates(self, doi: str, metadata: Mapping[str, Any]) -> list[str]:
         candidates: list[str] = []
         for value in _metadata_frontiers_urls(metadata):
             routes = _canonical_routes_from_url(value)
-            _append_unique(
-                candidates, routes.landing_url if routes is not None else value
+            extend_unique(
+                candidates, [routes.landing_url if routes is not None else value]
             )
         normalized_doi = normalize_doi(doi)
         if normalized_doi:
-            _append_unique(candidates, _frontiers_legacy_landing_url(normalized_doi))
+            extend_unique(candidates, [_frontiers_legacy_landing_url(normalized_doi)])
         return candidates
 
     def route_candidates(
@@ -646,6 +698,7 @@ class FrontiersClient(ProviderClient):
         return build_provider_payload(
             provider=self.name,
             route_kind="xml",
+            route_name="xml",
             source_url=final_url,
             content_type=content_type,
             body=body,
@@ -684,6 +737,7 @@ class FrontiersClient(ProviderClient):
         try:
             pdf_result = PdfFallbackStrategy(
                 transport=self.transport,
+                provider_name="frontiers",
                 headers=default_pdf_headers(self.user_agent, referer=route.landing_url),
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 asset_profile=effective_asset_profile,
@@ -698,6 +752,7 @@ class FrontiersClient(ProviderClient):
                 fetcher=fetch_pdf_over_http,
             ).fetch([route.pdf_url])
         except PdfFetchFailure as exc:
+            propagate_paywall(exc)
             raise ProviderFailure(NO_RESULT, exc.message) from exc
 
         article_metadata = dict(metadata)
@@ -706,6 +761,7 @@ class FrontiersClient(ProviderClient):
         return build_provider_payload(
             provider=self.name,
             route_kind=PDF_FALLBACK,
+            route_name="direct_pdf",
             source_url=pdf_result.final_url or pdf_result.source_url or route.pdf_url,
             content_type=PDF_MIME_TYPE,
             body=pdf_result.pdf_bytes,
@@ -730,7 +786,6 @@ class FrontiersClient(ProviderClient):
                 fulltext_marker(self.name, "fail", route="xml"),
                 fulltext_marker(self.name, "ok", route=PDF_FALLBACK),
             ],
-            content_needs_local_copy=True,
             needs_local_copy=True,
         )
 
@@ -757,6 +812,7 @@ class FrontiersClient(ProviderClient):
                     self._fetch_xml_payload(route, doi, metadata),
                 )
             except ProviderFailure as exc:
+                propagate_paywall(exc)
                 failures.append(("xml", exc))
 
             xml_failure_message = combine_provider_failures(failures).message
@@ -773,6 +829,7 @@ class FrontiersClient(ProviderClient):
                     ),
                 )
             except ProviderFailure as exc:
+                propagate_paywall(exc)
                 failures.append(("pdf", exc))
 
         discovered_routes = self.route_candidates(
@@ -794,6 +851,7 @@ class FrontiersClient(ProviderClient):
                     self._fetch_xml_payload(route, doi, metadata),
                 )
             except ProviderFailure as exc:
+                propagate_paywall(exc)
                 failures.append(("xml", exc))
 
         xml_failure_message = (
@@ -815,6 +873,7 @@ class FrontiersClient(ProviderClient):
                     ),
                 )
             except ProviderFailure as exc:
+                propagate_paywall(exc)
                 failures.append(("pdf", exc))
 
         combined = combine_provider_failures(failures)
@@ -842,6 +901,69 @@ class FrontiersClient(ProviderClient):
             != PDF_FALLBACK
         )
 
+    def _resolve_supplementary_urls(
+        self,
+        assets: Sequence[Mapping[str, Any]],
+        doi: str,
+    ) -> list[dict[str, Any]]:
+        resolved = [dict(asset) for asset in assets]
+        pending = [
+            asset
+            for asset in resolved
+            if asset.get("archive_state") == "not_archived"
+            and asset.get("source_href")
+            and PurePosixPath(str(asset["source_href"])).name == asset["source_href"]
+            and not urllib.parse.urlparse(str(asset["source_href"])).scheme
+        ]
+        article_id = _article_id_from_doi(doi)
+        if not pending or not article_id:
+            return resolved
+        api_url = f"{FRONTIERS_HOST}/api/v4/articles/{article_id}/supplemental-data"
+        try:
+            response = self.transport.request(
+                "GET",
+                api_url,
+                headers={"Accept": "application/json", "User-Agent": self.user_agent},
+                timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
+            )
+            status = int(response.get("status_code") or 200)
+            if status >= 400:
+                raise ValueError(f"HTTP {status}")
+            entries = json.loads(_response_body(response))
+            if not isinstance(entries, list):
+                raise ValueError("invalid attachment list")
+        except (RequestFailure, ValueError) as exc:
+            for asset in pending:
+                asset["not_archived_reason"] = (
+                    f"Frontiers supplemental-data lookup failed: {exc}"
+                )
+            return resolved
+        for asset in pending:
+            name = re.sub(r"[\s_]+", "", str(asset["source_href"])).casefold()
+            matches = [
+                entry
+                for entry in entries
+                if isinstance(entry, Mapping)
+                and re.sub(r"[\s_]+", "", str(entry.get("name") or "")).casefold()
+                == name
+            ]
+            if len(matches) != 1:
+                continue
+            url = str(matches[0].get("downloadUrl") or "")
+            parsed = urllib.parse.urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                continue
+            asset.update(
+                download_url=url,
+                original_url=url,
+                link=url,
+                archive_state="downloadable",
+                source_page_url=api_url,
+                filename_hint=str(matches[0]["name"]),
+            )
+            asset.pop("not_archived_reason", None)
+        return resolved
+
     def download_related_assets(
         self,
         doi: str,
@@ -861,7 +983,7 @@ class FrontiersClient(ProviderClient):
         ).lower()
         if route == PDF_FALLBACK:
             return empty_asset_results()
-        extracted_assets = _filter_assets_for_profile(
+        extracted_assets = filter_assets_for_profile(
             list(content.extracted_assets if content is not None else []),
             asset_profile=asset_profile,
         )
@@ -879,6 +1001,44 @@ class FrontiersClient(ProviderClient):
             ).lower()
             in {"figure", "formula"}
         ]
+        if body_image_assets and content is not None:
+            landing_metadata = content.merged_metadata or {}
+            landing_url = normalize_text(
+                str(
+                    landing_metadata.get("landing_page_url")
+                    or metadata.get("landing_page_url")
+                    or ""
+                )
+            )
+            original_graphics = self._landing_original_graphics(landing_url)
+            if original_graphics:
+                promoted_assets, replacements = _promote_frontiers_original_graphics(
+                    content.extracted_assets,
+                    original_graphics=original_graphics,
+                )
+                content = replace(
+                    content,
+                    extracted_assets=promoted_assets,
+                    markdown_text=_replace_markdown_urls(
+                        content.markdown_text or "", replacements
+                    ),
+                )
+                raw_payload.content = content
+                extracted_assets = filter_assets_for_profile(
+                    promoted_assets,
+                    asset_profile=asset_profile,
+                )
+                body_assets, supplementary_assets = split_body_and_supplementary_assets(
+                    extracted_assets
+                )
+                body_image_assets = [
+                    dict(item)
+                    for item in body_assets
+                    if normalize_text(
+                        str(item.get("kind") or item.get("asset_type") or "")
+                    ).lower()
+                    in {"figure", "formula"}
+                ]
         merged_metadata = content.merged_metadata if content is not None else None
         article_id = (
             normalize_doi(str((merged_metadata or {}).get("doi") or doi or ""))
@@ -898,13 +1058,25 @@ class FrontiersClient(ProviderClient):
                     output_dir=output_dir,
                     user_agent=self.user_agent,
                     asset_profile=asset_profile,
-                    headers=self._asset_headers(),
-                    candidate_builder=_frontiers_figure_candidates,
-                    asset_download_concurrency=concurrency,
-                    fetch_policy="direct_then_browser",
+                    options=AssetDownloadOptions(
+                        headers=self._asset_headers(),
+                        candidate_builder=_frontiers_figure_candidates,
+                        asset_download_concurrency=concurrency,
+                        fetch_policy="direct_then_browser",
+                        provider_name="frontiers",
+                        runtime_context=context,
+                    ),
                 )
             )
         if asset_profile == "all" and supplementary_assets:
+            supplementary_assets = self._resolve_supplementary_urls(
+                supplementary_assets, doi
+            )
+            if content is not None:
+                content = replace(
+                    content, extracted_assets=[*body_assets, *supplementary_assets]
+                )
+                raw_payload.content = content
             downloadable = [
                 dict(asset)
                 for asset in supplementary_assets
@@ -921,9 +1093,13 @@ class FrontiersClient(ProviderClient):
                         output_dir=output_dir,
                         user_agent=self.user_agent,
                         asset_profile=asset_profile,
-                        headers=self._asset_headers(),
-                        asset_download_concurrency=concurrency,
-                        fetch_policy="direct_then_browser",
+                        options=AssetDownloadOptions(
+                            headers=self._asset_headers(),
+                            asset_download_concurrency=concurrency,
+                            fetch_policy="direct_then_browser",
+                            provider_name="frontiers",
+                            runtime_context=context,
+                        ),
                     )
                 )
             unresolved_failures = [
@@ -995,7 +1171,7 @@ class FrontiersClient(ProviderClient):
         )
         markdown_text = str(
             (content.markdown_text if content is not None else "") or ""
-        ).strip()
+        )
         if not markdown_text:
             warnings.append("Frontiers retrieval did not produce usable Markdown.")
             return metadata_only_article(
@@ -1018,7 +1194,7 @@ class FrontiersClient(ProviderClient):
             ]
         abstract_sections = diagnostics.get("abstract_sections")
         semantic_losses = diagnostics.get("semantic_losses")
-        assets = _merge_assets(
+        assets = merge_extracted_and_downloaded_assets(
             list(content.extracted_assets if content is not None else []),
             list(downloaded_assets or []),
         )
@@ -1030,6 +1206,14 @@ class FrontiersClient(ProviderClient):
             abstract_sections=abstract_sections
             if isinstance(abstract_sections, list)
             else None,
+            # Match the existing provider convention for retained back matter:
+            # body enables rendering; it does not describe scientific content.
+            section_hints=[
+                {"heading": heading, "kind": "body"}
+                for heading in ("Author contributions", "Acknowledgments")
+            ]
+            if source == "frontiers_xml"
+            else None,
             assets=assets,
             warnings=warnings,
             trace=trace,
@@ -1039,6 +1223,9 @@ class FrontiersClient(ProviderClient):
         )
         if asset_failures:
             article.quality.asset_failures = [dict(item) for item in asset_failures]
+        for asset in article.assets:
+            if asset.kind == "supplementary" and not asset.path:
+                asset.url = asset.original_url or asset.source_url
         return article
 
     def describe_artifacts(
@@ -1074,3 +1261,63 @@ class FrontiersClient(ProviderClient):
 
 
 __all__ = ["FrontiersClient"]
+
+
+PROVIDER_BUNDLE = ProviderBundle(
+    client_factory=FrontiersClient,
+    catalog=ProviderSpec(
+        name="frontiers",
+        display_name="Frontiers",
+        official=True,
+        domains=("www.frontiersin.org", "frontiersin.org"),
+        doi_prefixes=("10.3389/",),
+        publisher_aliases=(
+            "frontiers",
+            "frontiers media",
+            "frontiers media s.a.",
+            "frontiers media sa",
+        ),
+        asset_default="body",
+        probe_capability="routing_signal",
+        provider_managed_abstract_only=False,
+        status_order=18,
+        base_domains=("www.frontiersin.org",),
+        landing_path_templates=("/articles/{doi}/full",),
+        xml_path_templates=("/journals/{journal_slug}/articles/{doi}/xml",),
+        pdf_path_templates=(
+            "/journals/{journal_slug}/articles/{doi}/pdf",
+            "/articles/{doi}/pdf",
+        ),
+        emits_html_managed_marker=False,
+        html_capable=False,
+        xml_root_tags=("article",),
+        xml_file_tokens=("10.3389", "frontiers"),
+        body_text_thresholds=BodyTextThresholds(min_chars=1200),
+        routes=(
+            ProviderRouteSpec(name="metadata", kind="metadata"),
+            ProviderRouteSpec(name="xml", kind="xml"),
+            ProviderRouteSpec(
+                name="direct_pdf",
+                kind="pdf",
+                requires_pdf_conversion=True,
+            ),
+            ProviderRouteSpec(
+                name="assets",
+                kind="assets",
+                timeout_seconds=20,
+                concurrency=2,
+                transient_retries=2,
+            ),
+        ),
+    ),
+    html_rules=ProviderHtmlRules(
+        name="frontiers",
+        front_matter=ProviderFrontMatterRules(
+            exact_texts=(),
+            contains_tokens=(),
+            publication_keywords=("frontiers", "frontiers media"),
+        ),
+        availability=AvailabilityPolicy(name="frontiers"),
+    ),
+    sources=("frontiers_xml", "frontiers_pdf"),
+)

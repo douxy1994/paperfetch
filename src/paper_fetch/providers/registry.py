@@ -2,13 +2,14 @@
 
 from __future__ import annotations
 
-import importlib
-from collections.abc import Iterable, Mapping
+
+from collections.abc import Iterable, Iterator, Mapping
+import threading
 
 from ..config import build_runtime_env
 from ..failure import FailureDiagnostics
 from ..http import HttpTransport
-from ..provider_catalog import ordered_provider_specs
+from ..provider_catalog import PROVIDER_BUNDLES
 from ..reason_codes import ERROR
 from .base import (
     ProviderClient,
@@ -68,14 +69,6 @@ class FailedProviderClient(ProviderClient):
         self._raise()
 
 
-def _client_factory(factory_path: str):
-    module_path, _, attribute = factory_path.partition(":")
-    if not module_path or not attribute:
-        raise ValueError(f"Invalid provider client factory path: {factory_path!r}")
-    module = importlib.import_module(module_path)
-    return getattr(module, attribute)
-
-
 def build_clients(
     transport: HttpTransport | None = None,
     env: Mapping[str, str] | None = None,
@@ -84,7 +77,7 @@ def build_clients(
 ) -> dict[str, ProviderClient]:
     active_transport = transport if transport is not None else HttpTransport()
     active_env = env if env is not None else build_runtime_env()
-    specs = ordered_provider_specs()
+    bundles = PROVIDER_BUNDLES
     selected = (
         None
         if provider_names is None
@@ -94,17 +87,17 @@ def build_clients(
             if str(name or "").strip()
         }
     )
-    known = {spec.name for spec in specs}
+    known = {bundle.catalog.name for bundle in bundles}
     unknown = sorted((selected or set()) - known)
     if unknown:
         raise ValueError(f"Unknown provider client(s): {', '.join(unknown)}")
     clients: dict[str, ProviderClient] = {}
-    for spec in specs:
+    for bundle in bundles:
+        spec = bundle.catalog
         if selected is not None and spec.name not in selected:
             continue
         try:
-            factory = _client_factory(spec.client_factory_path)
-            clients[spec.name] = factory(active_transport, active_env)
+            clients[spec.name] = bundle.client_factory(active_transport, active_env)
         except Exception as exc:  # noqa: BLE001 - isolate one provider factory.
             clients[spec.name] = FailedProviderClient(
                 name=spec.name,
@@ -112,6 +105,33 @@ def build_clients(
                 error=exc,
             )
     return clients
+
+
+class LazyProviderClients(Mapping[str, ProviderClient]):
+    """Request-local, thread-safe client creation with isolated factory failures."""
+
+    def __init__(self, transport: HttpTransport, env: Mapping[str, str]):
+        self._transport = transport
+        self._env = env
+        self._names = tuple(bundle.catalog.name for bundle in PROVIDER_BUNDLES)
+        self._clients: dict[str, ProviderClient] = {}
+        self._lock = threading.RLock()
+
+    def __iter__(self) -> Iterator[str]:
+        return iter(self._names)
+
+    def __len__(self) -> int:
+        return len(self._names)
+
+    def __getitem__(self, name: str) -> ProviderClient:
+        if name not in self._names:
+            raise KeyError(name)
+        with self._lock:
+            if name not in self._clients:
+                self._clients.update(
+                    build_clients(self._transport, self._env, provider_names=(name,))
+                )
+            return self._clients[name]
 
 
 __all__ = ["FailedProviderClient", "build_clients"]

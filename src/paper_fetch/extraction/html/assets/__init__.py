@@ -28,8 +28,10 @@ from .dom import (
 )
 from .formulas import extract_formula_assets as extract_formula_assets
 from .identity import (
+    filter_assets_for_profile as filter_assets_for_profile,
     html_asset_identity_key as html_asset_identity_key,
     html_asset_is_supplementary as html_asset_is_supplementary,
+    merge_extracted_and_downloaded_assets as merge_extracted_and_downloaded_assets,
     split_body_and_supplementary_assets as split_body_and_supplementary_assets,
 )
 from .supplementary import (
@@ -43,6 +45,8 @@ from .supplementary import (
     supplementary_text_tokens_for_profile as supplementary_text_tokens_for_profile,
 )
 from .download import (
+    AssetDownloadOptions as AssetDownloadOptions,
+    AssetFetchPolicy as AssetFetchPolicy,
     browser_asset_recovery_allowed as browser_asset_recovery_allowed,
 )
 from .figures import FigurePageFetcher as FigurePageFetcher
@@ -60,14 +64,7 @@ _PUBLIC_MODULES = (
 for _module in _PUBLIC_MODULES:
     globals().update({name: getattr(_module, name) for name in _module.__all__})
 
-_build_cookie_seeded_opener = download._build_cookie_seeded_opener
-_request_with_opener = download._request_with_opener
-
-
-def download_assets(*args, **kwargs):
-    kwargs.setdefault("cookie_opener_builder", _build_cookie_seeded_opener)
-    kwargs.setdefault("opener_requester", _request_with_opener)
-    return download.download_assets(*args, **kwargs)
+download_assets = download.download_assets
 
 
 __all__ = list(

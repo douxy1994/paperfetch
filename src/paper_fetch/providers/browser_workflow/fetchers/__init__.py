@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import time as time
 from .context import (
+    BrowserDocumentFetcherOptions,
     _BaseBrowserDocumentFetcher,
     _SharedBrowserPageSession,
     _choose_browser_seed_url,
@@ -14,7 +15,6 @@ from .context import (
 )
 from .diagnostics import (
     BROWSER_CONTEXT_ERROR,
-    _browser_image_payload_failure_reason,
     _compact_failure_diagnostic,
 )
 from .file import (
@@ -43,6 +43,7 @@ __all__ = [
     "BROWSER_CONTEXT_ERROR",
     "_IMAGE_DOCUMENT_FETCH_TIMEOUT_MS",
     "BodyDomReadinessResult",
+    "BrowserDocumentFetcherOptions",
     "_BaseBrowserDocumentFetcher",
     "_MemoizedFigurePageFetcher",
     "_MemoizedImageDocumentFetcher",
@@ -52,7 +53,6 @@ __all__ = [
     "_ThreadLocalSharedBrowserFileDocumentFetcher",
     "_ThreadLocalSharedBrowserImageDocumentFetcher",
     "_browser_image_document_payload",
-    "_browser_image_payload_failure_reason",
     "_build_shared_browser_file_fetcher",
     "_build_shared_browser_image_fetcher",
     "_choose_browser_seed_url",

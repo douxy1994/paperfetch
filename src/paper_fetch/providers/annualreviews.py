@@ -14,96 +14,89 @@ from ..extraction.html.provider_rules import (
     ProviderHtmlRules,
 )
 from ..models import AssetProfile
-from ..provider_catalog import BodyTextThresholds, ProviderSpec
+from ..provider_catalog import (
+    BodyTextThresholds,
+    ProviderRouteSpec,
+    ProviderSpec,
+    host_matches_domain,
+)
 from ..publisher_identity import normalize_doi
-from ..reason_codes import PDF_FALLBACK
 from ..runtime import RuntimeContext
-from ..utils import empty_asset_results, normalize_text
+from ..utils import empty_asset_results, extend_unique, normalize_text
 from . import _annualreviews_html, browser_workflow
-from ._registry import ProviderBundle, register_provider_bundle
+from ._pdf_candidates import build_direct_pdf_candidates
+from ._registry import ProviderBundle
 from .base import RawFulltextPayload
 
-
-register_provider_bundle(
-    ProviderBundle(
-        catalog=ProviderSpec(
-            name="annualreviews",
-            display_name="Annual Reviews",
-            official=True,
-            domains=("annualreviews.org", "www.annualreviews.org"),
-            doi_prefixes=("10.1146/",),
-            publisher_aliases=(
-                "annual reviews",
-                "annual reviews inc",
-                "annual reviews inc.",
-            ),
-            asset_default="body",
-            probe_capability="routing_signal",
-            provider_managed_abstract_only=True,
-            client_factory_path="paper_fetch.providers.annualreviews:AnnualreviewsClient",
-            status_order=12,
-            base_domains=("www.annualreviews.org",),
-            html_path_templates=(
-                "/content/journals/{doi}",
-                "/doi/{doi}",
-            ),
-            pdf_path_templates=("/doi/pdf/{doi}",),
-            crossref_pdf_position=0,
+_PROVIDER_SPEC = ProviderSpec(
+    name="annualreviews",
+    display_name="Annual Reviews",
+    official=True,
+    domains=("annualreviews.org", "www.annualreviews.org"),
+    doi_prefixes=("10.1146/",),
+    publisher_aliases=(
+        "annual reviews",
+        "annual reviews inc",
+        "annual reviews inc.",
+    ),
+    asset_default="body",
+    probe_capability="routing_signal",
+    provider_managed_abstract_only=True,
+    status_order=12,
+    base_domains=("www.annualreviews.org",),
+    html_path_templates=(
+        "/content/journals/{doi}",
+        "/doi/{doi}",
+    ),
+    pdf_path_templates=("/doi/pdf/{doi}",),
+    crossref_pdf_position=0,
+    body_text_thresholds=BodyTextThresholds(min_chars=1200),
+    routes=(
+        ProviderRouteSpec(name="metadata", kind="metadata"),
+        ProviderRouteSpec(
+            name="browser_html",
+            kind="html",
+            browser_required=True,
+            browser_preflight=True,
+            auth_supported=True,
             requires_playwright=True,
-            requires_browser_runtime=True,
-            body_text_thresholds=BodyTextThresholds(min_chars=1200),
+            concurrency=1,
         ),
-        html_rules=ProviderHtmlRules(
-            name="annualreviews",
-            noise_profile=_annualreviews_html.ANNUALREVIEWS_NOISE_PROFILE,
-            cleanup=ProviderCleanupRules(
-                markdown_promo_tokens=_annualreviews_html.ANNUALREVIEWS_MARKDOWN_PROMO_TOKENS,
-                extraction_cleanup_selectors=_annualreviews_html.ANNUALREVIEWS_EXTRACTION_CLEANUP_SELECTORS,
-                post_content_break_tokens=_annualreviews_html.ANNUALREVIEWS_POST_CONTENT_BREAK_TOKENS,
-            ),
-            front_matter=ProviderFrontMatterRules(
-                exact_texts=_annualreviews_html.ANNUALREVIEWS_FRONT_MATTER_EXACT_TEXTS,
-                contains_tokens=_annualreviews_html.ANNUALREVIEWS_FRONT_MATTER_CONTAINS_TOKENS,
-                publication_keywords=("annual reviews",),
-            ),
-            assets=ProviderAssetRules(
-                supplementary_text_tokens=_annualreviews_html.ANNUALREVIEWS_SUPPLEMENTARY_TEXT_TOKENS,
-            ),
-            availability=AvailabilityPolicy(
-                name="annualreviews",
-                site_rule_overrides=_annualreviews_html.ANNUALREVIEWS_SITE_RULE_OVERRIDES,
-                no_signals=True,
-            ),
+        ProviderRouteSpec(
+            name="browser_pdf",
+            kind="pdf",
+            browser_required=True,
+            browser_preflight=True,
+            auth_supported=True,
+            requires_playwright=True,
+            requires_pdf_conversion=True,
+            concurrency=1,
         ),
-        sources=("annualreviews_html", "annualreviews_pdf"),
-    )
+        ProviderRouteSpec(
+            name="assets",
+            kind="assets",
+            concurrency=2,
+            asset_scope="body",
+        ),
+    ),
 )
-
 
 ANNUALREVIEWS_BROWSER_PROFILE = browser_workflow.make_browser_profile(
     "annualreviews",
-    article_source_name="annualreviews_html",
+    catalog=_PROVIDER_SPEC,
     fallback_author_extractor=_annualreviews_html.extract_authors,
     policy=browser_workflow.BrowserWorkflowPolicy(
         blocked_resource_types=("image", "font", "media"),
-        preflight_html_reuse=True,
         direct_figure_page_fallback=True,
     ),
 )
 
 
 def _is_annualreviews_url(value: str | None) -> bool:
-    parsed = urlparse(normalize_text(value))
-    host = normalize_text(parsed.hostname or "").lower()
-    return host in {"annualreviews.org", "www.annualreviews.org"} or host.endswith(
-        ".annualreviews.org"
+    hostname = urlparse(normalize_text(value)).hostname
+    return any(
+        host_matches_domain(hostname, domain) for domain in _PROVIDER_SPEC.domains
     )
-
-
-def _append_unique(values: list[str], candidate: str | None) -> None:
-    normalized = normalize_text(candidate)
-    if normalized and normalized not in values:
-        values.append(normalized)
 
 
 class AnnualreviewsClient(browser_workflow.BrowserWorkflowClient):
@@ -122,14 +115,17 @@ class AnnualreviewsClient(browser_workflow.BrowserWorkflowClient):
         candidates: list[str] = []
         landing = normalize_text(str(metadata.get("landing_page_url") or ""))
         if _is_annualreviews_url(landing):
-            _append_unique(candidates, landing)
+            extend_unique(candidates, [landing])
         if normalized_doi:
             quoted = quote(normalized_doi, safe="/")
-            _append_unique(
-                candidates, f"https://www.annualreviews.org/content/journals/{quoted}"
+            extend_unique(
+                candidates,
+                [
+                    f"https://www.annualreviews.org/content/journals/{quoted}",
+                    f"https://www.annualreviews.org/doi/{quoted}",
+                    f"https://doi.org/{quoted}",
+                ],
             )
-            _append_unique(candidates, f"https://www.annualreviews.org/doi/{quoted}")
-            _append_unique(candidates, f"https://doi.org/{quoted}")
         return candidates
 
     def pdf_candidates(self, doi: str, metadata: Mapping[str, Any]) -> list[str]:
@@ -139,10 +135,10 @@ class AnnualreviewsClient(browser_workflow.BrowserWorkflowClient):
         source_url = normalize_text(
             str(metadata.get("landing_page_url") or "")
         ) or _annualreviews_html.direct_article_url(normalized_doi)
-        return _annualreviews_html.pdf_candidate_urls(
+        return build_direct_pdf_candidates(
             metadata,
             source_url=source_url,
-            doi=normalized_doi,
+            direct_pdf_url=_annualreviews_html.direct_pdf_url(normalized_doi),
         )
 
     def extract_markdown(
@@ -157,15 +153,6 @@ class AnnualreviewsClient(browser_workflow.BrowserWorkflowClient):
             final_url,
             metadata=metadata,
         )
-
-    def article_source_for_payload(self, raw_payload: RawFulltextPayload) -> str:
-        content = raw_payload.content
-        route = normalize_text(
-            content.route_kind if content is not None else ""
-        ).lower()
-        if route == PDF_FALLBACK:
-            return "annualreviews_pdf"
-        return "annualreviews_html"
 
     def to_article_model(
         self,
@@ -194,6 +181,13 @@ class AnnualreviewsClient(browser_workflow.BrowserWorkflowClient):
             not current_title or (doi and normalize_doi(current_title) == doi)
         ):
             effective_metadata["title"] = title
+        if content is not None and content.route_kind == "html":
+            downloaded_assets = [
+                dict(asset, render_state="inline")
+                if asset.get("kind") == "figure"
+                else asset
+                for asset in (downloaded_assets or [])
+            ]
         return super().to_article_model(
             effective_metadata,
             raw_payload,
@@ -245,3 +239,32 @@ class AnnualreviewsClient(browser_workflow.BrowserWorkflowClient):
 
 
 __all__ = ["AnnualreviewsClient"]
+
+
+PROVIDER_BUNDLE = ProviderBundle(
+    client_factory=AnnualreviewsClient,
+    catalog=_PROVIDER_SPEC,
+    html_rules=ProviderHtmlRules(
+        name="annualreviews",
+        noise_profile=_annualreviews_html.ANNUALREVIEWS_NOISE_PROFILE,
+        cleanup=ProviderCleanupRules(
+            markdown_promo_tokens=_annualreviews_html.ANNUALREVIEWS_MARKDOWN_PROMO_TOKENS,
+            extraction_cleanup_selectors=_annualreviews_html.ANNUALREVIEWS_EXTRACTION_CLEANUP_SELECTORS,
+            post_content_break_tokens=_annualreviews_html.ANNUALREVIEWS_POST_CONTENT_BREAK_TOKENS,
+        ),
+        front_matter=ProviderFrontMatterRules(
+            exact_texts=_annualreviews_html.ANNUALREVIEWS_FRONT_MATTER_EXACT_TEXTS,
+            contains_tokens=_annualreviews_html.ANNUALREVIEWS_FRONT_MATTER_CONTAINS_TOKENS,
+            publication_keywords=("annual reviews",),
+        ),
+        assets=ProviderAssetRules(
+            supplementary_text_tokens=_annualreviews_html.ANNUALREVIEWS_SUPPLEMENTARY_TEXT_TOKENS,
+        ),
+        availability=AvailabilityPolicy(
+            paywall_gate_selectors=".js-launch-price-overlay",
+            name="annualreviews",
+            site_rule_overrides=_annualreviews_html.ANNUALREVIEWS_SITE_RULE_OVERRIDES,
+        ),
+    ),
+    sources=("annualreviews_html", "annualreviews_pdf"),
+)

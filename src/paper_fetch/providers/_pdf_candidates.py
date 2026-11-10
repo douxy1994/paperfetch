@@ -9,6 +9,7 @@ from typing import Any
 from collections.abc import Mapping
 
 from ..extraction.html.parsing import choose_parser
+from ..extraction.html._metadata import raw_html_meta_values
 from ..extraction.html.ui_tokens import DOWNLOAD_PDF_LABEL
 from ..http import is_pdf_content_type
 from ..provider_catalog import (
@@ -19,6 +20,7 @@ from ..provider_catalog import (
     provider_pdf_source_path_templates,
 )
 from ..utils import normalize_text
+from ._pdf_document import non_article_pdf_reason
 
 from bs4 import BeautifulSoup
 
@@ -55,6 +57,8 @@ def _append_candidate(
         normalized = urllib.parse.urljoin(source_url, normalized)
     parsed = urllib.parse.urlparse(normalized)
     if parsed.scheme not in {"http", "https"} or not normalize_text(parsed.netloc):
+        return
+    if non_article_pdf_reason(normalized):
         return
     if normalized not in candidates:
         candidates.append(normalized)
@@ -95,6 +99,26 @@ def extract_pdf_url_from_metadata_links(metadata: Mapping[str, Any]) -> str | No
         ) or is_pdf_content_type(content_type):
             return url
     return None
+
+
+def build_direct_pdf_candidates(
+    metadata: Mapping[str, Any],
+    *,
+    source_url: str,
+    direct_pdf_url: str,
+) -> list[str]:
+    candidates: list[str] = []
+    for value in raw_html_meta_values(metadata, "citation_pdf_url"):
+        candidates.append(urllib.parse.urljoin(source_url, value))
+    for item in metadata.get("fulltext_links") or ():
+        if not isinstance(item, Mapping):
+            continue
+        url = normalize_text(str(item.get("url") or ""))
+        content_type = normalize_text(str(item.get("content_type") or "")).lower()
+        if url and ("pdf" in content_type or "pdf" in url.lower()):
+            candidates.append(urllib.parse.urljoin(source_url, url))
+    candidates.append(direct_pdf_url)
+    return list(dict.fromkeys(candidate for candidate in candidates if candidate))
 
 
 def looks_like_browser_workflow_pdf_url(url: str | None) -> bool:
@@ -142,6 +166,24 @@ def extract_pdf_candidate_urls_from_html(html_text: str, source_url: str) -> lis
             )
 
     for node in soup.find_all(["a", "link", "iframe", "embed", "object"]):
+        # References and site footers can link to other papers or user manuals.
+        if any(
+            ancestor.name == "footer"
+            or ancestor.get("role") in {"doc-bibliography", "contentinfo"}
+            or set(ancestor.get("class") or ())
+            & {
+                "ref-list",
+                "ref-body",
+                "ref-content",
+                "mixed-citation",
+                "references",
+                "theme-footer",
+                "footer-nav",
+            }
+            for ancestor in node.parents
+            if getattr(ancestor, "attrs", None)
+        ):
+            continue
         target = normalize_text(node.get("href") or node.get("src") or node.get("data"))
         if not target:
             continue
@@ -159,6 +201,8 @@ def extract_pdf_candidate_urls_from_html(html_text: str, source_url: str) -> lis
                 )
             )
         ).lower()
+        if non_article_pdf_reason(target, label=label):
+            continue
         if (
             any(token in lowered_href for token in PDF_HREF_TOKENS)
             or any(token in label for token in PDF_LINK_TEXT_TOKENS)

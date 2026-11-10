@@ -1,97 +1,11 @@
 from __future__ import annotations
 
-from dataclasses import FrozenInstanceError, fields
-
-import pytest
 from bs4 import BeautifulSoup
+import pytest
 
 from paper_fetch.extraction.html.provider_rules import (
-    AMS_POST_CONTENT_BREAK_TOKENS,
-    SCIENCE_POST_CONTENT_BREAK_TOKENS,
-    DomHooks,
-    MarkdownHooks,
     provider_html_rules,
 )
-import paper_fetch.providers._ams_html as ams_html
-import paper_fetch.providers._iop_html as iop_html
-import paper_fetch.providers._pnas_html as pnas_html
-import paper_fetch.providers._science_html as science_html
-import paper_fetch.providers._wiley_html as wiley_html
-from paper_fetch.providers._atypon_browser_workflow_profiles import (
-    ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES,
-    publisher_profile,
-)
-
-
-@pytest.mark.parametrize("provider", ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES)
-def test_publisher_profile_hooks_round_trip_provider_rules(provider: str) -> None:
-    rules = provider_html_rules(provider)
-    profile = publisher_profile(provider)
-
-    assert profile.dom_hooks == rules.dom_hooks
-    assert profile.markdown_hooks == rules.markdown_hooks
-    assert any(
-        getattr(profile.dom_hooks, field.name) is not None
-        for field in fields(profile.dom_hooks)
-    )
-    assert not hasattr(profile, "dom_postprocess")
-    assert not hasattr(profile, "markdown_postprocess")
-    assert not hasattr(profile, "post_content_break_tokens")
-
-
-def test_hook_dataclasses_are_frozen() -> None:
-    dom_hooks = DomHooks()
-    markdown_hooks = MarkdownHooks()
-
-    with pytest.raises(FrozenInstanceError):
-        dom_hooks.before_block_normalization = lambda _container: None
-    with pytest.raises(FrozenInstanceError):
-        markdown_hooks.normalize_markdown = lambda value: value
-
-
-def test_provider_rules_register_provider_owned_hook_functions() -> None:
-    pnas_rules = provider_html_rules("pnas")
-    science_rules = provider_html_rules("science")
-    wiley_rules = provider_html_rules("wiley")
-    ams_rules = provider_html_rules("ams")
-    iop_rules = provider_html_rules("iop")
-
-    assert (
-        pnas_rules.dom_hooks.before_block_normalization.__name__
-        == pnas_html.pnas_before_block_normalization.__name__
-    )
-    assert (
-        pnas_rules.markdown_hooks.suppress_missing_abstract.__name__
-        == pnas_html.pnas_suppress_missing_abstract.__name__
-    )
-    assert (
-        science_rules.dom_hooks.asset_figure_extraction.__name__
-        == science_html.science_asset_figure_extraction.__name__
-    )
-    assert (
-        science_rules.markdown_hooks.normalize_markdown.__name__
-        == science_html.science_normalize_markdown.__name__
-    )
-    assert (
-        wiley_rules.dom_hooks.after_block_normalization.__name__
-        == wiley_html.wiley_after_block_normalization.__name__
-    )
-    assert (
-        ams_rules.markdown_hooks.classify_heading.__name__
-        == ams_html.ams_classify_heading.__name__
-    )
-    assert (
-        iop_rules.dom_hooks.body_container.__name__
-        == iop_html.iop_body_container.__name__
-    )
-    assert (
-        iop_rules.dom_hooks.asset_body_container.__name__
-        == iop_html.iop_asset_body_container.__name__
-    )
-    assert (
-        iop_rules.dom_hooks.asset_figure_extraction.__name__
-        == iop_html.iop_asset_figure_extraction.__name__
-    )
 
 
 def test_provider_markdown_hooks_preserve_key_behaviour() -> None:
@@ -159,12 +73,236 @@ def test_provider_dom_hooks_preserve_key_behaviour() -> None:
     assert "Body text." in ams_soup.get_text(" ", strip=True)
 
 
-def test_post_content_break_tokens_live_in_cleanup_rules() -> None:
+def test_provider_specific_hooks_have_neutral_defaults() -> None:
+    from paper_fetch.extraction.html.provider_rules import DomHooks, MarkdownHooks
+
+    assert DomHooks().before_inline_formula_normalization is None
+    assert DomHooks().render_table is None
+    assert MarkdownHooks().keep_leading_auxiliary_block is None
+    for provider in ("pnas", "ams", "acs", "aip", "wiley"):
+        rules = provider_html_rules(provider)
+        assert rules.dom_hooks.before_inline_formula_normalization is None
+        assert rules.dom_hooks.render_table is None
+        assert rules.markdown_hooks.keep_leading_auxiliary_block is None
+    assert provider_html_rules("science").dom_hooks.render_table is not None
     assert (
-        provider_html_rules("science").cleanup.post_content_break_tokens
-        == SCIENCE_POST_CONTENT_BREAK_TOKENS
+        provider_html_rules("iop").dom_hooks.before_inline_formula_normalization
+        is not None
+    )
+
+
+def test_inline_and_table_hooks_run_at_existing_normalization_stages(
+    monkeypatch,
+) -> None:
+    from dataclasses import replace
+    from paper_fetch.providers.atypon_browser_workflow import normalization
+
+    profile = normalization._publisher_profile("pnas")
+    events = []
+    soup = BeautifulSoup(
+        '<article><div class="display-eqn"><script type="math/tex">y=1</script></div>'
+        '<table><tr><th>Value</th></tr><tr><td><math alttext="x"><mi>x</mi></math></td></tr></table></article>',
+        "html.parser",
+    )
+
+    def before_inline(container):
+        assert container.select_one(".display-eqn") is None
+        assert "$$" in container.get_text()
+        assert container.find("math") is not None
+        events.append("before_inline")
+
+    def render_table(node, *, label, caption):
+        assert node.find("math") is None
+        assert "$x$" in node.get_text()
+        assert label == "Table"
+        assert caption == ""
+        events.append("table")
+        return "Custom table"
+
+    def after(container):
+        assert container.find("table") is None
+        events.append("after")
+
+    profile = replace(
+        profile,
+        dom_hooks=replace(
+            profile.dom_hooks,
+            before_inline_formula_normalization=before_inline,
+            render_table=render_table,
+            after_block_normalization=after,
+        ),
+    )
+    monkeypatch.setattr(normalization, "_publisher_profile", lambda _: profile)
+    entries = normalization._normalize_special_blocks(soup.article, "pnas")
+    assert events == ["before_inline", "table", "after"]
+    assert entries[0]["markdown"] == "Custom table"
+
+
+def test_table_hook_none_uses_shared_rendering(monkeypatch) -> None:
+    from dataclasses import replace
+    from paper_fetch.providers.atypon_browser_workflow import normalization
+
+    profile = normalization._publisher_profile("pnas")
+    calls = []
+
+    def decline(node, *, label, caption):
+        calls.append(label)
+        return None
+
+    def source():
+        return BeautifulSoup(
+            "<article><table><tr><th>Parameter</th></tr><tr><td>42</td></tr></table></article>",
+            "html.parser",
+        ).article
+
+    expected = normalization._normalize_table_blocks(source(), "pnas")
+    profile = replace(
+        profile, dom_hooks=replace(profile.dom_hooks, render_table=decline)
+    )
+    monkeypatch.setattr(normalization, "_publisher_profile", lambda _: profile)
+    assert normalization._normalize_table_blocks(source(), "pnas") == expected
+    assert calls == ["Table"]
+
+
+def test_iop_inline_hook_keeps_tex_precedence_and_formula_order() -> None:
+    from paper_fetch.providers.atypon_browser_workflow.normalization import (
+        _normalize_special_blocks,
+    )
+
+    soup = BeautifulSoup(
+        '<article><p>First <span class="inline-eqn"><script type="math/tex">a+b</script>'
+        '<math alttext="wrong"><mi>z</mi></math><img src="formula.gif"/></span> then '
+        '<span class="inline-eqn"><script type="math/tex">c+d</script></span>.</p>'
+        '<div class="display-eqn"><script type="math/tex">e=f</script></div></article>',
+        "html.parser",
+    )
+    _normalize_special_blocks(soup.article, "iop")
+    text = soup.get_text()
+    assert "$a+b$" in text and "$c+d$" in text
+    assert text.index("$a+b$") < text.index("$c+d$") < text.index("e=f")
+    assert "wrong" not in text
+    assert soup.find(["math", "script", "img"]) is None
+
+
+def test_science_leading_figure_hook_preserves_caption_and_label_matching() -> None:
+    from paper_fetch.providers.atypon_browser_workflow.postprocess import (
+        _postprocess_browser_workflow_markdown,
+    )
+
+    block = "**Figure 1.** A manuscript photograph."
+    assets = [{"kind": "figure", "heading": "Figure 1", "section": "body"}]
+    hook = provider_html_rules("science").markdown_hooks.keep_leading_auxiliary_block
+    assert hook is not None
+    assert hook(block, publisher="science", figure_assets=assets)
+    assert not hook(block, publisher="Science", figure_assets=assets)
+    assert not hook("**Fig. 1.** Caption", publisher="science", figure_assets=assets)
+    assert not hook(
+        block,
+        publisher="science",
+        figure_assets=[dict(assets[0], section="supplementary")],
+    )
+    assert not hook(block, publisher="science", figure_assets=[])
+    text = (
+        block + "\n\n" + "This paragraph explains the scientific result in detail. " * 6
+    )
+    for publisher, figures, kept in (
+        ("science", assets, True),
+        ("science", [], False),
+        ("pnas", assets, False),
+    ):
+        rendered = _postprocess_browser_workflow_markdown(
+            text, title=None, publisher=publisher, figure_assets=figures
+        )
+        assert (block in rendered) == kept
+
+
+def test_post_content_policy_injects_provider_tokens_once() -> None:
+    from paper_fetch.providers.atypon_browser_workflow.profile import (
+        POST_CONTENT_BREAK_TOKENS,
+        _cleanup_policy_for_publisher,
+        _post_content_cleanup_policy,
+    )
+
+    for publisher in ("science", "ams", "acs", "iop", "aip"):
+        policy = _post_content_cleanup_policy(publisher)
+        assert policy.post_content_cutoff_tokens == (
+            *_cleanup_policy_for_publisher(publisher).post_content_cutoff_tokens,
+            *POST_CONTENT_BREAK_TOKENS,
+        )
+        for token in provider_html_rules(publisher).cleanup.post_content_break_tokens:
+            assert policy.post_content_cutoff_tokens.count(token) == 1
+
+
+def test_iop_formula_registration_only_extends_shared_defaults() -> None:
+    from paper_fetch.extraction.html.formula_rules import (
+        GENERIC_FORMULA_CONTAINER_TOKENS,
+        GENERIC_DISPLAY_FORMULA_SELECTORS,
+        display_formula_nodes,
+        display_formula_selectors_for_profile,
+        formula_container_tokens_for_profile,
+    )
+
+    assert formula_container_tokens_for_profile("iop") == (
+        *GENERIC_FORMULA_CONTAINER_TOKENS,
+        "tex",
     )
     assert (
-        provider_html_rules("ams").cleanup.post_content_break_tokens
-        == AMS_POST_CONTENT_BREAK_TOKENS
+        display_formula_selectors_for_profile("iop")
+        == GENERIC_DISPLAY_FORMULA_SELECTORS
     )
+    soup = BeautifulSoup(
+        '<article><div class="display-eqn" id="a"></div>'
+        '<div class="disp-formula" id="b"></div><div class="display-eqn" id="c"></div></article>',
+        "html.parser",
+    )
+    assert [n["id"] for n in display_formula_nodes(soup, noise_profile="iop")] == [
+        "a",
+        "c",
+        "b",
+    ]
+
+
+@pytest.mark.parametrize("provider", ["science", "pnas"])
+def test_science_and_pnas_asset_scopes_preserve_mutation_and_render_order(
+    provider,
+) -> None:
+    from paper_fetch.providers import _pnas_html, _science_html
+
+    callback = {"science": _science_html, "pnas": _pnas_html}[
+        provider
+    ].extract_asset_html_scopes
+    body = BeautifulSoup(
+        "<article><p>Body</p><section>Body supplement</section></article>",
+        "html.parser",
+    ).article
+    supplementary = BeautifulSoup(
+        "<article><section>First supplement</section><section> </section><section>Last supplement</section></article>",
+        "html.parser",
+    ).article
+    events = []
+
+    def sections(container):
+        events.append("body" if container is body else "supplementary")
+        if container is supplementary:
+            assert body.find("section") is None
+        return container.find_all("section")
+
+    def fragment(container, *, publisher):
+        assert publisher == provider
+        assert events == ["body", "supplementary"]
+        assert container is body
+        events.append("render")
+        return str(container)
+
+    result = callback(
+        body,
+        supplementary,
+        publisher=provider,
+        content_fragment_html=fragment,
+        atypon_browser_workflow_supplementary_sections=sections,
+    )
+    assert result == (
+        "<article><p>Body</p></article>",
+        "<section>First supplement</section>\n<section>Last supplement</section>",
+    )
+    assert events == ["body", "supplementary", "render"]

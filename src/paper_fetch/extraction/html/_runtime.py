@@ -7,6 +7,7 @@ import functools
 import importlib
 import logging
 import re
+from ...formula.validation import formula_document
 from dataclasses import dataclass
 from email.message import Message
 from html.parser import HTMLParser
@@ -51,7 +52,7 @@ from ...extraction.html.signals import (
     contains_access_gate_text,
 )
 from ...models import normalize_markdown_text, normalize_text
-from ...provider_catalog import provider_body_text_thresholds
+from ...markdown.math import protect_markdown_math, restore_markdown_math
 from ...publisher_identity import normalize_doi
 from ...publisher_identity import extract_doi as extract_doi_from_text
 from .provider_rules import (
@@ -150,8 +151,6 @@ class HtmlCleanupRules:
     policy: CleanupPolicy
     drop_selectors: tuple[str, ...]
     exact_texts: frozenset[str]
-    prefix_texts: tuple[str, ...]
-    attr_tokens: tuple[str, ...]
     extraction_cleanup_selectors: tuple[str, ...]
     markdown_exact_texts: frozenset[str]
     markdown_prefix_texts: tuple[str, ...]
@@ -167,8 +166,6 @@ def html_cleanup_rules(noise_profile: str | None = None) -> HtmlCleanupRules:
         policy=policy,
         drop_selectors=policy.dom_drop_selectors,
         exact_texts=policy.dom_exact_texts,
-        prefix_texts=policy.dom_prefix_texts,
-        attr_tokens=policy.dom_attr_tokens,
         extraction_cleanup_selectors=policy.extraction_cleanup_selectors,
         markdown_exact_texts=policy.markdown_exact_texts,
         markdown_prefix_texts=policy.markdown_prefix_texts,
@@ -491,6 +488,7 @@ def extract_html_section_hints(
     )
 
 
+@formula_document
 def extract_article_markdown(
     html_text: str,
     source_url: str,
@@ -511,6 +509,7 @@ def extract_article_markdown(
     )
 
 
+@formula_document
 def extract_article_markdown_from_cleaned_html(
     cleaned_html: str,
     source_url: str,
@@ -581,6 +580,7 @@ def _strip_markdown_chrome_sections(markdown_text: str) -> str:
 
 
 def clean_markdown(markdown_text: str, *, noise_profile: str | None = None) -> str:
+    markdown_text, protected = protect_markdown_math(markdown_text)
     cleanup_rules = html_cleanup_rules(noise_profile)
     markdown_text = _strip_markdown_chrome_sections(markdown_text)
     cleaned_lines: list[str] = []
@@ -591,7 +591,7 @@ def clean_markdown(markdown_text: str, *, noise_profile: str | None = None) -> s
             continue
         cleaned_lines.append(line)
     cleaned = "\n".join(cleaned_lines)
-    return normalize_markdown_text(cleaned)
+    return normalize_markdown_text(restore_markdown_math(cleaned, protected))
 
 
 def _canonical_text(value: str) -> str:
@@ -600,7 +600,7 @@ def _canonical_text(value: str) -> str:
 
 def _split_markdown_blocks(markdown_text: str) -> list[str]:
     return [
-        normalize_markdown_text(block)
+        block.strip("\r\n")
         for block in re.split(r"\n\s*\n", markdown_text)
         if normalize_text(block)
     ]
@@ -948,6 +948,8 @@ def has_sufficient_article_body(
         section_hints=section_hints,
         noise_profile=noise_profile,
     )
+    from ...provider_catalog import provider_body_text_thresholds
+
     thresholds = provider_body_text_thresholds(provider or noise_profile)
     if metrics["char_count"] < thresholds.short_body_min_chars:
         return False

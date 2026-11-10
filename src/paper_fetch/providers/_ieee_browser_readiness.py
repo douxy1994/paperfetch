@@ -6,17 +6,30 @@ from dataclasses import dataclass
 from typing import Any
 from collections.abc import Mapping
 
-from ..extraction.html import decode_html
 from ..extraction.html.signals import detect_html_block, summarize_visible_html
 from ..http import redact_url_for_diagnostics
 from ..http.headers import header_value
 from ..page_diagnostics import PageDiagnosticRequest, capture_page_diagnostic
 from ..runtime import RuntimeContext
+from ..reason_codes import ERROR
 from ..utils import normalize_text
 from . import _ieee_html as ieee_html
 from . import _ieee_metadata as ieee_metadata
 from . import _ieee_url as ieee_url
 from .browser_runtime import BrowserRuntimeConfig, BrowserRuntimeFailure
+from .base import ProviderFailure
+
+
+def _playwright_timeout_error(runtime_config: BrowserRuntimeConfig) -> type[Exception]:
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+    except Exception as exc:  # pragma: no cover - missing dependency deployment
+        raise ProviderFailure(
+            ERROR,
+            "Camoufox browser runtime requires Playwright; "
+            "cannot use IEEE selected-browser HTML fallback.",
+        ) from exc
+    return PlaywrightTimeoutError
 
 
 def _playwright_response_headers(response: Any | None) -> dict[str, str]:
@@ -77,12 +90,9 @@ def _captured_rest_html(
     response: Any,
     rest_url: str,
 ) -> _CapturedRestHtml | None:
-    try:
-        body = response.body()
-    except Exception:
-        return None
-    if not isinstance(body, (bytes, bytearray)) or not body:
-        return None
+    # A Playwright Response cannot provide a bounded/streaming body read.  Keep
+    # metadata for diagnostics, while article readiness comes from the loaded
+    # page DOM.  The direct transport owns any future REST replay.
     headers = _playwright_response_headers(response)
     return _CapturedRestHtml(
         source_url=ieee_url._absolute_ieee_url(
@@ -90,10 +100,7 @@ def _captured_rest_html(
             rest_url,
         ),
         headers=headers,
-        html_text=decode_html(
-            bytes(body),
-            content_type=header_value(headers, "content-type"),
-        ),
+        html_text="",
         status=_playwright_response_status(response),
     )
 
@@ -200,7 +207,7 @@ def _capture_failure_page_diagnostics(
                 doi=failure_context.landing_attempt.normalized_doi,
                 target_url=failure_context.rest_url,
                 final_url=invalid_rest.source_url,
-                backend=failure_context.runtime_config.backend,
+                backend="byparr",
                 response_status=invalid_rest.status,
                 summary=summarize_visible_html(invalid_rest.html_text),
                 details={"selectors": {"article": False}},
@@ -224,7 +231,7 @@ def _capture_failure_page_diagnostics(
                 doi=failure_context.landing_attempt.normalized_doi,
                 target_url=failure_context.document_url,
                 final_url=failure_context.final_url,
-                backend=failure_context.runtime_config.backend,
+                backend="byparr",
                 response_status=failure_context.navigation_status,
                 title=page_title,
                 summary=summarize_visible_html(page_html),
@@ -293,12 +300,7 @@ def _unready_browser_failure(
         details["status"] = status
         details["payload_source"] = payload_source
         if detected.reason == "aws_waf_challenge":
-            details.update(
-                {
-                    "challenge_provider": "aws_waf",
-                    "legacy_reason_code": "cloudflare_challenge",
-                }
-            )
+            details.update({"challenge_provider": "aws_waf"})
         return BrowserRuntimeFailure(
             detected.reason,
             detected.message,

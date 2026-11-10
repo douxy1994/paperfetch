@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from contextvars import copy_context
 from dataclasses import dataclass
 from typing import Any, cast
-from collections.abc import Iterator, Mapping, Set as AbstractSet
+from collections.abc import Mapping
 import urllib.parse
 
 from ..config import build_publisher_user_agent
@@ -27,14 +28,14 @@ from ..reason_codes import (
     RATE_LIMITED,
 )
 from ..providers.protocols import MetadataProvider
-from ..runtime import RUNTIME_UNSET, RuntimeContext, resolve_runtime_context
+from ..runtime import RuntimeContext
 from ..tracing import route_marker
 from ..publisher_identity import (
-    infer_provider_from_doi,
-    infer_provider_from_publisher,
-    infer_provider_from_url,
+    ProviderIdentityCandidate,
+    _ordered_provider_signals,
     normalize_doi,
     ordered_provider_candidates,
+    ordered_provider_candidate_evidence,
 )
 from ..utils import (
     choose_public_landing_page_url,
@@ -57,24 +58,6 @@ from .types import (
     PaperFetchFailure,
     RouteProbeResult,
 )
-
-
-def official_provider_name_set() -> frozenset[str]:
-    return frozenset(official_provider_names())
-
-
-class _OfficialProviderNames(AbstractSet[str]):
-    def __contains__(self, value: object) -> bool:
-        return value in official_provider_name_set()
-
-    def __iter__(self) -> Iterator[str]:
-        return iter(official_provider_name_set())
-
-    def __len__(self) -> int:
-        return len(official_provider_name_set())
-
-
-OFFICIAL_PROVIDER_NAMES: AbstractSet[str] = _OfficialProviderNames()
 
 
 @dataclass(frozen=True)
@@ -104,17 +87,12 @@ def route_signal_markers(
     doi: str | None = None,
 ) -> list[str]:
     markers: list[str] = []
-    for url in landing_urls or []:
-        provider = infer_provider_from_url(url)
-        if provider:
-            extend_unique(markers, [route_marker(f"signal_domain_{provider}")])
-    for publisher in publishers or []:
-        provider = infer_provider_from_publisher(publisher)
-        if provider:
-            extend_unique(markers, [route_marker(f"signal_publisher_{provider}")])
-    provider = infer_provider_from_doi(doi)
-    if provider:
-        extend_unique(markers, [route_marker(f"signal_doi_{provider}")])
+    for provider, signal in _ordered_provider_signals(
+        landing_urls=landing_urls,
+        publishers=publishers,
+        doi=doi,
+    ):
+        extend_unique(markers, [route_marker(f"signal_{signal}_{provider}")])
     return markers
 
 
@@ -132,8 +110,28 @@ def build_official_provider_candidates(
     return [
         (provider, signal)
         for provider, signal in candidates
-        if provider in official_provider_name_set()
+        if provider in official_provider_names()
         and provider_allowed(provider, strategy)
+    ]
+
+
+def build_official_provider_candidate_evidence(
+    resolved, *, routing_metadata: Mapping[str, Any] | None, strategy: FetchStrategy
+) -> list[ProviderIdentityCandidate]:
+    """Return filtered candidates while retaining signal strength."""
+
+    return [
+        candidate
+        for candidate in ordered_provider_candidate_evidence(
+            landing_urls=[
+                resolved.landing_url,
+                safe_text((routing_metadata or {}).get("landing_page_url")),
+            ],
+            publishers=[safe_text((routing_metadata or {}).get("publisher"))],
+            doi=resolved.doi,
+        )
+        if candidate.provider in official_provider_names()
+        and provider_allowed(candidate.provider, strategy)
     ]
 
 
@@ -192,15 +190,13 @@ def resolve_query_with_session_cache(
     query: str,
     *,
     resolver,
-    transport: HttpTransport,
-    env: Mapping[str, str],
     context: RuntimeContext,
 ):
     return cached_call(
         RESOLVED_QUERY_KEY,
         (normalize_text(query) or str(query),),
         context,
-        lambda: resolver(query, transport=transport, env=env),
+        lambda: resolver(query, context=context),
     )
 
 
@@ -365,26 +361,19 @@ def select_route_probe(probes: list[RouteProbeResult]) -> RouteProbeResult | Non
 def probe_has_fulltext(
     query: str,
     *,
-    transport: HttpTransport | None | object = RUNTIME_UNSET,
-    env: Mapping[str, str] | None | object = RUNTIME_UNSET,
-    clients: Mapping[str, object] | None | object = RUNTIME_UNSET,
-    context: RuntimeContext | None = None,
+    context: RuntimeContext,
     resolve_paper_fn=None,
 ) -> HasFulltextProbeResult:
-    runtime = resolve_runtime_context(
-        context, env=env, transport=transport, clients=clients
-    )
+    runtime = context
     assert runtime.env is not None
     assert runtime.transport is not None
     active_env = runtime.env
     active_transport = runtime.transport
-    client_registry = dict(runtime.get_clients())
+    client_registry = runtime.get_clients()
     resolver = resolve_paper_fn or resolve_paper
     resolved = resolve_query_with_session_cache(
         query,
         resolver=resolver,
-        transport=active_transport,
-        env=active_env,
         context=runtime,
     )
     if resolved.candidates and not resolved.doi:
@@ -437,16 +426,22 @@ def probe_has_fulltext(
         max_workers=max(1, 2 + len(initial_metadata_probe_providers))
     ) as executor:
         crossref_future = (
-            executor.submit(fetch_crossref_metadata)
+            executor.submit(copy_context().run, fetch_crossref_metadata)
             if doi and isinstance(crossref_client, MetadataProvider)
             else None
         )
         provider_probe_futures = {
-            provider_name: executor.submit(fetch_provider_probe_metadata, provider_name)
+            provider_name: executor.submit(
+                copy_context().run,
+                fetch_provider_probe_metadata,
+                provider_name,
+            )
             for provider_name in initial_metadata_probe_providers
         }
         landing_future = (
-            executor.submit(fetch_landing_probe, initial_landing_url)
+            executor.submit(
+                copy_context().run, fetch_landing_probe, initial_landing_url
+            )
             if initial_landing_url
             else None
         )

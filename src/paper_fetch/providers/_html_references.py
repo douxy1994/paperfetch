@@ -7,15 +7,12 @@ import re
 from typing import Any
 
 from ..extraction.html.parsing import choose_parser
-from ..publisher_identity import DOI_CORE_PATTERN
+from urllib.parse import unquote
+from ._reference_doi import reference_doi
 from ..utils import normalize_text
 
 from bs4 import BeautifulSoup, Tag
 
-DOI_URL_PATTERN = re.compile(
-    rf"https?://(?:dx\.)?doi\.org/(?P<doi>{DOI_CORE_PATTERN})",
-    flags=re.IGNORECASE,
-)
 YEAR_PATTERN = re.compile(r"\((?P<year>(?:18|19|20)\d{2})\)")
 REFERENCE_LINKOUT_LABELS = (
     "Article",
@@ -37,8 +34,10 @@ REFERENCE_LINKOUT_LABEL_PATTERN = re.compile(
 NUMBERED_BIBLIOGRAPHY_SELECTORS = (
     ".ref-list .js-splitview-ref-item",
     ".ref-list .ref",
+    "#bibliography .biblioentry",
     "section[role='doc-bibliography'] [role='listitem'][data-has='label']",
     "#bibliography [role='listitem'][data-has='label']",
+    "#bibliography .citations:has(.citation-content)",
     "section[data-title='References'] li[data-counter]",
     "section[data-title='References'] ol > li",
     "section[data-title='References and Notes'] ol > li",
@@ -50,6 +49,7 @@ REFERENCE_CONTENT_SELECTORS = (
     ".citation-content",
     ".mixed-citation",
     ".citation",
+    ".citations",
     ".ref-content",
     ".reference",
     "p",
@@ -172,19 +172,21 @@ def _reference_text(node: Any) -> str:
             for match in clone.select(selector):
                 match.decompose()
         active_node = clone
-    text = normalize_text(active_node.get_text(" ", strip=True))
+    from ..extraction.html.inline import render_html_inline_node
+
+    text = normalize_text(render_html_inline_node(active_node))
     return _clean_reference_text(text)
 
 
-def _reference_doi(node: Any) -> str | None:
+def _reference_doi(node: Any, *, include_text: bool = True) -> str | None:
     if not isinstance(node, Tag):
         return None
     for anchor in node.find_all("a", href=True):
-        href = normalize_text(anchor.get("href"))
-        match = DOI_URL_PATTERN.search(href)
-        if match is not None:
-            return normalize_text(match.group("doi").rstrip(").,;"))
-    return None
+        href = unquote(normalize_text(anchor.get("href")))
+        match = re.search(r"https?://(?:dx\.)?doi\.org/(.+)", href, re.I)
+        if match is not None and (doi := reference_doi(match.group(1))):
+            return doi
+    return reference_doi(_reference_text(node)) if include_text else None
 
 
 def _reference_year(node: Any, text: str) -> str | None:

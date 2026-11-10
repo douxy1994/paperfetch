@@ -113,12 +113,99 @@ class FormulaInstallTests(unittest.TestCase):
                 run.call_args.args[1],
             )
 
+    def test_cabal_update_recovers_before_installing(self) -> None:
+        with (
+            mock.patch.object(formula_install.shutil, "which", return_value="cabal"),
+            mock.patch.object(
+                formula_install, "_run_with_log", side_effect=[False, False, True, True]
+            ) as run,
+            mock.patch.object(formula_install.time, "sleep") as sleep,
+        ):
+            self.assertTrue(formula_install.install_texmath_with_cabal(Path("tools")))
+
+        self.assertEqual(
+            [call.args[1][1] for call in run.call_args_list],
+            ["update", "update", "update", "install"],
+        )
+        self.assertEqual(sleep.call_args_list, [mock.call(2), mock.call(4)])
+
+    def test_cabal_update_exhaustion_does_not_compile(self) -> None:
+        with (
+            mock.patch.object(formula_install.shutil, "which", return_value="cabal"),
+            mock.patch.object(
+                formula_install, "_run_with_log", return_value=False
+            ) as run,
+            mock.patch.object(formula_install.time, "sleep") as sleep,
+        ):
+            self.assertFalse(formula_install.install_texmath_with_cabal(Path("tools")))
+
+        self.assertEqual(run.call_count, 3)
+        self.assertTrue(
+            all(call.args[1] == ["cabal", "update"] for call in run.call_args_list)
+        )
+        self.assertEqual(sleep.call_args_list, [mock.call(2), mock.call(4)])
+
+    def test_cabal_compile_failure_is_not_retried(self) -> None:
+        with (
+            mock.patch.object(formula_install.shutil, "which", return_value="cabal"),
+            mock.patch.object(
+                formula_install, "_run_with_log", side_effect=[True, False]
+            ) as run,
+            mock.patch.object(formula_install.time, "sleep") as sleep,
+        ):
+            self.assertFalse(formula_install.install_texmath_with_cabal(Path("tools")))
+
+        self.assertEqual(run.call_count, 2)
+        sleep.assert_not_called()
+
+    def test_failure_log_tail_limits_bytes_and_lines_and_replaces_invalid_utf8(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "build.log"
+            log_file.write_bytes(
+                b"old output" * 2000 + b"\n" + b"line\n" * 50 + b"error\xff\n"
+            )
+            with mock.patch.object(formula_install, "warn") as warn:
+                formula_install._warn_log_tail(log_file)
+
+            output = warn.call_args.args[0]
+            self.assertNotIn("old output", output)
+            self.assertEqual(len(output.splitlines()), 41)
+            self.assertIn("error\ufffd", output)
+
+            log_file.write_bytes(b"x" * 10000 + b"failure")
+            with mock.patch.object(formula_install, "warn") as warn:
+                formula_install._warn_log_tail(log_file)
+            self.assertEqual(len(warn.call_args.args[0].split("\n", 1)[1]), 8192)
+            self.assertTrue(warn.call_args.args[0].endswith("failure"))
+
+    def test_unreadable_failure_log_is_reported(self) -> None:
+        with mock.patch.object(formula_install, "warn") as warn:
+            formula_install._warn_log_tail(Path("missing-build-log"))
+        self.assertIn("Could not read build log", warn.call_args.args[0])
+
     def test_bundled_formula_resources_are_packaged(self) -> None:
         root = formula_paths.bundled_formula_resources()
 
         self.assertTrue(root.joinpath("mathml_to_latex_cli.mjs").is_file())
         self.assertTrue(root.joinpath("package.json").is_file())
         self.assertTrue(root.joinpath("package-lock.json").is_file())
+
+    def test_checkout_uses_bundled_formula_scripts(self) -> None:
+        root = formula_paths.repo_root()
+        self.assertIsNotNone(root)
+        assert root is not None
+        resource_dir = root / "src" / "paper_fetch" / "resources" / "formula"
+
+        self.assertEqual(
+            formula_paths.mathml_to_latex_script_candidates({})[-1],
+            resource_dir / "mathml_to_latex_cli.mjs",
+        )
+        self.assertEqual(
+            formula_paths.mathml_to_latex_worker_script_candidates({})[-1],
+            resource_dir / "mathml_to_latex_worker.mjs",
+        )
 
     def test_stage_bundled_node_workspace_writes_expected_files(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -127,8 +214,45 @@ class FormulaInstallTests(unittest.TestCase):
 
             self.assertTrue((target_dir / "mathml_to_latex_cli.mjs").exists())
             self.assertTrue((target_dir / "mathml_to_latex_worker.mjs").exists())
+            self.assertTrue((target_dir / "tex_validation_worker.mjs").exists())
+            self.assertTrue((target_dir / "mathjax_engine.mjs").exists())
             self.assertTrue((target_dir / "package.json").exists())
             self.assertTrue((target_dir / "package-lock.json").exists())
+
+    def test_old_mathml_only_install_still_installs_mathjax(
+        self,
+    ) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            target_dir = Path(tmpdir) / "formula-tools"
+            (target_dir / "node_modules" / "mathml-to-latex").mkdir(parents=True)
+
+            with (
+                mock.patch.object(
+                    formula_install.shutil,
+                    "which",
+                    side_effect=lambda name: f"/usr/bin/{name}",
+                ),
+                mock.patch.object(formula_install, "_run_with_log") as run,
+            ):
+                self.assertTrue(
+                    formula_install.ensure_mathml_to_latex(
+                        target_dir,
+                        install_node=True,
+                    )
+                )
+
+            run.assert_called_once()
+
+    def test_working_texmath_does_not_skip_node_validation_install(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            with (
+                mock.patch.object(formula_install, "ensure_texmath", return_value=True),
+                mock.patch.object(
+                    formula_install, "ensure_mathml_to_latex", return_value=True
+                ) as install_node,
+            ):
+                self.assertEqual(formula_install.main(["--target-dir", tmpdir]), 0)
+            install_node.assert_called_once_with(Path(tmpdir), install_node=True)
 
     def test_texmath_target_path_uses_exe_on_windows(self) -> None:
         target_dir = Path("tools")

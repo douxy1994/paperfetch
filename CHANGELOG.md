@@ -6,6 +6,580 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 <!-- SCAFFOLD: changelog-unreleased -->
 
+## 7.4.2 - 2026-11-09
+
+### Browser and PNAS fetching
+
+- Upgrade managed Byparr to 3.1.1. Windows/Linux x64 use InvisiblePlaywright 0.47.1 with matching invisible-core 58.56.0; macOS and ARM retain Camoufox. Preserve native-profile/JSON state ownership, request deadlines, cancellation, and offline component verification.
+- Try direct downloads first for PNAS body images, then request original image bytes from the existing browser context before page-image recovery. Read paragraph roles and text within the existing body-readiness budget. Retain matching popup navigations before page association so reentrant response or download events are not missed.
+
+### Documentation and Skill
+
+- Correct platform engine selection, backend compatibility values, and executable constraints against the code. Use the unified preparation entrypoint for the current platform engine and Byparr before offline use.
+- Correct single-paper MCP Markdown overwrite defaults, supplementary-index naming, and compact acceptance fields in the Skill. Consolidate workflows, diagnostics, and rules while preserving the five presets, a self-contained Skill, and unchanged PDF converter output.
+- Remove duplicated rules and procedural commentary from user, developer, test, and deployment documentation, keeping contracts and implementation indexes in their topic documents.
+
+## 7.4.1 - 2026-11-08
+
+This release includes the unified Byparr＋Camoufox browser routes and configuration migration recorded under 7.4.0, whose stable publication did not complete.
+
+### macOS release gate fix
+
+- Pass the prepared Camoufox dependency cache to isolated Byparr browser-test subprocesses, preventing native macOS gates from downloading the browser again on each launch and exhausting the request budget. Publisher profiles, cookies, and storage state remain isolated.
+- Use two pytest workers in native macOS gates to bound concurrent browser and GPU-probe launches. Browser tests use the default runtime request budget while retaining navigation, original-response, persistent-state replay, and cancellation checks.
+- Wait for real download events before clearing cookies and advancing popup/iframe automatic-validation tests, preventing the previous popup from overwriting the next stage's initial cookie state while retaining challenge-evidence and single-click assertions.
+- Allow the native browser's graceful shutdown to finish after its protocol disconnect, so its owner does not terminate Firefox before profile cookies and localStorage reach disk.
+
+## 7.4.0 - 2026-11-07
+
+### Unified Byparr and Camoufox browser routes
+
+- Use managed Byparr v2.1.0＋Camoufox for all browser publishers across articles, images, attachments, browser PDFs, preflight, and authentication, including Elsevier browser stages on macOS. Article and asset stages reuse the publisher context, manage their own pages, and release sessions on the owning thread.
+- Handle supported Cloudflare interstitials automatically. Navigation and click monitors follow the original pages, popups, iframes, and redirects; solving is serialized within the same context, and GET recovery permits at most one bounded retry. Preserve actual Response/Download objects, operation events, request deadlines, and cancellation; login, payment, and other challenges retain their access restrictions.
+- Prepare locked source and private dependencies on demand for source installs. Offline packages on supported platforms include complete upstream source, licenses, component manifests, digests, and adaptation notes in frozen snapshots, inventories, checksums, and SBOMs. Reuse Camoufox browser/fingerprint caches and provide unified post-install preparation and independent retries.
+
+### Configuration migration
+
+- Remove the FlareSolverr, system Chrome, and ChromeDriver routes. `PAPER_FETCH_<PROVIDER>_BROWSER_BACKEND=auto|camoufox|byparr` selects Byparr＋Camoufox; the old `flaresolverr` value fails explicitly and must become `auto` or `byparr`. Remove `PAPER_FETCH_CHROME_BINARY_PATH`; use `PAPER_FETCH_BROWSER_BINARY_PATH` for custom Camoufox executables. Replace old preparation options with `--prepare-byparr` or `--prepare-browsers byparr`.
+- Preserve existing state ownership: PNAS and Elsevier on Windows/Linux x64 retain filtered JSON with `auto|byparr`; explicit `camoufox` and other supported platforms/providers use native persistent profiles. State mode is independent of the backend name, and authentication directories are never merged or migrated automatically. Existing FlareSolverr state and historical capture provenance remain intact.
+
+### Dependencies and usage guidance
+
+- Refresh compatible Python and formula Node locks, including cachetools 8.0.0, CycloneDX BOM 8.0.1, PyMuPDF/PyMuPDF4LLM/pymupdf-layout 2.1, Pydantic 2.14.3, and Ruff 0.17.4; widen cachetools and CycloneDX BOM compatibility ceilings. Update private browser components to playwright-captcha 0.1.5, FastAPI 0.162.0, and Starlette 1.10.0 with locked dependencies.
+- Consolidate installation, browser, provider, extraction, and test guidance by topic. Correct Elsevier API-key/browser-state, arXiv enrichment, and AIP acquisition descriptions; streamline bilingual history and Skill guidance while retaining rule anchors, five presets, a self-contained Skill, and the PDF conversion-passthrough boundary.
+
+## 7.3.6 - 2026-11-05
+
+### Offline installation flow and logging fixes
+
+- Prepare browsers automatically only once per installation. Limit terminal optional configuration and Windows component options to credentials, Ghostscript and libvips, keeping image tool installs off by default. Preserve the Windows five-line request protocol and explicit browser preparation for older callers.
+- Keep the latest final result per component and display progress states only in real time. Report Python as ready or unsupported, remove resolved missing states from summaries and add a stable overall browser status that succeeds only when every selected supported backend is ready.
+- Align Linux, macOS and Windows completion messages: clear stale results, show completion and result paths on success, preserve core installation and provide an independent retry command on failure or cancellation, and show a manual preparation command when skipped. Clarify that default browser preparation may use the network and that skipping affects installation only, preserving runtime on-demand preparation.
+- Capture texmath `--version` output, remaining silent on success and showing diagnostics on failure. Report image tool readiness once with conversion evidence. Shorten only the known Canvas/WebGL random-readback warning during installation preparation, preserving fingerprint settings and other warnings.
+
+## 7.3.5 - 2026-11-05
+
+### Camoufox preparation fixes
+
+- Fall back to the official GitHub Release API when the pinned fpgen model download request fails. Resolve the same tag and asset name and retain Camoufox's SHA-256 checks for the archive and every model file; checksum failures do not trigger fallback.
+- Prepare the fingerprint model before starting Playwright for both ordinary and persistent contexts, including custom browser executables, so download failures do not leave a started Playwright connection to clean up.
+
+## 7.3.4 - 2026-11-04
+
+### Documentation and skill guidance
+
+- Align CLI, MCP, browser backend and offline installation documentation with the implementation, correcting lazy browser preparation, successful-check reuse, bundled FlareSolverr components and state storage, Markdown save paths and cache persistence semantics.
+- Simplify fixed preflight sequences, repeated confirmations and extra acceptance steps in the skill; consolidate duplicate rules while preserving the five presets, unified acceptance, provenance and lawful-access constraints.
+- Remove version migration guides and historical closure records, describe current behavior throughout maintained documentation, and repair navigation and references while retaining the complete bilingual changelogs and regression evidence.
+
+## 7.3.3 - 2026-11-04
+
+### Browser preparation and offline components
+
+- Prepare browser backends lazily when a provider actually needs them. Reuse successful online preparation checks for 24 hours while allowing failed or cancelled attempts to retry; prepare the Camoufox fingerprint model through the same managed path.
+- Bundle pinned FlareSolverr source, private dependencies, licenses and component metadata in Windows/Linux x64 offline packages and frozen dependency snapshots. Validate bundled components locally instead of downloading replacement source at runtime; continue preparing browsers and matching ChromeDriver separately.
+- Prepare all supported browser backends after installation, using shared dependency handling and the real backend for temporary blank-page checks. Add provider-declared backend selection and reuse common Playwright page operations across Camoufox and FlareSolverr.
+
+- Build frozen browser components in a child process so Windows releases loaded native dependency files before temporary-directory cleanup.
+
+- Preserve hidden upstream files when transferring frozen browser snapshots. Remove runtime-generated fingerprint model files and empty runtime directories during Windows uninstall while preserving user data and shared browser caches.
+
+### Runtime and batch resource ownership
+
+- Share CLI/MCP batch request ownership, DOI grouping, result fan-out and cancellation barriers through a common execution session. Keep child request state isolated, construct provider clients lazily and close browser sessions on their owning worker threads.
+
+## 7.3.0 - 2026-11-03
+
+### Publisher browser profiles and FlareSolverr
+
+- Reuse publisher-scoped native Camoufox profiles across authentication, preflight and fetching, with exclusive profile locks, legacy JSON initialization and separate optional JSON exports. Reopen the same profile to verify authentication; bind capability caches to the browser state actually used and avoid reuse when its digest is unavailable.
+- Add the system Chrome and pinned FlareSolverr backend for PNAS on Windows/Linux x64 and for Elsevier browser routes. Isolate source, private dependencies and version-matched ChromeDriver in the shared `flaresolverr/` cache, retain checksum/lock/atomic preparation, and clean up request-owned browser processes. macOS and other architectures retain Camoufox for PNAS and skip Elsevier browser routes.
+- Prepare FlareSolverr after core installation on Windows/Linux x64, including upgrades and reinstalls. Add consent-based Debian/Ubuntu dependency and Chrome installation, noninteractive download preparation, a bounded temporary-state CDP/blank-page check, result summaries and an independent retry command. Failures or cancellation preserve core installation; online `--lite` and macOS skip this phase, while runtime repair remains available. Offline installers may use the network during this preparation phase.
+
+### Elsevier acquisition and source fidelity
+
+- Use API XML → FlareSolverr HTML → API PDF → FlareSolverr PDF acquisition while retaining actual response statuses, DOI/PII identity checks and shared-context article assets. Add ScienceDirect body, MathJax MathML, original-image and supplementary extraction with captured-source regression coverage.
+- Preserve source section numbering, paragraph/list ownership, figure captions, bilingual abstracts, bibliography order and structural graphical abstracts across Elsevier HTML/XML output. Complete only missing reference DOIs after full-text acceptance through bounded, uniquely matched Crossref lookups; retain source citations and cancellation/deadline behavior.
+- Advance extraction revision from 8 to 11 so prior extraction caches are reprocessed. Keep PDF output within the existing converter boundary and synchronize browser diagnostics, CLI/MCP contracts, bundled Skill guidance and the macOS adaptation contract.
+
+## 7.2.6 - 2026-11-01
+
+### Browser runtime selection
+
+- Upgrade browser/full extras to `camoufox==0.5.9`. Let `official/prerelease` select the latest compatible stable or prerelease browser in upstream order; keep `official/stable` restricted to stable releases. Apply the same channel rule to local pinned builds while preserving version/SHA pins, custom executables, update intervals, locking and failure fallback.
+
+### Dependency updates
+
+- Refresh 23 compatible locked Python dependencies, including Pydantic 2.14.2, python-dateutil 4.0.0, PyObjC 13.0, pytest 9.2.0, mypy 2.4.1 and Ruff 0.17.3. Retain Playwright 1.62.0 and trafilatura 2.2.0 with their existing compatibility constraints.
+- Allow the native dual-context gate to reuse compatible stable or prerelease builds, removing the obsolete addon-download hook while retaining runtime and fingerprint-model reuse.
+
+## 7.2.5 - 2026-10-29
+
+### Supplementary discovery and authentication fixes
+
+- Preserve browser supplementary discovery failures with their original reason, message, details and source page. Continue the explicit-attachment fallback and download recovered files while keeping discovery incomplete; a missing article container remains compatible with attachment discovery on abstract and paywalled pages.
+- Send the configured Elsevier API key for independent supplementary downloads only to the official HTTPS Object Retrieval endpoint. Filter candidate headers and remove sensitive credentials on cross-origin redirects in both ordinary and streaming downloads; retain per-file failures and discovery-only behavior.
+
+### Reliable Linux and macOS updates
+
+- Stage and validate the complete new runtime on the target filesystem before replacing managed components. Include the runtime marker, required installed-skill validation and enabled smoke checks before commit; restore the previous payload and original exit code on failure, and retain the backup location if rollback fails.
+- Preserve papers, user files and environment files during runtime replacement. Clean backups and source/build leftovers after success, then update configuration and host integrations.
+
+## 7.2.4 - 2026-10-27
+
+### Independent supplementary acquisition
+
+- Add `target="supplementary"` to the Python API and MCP single/batch fetch, and `--target supplementary` to the CLI. Verify paper identity and discover and download publisher-defined supplementary files, Source Data, Extended Data and multimedia without requiring article text or fetching the article PDF.
+- Return structured material lists, per-file failures, discovery completeness and source provenance, with a separate Markdown index. Distinguish complete empty discovery from discovery failures and preserve unarchived lists when downloads are disabled. Isolate paper and supplementary cache requests and verify required local files before cache reuse.
+- Allow supplementary browser indexes on abstract and paywalled article pages while preserving attachment access restrictions and the existing browser click-download path.
+
+### Official installation updates
+
+- Add `paper-fetch update` for official installations. Select the latest stable GitHub Release installer for the current platform and CPython ABI and verify its SHA256 before execution; current or newer installations skip the download.
+- Upgrade Linux/macOS installations in place through the existing installer, reusing the current Python and configuration. Preflight macOS archives before extraction. On Windows, launch the verified graphical installer with the current installation directory preselected. Source and pip environments receive their existing update commands.
+
+## 7.2.3 - 2026-10-25
+
+### HTML capture and selection performance
+
+- Capture ready PNAS, Science and Wiley HTML, title and URL together in the browser's main context on its owning thread. Recapture after provider page preparation, fall back to native capture on navigation races, and preserve cancellation and access-boundary handling.
+- Reuse container scores and ancestor selections within one read-only DOM selection phase. Preserve stable ties and invalidate scores around refiners that can mutate the document.
+- Set independent arXiv Atom metadata and source-asset request intervals to one second while retaining shared-worker pacing and Retry-After handling.
+
+### Maintenance
+
+- Streamline the bundled Skill and focused references with section-level guidance for presets, tool contracts and acceptance.
+- Separate live browser preflight timing from fetch timing, preserve isolated MCP environments, and recognize explicit Elsevier access restrictions in the legacy-DOI live check. Add offline snapshot and scoring-reuse coverage and synchronize the macOS adaptation contract.
+
+## 7.2.2 - 2026-10-24
+
+### Browser update interval
+
+- Share a rolling 24-hour managed Camoufox update-check record across fetch, authentication, preflight and direct preparation. Reuse a valid local browser within the interval; missing, damaged or incompatible runtimes are prepared immediately. Failed checks also count toward the interval, skipped checks do not extend it, and cancellation does not record completion. Recheck when the channel, version/SHA pin or Camoufox Python package changes.
+- Validate the update record under the existing cache lock, including path ownership and timestamps. Invalid or missing records trigger a fresh check; record-write failures retain the preparation result and report diagnostics to stderr.
+
+### PDF dependency compatibility
+
+- Upgrade PDF extras to PyMuPDF 2.x and PyMuPDF4LLM 2.x, with PyMuPDF, PyMuPDF4LLM and pymupdf-layout locked to 2.0. Preserve upstream conversion output and existing asset-path handling without project-level formatting cleanup or content repair.
+
+### Maintenance
+
+- Refresh 25 compatible locked Python dependencies, including cachetools 7.2.4, filelock 4.2.4, idutils 1.7.1, platformdirs 4.13.5, Pydantic 2.14.1 / pydantic-core 2.50.1, python-dateutil 3.0.0, httpx2 / httpcore2 2.16.0 and Ruff 0.17.2. Retain trafilatura 2.2.0 and the Camoufox-compatible Playwright 1.62.0 lock. Resolve SoupSieve to 3.0.4 on Python 3.11.5+ and 2.10 on earlier Python 3.11 patch releases.
+- Update pinned GitHub Actions to setup-python 7.1.0 and setup-uv 10.3.2.
+
+## 7.2.1 - 2026-10-23
+
+### Browser runtime updates
+
+- Pin browser/full extras to `camoufox==0.5.8` and default managed browsers to `official/prerelease`. Select the latest compatible build for the current platform through Camoufox's official discovery, without upgrading the Python package. Preserve explicit channels, version/SHA pins and custom executables; migrate old active-only configurations under the existing cache lock.
+- Check and prepare the browser at the start of every CLI, MCP and Python API fetch, including HTTP-only requests and cache hits. Prepare once before batch scheduling and reuse the result across children and browser launches; independent calls check again. Reuse a valid local browser when updates fail. Without a usable browser, retain the preparation error while allowing HTTP/cache work to continue, and report it if a browser is needed. Skip managed updates for core installs without browser dependencies and for custom executables; keep static diagnostics read-only and preserve cancellation and batch terminal records.
+
+### Oxford inline figures
+
+- Preserve Oxford figures at their source positions, including identifiers, captions and subpanels, without appending duplicate figure assets. Download each original image once, use available previews when original downloads fail, and retain explicit diagnostics and degraded acceptance for unavailable assets.
+- Prepare a compatible prerelease browser and fingerprint model through the project preparer for the native dual-context gate.
+
+## 7.2.0 - 2026-10-23
+
+### Source fidelity and formula validation
+
+- Validate source TeX with the bundled MathJax 4.1.3 engine before rendering. Preserve valid source commands, whitespace and environments; when validation fails, convert only the uniquely paired MathML from the same formula node and validate the result. Retain the original TeX and diagnostics when no valid fallback is available. Record validation errors, conversion backends and style degradations through existing quality and acceptance results.
+- Bundle the validation worker, offline fonts, bbm and textcomp support with formula tools and offline installers. Keep the LitRoot reader and independent Markdown checker synchronized with the same engine. Preserve nested dollar signs, aligned equations, MathML spacing and control-word boundaries; render simple currency amounts as ordinary escaped text.
+- Preserve HTML/XML source structure across headings, multilingual abstracts, paragraphs, lists, tables and notes, captions, scientific inline formatting, authors, references and back matter. Resolve retained citations and object links against verified source IDs and explicit aliases before DOM cleanup, keeping valid source-page targets when local anchors are omitted.
+- Keep PDF Markdown within the existing pymupdf4llm conversion boundary, without project-level formatting cleanup or content repair. Refresh captured-source baselines and advance the extraction revision to 8 so prior extraction results are not reused as current output.
+
+### Codex skill installation
+
+- Install Codex skills under `~/.agents/skills/paper-fetch-skill` for user scope and `.agents/skills/paper-fetch-skill` for project scope; Windows uses the corresponding user profile directory. `CODEX_HOME` no longer selects the new skill destination, while MCP configuration keeps its existing location.
+- Verify the new bundle before removing legacy copies in the same scope. Source installs also migrate the former custom `CODEX_HOME` skill path; uninstall handles new and legacy paths, and `--check` remains a read-only check of the new destination.
+- Shorten skill discovery and entrypoint instructions, update UI metadata and browser preparation guidance, and retain a self-contained bundle with seven focused references and implicit invocation enabled.
+
+### Maintenance
+
+- Update locked certifi to 2026.10.19 to address PYSEC-2026-4320 reported by the release dependency audit.
+
+## 7.1.1 - 2026-10-15
+
+### Fixed — browser readiness and asset recovery
+
+- Science uses one normal HTML attempt and checks actual reference target IDs for nonempty, extractable text. Batch reference and expansion-control reads within the existing 10-second preparation budget; retain missing-reference diagnostics when the budget expires.
+- End AIP body polling when the governor validation URL and visible validation evidence both confirm a terminal challenge, preserving diagnostics in headed and headless modes.
+- Download IOP body assets with at most two HTTP workers while keeping browser recovery and cleanup on the owning thread. After successful recovery, route pending assets on the same host through the verified browser path; retain cancellation and download-budget cleanup.
+- Reuse IEEE original-image link indexes only within the same article document and invalidate them on navigation. Batch Taylor & Francis table-control reads and DOM injection while preserving per-table failures and existing limits.
+
+### Maintenance
+
+- Bound optional arXiv Atom enrichment to one request attempt with a 10-second I/O timeout; ordinary network failures preserve the fetched full text, while cancellation and access restrictions still propagate. Independent metadata queries retain their existing policy.
+- Reuse HTML availability and paywall analysis within the current fetch, add request and browser-stage timing diagnostics, and hide runtime environment values from object representations.
+
+## 7.1.0 - 2026-10-11
+
+### Changed — browser supplementary downloads
+
+- Science, Wiley, PNAS, IEEE, AMS, MDPI, Royal Society, Annual Reviews, ACS, IOP, AIP, and Taylor & Francis now download browser supplementary files by serially clicking existing article or attachment-directory controls. Click failures retain per-file diagnostics without falling back to direct HTTP or browser context requests. HTTP-only routes and body-image download policies retain their existing behavior.
+- Accept download events and inline file responses only when they match the selected control target and its redirect chain. Record the click page, original link, and final URL; retain shared request deadlines, cancellation, byte/type checks, download budgets, and atomic file writes. Restore the article page, close owned popups, and remove listeners after each attempt.
+- Preserve publisher-specific controls: Wiley supporting accordions, IOP attachment directories and IDs, IEEE media tabs and filename/attachment-DOI controls, Annual Reviews supplemental tabs, and MDPI visible links or supplementary modals. Reconcile IEEE tracking-query variants with the discovered attachment and retain MDPI's original versioned modal link.
+
+### Maintenance
+
+- Refresh compatible locked Python dependencies, including filelock 4.1.0, platformdirs 4.13.0, Pydantic 2.14.0 / pydantic-core 2.50.0, Ruff 0.17.0, SoupSieve 3.0.1, jsonpointer 3.2.1, pycparser 3.11, NumPy 2.5.4 on Python 3.12+, and ONNX Runtime 1.31.0. Keep trafilatura at 2.2.0 and preserve the Camoufox-compatible Playwright 1.62.0 lock.
+- Update pinned GitHub Actions to upload-artifact 7.0.2, download-artifact 8.0.2, and setup-uv 10.3.0.
+
+## 7.0.4 - 2026-10-08
+
+### Fixed — Science reference loading
+
+- Wait for delayed Science bibliographies and reference batches using DOM coverage checks and one native scroll. Keep expansion controls and polling within the remaining request budget, capped at 10 seconds; recover from expansion timeouts and report the actual missing reference targets when the budget expires.
+
+### Maintenance
+
+- Update locked Camoufox to 0.5.8 and document its paired browser, `official/156.0.1-beta.36`. Refresh compatible locked dependencies to cachetools 7.2.1, filelock 4.0.12, platformdirs 4.12.4, iniconfig 2.3.1, jsonpointer 3.2.0, opentelemetry-api 1.45.1, orjson 3.13.0, and tomli 2.5.0.
+- Keep trafilatura at 2.2.0 with the existing `<2.3` limit: isolated checks confirm that 2.3.1 still changes Markdown escaping in inline LaTeX formulas and table references.
+
+## 7.0.3 - 2026-10-05
+
+### Browser runtime compatibility
+
+- Update locked Camoufox to 0.5.7 and prepare the browser paired with the Python package (`official/156.0.1-beta.34` by default). Reuse an installed paired build without querying releases; a missing paired build no longer falls back to an older active browser. Explicit channel and version choices continue to override the default pairing.
+- Keep browser probes read-only when selecting the paired runtime. The native macOS gate now prepares the paired browser and fpgen fingerprint model before validating both context modes. The model is downloaded into the fpgen package directory rather than bundled in Python wheels; complete preparation while that directory is writable before using the browser offline.
+
+### Maintenance
+
+- Retry `cabal update` up to three times when preparing texmath, waiting 2 and 4 seconds between attempts. Repeated update failures still stop Cabal compilation and prevent offline builds from accepting a missing texmath binary; compilation itself is not retried. Failed external tools now print a bounded log tail while retaining the complete temporary build log for release diagnostics.
+- Refresh locked Python dependencies, including MCP 2.3.0, filelock 4.0.11, Ruff 0.16.10, and mypy 2.4.0. Camoufox now uses fpgen in place of BrowserForge. Restrict trafilatura to `>=2.0,<2.3` (locked to 2.2.0) because 2.3.0 changes Markdown escaping in existing formulas and table citations.
+
+## 7.0.2 - 2026-09-27
+
+### Dependency compatibility
+
+- Allow filelock 4.x and Playwright below 1.64; update the development lock to filelock 4.0.4, Camoufox 0.5.6, and Playwright 1.62.0. Camoufox currently requires Playwright below 1.63. With Playwright 1.61 or newer, prepare Camoufox browser beta.30 or newer; reject incompatible browser candidates before download, and explicitly repin older pinned bundles. The native macOS gate now stages beta.30.
+- Update the pinned Haskell setup action to 2.12.1.
+- Refresh all resolvable Python dependencies and the npm lockfile, including MCP 2.2.0, Pydantic 2.13.5, urllib3 2.8.0, and xmldom 0.9.12. Upgrade setup-uv to 10.2.0, texmath to 0.13.3 with GHC 9.14.1 / Cabal 3.18.1.0, and the verified Windows embedded CPython / libvips assets to 3.13.15 / 8.18.7.
+
+## 7.0.1 - 2026-09-27
+
+### Fixed — publisher images and asset diagnostics
+
+- Wiley body images and formula bitmaps now use serial image navigation in one dedicated Camoufox session, preserving original response bytes and matching each response to its navigation and loaded image. Formula assets run first; candidates share per-asset and request budgets, retain challenge recovery and preview-fallback evidence, and clean up on cancellation. This path no longer adds direct HTTP retries, canvas exports, or separate figure-page discovery. Existing formula semantics and acceptance criteria remain unchanged.
+- Taylor & Francis image navigation now waits for response commit before validating image bytes, avoiding repeated `DOMContentLoaded` timeouts that could discard the original response and fall back to canvas output.
+- Elsevier XML assembly now preserves downloaded figure, table, and supplementary-file timing, dimensions, download tier, fetcher, and provenance. Browser image diagnostics report the actual Camoufox backend instead of the string `"None"`.
+
+## 7.0.0 - 2026-09-19
+
+### Upgrade behavior
+
+- Confirmed same-article paywalls and official full-text API entitlement denials now stop subsequent candidates, retries, PDF recovery, and asset downloads. When fallback is allowed, received abstracts and metadata retain their source and access diagnostics. Hidden notices, other-article notices, ordinary 403 responses, and individual asset denials do not establish a body restriction.
+- PDF body content now follows the existing `pymupdf4llm` output without project-level formatting cleanup or content repair. Consumers should not depend on the previous adjustments to headings, whitespace, references, or tables. Supported local asset-path rewriting remains available.
+- Extraction revision advances from 5 to 6. Results cached by 6.2.4 or older revisions no longer count as current extraction results; the first request after upgrade may fetch the paper again. Existing files are not proactively deleted. See the [7.0 migration guide](https://github.com/Dictation354/paper-fetch-skill/blob/v7.0.0/docs/migration-v7.md).
+
+### Article and asset fixes
+
+- Preserve HTML/XML inline semantics, headings, references, figures, tables, formulas, and back matter across supported publishers, fixing lost, duplicated, or misplaced content while retaining source identity and order. PLOS binds downloaded objects by article DOI and object ID; undownloaded objects retain official remote URLs, and partial downloads do not reduce the acceptance denominator.
+- Tighten provider-local recovery for IEEE PDF wrappers, PNAS body readiness, Science reference expansion, and publisher image candidates within existing request budgets, access boundaries, and provenance contracts.
+
+### Maintenance and compatibility
+
+- Existing CLI/MCP parameters, five presets, and public result formats remain supported. The major-version behavior changes concern access termination, PDF output, and cache upgrades.
+
+## 6.2.4 - 2026-09-13
+
+### Added — optional offline setup
+
+- Linux/macOS offline installers and the Windows EXE now offer an optional setup wizard after core installation succeeds: securely save Elsevier/Wiley credentials, detect or install supported system/image tools, and prepare Camoufox with a local blank-page launch check. Downloads and installations default to off; non-interactive and silent installs skip the wizard, and optional failures preserve the successful core installation.
+- Linux supports separate APT choices for browser libraries and image tools; macOS reuses existing Homebrew. Windows pins verified official Ghostscript EXE and libvips ZIP assets, validates actual image conversion, and records tool ownership. Upgrades preserve credentials and optional tools; optional uninstall cleanup preserves user-added files and shared caches. Skipping Camoufox retains its existing launch-time preparation behavior.
+
+### Fixed — Taylor & Francis formulas and figures
+
+- HTML extraction now distinguishes formula references from inline math using explicit DOM semantics, preserves equation labels and subitem headings, and reports conversion losses through acceptance. Full-size official figures replace matching previews; the extraction revision advances to invalidate outdated cached extraction results.
+
+## 6.2.3 - 2026-09-12
+
+### Fixed — Wiley supplementary downloads
+
+- Supporting-file links now activate through the page DOM as soon as they become visible, avoiding download stalls when the panel hides again during its opening animation. Downloads retain browser events, matching response metadata, and the shared request budget.
+
+### Fixed — publication years in output filenames
+
+- CLI and MCP automatic filenames now extract the first four-digit year not adjacent to other digits anywhere in the publication date, including `20 October 2020` and `October 20, 2020`. Missing or unrecognized years still use `unknown`; publication-date metadata retains its original value.
+
+## 6.2.2 - 2026-09-09
+
+### Changed — automatic Camoufox runtime preparation
+
+- CLI, MCP, and library browser routes, browser preflight, and interactive authentication now prepare managed Camoufox immediately before browser launch. Unpinned runtimes check the selected channel for the latest compatible release; pinned runtimes only prepare the requested version and reuse a valid local copy without querying releases. Browser reuse does not repeat preparation, and browser-free requests do not check for updates.
+- Failed update checks or installations retain a validated local runtime; a missing or unusable runtime reports preparation failure through existing provider error handling. Explicit executable paths remain user-managed, and missing Python dependencies still require installation by the user.
+
+### Fixed — managed runtime safety and protocol output
+
+- Preparation serializes shared-cache changes across processes, rechecks local state under the lock, and only repairs the validated target version directory. Failed updates restore the previous active configuration without purging the cache. Corrupt configuration, unsafe paths, and symlink/reparse points fail explicitly; managed macOS bundles retain their native launch layout.
+- Download and preparation output goes to stderr, preserving MCP JSON-RPC stdout. `doctor` and `provider_status` remain read-only; installers still do not download browser runtimes, and offline packages do not include browser binaries. Browser documentation, agent/MCP guidance, and the macOS contract now reflect launch-time preparation.
+
+## 6.2.1 - 2026-09-08
+
+### Added — arXiv ancillary files
+
+- `asset_profile=all` now downloads official ancillary files for the same paper and version on both HTML and PDF routes. Abstract-page identity checks pin unversioned inputs to an explicit version; later metadata enrichment preserves it. Attachments appear once in `Supplementary Materials`, with provenance and per-file failure evidence. The default `body` profile and requests that disable asset output do not perform ancillary discovery.
+
+### Fixed — publisher supplementary downloads
+
+- Wiley supporting files now download by clicking the matching link in the article browser session. Collapsed or redrawn panels are reopened within bounded waits; download events and matching responses supply file bytes and metadata. Missing links, blocked pages, and timeouts retain diagnostics within the shared request budget.
+- Annual Reviews now retrieves official PDF and MPG attachments from the supplementary section after checking the parent DOI. Frontiers resolves relative supplementary filenames through the same article's supplemental-data API only when there is a unique match; unmatched files remain explicitly unarchived.
+- AMS includes same-article supplementary links cited in the body and removes duplicate URLs. IOP accepts both `SM` and `supp` numbered attachment links. AIP ZIP links and Taylor & Francis download links now supply the intended attachment filename.
+- Oxford Academic prefers links from the attachment section, excludes article PDFs and non-HTTP navigation, and deduplicates equivalent signed CDN links while retaining the complete download URL.
+- Elsevier no longer downloads formula bitmaps already represented by MathML, merges duplicate accepted-manuscript PDF references, and uses the matched supplementary asset's local path when rendering links.
+
+### Fixed — browser readiness and asset execution
+
+- AIP article readiness can now wait up to 90 seconds within the remaining request budget, ending early when the body is stable and preserving timeout diagnostics and the remaining PDF fallback budget.
+- Browser asset planning now receives the provider client, and Silverchair figure-page recovery stays on the caller thread for either supported browser backend.
+
+## 6.2.0 - 2026-09-07
+
+### Added — CLI progress and cooperative cancellation
+
+- Single and batch fetches now support `--progress auto|text|jsonl|none` on stderr, preserving stdout for paper content or JSON. The default `auto` displays text only in a terminal; JSONL reports input-indexed stages, asset counts, and terminal manifest records.
+- `--progress jsonl --control-stdin` accepts commands to cancel one input or the entire batch. Cancellation preserves completed results and original input order; duplicate DOI inputs retain shared work until all dependent inputs are cancelled. Terminal events follow output submission and worker cleanup, while final batch JSONL remains a single input-ordered result file.
+
+### Fixed — Oxford Academic inline images
+
+- Oxford Academic HTML now rewrites downloaded preview-image links to local asset paths before article-model conversion, keeping figures inline without duplicate images. Undownloaded images retain their remote links, and partial failures retain their acceptance evidence.
+
+### Changed — paper skill discovery and reading guidance
+
+- Skill descriptions now cover full-text retrieval and availability probes, including explicit paper candidates found by an agent searching for evidence to answer a question. The existing five presets now state their selection criteria.
+- Batch guidance applies the 50-input limit before identity resolution, preserves original indices, and deduplicates canonical DOIs across chunks. Full reading and comparison tasks reuse qualified local text or fetch each paper with the existing reading preset; compact results and truncated bounded excerpts do not count as having read the full text.
+- Availability-only tasks report per-item probe evidence, errors, and unscheduled states without requiring full-text acceptance or automatically fetching the paper. Fetch/cache examples explicitly select supported reference parameters; existing authorization, cache scope, output, and provenance boundaries remain unchanged.
+
+## 6.1.6 - 2026-09-07
+
+### Fixed — Nature extended assets and Wiley image retrieval
+
+- Nature Extended Data tables and figures now belong to supplementary scope: `body` excludes them, while `all` retrieves them through the existing image download path. Table matching no longer assumes that the displayed table number equals the page URL number; legacy table images require matching page labels, article backlinks, image DOI, and table content context. Image tables retain their Markdown references, and missing extended assets retain provenance and structured failure evidence for acceptance.
+- Wiley formula bitmaps now accept positive natural dimensions and require an exact match to the requested image URL, avoiding substitution with unrelated page images. Formula and figure image navigation waits for navigation commit and image readiness instead of image-document `DOMContentLoaded`.
+- Wiley figures now prefer the publisher's full-size candidates and require the loaded image URL to match the current target during page export and image navigation. Preview fallback retains its source, dimensions, and full-size failure evidence, with `download_tier=preview` and `preview_accepted=false` so unified acceptance reports the quality downgrade.
+
+## 6.1.5 - 2026-09-05
+
+### Breaking — unified MCP probe entry point
+
+- Removed the standalone `has_fulltext` MCP tool without an alias, reducing the tool count from ten to nine. Use `batch_check(queries=[query])` for a single paper and read `probe_state`, evidence, warnings, and item errors from `results[0]`; ambiguous candidates now live in the item error instead of the former single-tool top-level error.
+- `batch_check` now accepts only `mode="metadata"`, which remains the default. Removed its article-fetch path while preserving schema-v2 metadata fields, input order, canonical-DOI deduplication, isolated item contexts, shared transport, provider-lane limits, cancellation, and progress. The Python `probe_has_fulltext` service and provider-catalog resource remain unchanged.
+- Replace article checks with `batch_fetch` and judge each result by `acceptance`. For body checks without disk output, explicitly use `modes=["article"]`, `detail="compact"`, `save_markdown=false`, `no_download=true`, `prefer_cache=false`, `artifact_mode="none"`, and `strategy={"asset_profile":"none"}`, without `batch_results`. Existing `batch_fetch` defaults are unchanged.
+
+### Changed — skill workflow guidance
+
+- Determine task intent and request parameters before local/cache checks; temporary reading does not require selecting a cache directory. Preserve the five presets and reuse explicit user choices and existing authorization without repeated confirmation.
+- Make reference reading and acceptance reporting depend on the task, clarify runtime preparation and access boundaries, and continue the requested summary, comparison, translation, or extraction after obtaining verified text.
+
+## 6.1.4 - 2026-09-05
+
+### Fixed — publisher browser and asset retrieval
+
+- AIP now uses the normal HTML attempt without media interception or the Adzerk/Crossmark empty-script responses, preserving its existing non-persistent session and article readiness checks.
+- IEEE original-image recovery now follows the matching article link in the shared browser session. Figures use the publisher viewer; table-image links open a temporary browser tab. Recovery validates the original response bytes and retains per-asset failure reporting and preview fallback.
+- Springer/Nature now downloads known original-image candidates before requesting figure pages. Figure-page discovery runs only when needed, within the same asset resolution and budget; table-page completion and preview provenance remain intact.
+- Science now associates the final page with the latest completed main-frame navigation response for the current candidate, matching URL and DOI. An initial denied response no longer overrides a subsequently loaded article; iframe and unrelated responses cannot replace the article status.
+- PNAS now blocks only the exact sidebar metrics endpoint and reports `blocked_sidebar_metrics_count`. Three cold-session comparisons did not demonstrate a consistent speedup; browser page processing remains a performance limitation. The documented PMC browser-free experiment is not an implemented retrieval route.
+
+## 6.1.3 - 2026-09-04
+
+### Changed — provider and browser ownership
+
+- Article provenance now resolves from each catalog route's declared source, with exact route-name selection and a compatibility path for PDF recovery payloads that only identify the route kind. Existing generic ACS, Science, and PNAS sources and the shared Wiley browser source remain unchanged.
+- Browser landing-page, provider, and asset URL checks now reuse the catalog hostname matcher while preserving the distinct provider-domain, route-host, candidate-construction, and exact MDPI/Frontiers network boundaries.
+
+### Changed — schema and repository maintenance
+
+- MCP request schemas now share one exact optional-string normalization helper across fetch, batch, cache, and browser-preflight path fields; path values still trim only leading and trailing whitespace. Removed an equivalent no-op article-source rendering branch.
+
+## 6.1.2 - 2026-09-03
+
+### Fixed — asset completeness and provider pagination
+
+- Standard provider fetches no longer impose a default 128-file asset cap; the per-file, aggregate-byte, pixel, and worker limits remain in force, and arXiv source archives retain their independent 128-regular-member traversal guard. Explicit finite file budgets are still enforced, fatal budget stops now return a timed failure for every admitted unfinished asset, and ordinary streamed figures no longer reserve a conversion output slot unless their payload is actually EPS or TIFF.
+- IEEE reference retrieval now continues beyond 20 pages, stopping at the advertised count or on an empty, short, or duplicate page while respecting one wall-clock deadline. Landing pages that advertise references without a count now fetch them as well.
+- Taylor & Francis dynamic CSV and embedded tables are hydrated in batches of 24 until all discovered tables are processed or the page deadline expires. Deadline truncation now reports the unfinished table count, and offline replay restores all bounded same-page table payloads.
+- Async MCP fetches close each Camoufox manager on its owner worker thread on success, provider failure, and cooperative cancellation.
+- Article rendering now recognizes metadata titles containing HTML emphasis as equivalent to Markdown-emphasized leading headings, preventing duplicate article titles.
+- Offline package verification now uses the supported `paper-fetch fetch` subcommand for its DOI smoke test.
+
+## 6.1.1 - 2026-09-02
+
+### Fixed — ACS assets and AIP browser stability
+
+- ACS HTML extraction now restores publisher figure-download links from the raw Silverchair body before asset discovery and deduplicates the resulting assets by identity, preserving access to the official image rendition when the cleaned article body omits those links.
+- AIP browser attempts now neutralize the exact Adzerk and Crossmark widget script URLs with empty JavaScript responses. Other URLs and resource types continue normally, and a failed fulfill safely falls through, preventing intermittent third-party TLS stalls from blocking article readiness or producing insufficient-body results.
+
+## 6.1.0 - 2026-09-02
+
+### Fixed — audit consistency
+
+- Batch MCP fetches now normalize optional string fields exactly like single fetches, including treating whitespace-only shared Markdown filenames as unspecified and recording the normalized request in manifests.
+- Async inline-image fetches retain the existing internal article field in cache only when needed to reproduce requested images; old insufficient sidecars safely miss, while public structured content still hides unrequested articles.
+- Provider results now propagate content updates made by asset hooks through article construction, workflow persistence, acquisition, and the returned provider content.
+- Removed the unused KaTeX runtime dependency and installation check; the packaged Node workspace now contains only the MathML-to-LaTeX converter and its transitive dependencies while retaining KaTeX-compatible normalization goals.
+
+### Breaking — command, MCP, batch, and manifest surfaces
+
+- The CLI is now command-only: use `paper-fetch fetch ...`. The legacy root-level fetch flags, CLI `--no-download`, durable `--run-manifest` / `--resume`, and the `manifest audit|reconcile` commands were removed. Use `--artifact-mode none` when provider artifacts and assets should not be retained.
+- CLI and MCP batches may write one final `batch-results.jsonl`; it is assembled in input order and committed atomically only after every input reaches a terminal state. Append-only attempts, run summaries, audit/reconcile, and resume semantics were removed, while in-batch canonical-DOI fan-out remains. Existing differing result files still require explicit `--overwrite` / `overwrite=true`.
+- Schema-v2 manifest records now expose only the current `record_status`, `acceptance`, and `output_artifacts` contract. The legacy top-level `status`, `output_path`, and `saved_markdown_path` projection and legacy acceptance/cache migration shims were removed; old, unknown, or incomplete records now fail closed instead of being guessed or upgraded.
+- Removed the `summarize_paper` and `verify_citation_list` MCP prompt templates. The fetch, resolve, check, and cache tools, static provider-catalog resource, and schema-v2 payload contract remain unchanged.
+
+### Changed — browser and transport runtime
+
+- Camoufox is now the single browser backend. Removed the backend selector, generic Chrome/CDP runtime path, automatic browser installation/repair/update, and the CLI/MCP/environment `browser_auto_prepare` controls. Fetch, auth, and preflight only use an already prepared runtime; run `python -m camoufox fetch` explicitly when setup is needed.
+- Browser preflight no longer publishes short-lived HTML or route hints for a later fetch. Every fetch performs its own navigation and repeats identity, access-boundary, body, and asset acceptance; storage state remains the intentional reusable browser capability.
+- Removed the `download_dir`-backed HTTP text cache, conditional disk revalidation, cache-stat/timing collectors, and their environment controls. HTTP GET reuse is now bounded to the current process, while request safety, redirect checks, retry policy, and asset limits remain enforced.
+
+### Changed — MCP cache access
+
+- Removed dynamic cache index/entry resources, cache resource-list notifications, and `batch_fetch` cache `resource_uri` fields. Cache access now uses `list_cached` / `get_cached` within an explicit `download_dir` scope; the static provider catalog resource remains available.
+- Removed cache `refresh` / `rescan` modes and loose-file discovery. Sidecars, Markdown, and assets are registered incrementally when written; reads trust only the current scoped index plus current DOI, capability-scope, stat, and hash evidence, without silently migrating an old or damaged index.
+
+### Changed — provider and library contracts
+
+- Built-in providers now load from one fixed, validated bundle list. Dynamic registration, import-order precedence, overlapping identity priorities, route-union compilation, and the generated provider catalog/route governance layer were removed; runtime network policy is compiled from an exact declared route.
+- Removed compatibility-only positional constructors, broad keyword adapters, legacy urllib asset request injection, generic browser/PDF launch arguments, cross-request singleflight, and other private wrapper imports. Current typed request/options objects and one-batch DOI deduplication remain the supported paths.
+
+### Changed — maintainer tooling and verification
+
+- Replaced the manifest/review/scaffold onboarding tree with the smaller `docs/adding-a-provider.md` workflow: define a runtime bundle, add provider-local tests, and add representative golden replay evidence. Removed provider governance/drift/canary generators, recursive onboarding automation, Markdown-review sidecars, live benchmark tooling, and generated route documentation.
+- Removed the repository coverage-focus and complexity-budget gates and the packaged `paper_fetch_devtools` quality layer. Deterministic unit, integration, provider replay, package, platform, and live-test entry points remain in their respective scopes.
+
+### Changed — release and dependency CI
+
+- Removed the mutable `dependency-latest` rolling release, its dedicated token path, and cross-revision release-tooling overlays. Stable `v*` releases continue to publish the nine offline installers with `SHA256SUMS`, frozen dependency evidence, SBOMs, secret scanning, and provenance attestation.
+- Removed the non-gating provider canary state machine; explicit legally authorized checks remain available under `tests/live`.
+- Locked dependency audits now export all extras and fail directly on every `pip-audit` finding, without an empty waiver framework.
+- Python 3.11 and 3.14 boundary jobs now build one wheel per Python version and smoke both isolated core and full installs.
+- Python distribution verification now checks archive safety, required package/Skill payloads, metadata, entry points, and complete wheel `RECORD` coverage without maintaining a checked-in exact source inventory. The legacy repository-root Windows PowerShell bundle installer was removed; the supported Windows release artifact remains the native setup executable.
+- Offline builders/installers verify bundled and installed Skill copies through `scripts/skill_integrity.py`. `doctor` now reports runtime/provider health only; `--install-root` and installation-provenance status were removed.
+
+## 6.0.4 - 2026-08-29
+
+### Fixed — release metadata
+
+- Synchronize the generated provider catalog's tool version with 6.0.4 project metadata, preserving the XML whitespace behavior introduced in 6.0.3.
+
+## 6.0.3 - 2026-08-29
+
+### Fixed — XML inline whitespace rendering
+
+- The shared Elsevier/JATS inline renderer now collapses publisher XML source-formatting whitespace before assembling Markdown. Line wrapping around operators and emphasis no longer produces malformed emphasis or unintended block parsing, while explicit break elements and the existing split-italic subscript repair keep their established behavior.
+- JATS paragraphs containing embedded blocks apply the same whitespace rule.
+
+## 6.0.2 - 2026-08-29
+
+### Fixed — Frontiers original figures and rolling releases
+
+- Frontiers body figures and formula images now discover and prefer the publisher's exact original `xml-images` URLs from the canonical landing page. Graphic-stem matching keeps downloaded full-size assets and rendered Markdown aligned while avoiding incorrect article-directory URLs derived from DOI suffixes.
+- The rolling dependency release `publish` job now checks out the triggering workflow commit before invoking repository release scripts. The checkout is pinned, shallow, and credential-free, preventing `prepare_release_assets.py` from failing with `Errno 2`; a structured workflow contract protects the ordering and trust boundary.
+
+## 6.0.1 - 2026-08-28
+
+### Fixed — release publication
+
+- Stable publication now relies on the already verified remote tag instead of redundantly passing its commit as `target_commitish`, avoiding GitHub's workflow-permission rejection when the default branch advances while an immutable-tag release is building.
+
+## 6.0.0 - 2026-08-28
+
+### Changed — explicit capabilities and smaller public surfaces
+
+- Provider routes are now the sole capability source. Provider-level browser flags, automatic route synthesis, source-tree discovery, and dynamic registry monkeypatching were removed; built-in providers use one explicit lazy module list.
+- MCP tools keep their existing `CallToolResult.structured_content` success and error payloads, but `tools/list` no longer publishes `outputSchema`. Browser capability and preflight status are derived from runtime owners, and unknown preflight states now fail closed.
+
+### Changed — repository tooling and releases
+
+- Removed recursive onboarding agent orchestration, private DAG/state/retry machinery, evidence sidecars, geography-only live/report tooling, and production-wheel Markdown review/quality diagnostics. Deterministic review bootstrap/finalization and golden fixture manifests remain the repository-owned workflow.
+- Stable releases now publish exactly nine installers plus `SHA256SUMS`. Rolling prereleases publish those installers, `dependency-manifest.json`, and `SHA256SUMS`; wheel, sdist, inventory, SBOM, and per-target evidence remain build-time verification inputs.
+- Replaced the historical macOS ledger with a compact support, safety, and evidence contract derived from project metadata, workflows, the installer manifest, and the release asset owner.
+
+See [docs/migration-v6.md](https://github.com/Dictation354/paper-fetch-skill/blob/v6.0.0/docs/migration-v6.md) for incompatible import and protocol changes.
+
+## 5.6.1 - 2026-08-27
+
+### Fixed — Windows release lifecycle
+
+- Fixed the native Windows release failure caused by Inno Setup's two-phase uninstaller: the first process could return while its TEMP-hosted second phase still owned `unins000.exe`, so the overwrite upgrade created `unins001.exe` and the final residue check raced that delayed cleanup.
+- Replaced the installer-side registry/command-line parsing with the official UninsIS 1.7.0 helper pinned by release, DLL, and license digests. The Windows builder verifies those files before Inno compilation and records the setup-time component in the offline manifest, dependency evidence, and CycloneDX SBOM. Upgrade now fails closed until the old uninstaller has completed and deleted its original executable, while preserving `offline.env` and other user-owned content; the LGPL license and provenance notice ship with the installer.
+- Strengthened the native lifecycle gate to require exactly one post-upgrade `unins000.exe`, then wait up to 60 seconds for both the Inno success log marker and every `unins*.exe/.dat/.msg` file to disappear before applying the exact uninstall residue allowlist.
+
+## 5.6.0 - 2026-08-27
+
+### Skill integrity and release builds
+
+- Address the static Skill bundle by the SHA-256 of its sorted regular-file inventory. Source, staging, offline manifests, and host installs reject missing, extra, changed, symlink, and special entries; the canonical `agents/openai.yaml` ships directly.
+- Add read-only installer `--check` for Codex/Claude/Antigravity and expected/actual Skill versions to `doctor`, with readiness failure for missing or drifted active copies.
+- Build wheel/sdist through reusable `package.yml` with exact inventory and independent install smokes. Stable release runs artifact builds rather than ordinary CI, in parallel with the nine-target frozen resolver; it neither runs nor waits for remote unit/ordinary CI. Full local unit verification remains the release-operator prerequisite. Ordinary CI uses reusable `verify.yml`, and Dependency refresh runs the full unit suite.
+- Peel stable tags to one immutable SHA used by packaging, dependency resolution, offline builds, checkout, attestation, and publication, and reject tag drift before publication.
+- Resolve frozen Linux x86_64 and macOS arm64 CPython 3.11–3.14 plus Windows x86_64 CPython 3.13 snapshots. Record actual staged dependencies and content digests in per-target manifests and CycloneDX 1.6 SBOMs; use the locked project venv for evidence generation.
+- Pin and verify the Windows CPython 3.13.13 embeddable archive. Validate the exact stable asset set: wheel/sdist and inventory, nine installers, eighteen target evidence files, merged dependency manifest, and basename-only `SHA256SUMS`.
+- Verify final Windows EXE install, overwrite upgrade, user-data preservation, and uninstall; only `offline.env`, `downloads/`, and the owned user-data sample may remain. Keep the Windows tooling overlay pinned as one revision.
+- Refresh compatible dependencies including MCP 2.1.1, imagesize 2.0.1, and PyMuPDF4LLM 1.28.2; declarations retain rolling compatibility ranges while lockfiles retain exact resolution.
+
+### Network, cache, and output behavior
+
+- Restore hostname-based urllib3 pools with public HTTP(S) URL checks, safe redirects, sensitive-header stripping, and standard cookie-jar scope. Provider catalog hosts do not grant implicit network authorization; explicit caller allowlists remain enforced.
+- Redact secrets in human/MCP logs and artifact uploads. Route notifications by request ownership and prevent late workers from logging into closed or overlapping sessions.
+- Bind private caches to credentials and browser state actually used, including provider, backend, canonical state path, and final digest. Check local DOI sidecars before enrichment, enforce private-to-public fallback only, and re-evaluate capabilities on resource reads. Reuse unchanged-file fingerprints and incrementally update cache indexes.
+- Publish artifacts, sidecars, Markdown, indexes, and run summaries with path locks, unique staging, fsync, and atomic replacement. Equal non-overwrite writes are idempotent; differing content requires overwrite. Cancellation fences later commits and progress.
+- Preserve input order, indices, provider lanes, and terminal/not-scheduled states in batches. Share canonical-DOI work with cancellation-isolated waiters. Resume manifests keep fetch/output semantics immutable while permitting execution-policy changes.
+- Share an article asset budget: 128 files, 32 MiB per file, 256 MiB total, 64 million pixels, and at most four workers. Bound browser-returned bytes, archive traversal, conversion, and atomic writes; stop and clean staging on fatal budget failures.
+- Declare body-asset routes with a 20-second direct attempt and two-worker route cap. After one direct probe per host, reuse a verified browser path within that article. Preserve per-asset timing, original/preview provenance, and explicit degradation reasons.
+- Add optional `require_local_body_assets` and `require_full_size_body_assets` across Python, CLI, MCP, cache, and manifests. Both default false; full-size implies local, and unmet requirements degrade acceptance without discarding acquired full text.
+- Accept Wiley 401/403 candidates only after stable body readiness, exact DOI match, no challenge/no-access signal, and full-text acceptance; preserve the actual HTTP status. Align PNAS readiness with its body parser and retain bounded ACS empty-shell diagnostics.
+- Compile route timeout, retry, pacing, acceptance, and concurrency policies from the catalog. Pace arXiv Atom/source requests at one per three seconds within a shared transport scope. Strong identity evidence controls access-boundary termination; DOI-less acceptance requires a verified unique canonical landing identity.
+- Complete MCP v2 cache asset facets and batch `route`/`failure_code` fields. Add provider replay shards, route-specific evidence waivers, coverage gates, and a non-blocking scheduled canary for four public direct routes.
+
+## 5.5.0 - 2026-08-25
+
+### Added — exact acquisition provenance
+
+- Kept the legacy `source` scalar unchanged and added `acquisition={provider,route,representation,transport,fallback_used}` to fetch envelopes, articles, Markdown front matter, acceptance, manifest v2, MCP fetch/cache/batch payloads, and cache-index entries. Exact route and transport facts come from the provider route catalog; unavailable facts remain `null` and make provenance partial instead of being guessed from `source`.
+- Raised the fetch-envelope sidecar version to 5 so pre-acquisition v4 sidecars are reported as stale and refetched, while existing Markdown files remain readable with `acquisition=null`. Provider waterfalls now stamp the winning catalog route without changing established public `source` values or legacy source-trail markers.
+- Required complete provenance to agree with the catalog route, source owner, and structured fallback trace; manifest auditing now detects Markdown acquisition drift. Generated route documentation exposes `api|browser|http`, success traces retain the exact winning route, and the additive contract is covered by core CI without changing manifest or MCP schema v2.
+
+### Fixed — formula assets, equation fallbacks, and Markdown links
+
+- Fixed Wiley/Atypon display equations whose empty MathML exposed only a numbered label: structured TeX still wins, otherwise the official formula image is used before visible text; label-only equations remain explicitly unavailable instead of becoming pseudo-math, and complete display-math blocks survive Markdown post-processing.
+- Allowed explicit formula URLs such as `math-N`, `_IEqN`, and `_EquN` inside figure captions to enter formula asset discovery while preserving the main figure and leaving ordinary equation-related graphics classified as figures. Publisher-supplied bitmap-only formulas remain truthful `download_tier="preview"` assets but are accepted previews, so intrinsically small or duplicate formulas no longer raise placeholder or fidelity-degradation issues; real payload and path defects remain diagnostic.
+- Reconciled Springer/Nature `media.springernature.com/lwNN/...` rendition aliases with their `/full/...` downloads before asset acceptance. A successfully archived formula or figure is now counted once as a local logical asset instead of leaving a duplicate remote-only record that falsely degrades Manifest audit with `missing_path` and `asset_below_request`.
+- Stopped root-relative publisher assets from being rewritten as nonexistent `../../cms/...` paths. Only existing local files become relative links, downloaded assets still take precedence, and unmatched `/cms/...` links use a valid publisher landing page to remain complete remote URLs or stay unchanged when no valid base exists. Preview fallback warnings are now asset-neutral.
+
+## 5.4.1 - 2026-08-19
+
+### Fixed — compatible Camoufox offline snapshots
+
+- Raised the supported Camoufox line to `>=0.5.5,<0.6` and refreshed the development/CI lock to 0.5.5.
+- Removed the POSIX offline builder's Camoufox-only exact `uv.lock` override. Offline builds now derive the selected version from the resolved wheelhouse while still requiring one Camoufox wheel and verifying wheel metadata, the installed distribution, and the recorded manifest version agree. This prevents frozen rolling snapshots containing a newer compatible Camoufox wheel from being rejected by an older source lock.
+
+## 5.4.0 - 2026-08-18
+
+### Added — on-demand Camoufox runtime preparation
+
+- Added first-use preparation for the managed Camoufox browser runtime on CLI browser paths. `paper-fetch fetch`, `paper-fetch auth`, and `paper-fetch browser-preflight` now prepare a missing runtime only when browser work is actually requested, using the official Camoufox CLI for installation, repair, and update checks. Valid runtimes are checked at most once every 24 hours, and a failed update continues with the existing valid runtime.
+- Added structured preparation progress, a 900-second child-process deadline, cooperative cancellation, failure cooldowns, and a cross-process file lock so concurrent commands share one installation attempt. Runtime probing rejects managed paths that escape the Camoufox root or traverse symlinks/junctions before any repair is attempted.
+
+### Changed — explicit browser networking policy
+
+- Added `--browser-auto-prepare` / `--no-browser-auto-prepare`, `PAPER_FETCH_BROWSER_AUTO_PREPARE`, and MCP request-level `browser_auto_prepare` controls. CLI browser commands default to enabled; MCP tools and direct library calls default to disabled so service and embedded modes never acquire browser binaries merely by being invoked.
+- Kept explicit custom browser binaries outside managed-runtime mutation, and kept static diagnostics, `provider_status`, offline installers, and offline package verification free of browser downloads. Synchronized the Linux, Windows, and native macOS CI contracts, regression coverage, operator documentation, and bundled skill guidance with the new boundary.
+
+## 5.3.2 - 2026-08-17
+
+### Changed — formula and release integrity
+
+- Updated KaTeX from 0.18.1 to 0.18.4 in both development and bundled formula manifests and lockfiles, incorporating settings-object prototype-pollution hardening and parser fixes. The machine contract and unit tests now reject declaration or lock drift between the two copies.
+- Update pinned `actions/attest-build-provenance` from v4.1.1 to v4.2.2, retaining its subject-path interface.
+
+## 5.3.1 - 2026-08-10
+
+### Fixed — Wiley browser access detection
+
+- Fixed Wiley full-text and Open Access pages being classified as `publisher_paywall` solely because the current header places `Institutional login` within the first 1,000 visible characters. Once the existing provider body-readiness check confirms substantive article content, navigation-only paywall and not-found text is deferred to the body-aware availability assessor; challenge pages, HTTP 401/402/403, HTTP 404, explicit access denial, and abstract redirects still fail closed.
+- Kept `Institutional login` as a generic access-gate signal for pages without substantive body readiness, and added end-to-end Wiley browser-preflight, shared signal, Linux CI, native `macos-15`, and macOS adaptation-contract regressions.
+
 ## 5.3.0 - 2026-08-10
 
 ### Added — browser reuse and observability
@@ -29,8 +603,8 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 ### Changed — build and release integrity
 
-- Updated the pinned `haskell-actions/setup` build action from v2.11.0 to v2.12.0 and synchronized the macOS machine contract, validator, tests, and documentation. The action's GHCup 0.2.6.2 update retains GHC 9.10.3, Cabal 3.12.1.0, texmath 0.13.2, and the existing artifact interfaces.
 - Added an independent `uv lock --check` quality gate so stale project-version, dependency-declaration, or lock metadata changes fail CI before the remaining static checks.
+- Update pinned `haskell-actions/setup` from v2.11.0 to v2.12.0, including GHCup 0.2.6.2 while retaining GHC 9.10.3, Cabal 3.12.1.0, and texmath 0.13.2.
 
 ## 5.2.0 - 2026-08-07
 
@@ -83,60 +657,49 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 ## 5.0.0 - 2026-08-03
 
-### Added
+### Added and breaking changes
 
-- Rebuilt the macOS adaptation against `Dictation354/paper-fetch-skill` v4.1.0 (`fc3bd96e8d781667a2e86e90dc6e8e35a8a26fa7`) with a machine-readable contract, validator, layered audit matrix, and portable Windows/WSL maintenance gates. The contract documents how to replay the isolated adaptation on a refreshed upstream main branch and keeps `/mnt/*` WSL checkouts limited to static evidence.
-- Added fail-closed macOS installation checks for the minimum OS, manifest and checksums, an exact checksummed regular-file inventory with payload symlinks forbidden, standard-GIL CPython ABI and architecture, recursive quarantine state, package/staging path ownership, atomic artifact publication, safe purge, owned upgrades, user configuration, and symlink-preserving Zsh startup updates. Unlisted payload files and purge requests made through symlinks are rejected before user integrations are changed.
+- Rebuild the macOS adaptation against v4.1.0 (`fc3bd96e8d781667a2e86e90dc6e8e35a8a26fa7`), with a machine-readable contract and portable Windows/WSL gates. `/mnt/*` WSL checkouts provide static evidence only.
 
-### Breaking
+- Upgrade MCP success/error and acceptance payloads to schema v2. `FetchEnvelope.trace` becomes the sole complete trace owner; retain `article_type`, `preview_accepted`, and stable asset issue codes. Schema-v1 consumers must upgrade; old v1 fetch-envelope caches remain read-only migratable.
 
-- Upgraded all MCP success/error and acceptance payloads from schema v1 to schema v2 and removed the duplicated `quality.trace`; `FetchEnvelope.trace` is now the sole complete trace owner, metadata/assets retain `article_type` and `preview_accepted`, and asset summaries distinguish accepted/fallback previews with stable issue codes. Consumers that require schema v1 must upgrade before adopting 5.0.0. Legacy v1 fetch-envelope caches remain read-only migratable.
-- Removed the advertised but unimplemented IOP XML/TDM placeholder route, so catalog/status/docs now expose only executable IOP HTML, PDF, metadata, and supplementary capabilities.
+- Remove the advertised but unimplemented IOP XML/TDM route; expose executable HTML, PDF, metadata, and supplementary capabilities only.
 
-### Changed — macOS and packaging
+### macOS and offline packaging
 
-- Pinned native macOS arm64 offline builds for CPython 3.11–3.14 to `macos-15`, including relocatable texmath Mach-O dependency closure, ad-hoc signing, safe archive extraction, canonical `LC_RPATH` validation, recursive `xattr` checks, and executable Playwright Node verification.
-- Split portable Windows/WSL contract evidence from native macOS evidence. Regular CI now runs the native filesystem-alias node and a serial dual-context test against the pinned official Camoufox `152.0.4-beta.28` app bundle; the test validates the managed cache before Camoufox can inspect or clean it.
-- Kept browser extras on the compatible `camoufox>=0.5.4,<0.6` line while using `uv.lock` as the reproducible concrete-version source. POSIX packaging resolves that locked version, verifies the downloaded wheel metadata and installed distribution, then records the verified version in the offline manifest. Immutable-tag rebuilds must pass the source checkout's current Mac contract before any overlay; trusted POSIX/Windows tooling refs require full commit SHAs, copy only exact packaging-tool paths, never copy Python wheel source, and are recorded separately in artifact provenance.
+- Require macOS 15.0, standard-GIL CPython ABI/architecture, exact checksummed regular-file inventories, and recursive quarantine checks before user integrations change. Reject payload symlinks, unlisted files, unsafe staging/purge targets, and unowned upgrades; preserve user configuration and Zsh symlinks, and publish artifacts atomically.
 
-### Fixed — macOS and packaging
+- Build macOS arm64 CPython 3.11–3.14 on `macos-15`, verifying native installs, relocatable texmath Mach-O closure, ad-hoc signing, safe archive extraction, canonical `LC_RPATH`, recursive `xattr`, and bundled Playwright Node execution. Portable Windows/WSL results do not replace native macOS evidence.
 
-- Declared `packaging` as a core runtime dependency for provenance checks, and ran macOS contract validation through the locked project environment so clean core installs and native/offline CI runners do not fail on an undeclared or invisible dependency.
-- Fixed concurrent or resumed CLI batches colliding on `unknown_unknown_article.*` when a metadata-poor result had no title or DOI. Output naming now falls back to a deterministic 16-character SHA-256 digest of the normalized query, preserving no-overwrite safety without exposing full query URLs in filenames.
-- Fixed prepared official Camoufox app bundles failing to start on native macOS. Managed runtime readiness remains a no-download check, but paper-fetch no longer passes `Contents/MacOS/camoufox` back as a custom executable and therefore no longer makes Camoufox look for `Contents/MacOS/properties.json`. Ephemeral fetch/preflight and persistent authentication contexts share this behavior, while explicit custom executable overrides remain supported.
-- Fixed MCP cache index, fetch-envelope, and resource misses when macOS exposes a temporary scope through `/var` or `/tmp` but canonicalizes saved paths through `/private/var` or `/private/tmp`; equivalent roots now share one safe scope while in-scope symlinks and out-of-scope files remain rejected.
+- Regular native CI prepares official Camoufox `152.0.4-beta.28`, checks filesystem aliases, and serially starts temporary/persistent contexts after managed-cache validation. Authenticate release discovery with the workflow read-only GitHub token to avoid anonymous API limits.
 
-### Changed — runtime and provider validation
+- Keep `camoufox>=0.5.4,<0.6` with concrete versions from `uv.lock`; verify wheel/installed metadata and record the version. Immutable-tag rebuilds must pass the source Mac contract. Tooling overlays require full commit SHAs, copy exact packaging paths without wheel source, and record source/tooling revisions separately.
 
-- Removed the scheduled/manual GitHub Actions workflow for live publisher/MCP,
-  provider-drift, and full golden-corpus checks; these opt-in checks now retain
-  only their documented local pytest and script entry points.
-- Made live publisher samples declare accepted source-and-trail outcomes, use lazy browser preflight with shared storage state, and run under marker-aware socket policy without a global force-enable override. Springer success coverage now uses an OA research article; the historical Nature news item remains a separate access-gate behavior sample.
-- Promoted the publisher catalog live suite from full-text smoke coverage to a hard `asset_profile=body` acceptance gate, with report/JUnit artifacts that distinguish recorded complete providers from skipped or otherwise unrecorded catalog entries; protected IEEE GIF recovery now lives in a separate authorized-runner opt-in suite.
+- Declare core `packaging` and run contract validation in the locked environment. Fix prepared official macOS app launches by keeping managed bundles out of custom-executable handling; explicit executable overrides remain supported.
 
-### Fixed — runtime and providers
+- Unify `/var` and `/tmp` cache scopes with their `/private/...` aliases while rejecting in-scope symlinks and out-of-scope files. Use a 16-character normalized-query SHA-256 filename fallback when CLI batch results lack title/DOI, avoiding `unknown_unknown_article.*` collisions without exposing query URLs.
 
-- Preserved the first stable challenge/paywall/access-boundary reason when a later browser candidate fails at transport/navigation, either the next candidate or the conservative retry exhausts the shared deadline, and kept that `no_access` classification through provider-owned PDF waterfalls. Live acceptance now recognizes both explicit `status=no_access` errors and the successful metadata fallback's exact `route:provider_candidate_*_access_boundary_stop` marker, while leaving extraction, empty-shell, and incomplete-body regressions as failures.
-- Recognized Springer/Nature `Client Challenge` shells (including the `_fs-ch-` runtime marker) and stopped returning them as provisional abstract/metadata articles; MDPI now waits for a stable article-body DOM instead of accepting a delayed HTTP-200 head-only shell.
-- Authenticated native macOS CI Camoufox release discovery with the workflow's read-only GitHub token, preventing pinned runtime preparation from failing under GitHub's anonymous API rate limit.
-- Made IEEE preflight, browser landing/full-text, and shared asset seeding wait up to 15 seconds for a matching article-number `#article`; persistent AWS WAF HTTP-202 pages now report `aws_waf_challenge` with compatibility diagnostics, while pages that become ready are no longer rejected from their initial response. Protected large-asset recovery still stays direct-first, primes its preview once, and preserves full-size recovery/fallback provenance.
-- Stabilized AIP and the shared browser-workflow cold HTML retry by carrying provider-scoped transient cookies from the fast attempt into the normal attempt without persisting unaccepted state; after an HTTP-200 `empty_article_shell`, the retry now prioritizes the next existing provider URL instead of repeating the same head-only landing. Diagnostics retain both attempts, response status, and DOM readiness while PDF remains a terminal fallback.
-- Fixed live browser-provider capability gating to read the nested `browser_runtime.available` result, isolate provider profiles/storage state, and reuse Camoufox's prepared executable and dependency cache across pytest isolation; explicit launches reuse adjacent version metadata, and startup progress is kept off MCP JSON-RPC stdout.
-- Preserved pre-page browser failures as privacy-safe diagnostic JSON, propagated request-scoped formula tool configuration into implicit MathML conversion, corrected body-only asset acceptance/provenance semantics, and recovered signed Silverchair originals without cross-thread Camoufox page access.
-- Kept ordinary publisher/MCP live suites and protected IEEE coverage as separate documented local-only entry points; shared-state tests remain serial and retain legacy-compatible JUnit properties plus structured acceptance artifacts.
-- Prevented IEEE browser DOM extraction from treating `captcha` or access tokens inside non-visible script/template markup as a block page; visible challenges remain rejected, and validation now leaves the page's own REST subrequests unblocked.
-- Added the documented `status=ok` and compact seven-facet acceptance summary to successful single-paper MCP fetch responses, using the same canonical evaluator and projection as batch fetches.
-- Reclassified successfully expanded HTML/JATS/CALS row and column spans as normal table normalization, retaining structural reason codes without emitting false layout-degradation warnings; malformed span or column metadata still degrades conservatively, and the extraction revision now invalidates stale cached quality results.
-- Fixed request deadline initialization, AIP/Science DOM readiness, and browser preflight classification so local fast-path caps do not exhaust later fallbacks and page/extraction failures retain privacy-safe diagnostic artifacts.
-- Made Springer/Nature HTML retrieval reuse the hardened cookie-aware requester with one fresh-session retry for `cookies_not_supported`, preserved Research Briefing article type, and stopped valid authorless briefings from receiving `empty_authors`.
-- Reconciled IEEE small/large variants by canonical logical identity, restored parallel direct asset downloads while keeping shared-page browser recovery serial, and separated asset download, fidelity, placeholder, and remote-only acceptance facts.
-- Removed trace triplication and the warning-count quality heuristic; repeated codes from real retry attempts remain ordered, while arbitrary operational warning text no longer degrades successful content.
-- Enforced zero external socket attempts in ordinary unit tests, closed the three batch resolver seams, diagnosed inactive source-checkout `.venv`/incompatible MCP versions, and retained diagnostic files in both successful and terminal-failure manifests.
-- Added independent browser/DOM/HTTP/retry/asset/render timing and provider-route-stage nearest-rank performance summaries with observed-only output for single samples and p50/p95 for repeated samples.
+### Runtime and providers
 
-### Limitations
+- Remove scheduled/manual live publisher/MCP, provider-drift, and full golden workflows; keep local opt-in entry points. Publisher live acceptance requires body assets and declared source/trail outcomes; protected IEEE GIF checks remain a separate authorized suite, and shared external state runs serially.
 
-- Offline packages include the Camoufox and Playwright Python dependencies but not the Camoufox browser binary. Prepare it explicitly with `python -m camoufox fetch` before entering a restricted or offline environment, then run `paper-fetch browser-preflight`. A reproducible browser-backed fetch in a fully network-isolated native macOS environment remains an open audit item, so complete offline browser support is not claimed.
+- Preserve confirmed challenge/paywall/access-boundary reasons through later navigation failures, exhausted deadlines, and provider PDF waterfalls. Reject Springer/Nature `Client Challenge` shells (including `_fs-ch-`) as provisional articles and wait for stable MDPI body DOM before accepting HTTP-200 pages.
+
+- Wait up to 15 seconds for a matching IEEE `#article`; classify persistent AWS WAF HTTP 202 as `aws_waf_challenge` without rejecting recovered pages. Ignore `captcha` and access tokens in hidden script/template content, retain visible challenges, and leave page REST requests enabled.
+
+- Carry provider-scoped transient cookies from AIP fast HTML to normal retries without persisting unaccepted state. Retry the next existing URL after `empty_article_shell`; preserve attempt/readiness diagnostics and leave the remaining deadline for PDF fallback. Fix deadline initialization and AIP/Science/preflight readiness classification.
+
+- Read nested `browser_runtime.available` in live gating, isolate provider state, and reuse prepared Camoufox dependencies across test isolation. Keep startup progress off MCP stdout and retain privacy-safe diagnostics even before page creation or on terminal failure. Propagate request-scoped formula configuration to implicit MathML conversion.
+
+- Return `status=ok` and compact seven-facet acceptance for single MCP fetches. Correct body-only asset accounting, reconcile IEEE small/large variants by logical identity, recover Silverchair originals without cross-thread page access, and distinguish download, fidelity, placeholder, and remote-only asset outcomes.
+
+- Treat safely expanded HTML/JATS/CALS spans as table normalization without false layout warnings; preserve malformed-grid degradation and invalidate old extraction caches. Reuse cookie-aware Springer/Nature HTTP with one fresh-session `cookies_not_supported` retry, preserving Research Briefing type and valid authorless articles.
+
+- Remove trace triplication and warning-count quality downgrades, retaining ordered real retry codes. Diagnose inactive source `.venv` and incompatible MCP versions. Add separate browser/DOM/HTTP/retry/asset/render timings and nearest-rank summaries: observed for one sample, p50/p95 for repeated samples.
+
+### Offline browser boundary
+
+- Offline packages contain Camoufox/Playwright Python dependencies, not browser binaries. Fetch does not download them automatically in this release: prepare with `python -m camoufox fetch` while online and run `paper-fetch browser-preflight` before restricted-network use. Fully network-isolated native macOS browser operation is not claimed.
 
 ## 4.1.0 - 2026-07-29
 
@@ -195,7 +758,6 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 - Stabilized shared PDF Markdown structure under `pymupdf4llm` 1.28.0 by repairing deterministic heading drift without provider- or DOI-specific rules.
 - Deduplicated Royal Society Silverchair figures across `view-large` and CDN URL variants while preserving the preferred full-size URL, preview URL, label, and caption.
-- Refreshed and agent-reviewed all 26 affected golden snapshots after removing duplicate HTML title sections and applying the PDF and Royal Society fixes.
 
 ## 3.2.1 - 2026-07-25
 
@@ -262,7 +824,6 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 ### Added
 
 - Added bounded IOP supplementary expansion for `asset_profile=all`, resolving same-DOI `/data` indexes to `SM`-numbered attachments with browser cookie/Referer reuse.
-- Added a focused CI contract gate for IOP supplementary extraction, explicit asset Referer forwarding, signed-URL redaction, and browser challenge regression coverage.
 
 ### Fixed
 
@@ -281,7 +842,7 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 - Changed the static skill into a thin, self-contained workflow entrypoint with dedicated workflow, presets, acceptance, CLI, environment, tool-contract, and failure-handling references whose links are parser-validated in source, staging, and installer copies.
 - Changed offline manifest schema to version 3 so Linux, macOS, and Windows bundles carry the complete skill file list and a SHA256 for every file; installers now reject missing, extra, symlinked, or hash-drifted skill content before and after host installation.
-- Prepared the backward-compatible feature set as the SemVer minor release `3.1.0`, synchronizing package metadata, the stable tool User-Agent, Windows installer fallback version, deployment guidance, and both changelogs.
+
 - Added a lightweight cross-CLI/MCP/cache/manifest CI contract gate; package smoke now builds outside the checkout and verifies version consistency, every console script, MCP EOF, and static installation provenance while keeping live/offline heavy jobs opt-in.
 
 ### Fixed
@@ -295,7 +856,6 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 - Changed the built-in Wiley and Science samples used by `paper-fetch browser-preflight` and `paper-fetch auth` to lighter full-text pages already covered by fixtures, reducing slow parsing time in the default browser preflight.
 - Added a built-in Royal Society Publishing sample for `paper-fetch browser-preflight` and `paper-fetch auth royalsocietypublishing`, so the default browser preflight now covers that browser-backed provider.
 - Removed the full GitHub Actions unit/devtools/coverage job from the default CI gate; local `scripts/dev-preflight.sh` still runs the complete unit, devtools, and optional coverage checks.
-- Refreshed user and agent documentation: restored the README showcase and example screenshots while keeping the quick-start path compact, corrected AMS direct-HTTP/browser-runtime wording, aligned CLI `--output-dir` filename descriptions with paper-stem output naming, and replaced completed-provider onboarding examples with placeholder provider examples.
 
 ## 3.0.0 - 2026-07-03
 
@@ -320,24 +880,20 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 - Changed provider registry cold-start behavior so root `paper_fetch` imports no longer load provider entry modules, `trafilatura`, or `idutils`; provider discovery now uses an explicit built-in entry list plus cached AST checks for dynamic entries, and browser workflow route labels live in `route_order` instead of string-valued `waterfall_steps`.
 - Changed shared Markdown table rendering to use one canonical pipe-table formatter across IR and HTML paths, preserving explicit headers, escaping pipes/newlines, padding ragged rows, and rendering fallback messages.
 - Changed HTML-derived formula and citation rendering to keep inline TeX math delimited, prefer explicit figure context before formula-image URL heuristics, and share one numeric citation payload helper across section and Atypon renderers.
-- Updated README, CLI/MCP instructions, provider/runtime/deployment/extraction docs, AMS onboarding manifest/access-review/cleaning-chain evidence, and the provider runtime optimization plan to match the new browser-runtime and AMS direct-HTTP ownership boundaries.
-- Expanded unit and integration coverage for AMS direct HTTP HTML/PDF fallback, browser-preflight provider candidates/no-PDF behavior, external-CDP new-context diagnostics, browser runtime facade wiring, and browser workflow dependency grouping.
 
 ## 2.8.0 - 2026-07-02
 
 ### Added
 
 - Added provider-template-aware DOI extraction for DOI-bearing publisher URLs, including query-parameter DOIs, known route/extension suffix stripping, and AMS old-style SICI `view` / `downloadpdf` slug support, so many URL queries resolve directly without fetching a landing page first.
-- Added `scripts/dev-preflight.sh --coverage` plus CI unit coverage reports (`term-missing` and `coverage.xml`) as a baseline signal without enforcing a coverage threshold.
 
 ### Changed
 
 - Changed publisher-facing landing/PDF requests and browser workflows to use browser-shaped user agents through `build_publisher_user_agent`; `PAPER_FETCH_USER_AGENT` remains the tool/API user agent and no longer becomes the default browser context user agent.
 - Changed Royal Society Publishing from direct HTTP DOI/PDF fetching to the shared CDP browser HTML plus seeded-browser PDF workflow while keeping `royalsocietypublishing_html` / `royalsocietypublishing_pdf` sources and the no-XML route contract.
 - Changed title-query resolution to prefer a formal journal publication over a near-tie preprint when Crossref metadata identifies a clear formal publication candidate.
-- Expanded mypy coverage to 136 project source files, including HTML extraction, browser workflow, Atypon browser workflow, shared JATS/common Markdown helpers, the CloakBrowser helper, service, artifacts, image conversion, and resolver modules.
+
 - Changed local and CI quality gates to enforce `ruff format --check`, keep ruff linting, prefer repo-local `.venv/bin/python` or explicit `PYTHON_BIN`, report missing dev dependencies early, and run local preflight type checks with `mypy --no-site-packages`.
-- Applied `ruff format` across the Python codebase and updated module-layout and asset-contract guard tests for the formatted source shape.
 
 ### Fixed
 
@@ -347,6 +903,7 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 - Fixed official PDF fallback degradation for scanned/PDF-only provider results: real downloaded PDFs are retained with explicit warnings and provider source trail instead of being replaced by Crossref/general metadata-only results when Markdown extraction is unusable.
 - Fixed publisher landing/probe requests that previously sent the stable `paper-fetch-skill/<version>` tool user agent to browser-facing publisher routes.
 - Fixed docs and contract drift around `PdfFallbackStrategy`, browser runtime ownership, provider URL/route behavior, and asset-download contract marker scanning after repository-wide ruff formatting.
+- Add `scripts/dev-preflight.sh --coverage` and CI `term-missing` / `coverage.xml` reports without a coverage threshold.
 
 ## 2.7.1 - 2026-07-01
 
@@ -380,8 +937,6 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 ### Fixed
 
 - Fixed direct HTTP browser-workflow asset downloads so a failed AMS asset does not attempt browser seed refresh when no browser runtime was started, and so supplementary downloads inherit the same seeded Referer behavior as body figure downloads.
-- Ignored repo-local `.image-tools/` output so local Ghostscript/libvips staging artifacts are not accidentally committed.
-- Updated README, provider, deployment, architecture, extraction-rule, offline installer, CI, and unit-test coverage for AMS source figures, image conversion fallback, and offline image-tools behavior.
 
 ## 2.6.2 - 2026-06-27
 
@@ -411,7 +966,6 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 
 ### Added
 
-- Added Frontiers (`frontiers`) XML-first provider for `10.3389/` and `frontiersin.org`, with canonical article discovery, shared JATS rendering, figure URL rewriting, direct HTTP PDF fallback, `frontiers_xml` / `frontiers_pdf` sources, manifest, docs, and unit coverage.
 - Added `paper-fetch --version` plus CLI help text for reference, asset, and token rendering options.
 
 ### Changed
@@ -422,20 +976,19 @@ All notable public changes to `paper-fetch-skill` are documented in this file.
 ### Fixed
 
 - Fixed IOP figure asset extraction so standard `_lr` / `_online` CDN image links are upgraded to `_hr` high-resolution candidates before preview fallback, allowing IOP HTML fetches such as `10.1088/1748-9326/ad560b` to save full-size body figures when available.
+- Add Frontiers (`frontiers`) XML-first routing for `10.3389/` and `frontiersin.org`, with canonical article discovery, shared JATS rendering, figure URL rewriting, direct HTTP PDF fallback, and `frontiers_xml` / `frontiers_pdf` sources.
 
 ## 2.5.2 - 2026-06-24
 
 ### Fixed
 
 - Fixed shared HTML cleanup so semantic attributes such as `data-title`, `alt`, `title`, and `aria-*` no longer trigger chrome noise filtering. This preserves valid body figures whose captions contain words such as "related", including Nature articles where Fig. 2 was dropped from Springer/Nature HTML extraction.
-- Added regression coverage to keep Springer/Nature body figure assets with semantic `data-title` text while continuing to remove real related/recommended article chrome identified by structural attributes.
 
 ## 2.5.1 - 2026-06-23
 
 ### Fixed
 
 - Fixed browser PDF fallback after async thread handoff so it preserves the caller's runtime browser configuration, including provider profile and user-data directories, instead of forcing a fresh non-runtime browser context.
-- Added regression coverage for the runtime-browser PDF fallback path to ensure thread handoff still reuses the configured runtime context.
 
 ## 2.5.0 - 2026-06-23
 
@@ -501,32 +1054,21 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 
 ### Changed
 
-- Broadened the ruff lint ruleset from `E4,E7,E9,F,TID251` to additionally enforce `UP`, `B`, `SIM105`, and `RUF022`, and applied the resulting fixes across the codebase: `typing` ABC imports migrated to `collections.abc`, `datetime.timezone.utc` rewritten to `datetime.UTC`, `try`/`except`/`pass` blocks replaced with `contextlib.suppress`, an explicit exception chain added to `run_provider_waterfall` (`raise ... from exc`), and explicit `zip(..., strict=...)` at the sites the new rules surfaced. `B008` is ignored project-wide (the MCP `default_mcp_deps()` argument default is an intentional dependency-injection seam) and `B023` is ignored under `tests/`.
 - Extended mypy `files` coverage beyond the model/workflow/mcp/http contract surface to additional foundational modules (`metadata`, `markdown`, `extraction/markdown_render`, `tracing`, `reason_codes`, `arxiv_id`, `normalize_journal_name`, `section_vocab`, `logging_utils`, `publisher_identity`, `provider_catalog`, `extraction/citation_anchors`), raising the analyzed set from 45 to 68 files, with the type fixes required to keep the check green.
-- Stopped tracking the ad-hoc batch-debugging output under `failures/` and three unreferenced raw fetch artifacts under `figures/`, and added both to `.gitignore` to prevent re-committing them.
+
 - Bumped the bundled `mathml-to-latex` formula backend from 1.5.0 to 1.8.0, syncing the version across the root and `src/paper_fetch/resources/formula/` package manifests and lockfiles.
 
 ## 2.2.1 - 2026-06-12
 
 ### Changed
 
-- Disk cache entry iteration no longer reads each cache file's JSON payload to extract `stored_at`; `st_mtime` is used directly, removing O(n) file reads from every `_prune_disk_cache` call.
-- Disk cache reads in `_load_disk_cached_entry` no longer hold the exclusive `_disk_cache_lock` during file I/O; concurrent cache reads no longer serialize behind a single lock.
-- `_sensitive_cache_header_names` and `_cache_key_header_names` are now computed once per process via `@functools.cache` instead of calling `provider_sensitive_header_names()` on every HTTP request.
-- `prepare_html_extraction_tree` eliminates the redundant second BeautifulSoup parse; the HTML tree is now pruned in place and serialized once instead of being serialized to string and re-parsed into a fresh soup object.
-- `html_cleanup_rules` is now memoized with `@functools.lru_cache(maxsize=32)` so repeated calls with the same noise profile within a single extraction pipeline share a single `HtmlCleanupRules` instance.
-- `choose_parser` evaluates `importlib.util.find_spec("lxml")` once at import time and returns a module-level constant on every call.
-- `classify_dom_cleanup_node` now references a module-level `_HEADING_TAG_RE` constant instead of compiling `re.compile(r"^h[1-6]$")` twice on every element visit.
-- `_inline_image_contents` performs a single `path.stat()` call per asset instead of a separate `path.is_file()` followed by `path.stat()`.
-- `run_blocking_call` uses the default asyncio thread-pool executor instead of creating a dedicated per-call `ThreadPoolExecutor`; log bridge lifecycle in `batch_resolve_tool_async` and `batch_check_tool_async` now uses `ExitStack`.
-- `mark_envelope_cached_with_current_revision` is now a `None`-returning mutation instead of returning the modified envelope.
-- Expanded mypy coverage to include the `paper_fetch.mcp` and `paper_fetch.http` packages; added missing type annotations and `cast` calls to satisfy strict checking.
-- Relaxed `mcp` version constraint from `>=1.27,<1.28` to `>=1.27,<2`.
+- Reduce repeated disk-cache reads, lock contention, HTML parsing, filesystem probes, and thread-pool creation while retaining existing request and extraction behavior.
+- Relax the MCP compatibility range from `>=1.27,<1.28` to `>=1.27,<2`.
 
 ### Fixed
 
-- `parse_retry_after_seconds` now handles fractional `Retry-After` values such as `"0.5"` or `"1.5"` by parsing through `float()` before truncating to `int`; previously these fell through to the HTTP-date parser and were silently discarded.
-- `_mcp_log_level` no longer returns `"debug"` as the fallback for log records with a level above `CRITICAL`; the fallback is now `"critical"`.
+- Parse fractional `Retry-After` values through `float()` before truncating to seconds, rather than silently discarding them as invalid dates.
+- Map log levels above `CRITICAL` to `critical` instead of `debug`.
 
 ## 2.2.0 - 2026-06-10
 
@@ -537,7 +1079,6 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 ### Changed
 
 - Derive Atypon/Wiley figure caption labels from explicit labels, the figure DOM id, the image URL basename, or a caption that starts with `Figure N`, and read the `.figure__title` selector; a mid-caption `Figure N` cross-reference can no longer override the figure's own number.
-- Consolidate browser-workflow asset-download internals with no behavior change: a single generic per-thread document fetcher backs both the image and supplementary fetchers, image/file fetchers reuse the shared browser response-header/status helpers, the two attempt-fetcher builders collapse into one (dropping unused parameters), and a shared `dedupe_normalized` utility replaces four copies of ordered URL de-duplication.
 
 ### Fixed
 
@@ -567,85 +1108,61 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 ### Changed
 
 - Derive MCP provider guidance from the runtime provider catalog so accepted provider hints, browser-runtime providers, and public source names stay aligned with registered providers.
-- Refresh public provider and extraction documentation for the current provider catalog, including Annual Reviews, Royal Society Publishing, PLOS, Oxford Academic, ACS, IOP, AIP, MDPI, AMS, Science, and PNAS route details.
+
 - Mark browser-workflow providers through provider specs instead of maintaining separate hard-coded browser-runtime provider lists.
-- Update Codex skill installation, offline installer, deployment, and onboarding documentation around the supported installation surface.
 
 ### Removed
 
 - Remove the Gemini skill installer and legacy Codex MCP runner scripts from the shipped script surface.
 
-### Fixed
-
-- Keep CloakBrowser workflow labels, provider docs drift checks, offline install checks, and skill template tests synchronized with catalog-derived provider facts.
-
 ## 1.9.0 - 2026-05-27
 
 ### Added
 
-- Add AIP Publishing (`aip`) provider routing for `10.1063/` and `pubs.aip.org`, with CloakBrowser article HTML, seeded-browser PDF fallback, `aip_html` / `aip_pdf` sources, body figure/table/formula/supplementary extraction, and provider-managed abstract-only degradation.
-- Add two-step provider onboarding human gates with `prepare-human-preflight` and `finalize-review-artifact` so users review waterfall/access once, then batch-confirm final Markdown quality instead of editing every fixture review by hand.
-- Add IOP Publishing (`iop`) provider routing for `10.1088/` and `iopscience.iop.org`, with CloakBrowser article HTML, seeded-browser PDF fallback, `iop_html` / `iop_pdf` sources, and Radware/hCaptcha challenge rejection.
-- Add real IOP fixture coverage for table, formula, and PDF fallback purposes with `10.1088/2058-9565/ac3460` and `10.1088/1748-9326/aa9f73`.
-- Add ACS (`acs`) provider routing for `10.1021/`, `www.acs.org` / `pubs.acs.org`, shared CloakBrowser HTML plus seeded publisher PDF/ePDF workflow, replay-backed table / formula / Supporting Information coverage, and direct public `/doi/pdf` fallback capture with seeded browser-navigation headers.
+- Add AIP Publishing (`aip`), IOP Publishing (`iop`), and ACS (`acs`) providers with DOI/domain routing, CloakBrowser HTML, seeded-browser PDF fallback, body assets, and provider-managed metadata/abstract fallback. AIP and IOP expose `aip_html` / `aip_pdf` and `iop_html` / `iop_pdf`; IOP rejects Radware/hCaptcha challenges.
+- Add two-step provider onboarding human gates with `prepare-human-preflight` and `finalize-review-artifact` for waterfall/access review and batch Markdown approval.
 
-### Changed
+### Changed and fixed
 
-- Tighten provider fixture discovery so Crossref candidate searches can be DOI-prefix filtered, off-provider DOI candidates are dropped before probing, and challenge/access/empty-shell probes cannot rank as high-confidence fulltext fixtures.
-
-### Fixed
-
-- Re-approve the IOP replay fixture coverage so the real `10.1088/1748-9326/ab7d02` capture now covers the supplementary purpose through the article-scoped `stacks.iop.org` media link.
-- Require ACS body figure assets in the onboarding contract and preserve ACS figure image links through browser-workflow cleanup so downloaded body figures rewrite Markdown to local asset paths.
+- Filter fixture discovery by DOI prefix and reject off-provider, challenge, access-blocked, and empty-shell candidates as high-confidence full text.
+- Preserve ACS body figure image links and rewrite downloaded figures to local Markdown paths.
 
 ## 1.8.0 - 2026-05-26
 
 ### Added
 
-- Add PLOS (`plos`) provider routing for `10.1371/` DOI and `journals.plos.org`, using public JATS XML first, direct HTTP PDF fallback, provider-managed metadata fallback, and `plos_xml` / `plos_pdf` sources.
-- Add Oxford Academic (`oxfordacademic`) provider onboarding for public HTTP article HTML, validated article-PDF fallback, `oxfordacademic_html` / `oxfordacademic_pdf` sources, provider manifest, access review, cleaning proposal, and benchmark samples.
-- Add PLOS and Oxford Academic golden corpus coverage with real replay fixtures, expected Markdown summaries, markdown-quality reports, and representative fixtures.
-
-### Changed
-
-- Extend onboarding automation, fixture capture, manifest sync-back, and cleaning-chain proposal tooling for the PLOS and Oxford Academic provider workflows.
-- Refresh provider documentation, extraction-rule evidence, onboarding runbooks, and known-provider manifests for the new providers.
-- Update Royal Society Publishing PDF fallback expected payloads and markdown-quality fixtures after shared PDF rendering cleanup.
+- Add PLOS (`plos`) routing for `10.1371/` and `journals.plos.org`, with public JATS XML first, direct HTTP PDF and metadata fallback, and `plos_xml` / `plos_pdf` sources.
+- Add Oxford Academic (`oxfordacademic`) public HTTP HTML and validated article-PDF fallback with `oxfordacademic_html` / `oxfordacademic_pdf` sources.
 
 ### Fixed
 
-- Follow PLOS signed figure-image redirects during asset downloads and rewrite refreshed PLOS figure golden replay Markdown to local `body_assets`.
-- Render PLOS graphic-only JATS formulas as inline formula image assets instead of `Formula unavailable` placeholders.
-- Preserve Oxford Academic Silverchair formula paragraphs and render references from visible reference-list text instead of raw `citation_reference` meta keys.
-- Keep Oxford Academic golden corpus count guards in sync with the new provider fixtures and representative sample.
+- Follow PLOS signed image redirects and rewrite downloaded images to local paths; preserve graphic-only JATS formulas as formula images.
+- Preserve Oxford Academic Silverchair formula paragraphs and render references from visible reference-list text.
+- Update Royal Society Publishing PDF fallback rendering.
 
 ## 1.7.0 - 2026-05-24
 
 ### Added
 
-- Add Annual Reviews (`annualreviews`) provider for `10.1146/` DOI routing, CloakBrowser-rendered HTML full text, seeded-browser PDF fallback, provider-managed abstract-only degradation, fixture replay, golden corpus coverage, and HTML body figure extraction.
-
-- Add Royal Society Publishing direct HTTP HTML provider with strict PDF fallback.
+- Add Annual Reviews (`annualreviews`) for `10.1146/`, CloakBrowser HTML, seeded-browser PDF fallback, abstract-only degradation, and body figures.
+- Add Royal Society Publishing direct HTTP HTML with strict PDF fallback.
 
 ### Fixed
 
-- Wait for Annual Reviews dynamic full-text DOM containers during fast browser fixture capture, and stop treating institutional "access provided by" labels as paywall blockers while keeping them as Markdown cleanup noise.
-- Classify browser PDF fixture downloads that return non-PDF payloads as `NON_PDF_FALLBACK_CONTENT` instead of a network transient, and require replacing the failed PDF sample before onboarding resumes.
-- Refetch browser PDF fallback responses through the browser request context when Chromium exposes a PDF viewer shell instead of the underlying PDF bytes.
-- Allow manifest-driven fixture capture to reuse an already registered DOI fixture when multiple onboarding purposes share the same article.
-- Avoid classifying publisher access UI as an access gate during fixture capture when the captured page has a populated full-text container.
-- Preserved Royal Society Publishing Silverchair figure captions and stripped Royal Society PDF fallback watermark/page placeholder noise from Markdown.
-- Derived DOI values for known MDPI numeric article URLs before generic landing-page fetches, and derived MDPI article landing URLs from known MDPI DOI suffixes before falling back to `doi.org`.
-- Synced the bundled formula Node workspace to `katex` 0.17.0 so root and formula package lockfiles stay aligned.
-- Replaced invalid UTF-8 bytes from external formula converter subprocess output instead of letting Windows reader threads raise `UnicodeDecodeError`.
-- Replaced invalid UTF-8 bytes from PyMuPDF's Windows Tesseract-probe subprocess output during PDF fallback Markdown conversion.
+- Wait for Annual Reviews dynamic full-text containers and stop treating institutional “access provided by” labels as paywall blockers.
+- Report non-PDF browser downloads as `NON_PDF_FALLBACK_CONTENT`; refetch real PDF bytes through the same browser request context when Chromium returns a PDF viewer shell.
+- Reuse one DOI fixture across capture purposes and avoid treating access UI as a gate when a populated full-text container is present.
+- Preserve Royal Society Publishing Silverchair captions and clean PDF fallback watermark/page placeholder noise.
+- Derive DOI values from known MDPI numeric article URLs and landing URLs from known MDPI DOI suffixes.
+- Synchronize the formula Node workspace to `katex` 0.17.0.
+- Decode invalid UTF-8 from formula converters and PyMuPDF's Windows Tesseract probe with replacement characters, avoiding reader-thread `UnicodeDecodeError`.
 
 ## 1.6 - 2026-05-22
 
 ### Added
 
 - Added experimental macOS offline release tarballs for CPython 3.11, 3.12, 3.13, and 3.14, with CI installation checks, headful layout validation, and CloakBrowser smoke coverage.
-- Added the MDPI CloakBrowser HTML provider with browser PDF fallback, recorded replay fixtures, Markdown cleanup coverage, and `mdpi_html` / `mdpi_pdf` sources.
+
 - Added operator access-review and provider Markdown-review artifacts for AI provider onboarding, with schema-backed gates before discovery and acceptance.
 - Added a local `scripts/dev-preflight.sh` gate plus low-strength contract-layer `mypy` checking, formula Node package sync tests, and golden corpus provider adapters for easier provider onboarding.
 
@@ -655,6 +1172,7 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 - Tightened live review to compare provider sources against manifest `route_sources` and reuse manifest Markdown contracts for automatic issue classification.
 - Enabled the normal Chrome browser User-Agent in offline installer-managed `offline.env` blocks by default so CloakBrowser-backed AGU/Wiley fetches are less likely to stop at Cloudflare challenge pages.
 - Derived MCP status, live review support, and golden corpus representative coverage from provider facts instead of hard-coded provider lists where possible.
+- Add MDPI CloakBrowser HTML with browser PDF fallback and `mdpi_html` / `mdpi_pdf` sources.
 
 ## 1.5.6 - 2026-05-18
 
@@ -712,7 +1230,6 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 ### Added
 
 - Added the CloakBrowser-backed browser runtime abstraction and provider status diagnostics, replacing the FlareSolverr runtime path.
-- Added browser image payload and runtime smoke coverage for the migrated browser workflow.
 
 ### Changed
 
@@ -736,56 +1253,44 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 
 ### Changed
 
-- Release 1.4.1: native batch CLI and provider/MCP refinements.
 - Refined CLI output/artifact semantics so batch and single-query runs consistently separate primary output files from saved Markdown and provider artifacts.
 - Updated MCP fetch/cache payload behavior for inline image budgets, cache resource visibility, and schema coverage.
 - Hardened Elsevier Markdown and Springer HTML extraction around tables, figures, asset rewriting, and provider-specific cleanup.
 - Fixed offline installer smoke checks to use the current MCP provider-status entrypoint during Linux and PowerShell installs.
-- Refreshed README, provider, deployment, bundled skill, and tool-contract documentation to match the new CLI and MCP/provider behavior.
 
 ## 1.4 - 2026-05-12
 
 ### Added
 
 - Added the `arxiv` provider for `arxiv.org` and DOI prefix `10.48550/`, publishing `arxiv_html` on official HTML success with text-only PDF fallback as `arxiv_pdf`.
-- Added 10 real arXiv replay fixtures: 8 official HTML success samples and 2 official HTML 404 -> real PDF fallback samples, each with arXiv API metadata replay.
 
 ### Changed
 
-- Reworked Phase 1 routing/extraction internals: Copernicus URL identity now uses catalog `domain_suffixes`, early metadata probes are driven by `ProviderSpec.probe_capability`, reference-anchor detection is centralized in HTML semantics, Wiley supplementary data attributes are handled by the Wiley extractor, and Science/PNAS figure teaser filtering now receives the actual publisher.
 - Centralized provider source ownership, including Springer HTML/PDF source ownership, API-like hosts, Wiley TDM URL template, Springer/Nature domain matching, workflow HTML-managed fallback markers, and body-text thresholds in `ProviderSpec` / `SOURCE_PROVIDER_MAP`.
-- Tightened Phase 4 generic extraction boundaries: Springer/Nature citation cleanup patterns now live in the provider layer, provider formula tokens require explicit `ProviderHtmlRules` profile injection, and Research Briefing authorless signatures live with quality signals.
-- Completed Phase 4 duplicate-source cleanup: `FRONT_MATTER_PUBLICATION_KEYWORDS` now has one generic source with Science/PNAS publication tokens scoped to provider rules, `SourceKind` is checked against catalog sources at import time, Cloudflare cookie filters share the FlareSolverr constants, and Science reuses the shared AAAS datalayer pattern.
-- Centralized Phase 3 HTML availability overrides and access-gate signals through provider rules and shared signal patterns, including Science perspective, Elsevier canonical abstract, and Springer preview-wall body-run handling.
-- Hardened Phase 6 provider-specific contracts: IEEE article-number URL parsing now only accepts `/document/{article_number}/` landing paths, Springer/Nature Creative Commons cleanup no longer removes article roots, and HTML asset helpers avoid importing the public models package during package initialization.
-- Completed Phase 7 cleanup: generic browser HTML failures are now `HtmlExtractionFailure`, FlareSolverr status probes use a non-DOI sentinel, landing-page redirect resolution has one request-URL-based semantic, and old FlareSolverr rate-limit env cleanup code was removed.
-- Moved Atypon browser HTML/PDF candidate templates into `ProviderSpec` and removed the `paper_fetch.providers.science_html`, `paper_fetch.providers.pnas_html`, and `paper_fetch.providers.wiley_html` compatibility facades.
-- Completed Phase 5 Atypon/Wiley cleanup: Wiley owns abbreviations and supplementary filename contracts, datalayer signal parsing uses schema field maps, and Atypon browser workflow scope is documented as Science/PNAS/Wiley catalog entries only.
+
 - Golden criteria live review now includes `copernicus` in the supported provider rotation and provider-status diagnostics.
-- Documented Phase 8 CI/test policy updates: regular unit/integration jobs and full golden regression continue to use pytest-xdist defaults, while live FlareSolverr/MCP paths document their required serial execution.
+
 - Clarified CLI output semantics: explicit `--format` with `--output-dir` and stdout output now also writes a same-format document copy under `--output-dir`, while `--output` remains the explicit formatted-output file path.
 - Golden criteria live review now treats `arxiv` as a supported provider, records arXiv provider status, preserves derived-URL fallback when arXiv API metadata has transient failures, and classifies arXiv asset partial-download diagnostics as `asset_download_failure`.
 - arXiv metadata enrichment now uses a small internal Atom API client for ID lookup and no longer depends on the PyPI `arxiv` / `feedparser` dependency chain.
 - arXiv HTML asset downloads now use a provider-specific lower concurrency cap and retry network-exception failures once sequentially while preserving non-retryable failures in `quality.asset_failures`.
 - arXiv fulltext routing is now fixed to official HTML first with direct text-only PDF fallback; retired local source-conversion fallback code and related asset handling are no longer part of the supported route.
 - arXiv official HTML Markdown cleanup now folds ordinary prose hard line breaks, sanitizes nested `$...$` delimiters inside LaTeXML TeX annotations, and lifts full-width table title rows out of GFM pipe table headers.
-- Completed Phase 2 callback cleanup: Atypon DOM postprocess and scoped asset extraction are now provider-registered callbacks, and provider display names resolve through the catalog-backed `provider_display_name()` helper.
-- Completed Phase 3 catalog field cleanup: Springer/Nature PDF candidates, arXiv metadata probe short-circuiting, provider HTML artifact persistence, XML source inference, provider-managed abstract-only handling, and PDF URL token semantics are now catalog/callback driven instead of provider-name hardcoded.
-- Completed Phase 5 Atypon browser workflow rename: the old Science/PNAS package/profile/postprocess names were moved to `atypon_browser_workflow`, the legacy profiles facade was removed, Atypon profile dispatch now dynamically imports provider HTML modules from `ATYPON_BROWSER_WORKFLOW_PROVIDER_NAMES`, shared figure-link and abstract-redirect helpers live in neutral modules, and Science citation-italic repair now belongs to `_science_html.py`.
+
 - Elsevier XML body asset downloads now retry only failed transient network items once sequentially and remove the original asset failure when the retry succeeds.
 - Wiley formula image discovery now includes `data-altimg` fallback spans and display formula containers, so image-only formulas can enter the `kind="formula"` asset download path instead of requiring an `<img>` tag.
+- Restrict IEEE article-number parsing to `/document/{article_number}/` landing paths and preserve Springer/Nature article roots during Creative Commons cleanup.
 
 ## 1.3 - 2026-05-09
 
 ### Added
 
 - Added the `copernicus` XML-first provider for Copernicus Publications DOI prefix `10.5194/`, publishing `copernicus_xml` on NLM/JATS XML success with text-only PDF fallback as `copernicus_pdf`.
-- Added 8 Copernicus XML golden fixtures across ACP, HESS, GMD, TC, ESSD, NHESS, AMT, and BG, plus 4 older Copernicus PDF-fallback golden fixtures whose XML is abstract-level only; live smoke sample coverage remains behind `PAPER_FETCH_RUN_LIVE=1`.
+
 - Hardened Copernicus fallback handling for older articles whose XML only exposes abstract-level content: those XML failures now continue directly to text-only PDF fallback, and PDF discovery includes DOI-derived `.pdf` candidates when the landing page omits PDF metadata.
 
 ### Refactor
 
-- Split `paper_fetch.http` from a single module into a package facade plus internal transport, cache, retry, body, and error modules while preserving the existing public import path.
 - Move dev-only `geography_live`, `geography_issue_artifacts`, and `golden_criteria_live*` modules from `paper_fetch.*` to source-tree-only `paper_fetch_devtools.*`; wheels no longer ship those modules, while the existing repo-local script CLIs keep the same behavior.
 
 ### Changed
@@ -796,14 +1301,9 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 - Windows offline release artifacts now use `paper-fetch-skill-windows-x86_64-setup.exe` and bundle CPython 3.13 x64, Python dependencies, Playwright Chromium, formula tools, the FlareSolverr runtime, Codex / Claude Code skills, and MCP registration helpers.
 - GitHub Actions now creates a GitHub Release on `v*` tag pushes or explicit manual releases after regular validation, the full Linux offline package matrix, and the Windows x86_64 setup exe succeed, uploading 4 Linux tarballs plus 1 Windows installer release asset.
 - Expanded body-image payload recognition and persistence formats: in addition to PNG/JPEG/GIF/WebP/AVIF/TIFF, SVG text, BMP, ICO, APNG, and HEIC/HEIF MIME/extension mappings are supported; body images are verified for image magic bytes or top-level SVG document signatures before being saved, avoiding challenge HTML being persisted as images.
-- Added Science `10.1126/science.adz3492` to the golden fixtures with real SVG body-image assets to guard against Science/PNAS SVG image persistence regressions.
+
 - Added a fast initial FlareSolverr HTML pass for Wiley / Science / PNAS full-text fetching: primary HTML requests use `waitInSeconds=0` and `disableMedia=true`, then automatically fall back to the original conservative wait strategy on challenges, access blocks, abstract redirects, or insufficient body extraction.
 - Image recovery, body/supplementary asset downloads, and figure-page HTML discovery continue to use media-enabled paths so `disableMedia` does not block full-size image discovery or downloads.
-- Consolidated duplicate implementations for HTML availability/container handling, section hints, browser-workflow Markdown profiles, author fallback, Crossref resolve forwarding, and HTML heading/table helpers; canonical owners are now `quality.html_availability`, `extraction.section_hints` / `extraction.html.semantics`, `ProviderBrowserProfile` / `_html_authors.py`, and `metadata.crossref`.
-- Clarified that the shared Science / PNAS / Wiley browser extraction is an Atypon-only profile, and consolidated asset scope, Wiley abbreviations, Wiley author noise, supplementary URL/filename rules, and AAAS/PNAS/Wiley datalayer detection into provider-owned callbacks/schemas.
-- Moved the HTML asset canonical owner to the `paper_fetch.extraction.html.assets` package, removed the `paper_fetch.extraction.html._assets` and `paper_fetch.providers.html_assets` compatibility facades, and made download hooks patch from the extraction asset package or `paper_fetch.extraction.html.assets.download`.
-- Materialized `paper_fetch.models` as a package split by schema, markdown, tokens, quality, render, sections, and builders while keeping `from paper_fetch.models import ...` compatible.
-- Materialized the Science/PNAS browser-workflow HTML implementation as the `paper_fetch.providers.science_pnas` package, removed the `paper_fetch.providers._science_pnas_html` compatibility facade, and extracted the provider HTML asset policy engine plus Playwright document fetcher base class.
 
 ## 1.0.0 - 2026-04-26
 
@@ -814,22 +1314,10 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 - Reordered the Wiley full-text waterfall so browser PDF/ePDF fallback now runs before the optional TDM API PDF lane whenever the local browser runtime is ready, keeping `wiley_browser` as the default successful route.
 - Added `code_availability` as a first-class section kind. Elsevier, Springer / Nature, Wiley, Science, and PNAS now share data/code/software availability classification, retain those sections in final Markdown/ArticleModel output, and exclude them from body sufficiency metrics.
 
-### Docs
-
-- Documented the short-timeout behavior for seeded Playwright image fetches in the FlareSolverr workflow notes.
-- Documented the unified data/code availability retention and quality-metric exclusion rules.
-
-### Validation
-
-- `PYTHONPATH=src python3 -m pytest tests/unit/test_provider_request_options.py`
-- `PYTHONPATH=src python3 -m pytest tests/unit/test_science_pnas_provider.py -k 'download_related_assets or image'`
-- Live smoke: Wiley `10.1111/gcb.16414`, Science `10.1126/science.ady3136`, and PNAS `10.1073/pnas.2406303121` produced full-text Markdown with full-size body images using the WSLg FlareSolverr preset.
-
 ## 2026-04-25
 
 ### Changed
 
-- Promoted the Wiley / Science / PNAS browser workflow runtime to [`src/paper_fetch/providers/browser_workflow.py`](src/paper_fetch/providers/browser_workflow.py). Science, PNAS, and Wiley now declare `ProviderBrowserProfile` objects for URL candidates, Markdown extraction, author fallback, public source, labels, and browser asset behavior; `_science_pnas.py` remains a compatibility alias.
 - Promoted the Wiley / Science / PNAS HTML asset downloader to a shared Playwright primary path. Figure, table, and formula image candidates now reuse one seeded browser context per download attempt instead of trying direct HTTP first.
 - Kept full-size/original candidates ahead of preview candidates, but now fetches both tiers through the same shared browser context. Target-provider downloads report `download_tier="full_size"` or `download_tier="preview"` rather than `playwright_canvas_fallback`.
 - Tightened the browser-workflow image recovery path: repeated figure-page / image-candidate URLs are cached per attempt, body-image payload downloads now use fixed limited parallelism with stable output ordering, and FlareSolverr recovery no longer falls back to screenshot cropping when `solution.imagePayload` is missing or invalid.
@@ -840,37 +1328,11 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 - Tightened Springer / Nature HTML cleanup by pruning more article chrome and license sections, preserving scientific back matter outside the main body, extracting formula image assets, and emitting explicit table-body-unavailable placeholders when table-page parsing fails.
 - Adjusted golden-criteria live issue classification so formula-only preview fallback is not treated as an asset-download failure, while non-formula preview fallback still remains an asset issue unless explicitly accepted.
 
-### Docs
-
-- Updated README, provider, FlareSolverr, extraction-rule, deployment, architecture, and schema notes to describe the shared Playwright primary asset path, formula image preservation, Markdown asset-link rewrites, reference fallback behavior, and target-provider `download_tier` semantics.
-
-### Validation
-
-- `pytest tests/unit/test_science_pnas_provider.py tests/unit/test_provider_waterfalls.py tests/unit/test_provider_request_options.py tests/unit/test_html_shared_helpers.py -q`
-- `pytest tests/unit/test_elsevier_markdown.py tests/unit/test_golden_criteria_live.py tests/unit/test_models_render.py tests/unit/test_science_pnas_markdown.py tests/unit/test_springer_html_regressions.py -q`
-- Live smoke: Wiley `10.1111/gcb.16455` downloaded 5/5 full-size body figures, Science `10.1126/science.ady3136` downloaded 6/6 full-size body figures, and PNAS `10.1073/pnas.2406303121` downloaded 4/4 full-size body figures; all local files had image magic bytes, dimensions, and Markdown links rewritten to local paths.
-
 ## 2026-04-19
 
 ### Changed
 
-- Moved shared HTML full-text diagnostics into [`src/paper_fetch/providers/_html_availability.py`](src/paper_fetch/providers/_html_availability.py) and switched `html_generic`, `elsevier`, `springer`, FlareSolverr, and PDF fallback helpers to import the shared availability/access-signal layers directly instead of reaching through `_science_pnas_html.py`.
-- Added internal `PublisherProfile` plumbing in [`src/paper_fetch/providers/_science_pnas_profiles.py`](src/paper_fetch/providers/_science_pnas_profiles.py) so browser-workflow candidate builders, noise-profile selection, and provider-specific postprocess hooks live outside `_science_pnas_html.py`.
-- Removed the `_article_markdown_document.py` compatibility wrapper; direct Elsevier document assembly now lives only in [`src/paper_fetch/providers/_article_markdown_elsevier_document.py`](src/paper_fetch/providers/_article_markdown_elsevier_document.py), while [`src/paper_fetch/providers/_article_markdown.py`](src/paper_fetch/providers/_article_markdown.py) remains the intentional aggregate entrypoint.
-- Split the oversized `tests/unit/test_science_pnas_html.py` coverage into focused candidate, availability, markdown, and postprocess test files, while keeping `detect_html_block()` coverage in `tests/unit/test_html_access_signals.py`.
-- Promoted the geography report/export/group scripts plus their supporting modules and tests into tracked repo-local internal tooling without adding new CLI install surfaces or MCP tools.
-
-### Docs
-
-- Updated README, provider docs, and backlog notes to describe geography report/export/group as live-only internal tooling behind `PAPER_FETCH_RUN_LIVE=1`.
-
-### Validation
-
-- `pytest tests/unit/test_science_pnas_candidates.py tests/unit/test_html_availability.py tests/unit/test_science_pnas_markdown.py tests/unit/test_science_pnas_postprocess.py tests/unit/test_html_access_signals.py tests/unit/test_elsevier_markdown.py -q`
-- `pytest tests/unit/test_geography_live.py tests/unit/test_geography_issue_artifacts.py -q`
-- `python3 scripts/run_geography_live_report.py --help`
-- `python3 scripts/export_geography_issue_artifacts.py --help`
-- `python3 scripts/group_geography_issue_artifacts.py --help`
+- Add repository-local geography report/export/group scripts without adding installed CLI commands or MCP tools.
 
 ## 2026-04-16
 
@@ -886,11 +1348,6 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 - Changed Science / PNAS local diagnostics so MCP can inspect FlareSolverr runtime readiness and local rate-limit windows without mutating the rate-limit tracking file.
 - Changed `batch_resolve()` and `batch_check()` to reject requests with more than `50` queries instead of attempting oversized batch runs.
 - Changed MCP initialization so the server now advertises `capabilities.resources.listChanged=true` across supported transports.
-
-### Docs
-
-- Updated README, deployment docs, provider docs, and the bundled skill guide to document `provider_status()` and the new MCP tool-annotation hints.
-- Updated README, deployment docs, and the bundled skill guide to document the `50`-query batch limit and the new cache-resource list-change notifications.
 
 ## 2026-04-15
 
@@ -914,44 +1371,22 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 - Changed `token_estimate` semantics to remain backward compatible as `abstract + body`, while the new `refs` budget now lives only in `token_estimate_breakdown`.
 - Changed MCP cached FetchEnvelope sidecar loading to backfill missing token-breakdown fields when reading older cache entries that predate the new contract.
 
-### Docs
-
-- Updated README, deployment docs, the skill guide, and the probe-semantics note to document the shipped `has_fulltext` v1 behavior and the new `batch_check(mode="metadata")` semantics.
-- Updated the static skill installer and architecture docs to treat `skills/paper-fetch-skill/` as a runtime-agnostic bundle that can include on-demand `references/` files.
-- Updated MCP-facing docs to describe the new `concurrency` parameter and the "cross-host concurrent, same-host serial" behavior of `batch_*`.
-- Updated the MCP-facing docs and skill notes to describe cooperative cancellation for `fetch_paper` and `batch_*`.
-- Updated README, deployment docs, and MCP instruction text to document scoped cache resources for explicit isolated download directories.
-- Updated README, deployment docs, skill notes, and MCP instruction text to document `strategy.inline_image_budget` and its default `3 / 2 MiB / 8 MiB` inline-image caps.
-- Updated README, deployment docs, and the bundled skill guide to document the two published MCP prompts and the new `token_estimate_breakdown` budgeting hint.
-
 ## 2026-04-14
 
 ### Added
 
 - Added public `science` and `pnas` provider routes, including direct `provider_hint`, `preferred_providers`, and final `source` support.
 - Added repo-local Science / PNAS provider implementations in [`src/paper_fetch/providers/science.py`](src/paper_fetch/providers/science.py) and [`src/paper_fetch/providers/pnas.py`](src/paper_fetch/providers/pnas.py), backed by shared FlareSolverr, HTML cleanup, and Playwright PDF-fallback helpers.
-- Added repo-local `vendor/flaresolverr/` workflow assets, thin wrapper scripts under [`scripts/`](scripts), and a dedicated operator guide in [`docs/flaresolverr.md`](docs/flaresolverr.md).
-- Added offline Science / PNAS fixtures plus unit coverage for routing, FlareSolverr error handling, provider fallbacks, and public result provenance.
-- Added opt-in live smoke coverage for one Science HTML DOI and one PNAS PDF-fallback DOI behind the existing `PAPER_FETCH_RUN_LIVE=1` gate.
+- Added repo-local `vendor/flaresolverr/` workflow assets, thin wrapper scripts under [`scripts/`](scripts), and a dedicated operator guide in `docs/flaresolverr.md`.
 
 ### Changed
 
 - Extended `SourceKind` and the service provider registry so `science` and `pnas` are first-class public provenance values instead of envelope-only aliases.
 - Made Science / PNAS use a provider-managed `HTML first -> PDF fallback -> metadata-only fallback` chain, while explicitly skipping the generic `html_generic` fallback after those providers are selected.
-- Moved Science / PNAS HTML extraction onto provider-specific cleanup rules, then fed the cleaned HTML back through the existing HTML-to-Markdown pipeline for final rendering.
+
 - Added explicit repo-local runtime checks for `vendor/flaresolverr`, `FLARESOLVERR_ENV_FILE`, local FlareSolverr health, and required local rate-limit settings before Science / PNAS full-text retrieval proceeds.
 - Added local Science / PNAS rate-limit accounting in the user data directory and kept `asset_profile=body|all` on those routes as text-only downgrades with warnings instead of hard failures.
 - Expanded `install-formula-tools.sh` so repo-local development can bootstrap FlareSolverr source setup, Playwright Chromium, and headless `Xvfb` prerequisites from one entrypoint.
-
-### Docs
-
-- Updated README, deployment guidance, provider docs, MCP instruction snippets, and FlareSolverr workflow docs to describe the new Science / PNAS route, repo-local-only support boundary, required environment variables, and operator-owned ToS risk.
-
-### Validation
-
-- `python3 -m compileall src/paper_fetch`
-- `ruff check src/paper_fetch tests/unit`
-- `PYTHONPATH=src python3 -m unittest -q tests.unit.test_publisher_identity tests.unit.test_resolve_query tests.unit.test_science_pnas_html tests.unit.test_science_pnas_flaresolverr tests.unit.test_science_pnas_provider tests.unit.test_service`
 
 ## 2026-04-13
 
@@ -959,23 +1394,21 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 
 - Added MCP cache indexing with `list_cached()` / `get_cached()` plus `resource://paper-fetch/cache-index` and `resource://paper-fetch/cached/{entry_id}` resources for the default shared download directory.
 - Added `batch_resolve(queries)` and `batch_check(queries, mode)` MCP tools so citation-list workflows can stay serial, transport-reusing, and context-light.
-- Added canonical MCP/skill-facing instruction helpers in [`src/paper_fetch/mcp/_instructions.py`](src/paper_fetch/mcp/_instructions.py) to keep defaults, environment notes, and error-contract wording aligned.
+
 - Added inline `ImageContent` support for a few local body figures when `strategy.asset_profile` is `body` or `all`.
 - Added structured MCP progress updates and structured log notifications for `fetch_paper`, `batch_check`, and `batch_resolve`.
-- Added live MCP end-to-end smoke coverage for representative Elsevier and HTML-fallback flows.
+
 - Added a probe-semantics design note in [`docs/architecture/probe-semantics.md`](docs/architecture/probe-semantics.md) to define the future `has_fulltext(query)` direction.
 
 ### Changed
 
-- Moved public change history and shipped-surface notes out of ad hoc backlog docs into this changelog.
 - Exposed `download_dir` on the MCP `fetch_paper` surface so task-local directories can override `PAPER_FETCH_DOWNLOAD_DIR` and XDG defaults.
 - Expanded MCP `resolve_paper` to accept either a raw `query` or structured `title` plus optional `authors` / `year`.
 - Updated the static skill to document the real defaults, the environment variables that affect behavior, the error contract, cache-first call discipline, and the batch-first bibliography workflow.
 - Clarified that `include_refs=null` behaves like `all` for `max_tokens="full_text"` and like `top10` for numeric token budgets.
-- Reworked the skill frontmatter into a shorter trigger-style description and moved call-discipline guidance ahead of the main workflow.
+
 - Shifted provider routing toward Crossref/domain-first hints with DOI-prefix fallback only when needed, and added route diagnostics to `source_trail`.
-- Unified text-normalization, DOI extraction, metadata merge helpers, and HTML lookup heuristics around shared utilities to reduce duplicate logic.
-- Split large renderer and HTML modules into thinner facades backed by focused helpers while preserving public compatibility entrypoints.
+
 - Refined CLI exit codes, Markdown asset-link handling, render budgeting, and token-estimation internals without changing the public fetch contract.
 
 ### Fixed
@@ -987,18 +1420,3 @@ This release refactors the CloakBrowser browser path around CDP-managed Chrome r
 - Tightened exception handling so programming errors are no longer silently downgraded into partial-download or fallback paths.
 - Prevented `batch_check()` from writing payloads to disk by forcing `download_dir=None`.
 - Preserved top-level fetch provenance fields even when `article`, `markdown`, or `metadata` are unrequested and therefore returned as `null`.
-
-### Docs
-
-- Kept architecture rationale in [`docs/architecture/overview.md`](docs/architecture/overview.md) and moved shipped changes to this file.
-- Updated deployment, provider, MCP, and skill-facing documentation to match the landed MCP surface and environment behavior.
-
-### Validation
-
-- `ruff check .`
-- `PYTHONPATH=src python3 -m pytest tests/unit tests/integration -q`
-- `PYTHONPATH=src python3 -m pytest -n 0 tests/live/test_live_mcp.py -q` skips cleanly when live env is not enabled; `-n 0` is required because live MCP shares external publisher/API state and secrets.
-
-### Follow-up
-
-- The dedicated MCP probe tool `has_fulltext(query)` is intentionally not shipped yet; only its semantics note is landed in [`docs/architecture/probe-semantics.md`](docs/architecture/probe-semantics.md).

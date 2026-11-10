@@ -9,15 +9,25 @@ import sys
 import threading
 from typing import Any
 
+from .preparation import (
+    fetch_browser_preparation,
+    prepare_camoufox_fingerprint_model,
+    prepare_camoufox_managed_runtime,
+)
+
 
 def _launch_executable_path(binary_path: str | None) -> str | None:
     if binary_path:
+        prepare_camoufox_fingerprint_model()
         return binary_path
-    pkgman = importlib.import_module("camoufox.pkgman")
-    # Keep the no-download guard, but let Camoufox resolve its managed bundle.
+    prepared = fetch_browser_preparation.get()
+    if prepared is None:
+        prepare_camoufox_managed_runtime()
+    else:
+        prepared.require()
+    # Let Camoufox resolve its prepared managed bundle.
     # On macOS, passing Contents/MacOS/camoufox as a custom executable makes
     # Camoufox look beside it for metadata stored under Contents/Resources.
-    pkgman.camoufox_path(download_if_missing=False)
     return None
 
 
@@ -67,16 +77,16 @@ class CamoufoxBrowserManager:
         self._assert_owner_thread()
         if self._browser is not None:
             return self._browser
+        executable_path = _launch_executable_path(self.binary_path)
+        self._firefox_major_version = (
+            _launch_firefox_major_version(executable_path)
+            if executable_path is not None
+            else None
+        )
         sync_api = importlib.import_module("camoufox.sync_api")
         playwright_api = importlib.import_module("playwright.sync_api")
         self._playwright = playwright_api.sync_playwright().start()
         try:
-            executable_path = _launch_executable_path(self.binary_path)
-            self._firefox_major_version = (
-                _launch_firefox_major_version(executable_path)
-                if executable_path is not None
-                else None
-            )
             launch_kwargs: dict[str, Any] = {
                 "headless": self.headless,
             }
@@ -125,7 +135,7 @@ class CamoufoxBrowserManager:
 
 
 class CamoufoxPersistentContextManager:
-    """Own one headed persistent Camoufox context for interactive auth."""
+    """Own one thread-affine native persistent Camoufox context."""
 
     def __init__(
         self,
@@ -150,16 +160,16 @@ class CamoufoxPersistentContextManager:
         self._owner_thread_id = thread_id
         if self._context is not None:
             return self._context
+        executable_path = _launch_executable_path(self.binary_path)
+        firefox_major_version = (
+            _launch_firefox_major_version(executable_path)
+            if executable_path is not None
+            else None
+        )
         sync_api = importlib.import_module("camoufox.sync_api")
         playwright_api = importlib.import_module("playwright.sync_api")
         self._playwright = playwright_api.sync_playwright().start()
         try:
-            executable_path = _launch_executable_path(self.binary_path)
-            firefox_major_version = (
-                _launch_firefox_major_version(executable_path)
-                if executable_path is not None
-                else None
-            )
             launch_kwargs: dict[str, Any] = {
                 "headless": self.headless,
                 "user_data_dir": self.user_data_dir,

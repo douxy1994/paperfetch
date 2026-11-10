@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from ..quality.access_boundary import propagate_paywall
+
 from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
@@ -16,8 +17,10 @@ from ..extraction.html._metadata import merge_html_metadata
 from ..extraction.html.assets import (
     FIGURE_KIND,
     SUPPLEMENTARY_KIND,
+    AssetDownloadOptions,
     download_assets,
-    html_asset_identity_key,
+    filter_assets_for_profile,
+    merge_extracted_and_downloaded_assets,
     split_body_and_supplementary_assets,
 )
 from ..extraction.html.landing import (
@@ -40,6 +43,7 @@ from ..models import (
 )
 from ..provider_catalog import (
     BodyTextThresholds,
+    ProviderRouteSpec,
     ProviderSpec,
     provider_domains,
     provider_landing_path_templates,
@@ -54,6 +58,7 @@ from ..utils import (
     empty_asset_results,
     extend_unique,
     normalize_text,
+    strip_html_tags,
 )
 from ..xml_security import XmlParseFailure, parse_xml
 from ._article_markdown_common import (
@@ -72,7 +77,7 @@ from ._pdf_common import (
     pdf_fetch_result_warnings,
 )
 from ._pdf_fallback import PdfFallbackStrategy, PdfFetchFailure, fetch_pdf_over_http
-from ._registry import ProviderBundle, register_provider_bundle
+from ._registry import ProviderBundle
 from ._waterfall import (
     DEFAULT_WATERFALL_CONTINUE_CODES,
     ProviderWaterfallState,
@@ -94,39 +99,6 @@ from .base import (
 )
 
 from bs4 import BeautifulSoup, Tag
-
-
-register_provider_bundle(
-    ProviderBundle(
-        catalog=ProviderSpec(
-            name="copernicus",
-            display_name="Copernicus",
-            official=True,
-            domains=(),
-            doi_prefixes=("10.5194/",),
-            publisher_aliases=(
-                "copernicus",
-                "copernicus publications",
-                "copernicus gmbh",
-            ),
-            asset_default="body",
-            probe_capability="routing_signal",
-            provider_managed_abstract_only=False,
-            client_factory_path="paper_fetch.providers.copernicus:CopernicusClient",
-            status_order=8,
-            domain_suffixes=("copernicus.org",),
-            xml_path_templates=("/articles/{volume}/{page}/{year}/{suffix}.xml",),
-            landing_path_templates=("/articles/{volume}/{page}/{year}/",),
-            pdf_path_templates=("/articles/{volume}/{page}/{year}/{suffix}.pdf",),
-            emits_html_managed_marker=False,
-            html_capable=False,
-            xml_root_tags=("article",),
-            xml_file_tokens=("copernicus", "10.5194"),
-            body_text_thresholds=BodyTextThresholds(min_chars=500),
-        ),
-        sources=("copernicus_xml", "copernicus_pdf"),
-    )
-)
 
 MIN_BODY_CHARS = 500
 COPERNICUS_XML_DOI_PATTERN = re.compile(
@@ -209,53 +181,6 @@ def _discover_link_urls(html_text: str, base_url: str, *, suffix: str) -> list[s
     deduped: list[str] = []
     extend_unique(deduped, urls)
     return deduped
-
-
-def _merge_assets(
-    extracted_assets: Sequence[Mapping[str, Any]] | None,
-    downloaded_assets: Sequence[Mapping[str, Any]] | None,
-) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    by_identity: dict[str, dict[str, Any]] = {}
-    for item in extracted_assets or []:
-        asset = dict(item)
-        merged.append(asset)
-        identity = html_asset_identity_key(asset)
-        if identity:
-            by_identity[identity] = asset
-    for item in downloaded_assets or []:
-        asset = dict(item)
-        identity = html_asset_identity_key(asset)
-        existing = by_identity.get(identity) if identity else None
-        if existing is not None:
-            existing.update(asset)
-            continue
-        merged.append(asset)
-        if identity:
-            by_identity[identity] = asset
-    return merged
-
-
-def _filter_assets_for_profile(
-    assets: Sequence[Mapping[str, Any]] | None,
-    *,
-    asset_profile: AssetProfile,
-) -> list[dict[str, Any]]:
-    if asset_profile == "none":
-        return []
-    filtered: list[dict[str, Any]] = []
-    for item in assets or []:
-        asset = dict(item)
-        kind = normalize_text(
-            str(asset.get("kind") or asset.get("asset_type") or "")
-        ).lower()
-        section = normalize_text(str(asset.get("section") or "")).lower()
-        if asset_profile != "all" and (
-            kind == "supplementary" or section == "supplementary"
-        ):
-            continue
-        filtered.append(asset)
-    return filtered
 
 
 class CopernicusClient(ProviderClient):
@@ -397,6 +322,7 @@ class CopernicusClient(ProviderClient):
         try:
             landing = self._fetch_landing(landing_url)
         except ProviderFailure as exc:
+            propagate_paywall(exc)
             return self._doi_derived_landing_attempt(
                 normalized_doi,
                 metadata,
@@ -560,6 +486,7 @@ class CopernicusClient(ProviderClient):
                 return build_provider_payload(
                     provider=self.name,
                     route_kind="xml",
+                    route_name="xml",
                     source_url=response_url,
                     content_type=content_type,
                     body=body,
@@ -579,6 +506,7 @@ class CopernicusClient(ProviderClient):
                     warnings=list(attempt.warnings or []),
                 )
             except ProviderFailure as exc:
+                propagate_paywall(exc)
                 failures.append((candidate, exc))
                 continue
         if failures:
@@ -612,6 +540,7 @@ class CopernicusClient(ProviderClient):
         try:
             pdf_result = PdfFallbackStrategy(
                 transport=self.transport,
+                provider_name="copernicus",
                 headers=self._pdf_headers(referer=attempt.response_url),
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 asset_profile=effective_asset_profile,
@@ -622,12 +551,13 @@ class CopernicusClient(ProviderClient):
                 ),
                 expected_identity={
                     "doi": attempt.normalized_doi,
-                    "title": attempt.merged_metadata.get("title"),
+                    "title": strip_html_tags(attempt.merged_metadata.get("title")),
                 },
                 context=context,
                 fetcher=fetch_pdf_over_http,
             ).fetch(attempt.pdf_candidates)
         except PdfFetchFailure as exc:
+            propagate_paywall(exc)
             raise ProviderFailure(NO_RESULT, exc.message) from exc
         final_url = urllib.parse.urljoin(
             pdf_result.source_url or attempt.response_url, pdf_result.final_url
@@ -635,6 +565,7 @@ class CopernicusClient(ProviderClient):
         return build_provider_payload(
             provider=self.name,
             route_kind=PDF_FALLBACK,
+            route_name="direct_pdf",
             source_url=final_url,
             content_type=PDF_MIME_TYPE,
             body=pdf_result.pdf_bytes,
@@ -650,7 +581,6 @@ class CopernicusClient(ProviderClient):
                 *pdf_fetch_result_warnings(pdf_result),
                 "Full text was extracted from Copernicus PDF fallback after the XML route was not usable.",
             ],
-            content_needs_local_copy=True,
             needs_local_copy=True,
         )
 
@@ -701,6 +631,7 @@ class CopernicusClient(ProviderClient):
             [
                 ProviderWaterfallStep(
                     label="xml",
+                    route_name="xml",
                     run=run_xml,
                     failure_marker=fulltext_marker(self.name, "fail", route="xml"),
                     success_markers=(fulltext_marker(self.name, "ok", route="xml"),),
@@ -711,6 +642,7 @@ class CopernicusClient(ProviderClient):
                 ),
                 ProviderWaterfallStep(
                     label="pdf",
+                    route_name="direct_pdf",
                     run=run_pdf,
                     failure_marker=fulltext_marker(self.name, "fail", route="pdf"),
                     success_markers=(
@@ -743,7 +675,7 @@ class CopernicusClient(ProviderClient):
         ).lower()
         if route == PDF_FALLBACK:
             return empty_asset_results()
-        extracted_assets = _filter_assets_for_profile(
+        extracted_assets = filter_assets_for_profile(
             list(content.extracted_assets if content is not None else []),
             asset_profile=asset_profile,
         )
@@ -777,7 +709,6 @@ class CopernicusClient(ProviderClient):
             or normalize_text(str(metadata.get("title") or ""))
             or raw_payload.source_url
         )
-        seed_urls: list[str] = []
         body_result = (
             download_assets(
                 FIGURE_KIND,
@@ -787,10 +718,13 @@ class CopernicusClient(ProviderClient):
                 output_dir=output_dir,
                 user_agent=self.user_agent,
                 asset_profile=asset_profile,
-                headers=self._html_headers(),
-                seed_urls=seed_urls,
-                asset_download_concurrency=resolve_asset_download_concurrency(
-                    context.env
+                options=AssetDownloadOptions(
+                    headers=self._html_headers(),
+                    asset_download_concurrency=resolve_asset_download_concurrency(
+                        context.env
+                    ),
+                    provider_name="copernicus",
+                    runtime_context=context,
                 ),
             )
             if downloadable_body_assets
@@ -805,10 +739,13 @@ class CopernicusClient(ProviderClient):
                 output_dir=output_dir,
                 user_agent=self.user_agent,
                 asset_profile=asset_profile,
-                headers=self._html_headers(),
-                seed_urls=seed_urls,
-                asset_download_concurrency=resolve_asset_download_concurrency(
-                    context.env
+                options=AssetDownloadOptions(
+                    headers=self._html_headers(),
+                    asset_download_concurrency=resolve_asset_download_concurrency(
+                        context.env
+                    ),
+                    provider_name="copernicus",
+                    runtime_context=context,
                 ),
             )
             if supplementary_assets and asset_profile == "all"
@@ -867,7 +804,7 @@ class CopernicusClient(ProviderClient):
         if route == "xml":
             markdown_text = str(
                 (content.markdown_text if content is not None else "") or ""
-            ).strip()
+            )
             if not markdown_text:
                 warnings.append(
                     "Copernicus XML retrieval did not produce usable Markdown."
@@ -893,7 +830,7 @@ class CopernicusClient(ProviderClient):
                 ]
             abstract_sections = extraction_diagnostics.get("abstract_sections")
             semantic_losses = extraction_diagnostics.get("semantic_losses")
-            assets = _merge_assets(
+            assets = merge_extracted_and_downloaded_assets(
                 list(content.extracted_assets if content is not None else []),
                 list(downloaded_assets or []),
             )
@@ -918,7 +855,7 @@ class CopernicusClient(ProviderClient):
 
         markdown_text = str(
             (content.markdown_text if content is not None else "") or ""
-        ).strip()
+        )
         if not markdown_text:
             warnings.append("Copernicus retrieval did not produce usable Markdown.")
             return metadata_only_article(
@@ -929,7 +866,9 @@ class CopernicusClient(ProviderClient):
                 trace=trace,
             )
         extracted_assets = list(content.extracted_assets if content is not None else [])
-        assets = _merge_assets(extracted_assets, list(downloaded_assets or []))
+        assets = merge_extracted_and_downloaded_assets(
+            extracted_assets, list(downloaded_assets or [])
+        )
         availability_diagnostics = (
             dict(content.diagnostics.get("availability_diagnostics") or {})
             if content is not None
@@ -984,3 +923,50 @@ class CopernicusClient(ProviderClient):
 
 
 __all__ = ["CopernicusClient", "ProviderContent", "RawFulltextPayload"]
+
+
+PROVIDER_BUNDLE = ProviderBundle(
+    client_factory=CopernicusClient,
+    catalog=ProviderSpec(
+        name="copernicus",
+        display_name="Copernicus",
+        official=True,
+        domains=(),
+        doi_prefixes=("10.5194/",),
+        publisher_aliases=(
+            "copernicus",
+            "copernicus publications",
+            "copernicus gmbh",
+        ),
+        asset_default="body",
+        probe_capability="routing_signal",
+        provider_managed_abstract_only=False,
+        status_order=8,
+        domain_suffixes=("copernicus.org",),
+        xml_path_templates=("/articles/{volume}/{page}/{year}/{suffix}.xml",),
+        landing_path_templates=("/articles/{volume}/{page}/{year}/",),
+        pdf_path_templates=("/articles/{volume}/{page}/{year}/{suffix}.pdf",),
+        emits_html_managed_marker=False,
+        html_capable=False,
+        xml_root_tags=("article",),
+        xml_file_tokens=("copernicus", "10.5194"),
+        body_text_thresholds=BodyTextThresholds(min_chars=500),
+        routes=(
+            ProviderRouteSpec(name="metadata", kind="metadata"),
+            ProviderRouteSpec(name="xml", kind="xml"),
+            ProviderRouteSpec(
+                name="direct_pdf",
+                kind="pdf",
+                requires_pdf_conversion=True,
+            ),
+            ProviderRouteSpec(
+                name="assets",
+                kind="assets",
+                timeout_seconds=20,
+                concurrency=2,
+                transient_retries=2,
+            ),
+        ),
+    ),
+    sources=("copernicus_xml", "copernicus_pdf"),
+)

@@ -14,9 +14,7 @@ from .auth import AUTH_TARGETS, AuthTarget
 from .artifacts import ArtifactMode
 from .config import (
     BROWSER_TIMEOUT_MS_ENV_VAR,
-    BROWSER_USER_AGENT_ENV_VAR,
     build_runtime_env,
-    configured_browser_backend,
 )
 from .http import RequestCancelledError, diagnostic_url_payload
 from .page_diagnostics import PageDiagnosticRequest, capture_page_diagnostic
@@ -40,16 +38,11 @@ from .providers.browser_workflow.shared import (
     BrowserWorkflowDeps,
     default_browser_workflow_deps,
 )
-from .providers.browser_workflow.reuse_cache import mark_browser_preflight_producer
 from .providers.registry import build_clients
 from .reason_codes import (
     BROWSER_CONTEXT_CREATE_FAILED,
     BROWSER_PAGE_CREATE_FAILED,
-    CDP_CONNECT_FAILED,
     ERROR,
-    MANAGED_CHROME_CDP_TIMEOUT,
-    MANAGED_CHROME_EXITED_BEFORE_CDP,
-    MANAGED_CHROME_PROFILE_IN_USE,
 )
 from .runtime import RuntimeContext
 from .utils import normalize_text, provider_display_name
@@ -64,6 +57,15 @@ BrowserPreflightStatus = Literal[
     "runtime_error",
     "cancelled",
 ]
+BROWSER_PREFLIGHT_STATUSES: tuple[BrowserPreflightStatus, ...] = (
+    "ready",
+    "challenge",
+    "auth_required",
+    "network_timeout",
+    "extraction_error",
+    "runtime_error",
+    "cancelled",
+)
 
 _CHALLENGE_REASON_CODES = frozenset(
     {
@@ -103,15 +105,16 @@ _EXTRACTION_REASON_CODES = frozenset(
     }
 )
 IEEE_PREFLIGHT_READINESS_WAIT_SECONDS = 15
-_CANCELLED_REASON_CODES = frozenset({"cancelled", "request_cancelled"})
+_CANCELLED_REASON_CODES = frozenset(
+    {
+        "cancelled",
+        "request_cancelled",
+    }
+)
 _RUNTIME_REASON_CODES = frozenset(
     {
         BROWSER_CONTEXT_CREATE_FAILED,
         BROWSER_PAGE_CREATE_FAILED,
-        CDP_CONNECT_FAILED,
-        MANAGED_CHROME_CDP_TIMEOUT,
-        MANAGED_CHROME_EXITED_BEFORE_CDP,
-        MANAGED_CHROME_PROFILE_IN_USE,
         "browser_backend_invalid",
         "browser_dependency_missing",
         "browser_runtime_configuration_error",
@@ -213,8 +216,6 @@ def _runtime_with_preflight_storage(
         runtime = replace(
             runtime,
             storage_state_path=storage_state_path.expanduser(),
-            profile_dir=None,
-            user_data_dir=None,
         )
     else:
         runtime = runtime_with_default_storage_profile(
@@ -252,12 +253,10 @@ def _runtime_env(
         runtime_env[BROWSER_TIMEOUT_MS_ENV_VAR] = str(timeout_ms)
     normalized_user_agent = normalize_text(browser_user_agent)
     if normalized_user_agent:
-        if configured_browser_backend(runtime_env) == "camoufox":
-            raise ProviderFailure(
-                ERROR,
-                "--browser-user-agent cannot be used with Camoufox because it would make the generated Firefox fingerprint inconsistent.",
-            )
-        runtime_env[BROWSER_USER_AGENT_ENV_VAR] = normalized_user_agent
+        raise ProviderFailure(
+            ERROR,
+            "--browser-user-agent cannot be used with Camoufox because it would make the generated Firefox fingerprint inconsistent.",
+        )
     return runtime_env
 
 
@@ -294,7 +293,9 @@ def static_browser_capabilities(
     )
     packages = dependency_details.get("packages")
     package_states = packages if isinstance(packages, Mapping) else {}
-    selected_backend = configured_browser_backend(env)
+    from .providers.browser_runtime.selection import selected_backend as choose_backend
+
+    selected_backend = choose_backend(env, provider=provider_key)
 
     def package_capability(package: str) -> dict[str, object]:
         available = bool(
@@ -331,60 +332,24 @@ def static_browser_capabilities(
             "headless",
             "timeout_ms",
             "binary_path_configured",
-            "cdp_endpoint_configured",
-            "cdp_external_new_context",
             "profile_dir_configured",
             "user_data_dir_configured",
             "storage_state_json_configured",
             "storage_state_json_exists",
-            "auto_cdp_browser_enabled",
             "backend",
             "browser_user_agent_ignored",
             "storage_state_path",
+            "download_required",
+            "runtime_state",
+            "runtime_version",
+            "chrome_path",
+            "chrome_version",
+            "runtime_installed",
         }
     }
     runtime_status = (
         runtime_check.status if runtime_check is not None else result.status
     )
-    if runtime_status == ERROR:
-        chrome_cdp = {
-            "status": "error",
-            "available": False,
-            "reason_code": "browser_runtime_configuration_error",
-            "message": "Local browser runtime configuration could not be validated.",
-        }
-    elif runtime_status == "not_configured":
-        chrome_cdp = {
-            "status": "not_configured",
-            "available": False,
-            "reason_code": "browser_runtime_not_configured",
-            "message": "Local browser runtime configuration is incomplete.",
-        }
-    elif bool(runtime_details.get("cdp_endpoint_configured")):
-        chrome_cdp = {
-            "status": "configured",
-            "available": True,
-            "reason_code": "cdp_endpoint_configured_not_probed",
-            "message": "A CDP endpoint is configured; the connection was not opened.",
-        }
-    elif bool(runtime_details.get("binary_path_configured")):
-        chrome_cdp = {
-            "status": "configured",
-            "available": True,
-            "reason_code": "chrome_binary_configured_not_launched",
-            "message": "A local Chrome binary is configured; it was not launched.",
-        }
-    else:
-        chrome_cdp = {
-            "status": "not_checked",
-            "available": False,
-            "reason_code": "managed_chrome_not_probed",
-            "message": "Managed Chrome may be prepared on demand; no browser was launched.",
-        }
-    chrome_cdp["details"] = safe_runtime_details
-    chrome_cdp["connection_checked"] = False
-    chrome_cdp["launch_checked"] = False
-
     return {
         "diagnostic_scope": "static_configuration_and_local_dependencies",
         "provider_context": provider_key,
@@ -393,7 +358,6 @@ def static_browser_capabilities(
         "publisher_page_checked": False,
         "playwright": package_capability("playwright"),
         "camoufox": package_capability("camoufox"),
-        "chrome_cdp": chrome_cdp,
         "browser_runtime": {
             "backend": selected_backend,
             "status": runtime_status,
@@ -444,11 +408,6 @@ def _failure_result(
         and not normalize_text(str(diagnostic_payload.get("diagnostic_path") or ""))
         and not has_captured_page_diagnostic
     ):
-        diagnostic_backend = None
-        with contextlib.suppress(Exception):
-            diagnostic_backend = configured_browser_backend(
-                diagnostic_context.env or {}
-            )
         failure_diagnostic = capture_page_diagnostic(
             diagnostic_context,
             PageDiagnosticRequest(
@@ -461,7 +420,11 @@ def _failure_result(
                 doi=extract_doi(target_url or "") or None,
                 target_url=target_url,
                 final_url=final_url,
-                backend=diagnostic_backend,
+                backend=(
+                    diagnostic_payload.get("browser_runtime_trace")
+                    or diagnostic_payload.get("trace")
+                    or {}
+                ).get("backend", "camoufox"),
                 details=diagnostic_payload,
             ),
         )
@@ -615,6 +578,12 @@ def _preflight_generic_browser_route(
                 runtime_context=context,
             )
             diagnostics["storage_state_save"] = save_result
+            runtime_trace = diagnostics.get("browser_runtime_trace")
+            runtime_trace = (
+                dict(runtime_trace) if isinstance(runtime_trace, Mapping) else {}
+            )
+            runtime_trace["storage_state_save"] = dict(save_result)
+            diagnostics["browser_runtime_trace"] = runtime_trace
             if not save_result.get("saved"):
                 return _failure_result(
                     provider_key,
@@ -630,6 +599,11 @@ def _preflight_generic_browser_route(
                     diagnostics=diagnostics,
                     diagnostic_context=context,
                 )
+            html_result = replace(
+                html_result,
+                diagnostics=diagnostics,
+                staged_storage_state=None,
+            )
         return _ready_result(
             provider_key,
             target_url=target.url,
@@ -807,10 +781,8 @@ def preflight_browser_provider(
             ),
         )
 
-    # AIP's Camoufox cookies are bound to the generated runtime fingerprint.
-    # A distinct preflight RuntimeContext must not publish those cookies for a
-    # later context to consume.
-    effective_save_storage_state = bool(save_storage_state and provider_key != "aip")
+    # Native profiles always persist; this flag controls JSON export only.
+    effective_save_storage_state = bool(save_storage_state)
 
     storage_path: dict[str, Path | None] = {"value": None}
     context: RuntimeContext | None = None
@@ -838,11 +810,6 @@ def preflight_browser_provider(
             cancel_check=cancel_check,
             download_dir=download_dir,
             artifact_mode=artifact_mode,
-        )
-        mark_browser_preflight_producer(
-            context,
-            target_url=target.url,
-            save_storage_state=effective_save_storage_state,
         )
         bootstrap = deps.bootstrap_browser_workflow(
             client,
@@ -1032,4 +999,6 @@ def run_browser_provider_preflight(
         results.append(result)
         if on_result is not None:
             on_result(result, len(results), total)
+        if result.status == "cancelled":
+            break
     return results

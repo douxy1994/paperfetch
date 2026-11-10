@@ -25,7 +25,6 @@ from ...extraction.html.provider_rules import (
     front_matter_contains_tokens_for_profile,
     front_matter_exact_texts_for_profile,
     front_matter_publication_keywords_for_profile,
-    provider_html_rules,
 )
 from ...extraction.html._runtime import (
     FRONT_MATTER_PUBLICATION_KEYWORDS,
@@ -45,12 +44,12 @@ from ...extraction.html.shared import (
 )
 from ...quality.html_availability import (
     HTML_CONTAINER_BROWSER_WORKFLOW_FALLBACK_TAGS,
-    HTML_CONTAINER_DROP_BROWSER_WORKFLOW,
     HTML_CONTAINER_SCORE_BROWSER_WORKFLOW,
     HtmlContainerSelectionPolicy,
 )
 from .._html_authors import ATYPON_VIEW_ALL_ARTICLES_LABEL
 from ...utils import normalize_text
+from .._atypon_browser_workflow_postprocess import is_display_math_markdown_block
 from .._atypon_browser_workflow_profiles import (
     noise_profile_for_publisher as _profile_noise_profile_for_publisher,
     publisher_profile as _publisher_profile,
@@ -162,19 +161,12 @@ def _front_matter_publication_keywords(publisher: str | None) -> set[str]:
     }
 
 
-def _post_content_break_tokens(publisher: str | None) -> tuple[str, ...]:
-    return (
-        *POST_CONTENT_BREAK_TOKENS,
-        *provider_html_rules(publisher).cleanup.post_content_break_tokens,
-    )
-
-
 def _post_content_cleanup_policy(publisher: str | None):
     return extend_cleanup_policy(
         _cleanup_policy_for_publisher(publisher),
         post_content_exact_texts=tuple(POST_CONTENT_BREAK_TEXTS),
         post_content_prefixes=POST_CONTENT_BREAK_PREFIXES,
-        post_content_cutoff_tokens=_post_content_break_tokens(publisher),
+        post_content_cutoff_tokens=POST_CONTENT_BREAK_TOKENS,
     )
 
 
@@ -182,7 +174,6 @@ def _container_selection_policy(publisher: str) -> HtmlContainerSelectionPolicy:
     profile = _publisher_profile(publisher)
     return HtmlContainerSelectionPolicy(
         score_profile=HTML_CONTAINER_SCORE_BROWSER_WORKFLOW,
-        drop_profile=HTML_CONTAINER_DROP_BROWSER_WORKFLOW,
         fallback_tags=HTML_CONTAINER_BROWSER_WORKFLOW_FALLBACK_TAGS,
         prefer_complete_ancestor=True,
         avoid_page_level_container=True,
@@ -387,6 +378,8 @@ def _looks_like_post_content_noise_block(
 
 
 def _looks_like_markdown_auxiliary_block(text: str) -> bool:
+    if is_display_math_markdown_block(text):
+        return True
     lowered = normalize_text(text).lower()
     if not lowered:
         return False

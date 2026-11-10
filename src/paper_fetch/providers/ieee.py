@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from ..quality.access_boundary import propagate_paywall, raise_for_paywall
+
 from pathlib import Path
 import tempfile
 from typing import Any
@@ -22,6 +24,7 @@ from ..extraction.html.provider_rules import (
 from ..http import (
     DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
     HttpTransport,
+    HttpRequestPolicy,
     PDF_MIME_TYPE,
     RequestFailure,
     redact_url_for_diagnostics,
@@ -29,7 +32,7 @@ from ..http import (
 from ..http.headers import header_value
 from ..metadata.types import ProviderMetadata
 from ..models import AssetProfile
-from ..provider_catalog import ProviderSpec
+from ..provider_contracts import ProviderSpec
 from ..publisher_identity import normalize_doi
 from ..quality.html_availability import (
     HtmlQualityAssessor,
@@ -54,7 +57,7 @@ from . import _ieee_html as ieee_html
 from . import _ieee_landing as ieee_landing
 from . import _ieee_metadata as ieee_metadata
 from . import _ieee_recovery_policy as ieee_recovery_policy
-from . import _ieee_routes as ieee_routes
+from ._ieee_routes import IEEE_ROUTES, landing_route_name
 from . import _ieee_supplementary as ieee_supplementary
 from . import _ieee_url as ieee_url
 from . import browser_runtime
@@ -75,7 +78,7 @@ from ._payloads import (
     build_provider_payload,
     provider_failure_diagnostics as _provider_failure_diagnostics,
 )
-from ._registry import ProviderBundle, register_provider_bundle
+from ._registry import ProviderBundle
 from ._waterfall import (
     DEFAULT_WATERFALL_CONTINUE_CODES,
     ProviderWaterfallState,
@@ -95,49 +98,6 @@ from .base import (
 )
 
 __all__ = ["IeeeClient"]
-
-register_provider_bundle(
-    ProviderBundle(
-        catalog=ProviderSpec(
-            name="ieee",
-            display_name="IEEE",
-            official=True,
-            domains=("ieeexplore.ieee.org",),
-            doi_prefixes=("10.1109/",),
-            publisher_aliases=(
-                "ieee",
-                "institute of electrical and electronics engineers",
-            ),
-            asset_default="body",
-            probe_capability="routing_signal",
-            provider_managed_abstract_only=True,
-            client_factory_path="paper_fetch.providers.ieee:IeeeClient",
-            status_order=6,
-            routes=ieee_routes.IEEE_ROUTES,
-        ),
-        html_rules=ProviderHtmlRules(
-            name="ieee",
-            noise_profile="ieee",
-            cleanup=ProviderCleanupRules(
-                markdown_promo_tokens=IEEE_MARKDOWN_PROMO_TOKENS,
-                extraction_cleanup_selectors=IEEE_EXTRACTION_CLEANUP_SELECTORS,
-                extraction_drop_keywords=IEEE_AVAILABILITY_DROP_KEYWORDS,
-                access_block_text_tokens=IEEE_ACCESS_BLOCK_TEXT_TOKENS,
-            ),
-            availability=AvailabilityPolicy(
-                name="ieee",
-                site_rule_overrides=IEEE_SITE_RULE_OVERRIDES,
-                text_marker_signal_set=IEEE_TEXT_MARKER_SIGNAL_SET,
-                overrides=IEEE_AVAILABILITY_OVERRIDES,
-            ),
-        ),
-        asset_retry=ieee_html.IEEE_ASSET_RETRY_POLICY,
-        sources=("ieee_html", "ieee_pdf"),
-    )
-)
-
-IEEE_PDF_FALLBACK_ARTIFACT_DIR_NAME = "ieee_pdf_fallback"
-_FETCH_PDF_WITH_BROWSER = fetch_pdf_with_playwright = fetch_pdf_with_browser
 
 
 def _pdf_failure_diagnostics(failure: PdfFetchFailure | None) -> dict[str, Any] | None:
@@ -185,9 +145,7 @@ class IeeeClient(ProviderClient):
                         f"is {browser_status.status}."
                     ),
                     details={
-                        "backend": browser_runtime.selected_browser_runtime_backend(
-                            self.env
-                        ).name,
+                        "backend": "byparr",
                         "fallback_status": browser_status.status,
                         "fallback_available": browser_status.available,
                         "notes": list(browser_status.notes),
@@ -316,8 +274,18 @@ class IeeeClient(ProviderClient):
                 headers=self._rest_headers(document_url),
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 retry_on_transient=True,
+                request_policy=HttpRequestPolicy(
+                    cooldown_scope="provider:ieee:rest_html",
+                    body_access_provider="ieee",
+                ),
             )
         except RequestFailure as exc:
+            raise_for_paywall(
+                exc.body,
+                metadata=landing_attempt.merged_metadata,
+                source_url=str(exc.url or rest_url),
+                provider=self.name,
+            )
             raise map_request_failure(exc) from exc
         response_url = ieee_url._absolute_ieee_url(
             str(response.get("url") or rest_url), rest_url
@@ -326,6 +294,12 @@ class IeeeClient(ProviderClient):
         html_text = decode_html(
             body,
             content_type=header_value(response.get("headers"), "content-type"),
+        )
+        raise_for_paywall(
+            html_text,
+            metadata=landing_attempt.merged_metadata,
+            source_url=response_url,
+            provider=self.name,
         )
         extraction = ieee_html._extract_ieee_html(
             html_text,
@@ -348,16 +322,16 @@ class IeeeClient(ProviderClient):
         content_type = header_value(
             response.get("headers"), "content-type", "text/html"
         )
-        cleaned_body = extraction.html_text.encode("utf-8")
         extracted_assets = self._html_extraction_assets_with_landing_payloads(
             extraction, landing_attempt
         )
         return build_provider_payload(
             provider=self.name,
             route_kind="html",
+            route_name="rest_html",
             source_url=response_url,
             content_type=content_type,
-            body=cleaned_body,
+            body=extraction.html_text.encode("utf-8"),
             markdown_text=extraction.markdown_text,
             merged_metadata=landing_attempt.merged_metadata,
             diagnostics={
@@ -416,7 +390,7 @@ class IeeeClient(ProviderClient):
             "Referer": document_url,
         }
         artifact_dir = (
-            context.download_dir / IEEE_PDF_FALLBACK_ARTIFACT_DIR_NAME
+            context.download_dir / "ieee_pdf_fallback"
             if context.download_dir is not None
             and context.artifact_store is not None
             and context.artifact_store.allows_auxiliary_artifacts
@@ -432,6 +406,7 @@ class IeeeClient(ProviderClient):
         try:
             pdf_result = PdfFallbackStrategy(
                 transport=self.transport,
+                provider_name="ieee",
                 headers=headers,
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 artifact_dir=artifact_dir,
@@ -444,6 +419,7 @@ class IeeeClient(ProviderClient):
             ).fetch(candidates)
             fetcher = "direct_http"
         except PdfFetchFailure as exc:
+            propagate_paywall(exc)
             direct_failure = exc
             if not _ieee_pdf_browser_recovery_allowed(exc):
                 raise
@@ -464,11 +440,7 @@ class IeeeClient(ProviderClient):
             )
 
             def run_browser_pdf(active_artifact_dir: Path):
-                return (
-                    fetch_pdf_with_playwright
-                    if fetch_pdf_with_playwright is not _FETCH_PDF_WITH_BROWSER
-                    else fetch_pdf_with_browser
-                )(
+                return fetch_pdf_with_browser(
                     candidates,
                     artifact_dir=active_artifact_dir,
                     asset_profile=effective_asset_profile,
@@ -478,13 +450,13 @@ class IeeeClient(ProviderClient):
                     )
                     or self.browser_user_agent,
                     browser_cookies=list(browser_seed.get("browser_cookies") or []),
-                    headless=True,
                     referer=document_url,
                     seed_urls=browser_seed_urls,
                     allow_pdf_only=True,
                     request=PdfRequestContext(
                         expected_identity={"doi": landing_attempt.normalized_doi},
                         runtime=context,
+                        provider_name="ieee",
                     ),
                     browser_config=runtime_config,
                 )
@@ -497,8 +469,9 @@ class IeeeClient(ProviderClient):
                         pdf_result = run_browser_pdf(Path(tempdir))
                 else:
                     pdf_result = run_browser_pdf(artifact_dir)
-                fetcher = f"{runtime_config.backend}_browser"
+                fetcher = "camoufox_browser"
             except PdfFetchFailure as browser_exc:
+                propagate_paywall(browser_exc)
                 raise PdfFetchFailure(
                     browser_exc.kind,
                     (
@@ -515,6 +488,7 @@ class IeeeClient(ProviderClient):
                     },
                 ) from browser_exc
         pdf_diagnostics = {
+            **dict(pdf_result.diagnostics),
             "fetcher": fetcher,
             "candidates": [redact_url_for_diagnostics(item) for item in candidates],
             "direct_failure": _pdf_failure_diagnostics(direct_failure),
@@ -530,6 +504,7 @@ class IeeeClient(ProviderClient):
         return build_provider_payload(
             provider=self.name,
             route_kind=PDF_FALLBACK,
+            route_name=("browser_pdf" if direct_failure is not None else "direct_pdf"),
             source_url=pdf_result.final_url,
             content_type=PDF_MIME_TYPE,
             body=pdf_result.pdf_bytes,
@@ -544,7 +519,7 @@ class IeeeClient(ProviderClient):
             ),
             suggested_filename=pdf_result.suggested_filename,
             html_failure_message=html_failure_message,
-            content_needs_local_copy=True,
+            needs_local_copy=True,
             warnings=[*payload_warnings, *pdf_fetch_result_warnings(pdf_result)],
             trace_markers=[
                 *list(
@@ -553,7 +528,6 @@ class IeeeClient(ProviderClient):
                 ),
                 fulltext_marker("ieee", "ok", route=PDF_FALLBACK),
             ],
-            needs_local_copy=True,
         )
 
     def _abstract_only_payload(
@@ -572,13 +546,13 @@ class IeeeClient(ProviderClient):
                 NO_RESULT,
                 "IEEE landing metadata did not include provider abstract content.",
             )
-        body = markdown_text.encode("utf-8")
         return build_provider_payload(
             provider=self.name,
             route_kind=ABSTRACT_ONLY,
+            route_name=landing_route_name(landing_attempt.acquisition_source),
             source_url=landing_attempt.response_url,
             content_type="text/markdown",
-            body=body,
+            body=markdown_text.encode("utf-8"),
             markdown_text=markdown_text,
             merged_metadata=landing_attempt.merged_metadata,
             diagnostics=diagnostics,
@@ -624,9 +598,10 @@ class IeeeClient(ProviderClient):
                     html_failure_message=html_failure_message,
                     warnings=[],
                     context=runtime_context,
-                    html_trace_markers=state.source_markers(),
+                    html_trace_markers=state.source_trail,
                 )
             except PdfFetchFailure as exc:
+                propagate_paywall(exc)
                 pdf_failure_diagnostics = _pdf_failure_diagnostics(exc)
                 raise ProviderFailure(NO_RESULT, exc.message) from exc
 
@@ -634,7 +609,7 @@ class IeeeClient(ProviderClient):
             return self._abstract_only_payload(
                 landing_attempt,
                 warnings=[],
-                trace_markers=state.source_markers(),
+                trace_markers=state.source_trail,
                 diagnostics={
                     "html_failure": _provider_failure_diagnostics(
                         state.failure("html")
@@ -684,6 +659,7 @@ class IeeeClient(ProviderClient):
             [
                 ProviderWaterfallStep(
                     label="html",
+                    route_name="rest_html",
                     run=lambda _state: self._fetch_dynamic_html_payload(
                         landing_attempt, context=runtime_context
                     ),
@@ -714,6 +690,7 @@ class IeeeClient(ProviderClient):
                 ),
                 ProviderWaterfallStep(
                     label="pdf",
+                    route_name="direct_pdf",
                     run=run_pdf,
                     failure_marker=fulltext_marker("ieee", "fail", route="pdf"),
                     continue_codes=DEFAULT_WATERFALL_CONTINUE_CODES,
@@ -723,6 +700,7 @@ class IeeeClient(ProviderClient):
                 ),
                 ProviderWaterfallStep(
                     label="abstract",
+                    route_name="direct_landing",
                     run=run_abstract,
                     continue_codes=DEFAULT_WATERFALL_CONTINUE_CODES,
                 ),
@@ -844,3 +822,42 @@ class IeeeClient(ProviderClient):
             text_only=not pdf_assets,
             skip_trace=skip_trace,
         )
+
+
+PROVIDER_BUNDLE = ProviderBundle(
+    client_factory=IeeeClient,
+    catalog=ProviderSpec(
+        name="ieee",
+        display_name="IEEE",
+        official=True,
+        domains=("ieeexplore.ieee.org",),
+        doi_prefixes=("10.1109/",),
+        publisher_aliases=(
+            "ieee",
+            "institute of electrical and electronics engineers",
+        ),
+        asset_default="body",
+        probe_capability="routing_signal",
+        provider_managed_abstract_only=True,
+        status_order=6,
+        routes=IEEE_ROUTES,
+    ),
+    html_rules=ProviderHtmlRules(
+        name="ieee",
+        noise_profile="ieee",
+        cleanup=ProviderCleanupRules(
+            markdown_promo_tokens=IEEE_MARKDOWN_PROMO_TOKENS,
+            extraction_cleanup_selectors=IEEE_EXTRACTION_CLEANUP_SELECTORS,
+            extraction_drop_keywords=IEEE_AVAILABILITY_DROP_KEYWORDS,
+            access_block_text_tokens=IEEE_ACCESS_BLOCK_TEXT_TOKENS,
+        ),
+        availability=AvailabilityPolicy(
+            paywall_gate_selectors=".stats-document-banner-purchaseOrSignIn",
+            name="ieee",
+            site_rule_overrides=IEEE_SITE_RULE_OVERRIDES,
+            text_marker_signal_set=IEEE_TEXT_MARKER_SIGNAL_SET,
+            overrides=IEEE_AVAILABILITY_OVERRIDES,
+        ),
+    ),
+    sources=("ieee_html", "ieee_pdf"),
+)

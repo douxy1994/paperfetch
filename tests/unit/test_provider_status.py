@@ -17,11 +17,8 @@ from paper_fetch.providers.science import ScienceClient
 from paper_fetch.providers.springer import SpringerClient
 from paper_fetch.providers.wiley import WILEY_TDM_CLIENT_TOKEN_ENV_VAR, WileyClient
 from paper_fetch.providers.browser_runtime.backends import camoufox as camoufox_backend
-from paper_fetch.providers.base import ProviderFailure
 
-CAMOUFOX_ENV = {
-    config.BROWSER_BACKEND_ENV_VAR: "camoufox",
-}
+CAMOUFOX_ENV = {}
 CAMOUFOX_DEPENDENCIES_READY = {
     "probe": "unit_test",
     "packages": {"playwright": True, "camoufox": True},
@@ -44,6 +41,7 @@ class DummyTransport:
 
 class ProviderStatusTests(unittest.TestCase):
     def _browser_client(self, provider: str, env: dict[str, str]):
+        env = {**env, "PAPER_FETCH_PNAS_BROWSER_BACKEND": "camoufox"}
         if provider == "acs":
             return AcsClient(DummyTransport(), env)
         if provider == "aip":
@@ -72,21 +70,20 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertEqual(result.status, "not_configured")
         self.assertFalse(result.available)
         self.assertEqual(result.missing_env, ["ELSEVIER_API_KEY"])
-        self.assertEqual(len(result.checks), 1)
-        self.assertEqual(result.checks[0].name, "fulltext_api")
-        self.assertEqual(result.checks[0].status, "not_configured")
+        checks = {check.name: check for check in result.checks}
+        self.assertEqual(checks["fulltext_api"].status, "not_configured")
+        self.assertEqual(checks["runtime_env"].status, "not_configured")
 
-    def test_elsevier_status_is_ready_when_api_is_configured(self) -> None:
+    def test_elsevier_api_is_available_when_browser_is_not_configured(self) -> None:
         result = ElsevierClient(
             DummyTransport(), {"ELSEVIER_API_KEY": "secret"}
         ).probe_status()
-        self.assertEqual(result.status, "ready")
+        self.assertEqual(result.status, "partial")
         self.assertTrue(result.available)
         self.assertEqual(result.missing_env, [])
-        self.assertEqual(len(result.checks), 1)
-        self.assertEqual(result.checks[0].name, "fulltext_api")
-        self.assertEqual(result.checks[0].status, "ok")
-        self.assertEqual(result.checks[0].details, {})
+        checks = {check.name: check for check in result.checks}
+        self.assertEqual(checks["fulltext_api"].status, "ok")
+        self.assertEqual(checks["runtime_env"].status, "not_configured")
 
     def test_springer_direct_html_route_is_ready_without_env(self) -> None:
         result = SpringerClient(DummyTransport(), {}).probe_status()
@@ -282,18 +279,6 @@ class ProviderStatusTests(unittest.TestCase):
         self.assertEqual(checks["runtime_env"].status, "not_configured")
         self.assertIn(config.BROWSER_BINARY_PATH_ENV_VAR, checks["runtime_env"].message)
         self.assertEqual(checks["playwright_dependency"].status, "ok")
-
-    def test_browser_workflow_provider_rejects_removed_backend(
-        self,
-    ) -> None:
-        env = {config.BROWSER_BACKEND_ENV_VAR: "cloakbrowser"}
-        with mock.patch.object(
-            camoufox_backend,
-            "_dependency_details",
-            return_value=CAMOUFOX_DEPENDENCIES_READY,
-        ):
-            with self.assertRaisesRegex(ProviderFailure, "expected one of: camoufox"):
-                ScienceClient(DummyTransport(), env).probe_status()
 
     def test_browser_workflow_providers_ignore_unrelated_rate_limit_env(self) -> None:
         for provider in ("science", "pnas", "acs", "aip", "royalsocietypublishing"):

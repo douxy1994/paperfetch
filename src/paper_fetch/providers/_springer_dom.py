@@ -39,6 +39,7 @@ from ..extraction.html.semantics import (
     collect_html_section_hints,
     heading_category,
     normalize_section_title,
+    node_source_selector,
 )
 from ..extraction.html.ui_tokens import (
     SPRINGER_FULL_SIZE_IMAGE_LABEL,
@@ -62,6 +63,49 @@ from ._html_section_markdown import (
 )
 
 from bs4 import BeautifulSoup, Tag
+
+
+def access_check_html(html_text: str) -> str:
+    """An explicit institution grant supersedes Nature's residual preview notice."""
+    if "institution-access-preview" not in html_text:
+        return html_text
+    soup = BeautifulSoup(html_text, choose_parser())
+    granted = any(
+        normalize_text(node.get_text(" ", strip=True)).startswith(
+            "You have full access to this article via "
+        )
+        for node in soup.select('[data-test="access-message"]')
+    )
+    if not granted:
+        return html_text
+    for node in soup.select('[data-test="institution-access-preview"]'):
+        node.decompose()
+    return str(soup)
+
+
+def early_access_without_body(html_text: str) -> bool:
+    """Accepted-manuscript landing pages can contain only abstract and attachments."""
+    if "We’re sharing this article early" not in html_text:
+        return False
+    soup = BeautifulSoup(html_text, choose_parser())
+    body = soup.select_one(".c-article-body")
+    if body is None:
+        return True
+    auxiliary = {
+        "abstract",
+        "inline recommendations",
+        "author information",
+        "supplementary information",
+        "rights and permissions",
+        "about this article",
+    }
+    return not any(
+        normalize_text(section.get("data-title")).casefold() not in auxiliary
+        and section.get("data-title")
+        and section.find(["p", "table", "figure"])
+        for section in body.select("section[data-title]")
+    )
+
 
 SPRINGER_MEDIA_SIZE_SEGMENT_PATTERN = re.compile(r"^(?:lw|w|m|h)\d+(?:h\d+)?$")
 SPRINGER_INLINE_FIGURE_SELECTORS = (".c-article-section__figure-item",)
@@ -289,6 +333,11 @@ def _clean_springer_abstract_sections(
 ) -> list[dict[str, Any]]:
     cleaned_sections: list[dict[str, Any]] = []
     for section in sections:
+        if (
+            normalize_section_title(str(section.get("heading") or ""))
+            == "reporting summary"
+        ):
+            continue
         cleaned_section = dict(section)
         if cleaned_section.get("text") is not None:
             cleaned_section["text"] = _clean_springer_preview_fragment(
@@ -362,6 +411,35 @@ def _normalized_root_html(html_text: str) -> tuple[str, Any]:
     if root is None:
         root = soup.body or soup
     active_root = copy.deepcopy(root)
+    # Nature magazine captions use a margin utility to separate the caption
+    # from its credit. Preserve that explicit gap when CSS is no longer present.
+    for caption_text in active_root.select("figcaption .figure__caption > .u-mr-8"):
+        sibling = caption_text.next_sibling
+        if (
+            sibling is not None
+            and not str(sibling).startswith((" ", "\n", "\t"))
+            and not caption_text.get_text().endswith((" ", "\n", "\t"))
+        ):
+            caption_text.insert_after(" ")
+    for expandable_box in active_root.select(
+        '[data-expandable-box="true"][aria-hidden="true"]'
+    ):
+        del expandable_box["aria-hidden"]
+    # Image-only Nature boxes are captioned figures. Keep the source title
+    # beside the bitmap instead of producing a text-empty body section that
+    # the article renderer omits when deciding which sections contain prose.
+    for box in active_root.select(".c-article-box__content"):
+        images = box.find_all("img", recursive=False)
+        if images and not normalize_text(box.get_text(" ", strip=True)):
+            heading = box.parent.find(re.compile(r"^h[1-6]$"), recursive=False)
+            if heading is not None:
+                heading.name = "p"
+                bold = soup.new_tag("strong")
+                for child in list(heading.contents):
+                    bold.append(child.extract())
+                heading.append(bold)
+        for image in images:
+            image.wrap(soup.new_tag("figure"))
     prune_html_tree(active_root)
     _remove_springer_ai_alt_disclaimers(active_root)
     return str(active_root), active_root
@@ -421,14 +499,39 @@ def extract_html_extraction_sidecars(
     return {
         "cleaned_html": cleaned_html,
         "abstract_sections": abstract_sections,
-        "section_hints": collect_html_section_hints(
-            active_root,
-            title=title,
-            language_hint_resolver=lambda node: html_node_language_hint(
-                node, allow_soft_hints=True
-            ),
-        ),
+        "section_hints": _springer_section_hints(active_root, title=title),
     }
+
+
+def _springer_section_hints(root: Tag, *, title: str | None) -> list[dict[str, Any]]:
+    hints = collect_html_section_hints(
+        root,
+        title=title,
+        language_hint_resolver=lambda node: html_node_language_hint(
+            node, allow_soft_hints=True
+        ),
+    )
+    methods_ethics = set()
+    for heading in root.find_all(re.compile(r"^h[3-6]$")):
+        label = normalize_text(heading.get_text(" ", strip=True))
+        if normalize_section_title(label) not in {
+            "ethics compliance",
+            "ethics statement",
+        }:
+            continue
+        if any(
+            _springer_section_title_key(ancestor)
+            in {"methods", "materials and methods", "methodology"}
+            for ancestor in heading.parents
+            if isinstance(ancestor, Tag) and ancestor.name == "section"
+        ):
+            methods_ethics.add((label, node_source_selector(heading.parent)))
+    for hint in hints:
+        if str(hint["heading"]).casefold().startswith("extended data"):
+            hint["kind"] = "supplementary"
+        if (hint["heading"], hint["source_selector"]) in methods_ethics:
+            hint["kind"] = "body"
+    return hints
 
 
 def _springer_section_title_key(node: Any) -> str:
@@ -527,6 +630,12 @@ def _extract_asset_html_scope_fragments(
     source_data_html = _springer_merge_scope_fragments(
         [*supplementary_sections, *source_data_sections]
     )
+    # Extended Data can be nested inside main-content on older Nature pages.
+    body_soup = BeautifulSoup(body_html, choose_parser())
+    body_supplementary, body_source_data = _springer_collect_asset_sections(body_soup)
+    for section in [*body_supplementary, *body_source_data]:
+        section.decompose()
+    body_html = str(body_soup)
     return body_html, supplementary_html, source_data_html
 
 
@@ -887,6 +996,7 @@ def _springer_table_image_candidate_score(
     node: Tag | None,
     table_number: str,
     from_meta: bool,
+    verified_legacy_table_image: bool = False,
 ) -> int:
     if not SPRINGER_TABLE_IMAGE_EXTENSION_PATTERN.search(url):
         return -1
@@ -909,6 +1019,7 @@ def _springer_table_image_candidate_score(
         number_matches
         or (is_esm_mediaobject and has_table_semantics)
         or (is_table_context and has_table_semantics)
+        or (is_table_context and verified_legacy_table_image)
     ):
         return -1
     if from_meta and not (

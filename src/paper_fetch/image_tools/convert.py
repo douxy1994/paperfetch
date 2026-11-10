@@ -14,6 +14,7 @@ from collections.abc import Mapping
 
 from ..http.headers import header_value
 from ..reason_codes import (
+    ASSET_BYTES_PER_ASSET_EXCEEDED,
     IMAGE_CONVERSION_BACKEND_ERROR,
     IMAGE_CONVERSION_BACKEND_MISSING,
     IMAGE_CONVERSION_BACKEND_READY,
@@ -23,6 +24,7 @@ from ..reason_codes import (
 from ..utils import normalize_text
 from .paths import (
     _clear_image_tool_path_caches,
+    _path_fingerprint,
     ghostscript_binary_candidates,
     image_tool_timeout_seconds,
     vips_binary_candidates,
@@ -56,6 +58,15 @@ class SourceImageConversion:
     content_type: str
     source_format: str
     tool: str
+
+
+@dataclass(frozen=True)
+class SourceImagePathConversion:
+    path: Path
+    content_type: str
+    source_format: str
+    tool: str
+    output_bytes: int
 
 
 @dataclass(frozen=True)
@@ -123,19 +134,6 @@ def source_image_format_from_payload(
         return "tiff"
 
     return ""
-
-
-def _path_fingerprint(path: Path) -> tuple[str, bool, int, int]:
-    try:
-        stat_result = path.stat()
-    except OSError:
-        return (str(path), False, 0, 0)
-    return (
-        str(path),
-        True,
-        int(stat_result.st_mtime_ns),
-        int(stat_result.st_size),
-    )
 
 
 def _working_binary_cache_key(
@@ -235,15 +233,6 @@ def _working_binary_probe(
         probe = _probe_working_binary(candidates, probe_args, env=env)
         _WORKING_BINARY_CACHE[cache_key] = probe
         return probe
-
-
-def _working_binary(
-    candidates: list[Path],
-    probe_args: list[str],
-    *,
-    env: Mapping[str, str] | None = None,
-) -> Path | None:
-    return _working_binary_probe(candidates, probe_args, env=env).binary
 
 
 def _tool_env_root(binary: Path) -> Path | None:
@@ -503,10 +492,69 @@ def convert_source_image_response_to_png(
     )
 
 
+def convert_source_image_path_to_png(
+    input_path: Path,
+    output_path: Path,
+    *,
+    content_type: str | None = None,
+    source_url: str = "",
+    max_output_bytes: int | None = None,
+) -> SourceImagePathConversion | None:
+    """Convert an existing source file without materializing it in Python."""
+
+    input_path = Path(input_path)
+    output_path = Path(output_path)
+    try:
+        with input_path.open("rb") as source:
+            prefix = source.read(8192)
+    except OSError as exc:
+        raise ImageConversionFailure(str(exc)) from exc
+    source_format = source_image_format_from_payload(
+        prefix,
+        content_type=content_type,
+        source_url=source_url,
+    )
+    if source_format not in {"eps", "tiff"}:
+        return None
+    if output_path.exists():
+        raise ImageConversionFailure(
+            f"Image conversion output already exists: {output_path}"
+        )
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        tool = (
+            _convert_eps_to_png(input_path, output_path)
+            if source_format == "eps"
+            else _convert_tiff_to_png(input_path, output_path)
+        )
+        output_bytes = output_path.stat().st_size
+        if output_bytes <= 0:
+            raise ImageConversionFailure("Image conversion produced an empty PNG.")
+        if max_output_bytes is not None and output_bytes > max(0, max_output_bytes):
+            raise ImageConversionFailure(
+                "Converted PNG exceeded the configured per-asset byte limit.",
+                reason_code=ASSET_BYTES_PER_ASSET_EXCEEDED,
+            )
+        with output_path.open("rb+") as converted:
+            os.fsync(converted.fileno())
+    except BaseException:
+        output_path.unlink(missing_ok=True)
+        raise
+    return SourceImagePathConversion(
+        path=output_path,
+        content_type="image/png",
+        source_format=source_format,
+        tool=tool,
+        output_bytes=output_bytes,
+    )
+
+
 __all__ = [
     "ImageConversionBackendProbe",
     "ImageConversionFailure",
     "SourceImageConversion",
+    "SourceImagePathConversion",
+    "convert_source_image_path_to_png",
     "convert_source_image_response_to_png",
     "probe_image_conversion_backends",
     "source_image_format_from_payload",

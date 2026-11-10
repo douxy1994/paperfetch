@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import urllib.parse
+import re
 from typing import Any
 from collections.abc import Mapping
 
@@ -12,6 +13,7 @@ from ..extraction.html.assets import (
     FULL_SIZE_IMAGE_ATTRS,
     FIGURE_KIND,
     PREVIEW_IMAGE_ATTRS,
+    AssetDownloadOptions,
     FigurePageFetcher,
     SUPPLEMENTARY_KIND,
     _soup_attr_url,
@@ -26,6 +28,7 @@ from ..extraction.html.parsing import choose_parser
 from ..extraction.html.semantics import normalize_section_title
 from ..http.headers import header_value
 from ..utils import normalize_text
+from ..config import resolve_asset_download_concurrency
 from ._html_asset_engine import (
     HtmlAssetExtractionPolicy,
     extract_scoped_assets_with_policy,
@@ -49,6 +52,7 @@ from ._springer_dom import (
     _springer_table_image_candidate_urls,
     _springer_table_image_roots,
     _springer_table_meta_image_urls,
+    SPRINGER_TABLE_LABEL_PATTERN,
     decode_html,
     extract_full_size_figure_image_url,
     extract_html_extraction_sidecars,
@@ -105,10 +109,57 @@ def extract_springer_table_image_url(
     """Return a trusted image fallback for a Springer/Nature table page."""
     soup = BeautifulSoup(html_text, choose_parser())
     table_number = _springer_expected_table_number(label, table_url or source_url)
+    requested = urllib.parse.urlparse(table_url or source_url)
+    final = urllib.parse.urlparse(source_url)
+    if table_url and (
+        requested.hostname != final.hostname or requested.path != final.path
+    ):
+        return None
+    expected_label = SPRINGER_TABLE_LABEL_PATTERN.search(label)
+    expected_label_text = (
+        expected_label.group(0).lower().replace(".", "") if expected_label else ""
+    )
+    page_labels = [
+        match.group(0).lower().replace(".", "")
+        for node in soup.select("h1, title")
+        if (
+            match := SPRINGER_TABLE_LABEL_PATTERN.search(node.get_text(" ", strip=True))
+        )
+    ]
+    label_matches = bool(expected_label and page_labels) and all(
+        value == expected_label_text for value in page_labels
+    )
+    if expected_label and page_labels and not label_matches:
+        return None
+    article_path = requested.path.rsplit("/tables/", 1)[0]
+    nature_article = requested.hostname in {
+        "www.nature.com",
+        "nature.com",
+    } and article_path.startswith("/articles/")
+    article_doi = (
+        "10.1038/" + article_path.removeprefix("/articles/") if nature_article else ""
+    )
+    article_link_matches = any(
+        urllib.parse.urlparse(
+            urllib.parse.urljoin(source_url, str(a.get("href") or ""))
+        ).path
+        == article_path
+        for a in soup.select(".c-article-satellite-subtitle a[href]")
+    )
     scored_candidates: list[tuple[int, int, str]] = []
     order = 0
 
     for meta_url in _springer_table_meta_image_urls(soup, source_url):
+        meta_path = urllib.parse.unquote(urllib.parse.urlparse(meta_url).path)
+        media_doi = re.search(
+            r"/art:(10\.[^/]+/.+?)/MediaObjects/", meta_path, re.IGNORECASE
+        )
+        if (
+            article_doi
+            and media_doi
+            and media_doi.group(1).lower() != article_doi.lower()
+        ):
+            continue
         score = _springer_table_image_candidate_score(
             meta_url,
             node=None,
@@ -128,11 +179,35 @@ def extract_springer_table_image_url(
             root,
             source_url,
         ):
+            candidate_path = urllib.parse.unquote(
+                urllib.parse.urlparse(candidate_url).path
+            )
+            media_doi = re.search(
+                r"/art:(10\.[^/]+/.+?)/MediaObjects/", candidate_path, re.IGNORECASE
+            )
+            if (
+                article_doi
+                and media_doi
+                and media_doi.group(1).lower() != article_doi.lower()
+            ):
+                continue
             score = _springer_table_image_candidate_score(
                 candidate_url,
                 node=tag,
                 table_number=table_number,
                 from_meta=False,
+                verified_legacy_table_image=bool(
+                    label_matches
+                    and article_link_matches
+                    and article_doi
+                    and media_doi
+                    and media_doi.group(1).lower() == article_doi.lower()
+                    and urllib.parse.urlparse(candidate_url).hostname
+                    == "media.springernature.com"
+                    and re.search(
+                        r"_Fig[a-z]+_ESM\.(?:jpe?g|png)$", candidate_path, re.IGNORECASE
+                    )
+                ),
             )
             if score >= 0:
                 scored_candidates.append((score, order, candidate_url))
@@ -260,6 +335,17 @@ def extract_supplementary_assets(
     html_text: str, source_url: str
 ) -> list[dict[str, str]]:
     assets: list[dict[str, str]] = []
+    soup = BeautifulSoup(html_text, choose_parser())
+    extended_figures: dict[str, Tag] = {}
+    for link in soup.select(".c-article-supplementary__title a[href]"):
+        if re.match(
+            r"Extended Data Fig(?:ure)?\.?\s+\d",
+            link.get_text(" ", strip=True),
+            re.IGNORECASE,
+        ):
+            page_url = urllib.parse.urljoin(source_url, str(link.get("href") or ""))
+            if re.search(r"/figures/\d+$", urllib.parse.urlparse(page_url).path):
+                extended_figures[page_url] = link
     for asset in extract_generic_supplementary_assets(
         html_text, source_url, noise_profile="springer_nature"
     ):
@@ -268,7 +354,27 @@ def extract_supplementary_assets(
             heading
         ):
             continue
-        assets.append(dict(asset))
+        item = dict(asset)
+        url = item.get("url", "")
+        parsed_url = urllib.parse.urlparse(url)
+        if (
+            parsed_url.fragment
+            and url.split("#", 1)[0] == source_url.split("#", 1)[0]
+            and re.match(r"Extended Data Fig", heading, re.IGNORECASE)
+        ):
+            continue
+        link = extended_figures.get(url)
+        if link is not None:
+            preview = str(link.get("data-supp-info-image") or "").strip()
+            preview_url = urllib.parse.urljoin(source_url, preview) if preview else ""
+            item.update(kind="figure", figure_page_url=url, url=preview_url)
+            if preview_url:
+                item["preview_url"] = preview_url
+                promoted_url = promote_springer_media_url_to_full_size(preview_url)
+                if promoted_url:
+                    item["full_size_url"] = promoted_url
+                    item["url"] = promoted_url
+        assets.append(item)
     return _dedupe_springer_supplementary_assets(assets)
 
 
@@ -473,16 +579,9 @@ def extract_scoped_html_assets(
     )
 
 
-def figure_download_candidates(
-    transport,
-    *,
-    asset: Mapping[str, Any],
-    user_agent: str,
-    figure_page_fetcher: FigurePageFetcher | None = None,
-) -> list[str]:
+def _known_figure_candidates(asset: Mapping[str, Any]) -> list[str]:
     direct_full_size_url = normalize_text(str(asset.get("full_size_url") or ""))
     primary_url = normalize_text(str(asset.get("url") or ""))
-    preview_url = normalize_text(str(asset.get("preview_url") or "")) or primary_url
     candidates: list[str] = []
     if direct_full_size_url:
         candidates.append(direct_full_size_url)
@@ -491,6 +590,20 @@ def figure_download_candidates(
         candidates.append(promoted_preview)
     if primary_url and looks_like_full_size_asset_url(primary_url):
         candidates.append(primary_url)
+    return list(dict.fromkeys(candidates))
+
+
+def figure_download_candidates(
+    transport,
+    *,
+    asset: Mapping[str, Any],
+    user_agent: str,
+    figure_page_fetcher: FigurePageFetcher | None = None,
+) -> list[str]:
+    candidates = _known_figure_candidates(asset)
+    preview_url = normalize_text(
+        str(asset.get("preview_url") or asset.get("url") or "")
+    )
 
     figure_page_url = normalize_text(str(asset.get("figure_page_url") or ""))
     if figure_page_url:
@@ -545,9 +658,33 @@ def download_assets_for_springer(
     figure_page_fetcher: FigurePageFetcher | None = None,
     browser_context_seed: Mapping[str, Any] | None = None,
     seed_urls: list[str] | None = None,
-    asset_download_concurrency: int | None = None,
+    runtime_context: Any | None = None,
 ):
+    asset_download_concurrency = resolve_asset_download_concurrency(
+        getattr(runtime_context, "env", None)
+    )
     body_assets, supplementary_assets = split_body_and_supplementary_assets(assets)
+    missing_tables = [
+        asset
+        for asset in supplementary_assets
+        if asset_profile == "all"
+        and asset.get("kind") == "table"
+        and not asset.get("url")
+    ]
+    supplementary_assets = [
+        asset for asset in supplementary_assets if asset not in missing_tables
+    ]
+    if asset_profile == "all":
+        supplementary_images = [
+            asset
+            for asset in supplementary_assets
+            if asset.get("kind") in {"figure", "table"}
+            and (asset.get("url") or asset.get("kind") == "figure")
+        ]
+        body_assets.extend(supplementary_images)
+        supplementary_assets = [
+            asset for asset in supplementary_assets if asset not in supplementary_images
+        ]
     body_result = download_assets(
         FIGURE_KIND,
         transport,
@@ -556,11 +693,17 @@ def download_assets_for_springer(
         output_dir=output_dir,
         user_agent=user_agent,
         asset_profile=asset_profile,
-        figure_page_fetcher=figure_page_fetcher,
-        browser_context_seed=browser_context_seed,
-        seed_urls=seed_urls,
-        candidate_builder=figure_download_candidates,
-        asset_download_concurrency=asset_download_concurrency,
+        options=AssetDownloadOptions(
+            figure_page_fetcher=figure_page_fetcher,
+            browser_context_seed=browser_context_seed,
+            candidate_builder=lambda _transport, *, asset, **_kwargs: (
+                _known_figure_candidates(asset)
+            ),
+            _fallback_candidate_builder=figure_download_candidates,
+            asset_download_concurrency=asset_download_concurrency,
+            provider_name="springer",
+            runtime_context=runtime_context,
+        ),
     )
     supplementary_result = download_assets(
         SUPPLEMENTARY_KIND,
@@ -570,9 +713,12 @@ def download_assets_for_springer(
         output_dir=output_dir,
         user_agent=user_agent,
         asset_profile=asset_profile,
-        browser_context_seed=browser_context_seed,
-        seed_urls=seed_urls,
-        asset_download_concurrency=asset_download_concurrency,
+        options=AssetDownloadOptions(
+            browser_context_seed=browser_context_seed,
+            asset_download_concurrency=asset_download_concurrency,
+            provider_name="springer",
+            runtime_context=runtime_context,
+        ),
     )
     return {
         "assets": [
@@ -580,6 +726,14 @@ def download_assets_for_springer(
             *list(supplementary_result.get("assets") or []),
         ],
         "asset_failures": [
+            *[
+                SUPPLEMENTARY_KIND.failure_template(
+                    asset,
+                    asset.get("source_url", ""),
+                    reason="Springer extended table page did not provide a verified table image or table body.",
+                )
+                for asset in missing_tables
+            ],
             *list(body_result.get("asset_failures") or []),
             *list(supplementary_result.get("asset_failures") or []),
         ],

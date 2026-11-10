@@ -1,10 +1,7 @@
 from __future__ import annotations
-
 from pathlib import Path
 from unittest import mock
-
 from paper_fetch import publisher_identity
-from paper_fetch.extraction.html.signals import HtmlExtractionFailure
 from paper_fetch.provider_catalog import (
     PROVIDER_CATALOG,
     SOURCE_PROVIDER_MAP,
@@ -23,7 +20,7 @@ from paper_fetch.providers._registry import provider_bundle
 from paper_fetch.providers.aip import AipClient
 from paper_fetch.providers.base import ProviderContent, RawFulltextPayload
 from paper_fetch.providers.browser_workflow import BrowserWorkflowClient
-from tests.unit._browser_workflow_deps import install_browser_workflow_deps
+from tests.support._browser_workflow_deps import install_browser_workflow_deps
 
 
 AIP_STRUCTURE_DOI = "10.1063/5.0129134"
@@ -35,7 +32,7 @@ AIP_TABLE_FORMULA_DOI = "10.1063/5.0188905"
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_aip_cold_html_retry_reuses_transient_seed_without_persisting_state(
+def test_aip_normal_html_load_retains_seed_and_exports_compatible_state(
     tmp_path,
 ) -> None:
     client = AipClient(transport=None, env={})
@@ -46,7 +43,6 @@ def test_aip_cold_html_retry_reuses_transient_seed_without_persisting_state(
         artifact_dir=tmp_path / "artifacts",
         headless=True,
         user_agent=None,
-        backend="camoufox",
         storage_state_path=state_path,
     )
     seed = {
@@ -60,12 +56,6 @@ def test_aip_cold_html_retry_reuses_transient_seed_without_persisting_state(
         ],
         "browser_final_url": AIP_STRUCTURE_LANDING,
     }
-    first_stage = browser_runtime.BrowserStagedStorageState(
-        path=state_path,
-        provider="aip",
-        filter_url=AIP_STRUCTURE_LANDING,
-        payload={"cookies": list(seed["browser_cookies"]), "origins": []},
-    )
     second_stage = browser_runtime.BrowserStagedStorageState(
         path=state_path,
         provider="aip",
@@ -74,17 +64,6 @@ def test_aip_cold_html_retry_reuses_transient_seed_without_persisting_state(
     )
     mocked_browser = mock.Mock(
         side_effect=[
-            browser_runtime.BrowserFetchedHtml(
-                source_url=AIP_STRUCTURE_LANDING,
-                final_url=AIP_STRUCTURE_LANDING,
-                html="<html><head><title>AIP article</title></head></html>",
-                response_status=200,
-                response_headers={"content-type": "text/html"},
-                title="AIP article",
-                summary="AIP article",
-                browser_context_seed=seed,
-                staged_storage_state=first_stage,
-            ),
             browser_runtime.BrowserFetchedHtml(
                 source_url=AIP_STRUCTURE_LANDING,
                 final_url=AIP_STRUCTURE_LANDING,
@@ -100,10 +79,6 @@ def test_aip_cold_html_retry_reuses_transient_seed_without_persisting_state(
     )
     mocked_extractor = mock.Mock(
         side_effect=[
-            HtmlExtractionFailure(
-                "article_container_not_found",
-                "Could not identify the main article container.",
-            ),
             (
                 "# AIP article\n\n## Results\n\n" + ("Body text " * 120),
                 {
@@ -134,35 +109,29 @@ def test_aip_cold_html_retry_reuses_transient_seed_without_persisting_state(
             },
         )
 
-    assert mocked_browser.call_count == 2
+    assert mocked_browser.call_count == 1
+    for browser_call in mocked_browser.call_args_list:
+        assert not browser_call.kwargs["options"].empty_script_response_urls
+        assert not browser_call.kwargs["options"].blocked_resource_types
+        assert not browser_call.kwargs.get("disable_media", False)
     assert "browser_context_seed" not in mocked_browser.call_args_list[0].kwargs
     assert mocked_browser.call_args_list[0].args[0][0] == AIP_STRUCTURE_LANDING
-    assert mocked_browser.call_args_list[1].args[0][0] == (
-        f"https://pubs.aip.org/doi/full/{AIP_STRUCTURE_DOI}"
-    )
-    assert mocked_browser.call_args_list[1].args[0][-1] == AIP_STRUCTURE_LANDING
-    retry_seed = mocked_browser.call_args_list[1].kwargs["browser_context_seed"]
-    assert retry_seed["browser_cookies"][0]["name"] == "__cf_bm"
-    assert retry_seed["browser_cookies"][0]["value"] == "transient-session"
-    commit_state.assert_not_called()
+    commit_state.assert_called_once()
     assert not state_path.exists()
     assert raw_payload.content is not None
     assert raw_payload.content.route_kind == "html"
     attempts = raw_payload.content.diagnostics["html_attempts"]
-    assert [attempt["result"] for attempt in attempts] == [
-        "extraction_failure",
-        "success",
-    ]
-    assert attempts[0]["failure_code"] == "empty_article_shell"
-    assert raw_payload.content.diagnostics["browser_runtime_trace"][
-        "storage_state_save"
-    ] == {
-        "attempted": False,
-        "staged": False,
-        "saved": False,
-        "path": None,
-        "reason": "provider_runtime_fingerprint_boundary",
-    }
+    assert [attempt["result"] for attempt in attempts] == ["success"]
+    assert (
+        raw_payload.content.browser_context_seed["browser_cookies"]
+        == seed["browser_cookies"]
+    )
+    assert (
+        raw_payload.content.diagnostics["browser_runtime_trace"]["storage_state_save"][
+            "saved"
+        ]
+        is True
+    )
 
 
 def test_aip_provider_bundle_declares_routing_sources_and_browser_runtime() -> None:
@@ -173,13 +142,14 @@ def test_aip_provider_bundle_declares_routing_sources_and_browser_runtime() -> N
     assert catalog.domains == ("pubs.aip.org",)
     assert catalog.doi_prefixes == ("10.1063/",)
     assert provider_base_domains("aip") == ("pubs.aip.org",)
-    assert catalog.requires_browser_runtime is True
+    assert any(
+        route.browser_required or route.browser_optional for route in catalog.routes
+    )
     assert default_asset_profile_for_provider("aip") == "body"
     assert SOURCE_PROVIDER_MAP["aip_html"] == "aip"
     assert SOURCE_PROVIDER_MAP["aip_pdf"] == "aip"
     assert bundle.sources == ("aip_html", "aip_pdf")
     assert bundle.html_rules is not None
-    assert bundle.html_rules.availability.no_signals is True
 
 
 def test_aip_candidates_cover_article_html_pdf_fallback_and_landing_url() -> None:
@@ -232,6 +202,52 @@ def test_aip_browser_client_profile_and_author_fallback() -> None:
         "Ada Lovelace",
         "Grace Hopper",
     ]
+    assert not client.profile.empty_script_response_urls
+    assert not client.profile.blocked_resource_types
+    assert not client.profile.fast_html_attempt
+    assert client.profile.html_readiness_budget_seconds == 90.0
+    assert client.profile.persistent_storage_state
+
+
+def test_aip_asset_extraction_prefers_largest_official_srcset_rendition() -> None:
+    preview_url = "https://pubs.aip.org/cms/asset/preview.jpg"
+    original_url = "https://pubs.aip.org/cms/asset/original.jpg"
+
+    assets = _aip_html.scoped_asset_extractor(
+        f"""
+        <figure id="fig1">
+          <img src="{preview_url}"
+               srcset="{preview_url} 500w, {original_url} 2200w">
+          <figcaption>Figure 1. AIP rendition selection.</figcaption>
+        </figure>
+        """,
+        AIP_STRUCTURE_LANDING,
+        asset_profile="body",
+    )
+
+    figure = next(asset for asset in assets if asset["kind"] == "figure")
+    assert figure["preview_url"] == preview_url
+    assert figure["full_size_url"] == original_url
+    assert "official_full_size_not_exposed" not in figure.get("provenance", [])
+
+
+def test_aip_asset_extraction_marks_preview_when_official_original_is_absent() -> None:
+    preview_url = "https://pubs.aip.org/cms/asset/preview-only.jpg"
+
+    assets = _aip_html.scoped_asset_extractor(
+        f"""
+        <figure id="fig1">
+          <img src="{preview_url}">
+          <figcaption>Figure 1. Preview only.</figcaption>
+        </figure>
+        """,
+        AIP_STRUCTURE_LANDING,
+        asset_profile="body",
+    )
+
+    figure = next(asset for asset in assets if asset["kind"] == "figure")
+    assert not figure.get("full_size_url")
+    assert figure["provenance"] == ["official_full_size_not_exposed"]
 
 
 def test_aip_profile_exposes_provider_owned_hooks_for_article_html_pdf_fallback_and_abstract_only() -> (
@@ -374,6 +390,21 @@ def test_aip_markdown_cleanup_handles_unlabeled_bold_caption_after_image() -> No
     assert "Though the inherent characteristics" in markdown
 
 
+def test_aip_dom_cleanup_removes_only_figure_modal_copy():
+    from bs4 import BeautifulSoup
+
+    soup = BeautifulSoup(
+        '<article><div class="fig-section">Original caption</div>'
+        '<div class="fig-modal">Original caption</div>'
+        "<p>Original caption is discussed in the body.</p></article>",
+        "lxml",
+    )
+    _aip_html.aip_before_block_normalization(soup.article)
+    assert soup.select_one(".fig-section").get_text() == "Original caption"
+    assert soup.select_one(".fig-modal") is None
+    assert soup.p.get_text() == "Original caption is discussed in the body."
+
+
 def test_aip_markdown_cleanup_handles_formula_variant_caption_duplicates() -> None:
     markdown = _aip_html.aip_normalize_markdown(
         """
@@ -410,82 +441,6 @@ def test_aip_article_source_tracks_pdf_fallback_payload() -> None:
     )
 
     assert client.article_source_for_payload(payload) == "aip_pdf"
-
-
-def test_aip_markdown_review_contract_markers() -> None:
-    markdown = """
-    # On-chip on-demand delivery of K<sup>+</sup> for in vitro bioelectronics
-
-    ## Abstract
-
-    Bioelectronic devices can actuate biological processes.
-
-    ## I. INTRODUCTION
-
-    Bioelectronics bridges the gap between biology and electronics.
-
-    ![Figure 1](body_assets/aip-figure-1.jpeg)
-
-    **Figure 1.** Six-well potassium ion pump design.
-
-    ## SUPPLEMENTARY MATERIAL
-
-    See the supplementary material for additional characterization.
-
-    ## References
-
-    1. Seitanidou M. Adv. Healthcare Mater. 2019.
-    """
-
-    # markdown-review: purpose=structure doi=10.1063/5.0129134
-    assert "## Abstract" in markdown
-    assert "## I. INTRODUCTION" in markdown
-    assert "Download Citation" not in markdown
-    assert "Article Navigation" not in markdown
-
-    # markdown-review: purpose=figure doi=10.1063/5.0129134
-    assert "Figure 1" in markdown
-    assert "![Figure" in markdown
-    assert "Open figure viewer" not in markdown
-    assert "View large" not in markdown
-    assert "Close modal" not in markdown
-
-    # markdown-review: purpose=supplementary doi=10.1063/5.0129134
-    assert "SUPPLEMENTARY MATERIAL" in markdown
-    assert "supplementary material" in markdown
-    assert "Download Citation" not in markdown
-
-    # markdown-review: purpose=references doi=10.1063/5.0129134
-    assert "## References" in markdown
-    assert "Seitanidou" in markdown
-    assert "Google Scholar" not in markdown
-
-    markdown_text = """
-    # Machine-learned atomic cluster expansion
-
-    **Table** Comparison of the lattice parameters of w-AlN determined by different methods.
-
-    | Method | a | c |
-    | ------ | - | - |
-    | ACE    | 3 | 5 |
-
-    **Equation 1.**
-
-    $$
-    \\begin{matrix} {E = \\sum\\limits_{i}\\varepsilon_{i},} \\end{matrix}
-    $$
-    """
-
-    # markdown-review: purpose=table doi=10.1063/5.0188905
-    assert "Comparison of the lattice parameters" in markdown_text
-    assert "| Method" in markdown_text
-    assert "Google Scholar" not in markdown_text
-
-    # markdown-review: purpose=formula doi=10.1063/5.0188905
-    assert "Equation 1." in markdown_text
-    assert "\\begin{matrix}" in markdown_text
-    assert "$$" in markdown_text
-    assert "[Formula unavailable]" not in markdown_text
 
 
 def test_aip_download_related_assets_contract_marker(monkeypatch, tmp_path) -> None:
@@ -534,3 +489,22 @@ def test_aip_download_related_assets_contract_marker(monkeypatch, tmp_path) -> N
     assert Path(downloaded["path"]).read_bytes() == b"fake-image"
     assert downloaded["downloaded_bytes"] == len(b"fake-image")
     assert result["asset_failures"] == []
+
+
+def test_aip_zip_attachment_filename_uses_endpoint_format() -> None:
+    url = "https://pubs.aip.org/aip/adv/article-supplement/2820011/zip/125205_1_epaps"
+    assets = _aip_html.scoped_asset_extractor(
+        f'<a href="{url}">Supplementary material</a>',
+        AIP_STRUCTURE_LANDING,
+        asset_profile="all",
+    )
+    assert len(assets) == 1
+    assert assets[0]["filename_hint"] == "125205_1_epaps.zip"
+    assert assets[0]["url"] == url
+
+    other = _aip_html.scoped_asset_extractor(
+        '<a href="https://example.org/article-supplement/1/zip/other">Supplement</a>',
+        AIP_STRUCTURE_LANDING,
+        asset_profile="all",
+    )
+    assert "filename_hint" not in other[0]

@@ -6,9 +6,11 @@ import contextlib
 from dataclasses import dataclass, field
 import hashlib
 import json
+import os
 from pathlib import Path
+import tempfile
 from typing import Any, Literal
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 
 from filelock import FileLock
 from platformdirs import user_runtime_path
@@ -16,7 +18,6 @@ from platformdirs import user_runtime_path
 from .config import APP_NAME
 from .extraction.html.assets.dom import preview_dimensions_are_acceptable
 from .models import ArticleModel, AssetProfile, AssetQualitySummary
-from .provider_catalog import provider_persists_provider_html
 from .reason_codes import PDF_FALLBACK
 from .tracing import download_marker
 from .utils import (
@@ -78,10 +79,6 @@ class DownloadPolicy:
         return self.artifact_mode == "all" and self.download_dir is not None
 
     @property
-    def allows_http_disk_cache(self) -> bool:
-        return self.artifact_mode == "all"
-
-    @property
     def allows_structured_sidecars(self) -> bool:
         return self.artifact_mode == "all"
 
@@ -102,6 +99,11 @@ class ArtifactStore:
     """Centralizes provider payload saves and artifact diagnostics."""
 
     policy: DownloadPolicy = field(default_factory=DownloadPolicy)
+    default_commit_guard: Callable[[], None] | None = field(
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     @classmethod
     def from_download_dir(
@@ -109,10 +111,122 @@ class ArtifactStore:
         download_dir: Path | None,
         *,
         artifact_mode: ArtifactMode = DEFAULT_ARTIFACT_MODE,
+        commit_guard: Callable[[], None] | None = None,
     ) -> ArtifactStore:
         return cls(
-            DownloadPolicy(download_dir=download_dir, artifact_mode=artifact_mode)
+            DownloadPolicy(download_dir=download_dir, artifact_mode=artifact_mode),
+            default_commit_guard=commit_guard,
         )
+
+    def _effective_commit_guard(
+        self, commit_guard: Callable[[], None] | None
+    ) -> Callable[[], None] | None:
+        return commit_guard or self.default_commit_guard
+
+    @staticmethod
+    @contextlib.contextmanager
+    def _commit_critical_section(
+        guard: Callable[[], None] | None,
+    ) -> Iterator[None]:
+        critical_section = getattr(guard, "critical_section", None)
+        if callable(critical_section):
+            with critical_section():
+                yield
+            return
+        if guard is not None:
+            guard()
+        yield
+
+    @staticmethod
+    def _fsync_parent(path: Path) -> None:
+        """Best-effort directory durability after an atomic replace."""
+
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+        try:
+            directory_fd = os.open(path.parent, flags)
+        except OSError:
+            return
+        try:
+            os.fsync(directory_fd)
+        except OSError:
+            pass
+        finally:
+            os.close(directory_fd)
+
+    @staticmethod
+    def _matches_existing(path: Path, body: bytes) -> bool:
+        try:
+            if path.stat().st_size != len(body):
+                return False
+            existing_digest = hashlib.sha256()
+            with path.open("rb") as stream:
+                for block in iter(lambda: stream.read(1024 * 1024), b""):
+                    existing_digest.update(block)
+        except OSError:
+            return False
+        return existing_digest.digest() == hashlib.sha256(body).digest()
+
+    @staticmethod
+    def _files_match(left: Path, right: Path) -> bool:
+        try:
+            if left.stat().st_size != right.stat().st_size:
+                return False
+            digests = []
+            for path in (left, right):
+                digest = hashlib.sha256()
+                with path.open("rb") as stream:
+                    for block in iter(lambda: stream.read(1024 * 1024), b""):
+                        digest.update(block)
+                digests.append(digest.digest())
+        except OSError:
+            return False
+        return digests[0] == digests[1]
+
+    def _write_bytes_atomic(
+        self,
+        path: Path,
+        body: bytes,
+        *,
+        overwrite: bool,
+        commit_guard: Callable[[], None] | None,
+    ) -> Path:
+        """Durably replace one path using a unique same-directory staging file."""
+
+        guard = self._effective_commit_guard(commit_guard)
+        if guard is not None:
+            guard()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        lock_path = artifact_file_lock_path(path)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(str(lock_path)):
+            if guard is not None:
+                guard()
+            if path.exists() and not overwrite:
+                if self._matches_existing(path, body):
+                    return path
+                raise FileExistsError(
+                    "refusing to overwrite existing artifact without explicit "
+                    f"permission because content differs: {path}"
+                )
+            descriptor, temporary_name = tempfile.mkstemp(
+                prefix=f".{path.name}.",
+                suffix=".part",
+                dir=path.parent,
+            )
+            temporary_path = Path(temporary_name)
+            try:
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(body)
+                    stream.flush()
+                    os.fsync(stream.fileno())
+                with self._commit_critical_section(guard):
+                    os.replace(temporary_path, path)
+                    self._fsync_parent(path)
+            except BaseException:
+                with contextlib.suppress(OSError):
+                    temporary_path.unlink(missing_ok=True)
+                raise
+        return path
 
     @property
     def download_dir(self) -> Path | None:
@@ -131,10 +245,6 @@ class ArtifactStore:
         return self.policy.allows_auxiliary_artifacts
 
     @property
-    def allows_http_disk_cache(self) -> bool:
-        return self.policy.allows_http_disk_cache
-
-    @property
     def allows_structured_sidecars(self) -> bool:
         return self.policy.allows_structured_sidecars
 
@@ -145,53 +255,65 @@ class ArtifactStore:
         *,
         encoding: str = "utf-8",
         overwrite: bool = True,
-        use_lock: bool = False,
         commit_guard: Callable[[], None] | None = None,
     ) -> Path:
-        if commit_guard is not None:
-            commit_guard()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        lock_path = artifact_file_lock_path(path)
-        if use_lock:
-            lock_path.parent.mkdir(parents=True, exist_ok=True)
-        lock = FileLock(str(lock_path)) if use_lock else contextlib.nullcontext()
-        with lock:
-            if path.exists() and not overwrite:
-                raise FileExistsError(
-                    f"refusing to overwrite existing artifact without explicit permission: {path}"
-                )
-            tmp_path = path.with_suffix(path.suffix + ".part")
-            try:
-                tmp_path.write_text(text, encoding=encoding)
-                if commit_guard is not None:
-                    commit_guard()
-                tmp_path.replace(path)
-            except Exception:
-                with contextlib.suppress(OSError):
-                    tmp_path.unlink(missing_ok=True)
-                raise
-        return path
+        return self._write_bytes_atomic(
+            path,
+            text.encode(encoding),
+            overwrite=overwrite,
+            commit_guard=commit_guard,
+        )
 
     def write_bytes_file(
         self,
         path: Path,
         body: bytes,
         *,
+        overwrite: bool = True,
         commit_guard: Callable[[], None] | None = None,
     ) -> Path:
-        if commit_guard is not None:
-            commit_guard()
-        path.parent.mkdir(parents=True, exist_ok=True)
-        tmp_path = path.with_suffix(path.suffix + ".part")
-        try:
-            tmp_path.write_bytes(body)
-            if commit_guard is not None:
-                commit_guard()
-            tmp_path.replace(path)
-        except Exception:
-            with contextlib.suppress(OSError):
-                tmp_path.unlink(missing_ok=True)
-            raise
+        return self._write_bytes_atomic(
+            path,
+            body,
+            overwrite=overwrite,
+            commit_guard=commit_guard,
+        )
+
+    def publish_staged_file(
+        self,
+        staging_path: Path,
+        path: Path,
+        *,
+        overwrite: bool = True,
+        commit_guard: Callable[[], None] | None = None,
+    ) -> Path:
+        """Atomically publish an already flushed same-directory staging file."""
+
+        staging_path = Path(staging_path)
+        path = Path(path)
+        if staging_path.parent.resolve(strict=False) != path.parent.resolve(
+            strict=False
+        ):
+            raise ValueError("staging file must be in the destination directory")
+        guard = self._effective_commit_guard(commit_guard)
+        if guard is not None:
+            guard()
+        lock_path = artifact_file_lock_path(path)
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with FileLock(str(lock_path)):
+            if guard is not None:
+                guard()
+            if path.exists() and not overwrite:
+                if self._files_match(path, staging_path):
+                    staging_path.unlink(missing_ok=True)
+                    return path
+                raise FileExistsError(
+                    "refusing to overwrite existing artifact without explicit "
+                    f"permission because content differs: {path}"
+                )
+            with self._commit_critical_section(guard):
+                os.replace(staging_path, path)
+                self._fsync_parent(path)
         return path
 
     def write_json_file(
@@ -200,7 +322,6 @@ class ArtifactStore:
         payload: Mapping[str, Any],
         *,
         overwrite: bool = True,
-        use_lock: bool = False,
         commit_guard: Callable[[], None] | None = None,
     ) -> Path:
         return self.write_text_file(
@@ -208,7 +329,6 @@ class ArtifactStore:
             json.dumps(dict(payload), ensure_ascii=False, indent=2),
             encoding="utf-8",
             overwrite=overwrite,
-            use_lock=use_lock,
             commit_guard=commit_guard,
         )
 
@@ -229,7 +349,7 @@ class ArtifactStore:
         provider_label = provider_display_name(provider_slug)
         if self.download_dir is None:
             return [
-                f"{provider_label} official PDF/binary was not written to disk because --no-download was set."
+                f"{provider_label} official PDF/binary was not written to disk because artifact mode is none."
             ], [download_marker(provider_slug, "skipped")]
         if not self.policy.allows_provider_payload(content):
             return [], []
@@ -260,6 +380,8 @@ class ArtifactStore:
         doi: str | None,
         metadata: Mapping[str, Any],
     ) -> Path | None:
+        from .provider_catalog import provider_persists_provider_html
+
         if (
             content is None
             or self.download_dir is None
@@ -362,7 +484,7 @@ class ArtifactStore:
                     warnings,
                     [
                         (
-                            f"{provider_display_name(provider_name)} figure downloads fell back to preview images for "
+                            f"{provider_display_name(provider_name)} asset downloads fell back to preview images for "
                             f"{preview_fallback_count} asset(s) because full-size/original downloads were unavailable."
                         )
                     ],

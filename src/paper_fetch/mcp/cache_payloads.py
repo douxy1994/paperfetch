@@ -8,26 +8,29 @@ from collections.abc import Mapping
 
 from mcp.types import CallToolResult
 
+from ..capability_scope import capability_scopes_for_query
 from ._deps import MCPDeps, default_mcp_deps
-from .cache_index import (
-    CACHE_INDEX_MODE_INDEX,
-    CACHE_INDEX_MODE_RESCAN,
-    CACHE_INDEX_MODE_REFRESH,
-)
+from .cache_index import cache_entry_visible_for_scopes
 from .fetch_cache import (
-    PUBLIC_CREDENTIAL_SCOPE,
     FetchCache,
-    credential_scope_from_env,
+    FetchCacheDependencies,
 )
 from .results import _tool_result, error_payload_from_exception, with_schema_version
 from .schemas import FetchStrategyInput, GetCachedRequest
 
 _MCP_DEFAULT_DOWNLOAD_DIR = object()
-_CACHE_MODES = {
-    CACHE_INDEX_MODE_INDEX,
-    CACHE_INDEX_MODE_REFRESH,
-    CACHE_INDEX_MODE_RESCAN,
-}
+
+
+def _entry_visible_in_runtime_env(
+    entry: Mapping[str, Any], runtime_env: Mapping[str, str]
+) -> bool:
+    doi = str(entry.get("doi") or "").strip()
+    if not doi:
+        return False
+    return cache_entry_visible_for_scopes(
+        entry,
+        capability_scopes_for_query(runtime_env, doi),
+    )
 
 
 def _resolve_download_dir(
@@ -45,19 +48,21 @@ def list_cached_payload(
     *,
     env: Mapping[str, str] | None = None,
     download_dir: Path | None | object = _MCP_DEFAULT_DOWNLOAD_DIR,
-    cache_mode: str = CACHE_INDEX_MODE_INDEX,
     deps: MCPDeps = default_mcp_deps(),
 ) -> dict[str, Any]:
-    if cache_mode not in _CACHE_MODES:
-        raise ValueError("cache_mode must be one of: index, refresh, rescan.")
     runtime_env = deps.build_runtime_env(env)
     effective_download_dir = _resolve_download_dir(runtime_env, download_dir, deps=deps)
-    return with_schema_version(
-        FetchCache(
-            effective_download_dir,
-            list_cache_entries_fn=deps.list_cache_entries,
-        ).list_payload(cache_mode=cache_mode)
-    )
+    payload = FetchCache(
+        effective_download_dir,
+        dependencies=FetchCacheDependencies(list_entries=deps.list_cache_entries),
+    ).list_payload(_filter_entries=False)
+    payload["entries"] = [
+        entry
+        for entry in payload.get("entries", [])
+        if isinstance(entry, Mapping)
+        and _entry_visible_in_runtime_env(entry, runtime_env)
+    ]
+    return with_schema_version(payload)
 
 
 def get_cached_payload(
@@ -73,71 +78,38 @@ def get_cached_payload(
     download_dir: Path | None | object = _MCP_DEFAULT_DOWNLOAD_DIR,
     deps: MCPDeps = default_mcp_deps(),
 ) -> dict[str, Any]:
+    input_values = locals()
     request = GetCachedRequest.model_validate(
         {
-            "doi": doi,
-            "detail": detail,
-            "preferred_only": preferred_only,
-            "modes": modes,
-            "strategy": strategy,
-            "include_refs": include_refs,
-            "max_tokens": max_tokens,
+            name: input_values[name]
+            for name in GetCachedRequest.model_fields
+            if name != "download_dir"
         }
     )
     runtime_env = deps.build_runtime_env(env)
     effective_download_dir = _resolve_download_dir(runtime_env, download_dir, deps=deps)
 
-    def payload_for_scope(credential_scope: str) -> dict[str, Any]:
-        return FetchCache(
-            effective_download_dir,
-            refresh_cache_index_for_doi_fn=deps.refresh_cache_index_for_doi,
-            preferred_cached_entries_fn=deps.preferred_cached_entries,
-            credential_scope=credential_scope,
-        ).get_payload(
-            request.doi,
-            request=request.to_fetch_request(),
-            detail=request.detail,
-            preferred_only=request.preferred_only,
-        )
-
-    active_scope = credential_scope_from_env(runtime_env)
-    payload = payload_for_scope(active_scope)
-    sidecar = payload.get("sidecar")
-    sidecar_status = (
-        str(sidecar.get("status") or "") if isinstance(sidecar, Mapping) else ""
+    read_scopes = capability_scopes_for_query(runtime_env, request.doi)
+    payload = FetchCache(
+        effective_download_dir,
+        dependencies=FetchCacheDependencies(
+            preferred_entries=deps.preferred_cached_entries,
+        ),
+        credential_scope=read_scopes[0],
+        read_credential_scopes=read_scopes,
+    ).get_payload(
+        request.doi,
+        request=request.to_fetch_request(),
+        detail=request.detail,
+        preferred_only=request.preferred_only,
     )
-    if active_scope != PUBLIC_CREDENTIAL_SCOPE and sidecar_status in {
-        "missing",
-        "credential_scope_mismatch",
-    }:
-        public_payload = payload_for_scope(PUBLIC_CREDENTIAL_SCOPE)
-        public_sidecar = public_payload.get("sidecar")
-        public_status = (
-            str(public_sidecar.get("status") or "")
-            if isinstance(public_sidecar, Mapping)
-            else ""
-        )
-        if public_status not in {"missing", "credential_scope_mismatch"}:
-            payload = public_payload
     return with_schema_version(payload)
-
-
-def cached_entry_payload(
-    *,
-    entry_id: str,
-    env: Mapping[str, str] | None = None,
-    deps: MCPDeps = default_mcp_deps(),
-) -> dict[str, Any] | None:
-    runtime_env = deps.build_runtime_env(env)
-    default_download_dir = deps.resolve_mcp_download_dir(runtime_env)
-    return deps.find_cached_entry(default_download_dir, entry_id)
 
 
 def list_cached_tool(
     *,
     env: Mapping[str, str] | None = None,
     download_dir: Path | None | object = _MCP_DEFAULT_DOWNLOAD_DIR,
-    cache_mode: str = CACHE_INDEX_MODE_INDEX,
     deps: MCPDeps = default_mcp_deps(),
 ) -> CallToolResult:
     try:
@@ -145,7 +117,6 @@ def list_cached_tool(
             list_cached_payload(
                 env=env,
                 download_dir=download_dir,
-                cache_mode=cache_mode,
                 deps=deps,
             ),
             is_error=False,

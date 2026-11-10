@@ -2,7 +2,6 @@ param(
     [string]$OutputDir,
     [string]$PackageName,
     [string]$PythonBin = "python",
-    [string]$EmbeddedPythonVersion = "3.13.13",
     [string]$InnoCompiler
 )
 
@@ -16,18 +15,37 @@ $SkillName = [string]$InstallerManifest.skill.name
 $OfflineManagedBegin = [string]$InstallerManifest.managed_blocks.offline.begin
 $OfflineManagedEnd = [string]$InstallerManifest.managed_blocks.offline.end
 $OfflineEnvKeys = @(
-    "PAPER_FETCH_DOWNLOAD_DIR",
-    "PAPER_FETCH_FORMULA_TOOLS_DIR",
-    "PAPER_FETCH_IMAGE_TOOLS_DIR",
-    "MATHML_TO_LATEX_NODE_BIN",
-    "PAPER_FETCH_BROWSER_HEADLESS",
-    "PYTHONUTF8",
-    "PYTHONIOENCODING"
+    $InstallerManifest.mcp.env_keys |
+        ForEach-Object { [string]$_ } |
+        Where-Object { $_ -ne "PAPER_FETCH_ENV_FILE" }
 )
-if ($null -ne $InstallerManifest.env_sets -and $null -ne $InstallerManifest.env_sets.offline_env_keys) {
-    $OfflineEnvKeys = @($InstallerManifest.env_sets.offline_env_keys | ForEach-Object { [string]$_ })
-}
 $WindowsSetupBaseName = [string]$InstallerManifest.packages.windows_setup_base_name
+$EmbeddedPython = $InstallerManifest.embedded_runtimes.windows_cpython_x86_64
+$EmbeddedPythonVersion = [string]$EmbeddedPython.version
+$EmbeddedPythonUrl = [string]$EmbeddedPython.url
+$EmbeddedPythonSha256 = ([string]$EmbeddedPython.sha256).ToLowerInvariant()
+$EmbeddedPythonArchive = [string]$EmbeddedPython.archive
+$UninsIS = $InstallerManifest.setup_components.windows_uninsis_i386
+$UninsISDllPath = Join-Path $RepoDir ([string]$UninsIS.dll_path)
+$UninsISDllSha256 = ([string]$UninsIS.dll_sha256).ToLowerInvariant()
+$UninsISLicensePath = Join-Path $RepoDir ([string]$UninsIS.license_path)
+$UninsISLicenseSha256 = ([string]$UninsIS.license_sha256).ToLowerInvariant()
+if (
+    [string]::IsNullOrWhiteSpace($EmbeddedPythonVersion) -or
+    [string]::IsNullOrWhiteSpace($EmbeddedPythonUrl) -or
+    [string]::IsNullOrWhiteSpace($EmbeddedPythonArchive) -or
+    $EmbeddedPythonSha256 -cnotmatch '\A[0-9a-f]{64}\z'
+) {
+    throw "installer/manifest.json must pin the Windows CPython version, archive, URL, and SHA-256."
+}
+if (
+    [string]::IsNullOrWhiteSpace([string]$UninsIS.version) -or
+    [string]::IsNullOrWhiteSpace([string]$UninsIS.archive_url) -or
+    $UninsISDllSha256 -cnotmatch '\A[0-9a-f]{64}\z' -or
+    $UninsISLicenseSha256 -cnotmatch '\A[0-9a-f]{64}\z'
+) {
+    throw "installer/manifest.json must pin the UninsIS version, archive URL, DLL SHA-256, and license SHA-256."
+}
 $BuildDir = if ($env:PAPER_FETCH_OFFLINE_BUILD_DIR) {
     [System.IO.Path]::GetFullPath($env:PAPER_FETCH_OFFLINE_BUILD_DIR)
 } else {
@@ -39,21 +57,13 @@ if ([string]::IsNullOrWhiteSpace($OutputDir)) {
 $OutputDir = [System.IO.Path]::GetFullPath($OutputDir)
 $ProjectWheelPath = ""
 $DependencyWheelhouse = ""
+$EmbeddedPythonActualSha256 = ""
+$UninsISActualSha256 = ""
+$UninsISLicenseActualSha256 = ""
 
 function Write-Log {
     param([string]$Message)
     Write-Host "==> $Message"
-}
-
-function Get-OfflineToolingRevision {
-    $revision = [string]$env:PAPER_FETCH_OFFLINE_TOOLING_REVISION
-    if ([string]::IsNullOrEmpty($revision)) {
-        return $null
-    }
-    if ($revision -cnotmatch '\A[0-9A-Fa-f]{40}\z') {
-        throw "PAPER_FETCH_OFFLINE_TOOLING_REVISION must be a 40-character hexadecimal Git revision."
-    }
-    return $revision.ToLowerInvariant()
 }
 
 function Invoke-Native {
@@ -118,6 +128,27 @@ function Assert-Target {
     return $pythonTag
 }
 
+function Get-VerifiedUninsISDigests {
+    if (-not (Test-Path -LiteralPath $UninsISDllPath -PathType Leaf)) {
+        throw "Pinned UninsIS DLL is missing: $UninsISDllPath"
+    }
+    if (-not (Test-Path -LiteralPath $UninsISLicensePath -PathType Leaf)) {
+        throw "Pinned UninsIS license is missing: $UninsISLicensePath"
+    }
+    $dllDigest = (Get-FileHash -LiteralPath $UninsISDllPath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($dllDigest -ne $UninsISDllSha256) {
+        throw "UninsIS DLL SHA-256 mismatch: expected $UninsISDllSha256, got $dllDigest"
+    }
+    $licenseDigest = (Get-FileHash -LiteralPath $UninsISLicensePath -Algorithm SHA256).Hash.ToLowerInvariant()
+    if ($licenseDigest -ne $UninsISLicenseSha256) {
+        throw "UninsIS license SHA-256 mismatch: expected $UninsISLicenseSha256, got $licenseDigest"
+    }
+    return [pscustomobject]@{
+        Dll = $dllDigest
+        License = $licenseDigest
+    }
+}
+
 function Get-ProjectVersion {
     $version = & $PythonBin -c "import pathlib, sys, tomllib; print(tomllib.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))['project']['version'])" (Join-Path $RepoDir "pyproject.toml")
     if ($LASTEXITCODE -ne 0) {
@@ -137,6 +168,7 @@ function Copy-RuntimeAssets {
 
     Copy-Item -LiteralPath $InstallerManifestPath -Destination (Join-Path $installerDir "manifest.json")
     Copy-Item -LiteralPath (Join-Path (Join-Path $RepoDir "scripts") "windows-installer-helper.ps1") -Destination (Join-Path $scriptsDir "windows-installer-helper.ps1")
+    Copy-Item -LiteralPath (Join-Path (Join-Path $RepoDir "scripts") "skill_integrity.py") -Destination (Join-Path $scriptsDir "skill_integrity.py")
 
     $sourceSkill = Join-Path (Join-Path $RepoDir "skills") $SkillName
     if (-not (Test-Path -LiteralPath (Join-Path $sourceSkill "SKILL.md") -PathType Leaf)) {
@@ -187,13 +219,17 @@ function Add-EmbeddedPythonRuntime {
     param([string]$Staging)
 
     $runtime = Join-Path $Staging "runtime"
-    $archive = Join-Path $BuildDir "python-$EmbeddedPythonVersion-embed-amd64.zip"
-    $url = "https://www.python.org/ftp/python/$EmbeddedPythonVersion/python-$EmbeddedPythonVersion-embed-amd64.zip"
+    $archive = Join-Path $BuildDir $EmbeddedPythonArchive
 
     Write-Log "Downloading CPython $EmbeddedPythonVersion embeddable x64 runtime"
     if (-not (Test-Path -LiteralPath $archive -PathType Leaf)) {
         [Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
-        Invoke-WebRequest -Uri $url -OutFile $archive
+        Invoke-WebRequest -Uri $EmbeddedPythonUrl -OutFile $archive
+    }
+    $actualSha256 = (Get-FileHash -LiteralPath $archive -Algorithm SHA256).Hash.ToLowerInvariant()
+    $script:EmbeddedPythonActualSha256 = $actualSha256
+    if ($actualSha256 -cne $EmbeddedPythonSha256) {
+        throw "CPython embeddable archive SHA-256 mismatch: expected $EmbeddedPythonSha256, got $actualSha256."
     }
     Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $runtime
     New-Item -ItemType Directory -Force -Path $runtime | Out-Null
@@ -299,6 +335,10 @@ stage_bundled_node_workspace(Path(sys.argv[1]))
     if ($LASTEXITCODE -ne 0 -or -not $nodeLatex.Contains("x")) {
         throw "Bundled mathml-to-latex fallback failed its smoke test."
     }
+    $validation = ('{"id":1,"session":"offline-smoke","expression":"\\mathbbm{1}+\\textdegree","displayMode":false}' | & $node (Join-Path $target "tex_validation_worker.mjs") | ConvertFrom-Json)
+    if ($LASTEXITCODE -ne 0 -or -not $validation.ok -or -not $validation.valid) {
+        throw "Bundled MathJax validation/font layout failed its smoke test."
+    }
 }
 
 function Add-ImageTools {
@@ -354,20 +394,6 @@ exit /b %ERRORLEVEL%
     Set-Content -LiteralPath (Join-Path $bin "paper-fetch-install-image-tools.cmd") -Value $imageTools -Encoding ASCII
 }
 
-function Add-SkillAgentManifest {
-    param([string]$Staging)
-
-    $agentDir = Join-Path (Join-Path (Join-Path $Staging "skills") $SkillName) "agents"
-    New-Item -ItemType Directory -Force -Path $agentDir | Out-Null
-    $content = @"
-interface:
-  display_name: "$($InstallerManifest.skill.display_name)"
-  short_description: "$($InstallerManifest.skill.short_description)"
-  default_prompt: "$($InstallerManifest.skill.default_prompt)"
-"@
-    [System.IO.File]::WriteAllText((Join-Path $agentDir "openai.yaml"), $content, [System.Text.UTF8Encoding]::new($false))
-}
-
 function Write-DefaultOfflineEnv {
     param([string]$Staging)
 
@@ -416,10 +442,15 @@ function Write-OfflineReadme {
 
 This installer includes the embedded Python runtime, installed Python packages, formula tools, and image-tools configuration for optional conversion tools.
 The offline build does not bundle Ghostscript/libvips from the build host PATH; AMS EPS/TIFF source figure conversion falls back to webpage JPG/PNG candidates when those tools are unavailable.
-It does not redistribute a browser binary for browser-backed providers. Default Camoufox may fetch its runtime on the first real browser-backed request; fully offline hosts must preinstall the complete Camoufox runtime.
+It bundles pinned Byparr source/private dependencies under `runtime/browser-components/byparr/`.
+Camoufox binaries and fingerprint models are prepared after core installation, including silent installs.
+Use `/SKIPBROWSERPREPARE` to skip. single-backend failure preserves core installation.
+See `browser-setup-results.txt`. Retry with `python -m paper_fetch.offline_setup --install-root <path> --prepare-browsers all`.
+Successful online checks are reused for 24 hours; failed/cancelled checks allow retry.
+Ghostscript uses the official visible x64 installer (UAC/admin and system registry); libvips keeps the complete official x64 ZIP with DLLs/resources. Tools go under versioned `image-tools` directories; existing valid tools are reused and real EPS/TIFF conversion is checked before saving paths. Optional failures preserve the core installation. See `optional-setup-results.txt` after using the wizard.
+Upgrades preserve credentials and optional tools. Uninstall keeps optional tools by default; interactive cleanup removes only recorded owned tools via the official Ghostscript uninstaller or individually recorded libvips files, preserving user additions. Shared Camoufox caches remain.
 Formula conversion uses the bundled Playwright driver Node via `MATHML_TO_LATEX_NODE_BIN`; do not rely on a bare `node` from PATH in Codex Desktop sessions.
 
-Browser-backed providers use native Camoufox.
 Set `PAPER_FETCH_BROWSER_HEADLESS=false` only when running with a display-capable session.
 '@
     [System.IO.File]::WriteAllText((Join-Path $Staging "README.offline.md"), $content, [System.Text.UTF8Encoding]::new($false))
@@ -430,8 +461,7 @@ function Write-ManifestAndChecksums {
         [string]$Staging,
         [string]$Version,
         [string]$PythonTag,
-        [string]$SetupBaseName,
-        [AllowNull()][string]$ToolingRevision
+        [string]$SetupBaseName
     )
 
     Write-Log "Writing standalone manifest and checksums"
@@ -442,7 +472,7 @@ function Write-ManifestAndChecksums {
         $gitRevision = $null
     }
 
-    $skillManifestTool = Join-Path (Join-Path (Join-Path $RepoDir "src") "paper_fetch") "skill_integrity.py"
+    $skillManifestTool = Join-Path (Join-Path $RepoDir "scripts") "skill_integrity.py"
     $skillRoot = Join-Path (Join-Path $Staging "skills") $SkillName
     $skillBundleOutput = & $PythonBin $skillManifestTool build --skill-dir $skillRoot --name $SkillName --root "skills/$SkillName"
     if ($LASTEXITCODE -ne 0) {
@@ -462,6 +492,34 @@ function Write-ManifestAndChecksums {
             arch = "x86_64"
             python_tag = $PythonTag
             python_runtime = "cpython-$EmbeddedPythonVersion-embed-amd64"
+            embedded_runtime = [ordered]@{
+                implementation = [string]$EmbeddedPython.implementation
+                version = $EmbeddedPythonVersion
+                architecture = [string]$EmbeddedPython.architecture
+                archive = $EmbeddedPythonArchive
+                url = $EmbeddedPythonUrl
+                expected_sha256 = $EmbeddedPythonSha256
+                actual_sha256 = $EmbeddedPythonActualSha256
+            }
+        }
+        setup_components = [ordered]@{
+            windows_uninsis_i386 = [ordered]@{
+                name = [string]$UninsIS.name
+                version = [string]$UninsIS.version
+                architecture = [string]$UninsIS.architecture
+                upstream = [string]$UninsIS.upstream
+                release = [string]$UninsIS.release
+                release_commit = [string]$UninsIS.release_commit
+                archive = [string]$UninsIS.archive
+                archive_url = [string]$UninsIS.archive_url
+                archive_sha256 = ([string]$UninsIS.archive_sha256).ToLowerInvariant()
+                expected_sha256 = $UninsISDllSha256
+                actual_sha256 = $UninsISActualSha256
+                license = [string]$UninsIS.license
+                license_expected_sha256 = $UninsISLicenseSha256
+                license_actual_sha256 = $UninsISLicenseActualSha256
+                usage = [string]$UninsIS.usage
+            }
         }
         entrypoint = "$SetupBaseName.exe"
         skill_bundle = $skillBundle
@@ -482,10 +540,15 @@ function Write-ManifestAndChecksums {
             }
         }
     }
-    if (-not [string]::IsNullOrEmpty($ToolingRevision)) {
-        $payload["tooling_revision"] = $ToolingRevision
-    }
     $payload | ConvertTo-Json -Depth 8 | Set-Content -LiteralPath (Join-Path $Staging "offline-manifest.json") -Encoding UTF8
+
+    Invoke-Native $PythonBin (Join-Path $RepoDir "scripts/generate_offline_evidence.py") `
+        --staging $Staging `
+        --site-packages (Join-Path $Staging "runtime/Lib/site-packages") `
+        --offline-manifest (Join-Path $Staging "offline-manifest.json") `
+        --output-dir $Staging `
+        --target "windows-x86_64-$PythonTag" `
+        --cyclonedx-python $PythonBin
 
     $checksumLines = Get-ChildItem -LiteralPath $Staging -Recurse -File |
         Where-Object { $_.Name -ne "sha256sums.txt" } |
@@ -496,6 +559,29 @@ function Write-ManifestAndChecksums {
             "$hash  ./$relative"
         }
     $checksumLines | Set-Content -LiteralPath (Join-Path $Staging "sha256sums.txt") -Encoding ASCII
+}
+
+function Publish-DependencyEvidence {
+    param(
+        [string]$Staging,
+        [string]$Target
+    )
+
+    New-Item -ItemType Directory -Force -Path $OutputDir | Out-Null
+    foreach ($evidence in @(
+        [pscustomobject]@{ Source = "dependency-manifest.json"; Suffix = "dependency-manifest.json" }
+        [pscustomobject]@{ Source = "paper-fetch-sbom.cdx.json"; Suffix = "sbom.cdx.json" }
+    )) {
+        $source = Join-Path $Staging $evidence.Source
+        $destination = Join-Path $OutputDir "paper-fetch-evidence-$Target.$($evidence.Suffix)"
+        $temporary = "$destination.$([Guid]::NewGuid().ToString('N')).tmp"
+        try {
+            Copy-Item -LiteralPath $source -Destination $temporary
+            Move-Item -LiteralPath $temporary -Destination $destination -Force
+        } finally {
+            Remove-Item -LiteralPath $temporary -Force -ErrorAction SilentlyContinue
+        }
+    }
 }
 
 function Assert-RuntimeOnlyStaging {
@@ -510,7 +596,8 @@ function Assert-RuntimeOnlyStaging {
         "bin/paper-fetch-install-image-tools.cmd",
         "skills/$SkillName/SKILL.md",
         "installer/manifest.json",
-        "scripts/windows-installer-helper.ps1"
+        "scripts/windows-installer-helper.ps1",
+        "scripts/skill_integrity.py"
     )) {
         if (-not (Test-Path -LiteralPath (Join-Path $Staging $relative))) {
             throw "Windows runtime staging is missing required path: $relative"
@@ -579,8 +666,10 @@ function Build-InnoInstaller {
     Write-Host $setupPath
 }
 
-$toolingRevision = Get-OfflineToolingRevision
 $pythonTag = Assert-Target
+$uninsisDigests = Get-VerifiedUninsISDigests
+$UninsISActualSha256 = $uninsisDigests.Dll
+$UninsISLicenseActualSha256 = $uninsisDigests.License
 if ([string]::IsNullOrWhiteSpace($PackageName)) {
     $PackageName = $WindowsSetupBaseName
 }
@@ -595,12 +684,13 @@ Build-ProjectWheelhouse
 $buildPython = New-BuildVenv
 Add-EmbeddedPythonRuntime $staging
 Install-EmbeddedPythonPackages $staging
+Invoke-Native $buildPython (Join-Path $RepoDir "scripts/build_browser_components.py") --destination (Join-Path $staging "runtime/browser-components/byparr")
 Add-FormulaTools -Staging $staging -BuildPython $buildPython
 Add-ImageTools -Staging $staging -BuildPython $buildPython
 Write-CmdWrappers $staging
-Add-SkillAgentManifest $staging
 Write-DefaultOfflineEnv $staging
 Write-OfflineReadme $staging
 Assert-RuntimeOnlyStaging $staging
-Write-ManifestAndChecksums -Staging $staging -Version $version -PythonTag $pythonTag -SetupBaseName $PackageName -ToolingRevision $toolingRevision
+Write-ManifestAndChecksums -Staging $staging -Version $version -PythonTag $pythonTag -SetupBaseName $PackageName
 Build-InnoInstaller -Staging $staging -Version $version -SetupBaseName $PackageName
+Publish-DependencyEvidence -Staging $staging -Target "windows-x86_64-$pythonTag"

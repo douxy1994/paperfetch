@@ -8,22 +8,17 @@ from bs4 import BeautifulSoup, Tag
 
 from ..extraction.html.parsing import choose_parser
 from ..models.markdown import NUMBERED_REFERENCE_PATTERN
-from ..utils import normalize_text
+from ._reference_doi import reference_doi
+from ..utils import extend_unique, normalize_text
 
 _REFERENCE_SELECTORS = (
     "#html-references_list li",
     "section#html-references_list li",
 )
 _REFERENCE_UI_BRACKET_TOKEN_RE = re.compile(
-    r"\[\s*(?:Google Scholar|CrossRef|PubMed|Green Version)\s*\]",
+    r"\\?\[\s*(?:Google Scholar|CrossRef|PubMed|Green Version)\s*\\?\]",
     flags=re.IGNORECASE,
 )
-
-
-def _append_unique(values: list[str], candidate: str | None) -> None:
-    normalized = normalize_text(candidate)
-    if normalized and normalized not in values:
-        values.append(normalized)
 
 
 def _remove_reference_ui_tokens(text: str) -> str:
@@ -61,12 +56,28 @@ def extract_references(html_text: str) -> list[dict[str, str | None]]:
         for node in soup.select(selector):
             if not isinstance(node, Tag):
                 continue
-            text = _clean_reference_raw_text(node.get_text(" ", strip=True))
+            from ..extraction.html.inline import render_html_inline_node
+
+            text = _clean_reference_raw_text(render_html_inline_node(node))
             text = _prepend_reference_label(text, _reference_label_from_node(node))
             if not text or text in seen:
                 continue
             seen.add(text)
-            references.append({"raw": text})
+            doi = next(
+                (
+                    value
+                    for anchor in node.select("a.cross-ref[href]")
+                    if (value := reference_doi(str(anchor.get("href") or "")))
+                ),
+                None,
+            )
+            if not doi:
+                # Older MDPI bibliographies use ordinary DOI anchors for
+                # datasets and reports, without the cross-ref CSS class.
+                from ._html_references import _reference_doi
+
+                doi = _reference_doi(node)
+            references.append({"raw": text, "doi": doi})
     if references:
         return references
     for node in soup.select("meta[name='citation_reference']"):
@@ -87,13 +98,12 @@ def extract_keywords(html_text: str) -> list[str]:
             title_node.decompose()
         for node in container.find_all("a"):
             if isinstance(node, Tag):
-                _append_unique(keywords, node.get_text(" ", strip=True))
+                extend_unique(keywords, [node.get_text(" ", strip=True)])
         if keywords:
             continue
         text = normalize_text(container.get_text(" ", strip=True))
         text = re.sub(r"^Keywords\s*:?\s*", "", text, flags=re.IGNORECASE)
-        for part in re.split(r"\s*;\s*", text):
-            _append_unique(keywords, part)
+        extend_unique(keywords, re.split(r"\s*;\s*", text))
     return keywords
 
 

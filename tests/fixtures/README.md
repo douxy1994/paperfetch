@@ -1,49 +1,74 @@
-This directory now treats article-content fixtures as provenance-tracked literature samples rather than minimized paraphrases.
+# Fixture conventions
 
-Policy:
+当前样本、来源选择、资产与预期由 [manifest](golden_criteria/manifest.json) 和对应
+DOI 目录管理；[fixture catalog](../fixture_catalog.py) 提供测试读取入口。
+测试命令、分层和台账维护统一见 [测试说明](../README.md)。本文只定义来源证据约束，
+不维护第二份覆盖清单、逐函数分类表。
 
-- `content` tests must use fixtures registered in `tests/fixture_catalog.py`.
-- Rule-test fixtures should use canonical assets registered in `tests/fixtures/golden_criteria/manifest.json`.
-- `content` fixtures must be `real_replay`, `real_excerpt`, or `contract_scenario`.
-- `synthetic` fixtures are reserved for infrastructure or narrowly scoped mechanism tests that do not assert article-content semantics.
-- Handwritten markdown or paraphrased article-body fixtures are not allowed in the default content-test path.
+## 目录与来源
 
-Origin kinds:
+| 目录 | 用途 |
+| --- | --- |
+| `golden_criteria/<doi_slug>/` | 已登记的正例、原始响应、expected 与回放资产 |
+| `block/` | manifest 中 `fixture_family=block` 的真实付费墙、摘要页、空壳及拒绝响应 |
+| `golden_criteria/_scenarios/` | 最小规则场景、来源片段或明确标为 synthetic 的机制输入 |
 
-- `real_replay`: raw publisher HTML/XML or final browser replay captured from a real article page.
-- `real_excerpt`: direct excerpt or derived snapshot from a real article, such as `.extracted.md`.
-- `contract_scenario`: minimal rule scenario stored under `golden_criteria/_scenarios/` and documented in `docs/extraction-rules.md`.
-- `synthetic`: only for transport/cache/config/service/MCP-style tests, or tightly scoped parser mechanics that are not claiming end-to-end article realism.
+目录不自动证明来源类型。`assets` 是唯一文件清单；可选 `asset_origins` 按已有 asset key
+覆盖样本默认来源。未知 key、同路径的冲突来源都应拒绝。可执行回放数量来自
+`golden_corpus_replay_inventory()`，不把 manifest-only 输入或 synthetic scenario 算成论文。
 
-Primary offline baselines:
+| Origin kind | 可证明的范围 |
+| --- | --- |
+| `real_replay` | 真实文章的原始响应或捕获的 browser DOM；仍须检查身份与 acquisition |
+| `real_excerpt` | 从真实来源直接裁取、可追溯的片段；改写文字和生成 Markdown 不属于原文 |
+| `contract_scenario` | 已登记的最小机制契约，不证明整篇文章的真实性 |
+| `synthetic` | transport/cache/config/service/MCP 等基础设施或局部机制 |
+| `unverified` | 尚未核验的来源，不能计入真实内容覆盖 |
 
-- `tests/fixtures/golden_criteria/`
-  The canonical positive corpus: rule-test assets, 127-sample golden corpus replays, rule scenarios, and documentation-linked HTML/XML/Markdown samples. The golden corpus includes IEEE real dynamic HTML replays; synthetic IEEE PDF fallback fixtures remain scoped to provider mechanism tests.
-- `tests/fixtures/block/`
-  The canonical negative corpus: 16 real paywall / abstract-only captures used by availability and fallback tests.
-- `tests/fixtures/golden_criteria/_scenarios/`
-  Minimal contract scenarios that exercise narrow parser behaviors without introducing extra real-article variance.
+来源标签是声明，不是联网获取证明。当前拒绝与撤回事实位于 manifest 的
+`rejected_sources` / `withdrawn_assets`；不能通过改名或修改标签把已拒绝字节提升为真实原文。
+捕获的 challenge 或 abstract 页面是真实字节，但不是全文证据。
 
-Synthetic fixtures may exist in the tree for isolated mechanism tests, but content-oriented tests should use provenance-tracked real fixtures and the provenance audit rejects synthetic fixture use in the registered content-test modules.
+## 内容与机制边界
 
-Sample-type audit checklist:
+- 内容测试的 primary input 必须是 `real_replay` 或直接 `real_excerpt`；手写、改写正文及
+  derived snapshot 不能代替原文。snapshot 只作为辅助预期。
+- unit 只用最小片段、现有 contract scenario 和边界 mock；完整原文、资产集合及整篇
+  构建放在 golden，真实进程与浏览器契约放在 integration。
+- publisher DOM、正文顺序、对象归属、数值和上下标断言必须有对应原文支撑；基础阈值、
+  参数、状态及错误分类使用最小机制输入即可，不为每个机制制造整篇论文。
+- PDF 只验证获取、合法访问、真实文件及身份/完整性、来源、落盘与转换输出透传。
+  标题、页眉页脚、引用、公式、表格、OCR 和排版质量不属于 fixture 补齐或验收目标；
+  任何层都不得在现有 `pymupdf4llm` 输出上清洗或修复。见
+  [PDF 转换边界](../../docs/extraction-rules.md#rule-pdf-conversion-boundary)。
 
-| Test area | Decision | Rationale |
-| --- | --- | --- |
-| `test_atypon_browser_workflow_markdown.py` provider extraction over Science, PNAS, and Wiley article HTML | real fixture required | These tests assert article body, abstract, figure, table, formula, collateral noise, and availability behavior that depends on publisher DOM structure. Use `golden_criteria` or provider benchmark fixtures. |
-| `test_springer_html_regressions.py` Nature/Springer article extraction, main-content traversal, figure/formula/table/back-matter behavior | real fixture required | These tests guard real Springer/Nature HTML layouts and should read canonical HTML fixtures whenever the assertion is about publisher structure. |
-| `test_springer_html_tables.py` table page parsing and inline table injection | real fixture required for successful publisher table extraction; synthetic retained for transport/error contracts | Real table HTML covers flattening and publisher structure. Fake transport responses are retained where the behavior is a minimal response contract, such as image response fallback, missing table degradation, and non-Extended Data Table guardrails. |
-| `test_html_availability.py` paywall/fulltext/abstract-only acceptance for provider pages | real fixture required | Provider availability outcomes must use block or golden fixtures so thresholds are calibrated against real access states. |
-| `test_html_availability.py` threshold-only and plain text fallback cases | synthetic preferred | These tests exercise pure scoring thresholds, metadata comparison, and structured-article contracts without claiming publisher HTML realism. |
-| `test_html_shared_helpers.py` shared HTML parser rules tied to publisher markup | real fixture required | Formula image recognition, Source Data retention, and chrome section filtering use canonical real HTML because they depend on observed DOM conventions. |
-| `test_html_shared_helpers.py` metadata, URL joining, Cloudflare/challenge detection, noise-profile switches, and single helper inputs | synthetic preferred | These are isolated helper contracts where a real article would add irrelevant variance. |
-| `test_html_semantics.py` heading taxonomy for known publisher headings | real fixture required for publisher-specific heading evidence; synthetic preferred for canonical token mapping | Known back matter and auxiliary headings are sampled from real fixtures. Basic category/token mapping remains synthetic because it tests pure taxonomy lookup. |
-| `test_models_render.py` token budgets, rendering options, asset rewrite, section-kind classification, diagnostics merge, and model contract behavior | synthetic preferred | These tests target internal model/rendering contracts, not publisher HTML extraction. Real fixtures are used only when validating a real extracted markdown regression, such as old Nature Methods Summary handling. |
-| `test_mcp.py`, `test_service.py`, `test_provider_request_options.py`, `test_http_cache.py`, `test_cli.py`, and provider/service orchestration tests | synthetic preferred | Mocked transports, cache entries, request options, MCP payloads, and CLI save behavior are infrastructure contracts and should not depend on live or captured publisher HTML unless the test explicitly claims extraction realism. |
+HTML/XML 回放 metadata 只使用已声明的书目标题。`GoldenCorpusFixture.title` 的 DOI
+fallback 仅用于展示，不能进入可信 metadata；缺失题名可由既有源解析器补齐，否则
+保持缺失。源 DOI 与目标冲突时须在转换前拒绝。对应回归见
+[来源标题测试](../golden/test_replay_source_titles.py)，PDF metadata 沿用原契约。
 
-Synthetic retained because no stable fixture currently covers the behavior:
+复杂表格的固定行列映射、单元格和 MathML 事实存于 expected 的 `source_objects`，
+绑定源文件 SHA-256、源节点哈希及对象索引。更新预期必须核对原始 HTML/XML，
+不能从生产输出生成；
+简单节点选择和对象位置检查直接读取原文，输出比较保留数值和上下标边界。
 
-- `test_springer_html_regressions.py::test_springer_markdown_preserves_subscripts_in_section_headings` keeps a minimal Springer section because the docs do not yet point to a stable Springer/Nature DOI sample with the exact section-heading subscript shape.
-- `test_springer_html_regressions.py::test_springer_mathjax_tex_normalizes_upgreek_macros` keeps a minimal MathJax block because the rule is macro normalization, not article layout.
-- `test_atypon_browser_workflow_markdown.py` multilingual/nested article/browser-workflow tests keep small synthetic articles because they isolate language scoping, nested roots, and section-hint contracts that are hard to cover with one stable publisher replay.
-- `test_html_shared_helpers.py` metadata and challenge-detection tests keep minimal snippets because they target hidden fields, redirect stubs, and HTTP response bodies rather than article-content semantics.
+## 采集与逐资产证据
+
+- 原始 HTML/XML 和 acquisition 文件保留上游字节及空白；Git attributes 禁止对这些
+  带 hash 输入执行 checkout 换行转换。来源 URL、时间、状态/MIME、SHA-256 与实际
+  响应分开记录；新增采集不改写已有响应或 synthetic 来源。
+- Browser DOM、HTTP entity 和 canvas export 使用不同 capture kind。canvas 导出
+  不捏造 HTTP 状态；direct 图片成功也不能证明 challenged-HTTP 的 browser recovery。
+- 捕获 HTML 不会自动认证图片字节。资产断言必须声明 `asset` primary role 并实际读取
+  资产；只读取正文不能满足资产证据要求。源码包使用真实容器扩展名，归资产证据。
+- 同一样本、同来源分类的重复字节可由 manifest 指向保留实体；每次采集的 provenance
+  仍独立，`body_file` 指向实体，`original_body_file` 保留合并前名称。
+- 图片回放复用 `tests.support.captured_images.download_captured_images`，核对登记的
+  SHA-256、尺寸及响应。URL 默认精确匹配；仅既有 Silverchair provider 的签名回放忽略
+  已知过期签名参数，保留对象、尺寸及其他 query。它证明存储/本地化，不证明候选顺序。
+- 文章图片包装 URL 与独立 viewer 直链分别核验，不能互相代替。临时 token、cookie 和
+  原始挑战脚本不得作为论文原文入库；按既有脱敏边界保留诊断、hash 和尺寸。
+
+## 测试台账与实际读取审计
+
+模块分类、`template_review` 与实际读取审计统一见 [测试说明](../README.md#证据台账)。来源声明不能代替原文断言，live 的 `live_response` 也不由离线文件审计认证。

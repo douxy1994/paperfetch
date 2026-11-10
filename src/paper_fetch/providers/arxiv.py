@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+from ..quality.access_boundary import propagate_paywall
+
 from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from collections.abc import Mapping, Sequence
 import urllib.parse
+import re
+import time
 
 from ..arxiv_id import (
     arxiv_id_from_doi,
@@ -18,14 +22,15 @@ from ..arxiv_id import (
 )
 from ..config import build_publisher_user_agent, build_user_agent
 from ..failure import FailureDiagnostics
-from ..extraction.html import assets as html_assets
 from ..extraction.html.availability_policy import AvailabilityPolicy
 from ..extraction.html.provider_rules import ProviderHtmlRules
+from ..extraction.html import assets as html_assets
 from ..http import (
     DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
     HttpTransport,
     PDF_MIME_TYPE,
     RequestFailure,
+    RequestCancelledError,
     classify_network_error,
 )
 from ..metadata.types import ProviderMetadata
@@ -35,22 +40,20 @@ from ..models import (
     article_from_markdown,
     metadata_only_article,
 )
-from ..provider_catalog import ProviderRouteSpec, ProviderSpec
+from ..provider_contracts import ProviderRouteSpec, ProviderSpec
 from ..runtime import RuntimeContext
 from ..tracing import download_marker, fulltext_marker, trace_from_markers
 from ..utils import empty_asset_results, normalize_text
-from ._asset_retry import (
-    assets_for_network_retry,
-    merge_asset_failures,
-    merge_asset_retry_results,
-)
 from ._arxiv_assets import (
-    ARXIV_ASSET_RETRY_POLICY,
     ARXIV_IMAGE_ACCEPT,
     _arxiv_asset_download_concurrency,
-    _asset_has_download_candidate,
-    download_arxiv_source_figure_assets,
+    discover_arxiv_ancillary_assets,
     inline_arxiv_source_assets_in_markdown,
+    reconcile_arxiv_body_assets,
+)
+from ._arxiv_asset_strategy import (
+    ArxivHtmlAssetDownloadPlan,
+    download_arxiv_html_figure_assets,
 )
 from ._arxiv_atom import (
     ARXIV_API_DELAY_SECONDS,
@@ -66,6 +69,7 @@ from ._arxiv_metadata import (
     _first_header_value,
     _merge_arxiv_metadata_layers,
     _minimal_arxiv_metadata,
+    arxiv_metadata_probe_short_circuit,
     metadata_from_arxiv_result as _metadata_from_arxiv_result,
 )
 from ._payloads import build_provider_payload
@@ -77,14 +81,14 @@ from ._pdf_common import (
     pdf_fetch_result_assets,
     pdf_fetch_result_warnings,
 )
-from ._registry import ProviderBundle, register_provider_bundle
+from ._registry import ProviderBundle
 from ._waterfall import (
     DEFAULT_WATERFALL_CONTINUE_CODES,
     ProviderWaterfallStep,
     ProviderWaterfallState,
     run_provider_waterfall,
 )
-from ..reason_codes import ERROR, NO_RESULT, NOT_SUPPORTED, OK, PDF_FALLBACK
+from ..reason_codes import ERROR, NO_ACCESS, NO_RESULT, NOT_SUPPORTED, OK, PDF_FALLBACK
 from .base import (
     ProviderArtifacts,
     ProviderClient,
@@ -94,50 +98,6 @@ from .base import (
     build_provider_status_check,
     map_request_failure,
     summarize_capability_status,
-)
-
-
-register_provider_bundle(
-    ProviderBundle(
-        catalog=ProviderSpec(
-            name="arxiv",
-            display_name="arXiv",
-            official=True,
-            domains=("arxiv.org",),
-            doi_prefixes=("10.48550/",),
-            publisher_aliases=("arxiv",),
-            asset_default="body",
-            probe_capability="metadata_api",
-            provider_managed_abstract_only=False,
-            client_factory_path="paper_fetch.providers.arxiv:ArxivClient",
-            status_order=7,
-            metadata_probe_short_circuit=(
-                "paper_fetch.providers._arxiv_metadata:"
-                "arxiv_metadata_probe_short_circuit"
-            ),
-            persist_provider_html=True,
-            routes=(
-                ProviderRouteSpec(
-                    name="atom_metadata",
-                    kind="metadata",
-                    qps=1 / 3,
-                    rate_policy="arxiv_three_second_pacing",
-                ),
-                ProviderRouteSpec(name="official_html", kind="html"),
-                ProviderRouteSpec(
-                    name="direct_pdf",
-                    kind="pdf",
-                    requires_pdf_conversion=True,
-                ),
-            ),
-        ),
-        html_rules=ProviderHtmlRules(
-            name="arxiv",
-            availability=AvailabilityPolicy(name="arxiv", no_signals=True),
-        ),
-        asset_retry=ARXIV_ASSET_RETRY_POLICY,
-        sources=("arxiv_html", "arxiv_pdf"),
-    )
 )
 
 
@@ -212,7 +172,9 @@ class ArxivClient(ProviderClient):
     def _pdf_headers(self, *, referer: str | None = None) -> dict[str, str]:
         return default_pdf_headers(self.user_agent, referer=referer)
 
-    def fetch_metadata(self, query: Mapping[str, str | None]) -> ProviderMetadata:
+    def fetch_metadata(
+        self, query: Mapping[str, str | None], *, _optional_enrichment: bool = False
+    ) -> ProviderMetadata:
         arxiv_id = (
             normalize_arxiv_id(query.get("arxiv_id"))
             or arxiv_id_from_doi(query.get("doi"))
@@ -226,10 +188,32 @@ class ArxivClient(ProviderClient):
             )
         try:
             search = _ArxivSearch(id_list=[arxiv_id], max_results=1)
-            results = list(self.api_client.results(search))
+            results = list(
+                self.api_client.results(search, optional_enrichment=True)
+                if _optional_enrichment
+                and isinstance(self.api_client, _InternalArxivApiClient)
+                else self.api_client.results(search)
+            )
+        except RequestCancelledError:
+            raise
         except ProviderFailure:
             raise
         except Exception as exc:
+            propagate_paywall(exc)
+            if (
+                _optional_enrichment
+                and isinstance(exc, RequestFailure)
+                and exc.status_code in {401, 402, 403}
+            ):
+                if exc.status_code == 402:
+                    raise ProviderFailure(
+                        NO_ACCESS,
+                        str(exc),
+                        diagnostics=FailureDiagnostics(
+                            http_status=402, retryable=False
+                        ),
+                    ) from exc
+                raise map_request_failure(exc) from exc
             error_category = classify_network_error(exc)
             raise ProviderFailure(
                 ERROR,
@@ -270,8 +254,13 @@ class ArxivClient(ProviderClient):
         self, arxiv_id: str
     ) -> tuple[ProviderMetadata | None, list[str]]:
         try:
-            return self.fetch_metadata({"arxiv_id": arxiv_id}), []
+            return self.fetch_metadata(
+                {"arxiv_id": arxiv_id}, _optional_enrichment=True
+            ), []
         except ProviderFailure as exc:
+            propagate_paywall(exc)
+            if exc.code in {"no_access", "publisher_access_denied"}:
+                raise
             warning = (
                 "arXiv API metadata retrieval failed; using official HTML front matter and derived "
                 f"arXiv URLs from identifier {arxiv_id} ({exc.message})."
@@ -307,10 +296,13 @@ class ArxivClient(ProviderClient):
             api_metadata=api_metadata,
             references=references,
         )
-        payload.merged_metadata = merged_metadata
+        fixed_id = str(derived_metadata.get("arxiv_id") or "")
+        if re.search(r"v\d+$", fixed_id):
+            merged_metadata = _minimal_arxiv_metadata(
+                fixed_id, doi=None, metadata=merged_metadata
+            )
+        payload.content = replace(payload.content, merged_metadata=merged_metadata)
         payload.warnings = warnings
-        if content is not None:
-            payload.content = replace(content, merged_metadata=merged_metadata)
         return payload
 
     def _fetch_html_payload(
@@ -353,6 +345,7 @@ class ArxivClient(ProviderClient):
         return build_provider_payload(
             provider=self.name,
             route_kind="html",
+            route_name="official_html",
             source_url=final_url,
             content_type=content_type,
             body=body,
@@ -398,6 +391,7 @@ class ArxivClient(ProviderClient):
         try:
             pdf_result = PdfFallbackStrategy(
                 transport=self.transport,
+                provider_name="arxiv",
                 headers=self._pdf_headers(referer=referer),
                 timeout=DEFAULT_FULLTEXT_TIMEOUT_SECONDS,
                 asset_profile=effective_asset_profile,
@@ -415,6 +409,7 @@ class ArxivClient(ProviderClient):
                 fetcher=fetch_pdf_over_http,
             ).fetch(candidates)
         except PdfFetchFailure as exc:
+            propagate_paywall(exc)
             raise ProviderFailure(NO_RESULT, exc.message) from exc
         final_url = urllib.parse.urljoin(
             pdf_result.source_url or candidates[0], pdf_result.final_url
@@ -422,6 +417,7 @@ class ArxivClient(ProviderClient):
         return build_provider_payload(
             provider=self.name,
             route_kind=PDF_FALLBACK,
+            route_name="direct_pdf",
             source_url=final_url,
             content_type=PDF_MIME_TYPE,
             body=pdf_result.pdf_bytes,
@@ -441,7 +437,6 @@ class ArxivClient(ProviderClient):
                 *pdf_fetch_result_warnings(pdf_result),
                 "Full text was extracted from arXiv PDF fallback after arXiv official HTML was not usable.",
             ],
-            content_needs_local_copy=True,
             needs_local_copy=True,
         )
 
@@ -455,6 +450,18 @@ class ArxivClient(ProviderClient):
         context = self._runtime_context(context)
         derived_metadata = self._ensure_derived_metadata(doi, metadata)
         arxiv_id = normalize_arxiv_id(str(derived_metadata.get("arxiv_id") or ""))
+        ancillary = None
+        if (
+            context.asset_profile == "all"
+            and context.artifact_store is not None
+            and context.artifact_store.asset_download_dir is not None
+        ):
+            arxiv_id, ancillary = discover_arxiv_ancillary_assets(
+                self.transport, arxiv_id, user_agent=self.user_agent, context=context
+            )
+            derived_metadata = _minimal_arxiv_metadata(
+                arxiv_id, doi=doi, metadata=derived_metadata
+            )
 
         def run_html(_state: ProviderWaterfallState) -> RawFulltextPayload:
             return self._fetch_html_payload(derived_metadata)
@@ -478,6 +485,7 @@ class ArxivClient(ProviderClient):
             [
                 ProviderWaterfallStep(
                     label="html",
+                    route_name="official_html",
                     run=run_html,
                     failure_marker=fulltext_marker(self.name, "fail", route="html"),
                     success_markers=(fulltext_marker(self.name, "ok", route="html"),),
@@ -489,6 +497,7 @@ class ArxivClient(ProviderClient):
                 ),
                 ProviderWaterfallStep(
                     label="pdf",
+                    route_name="direct_pdf",
                     run=run_pdf,
                     failure_marker=fulltext_marker(self.name, "fail", route="pdf"),
                     success_markers=(
@@ -506,9 +515,35 @@ class ArxivClient(ProviderClient):
             client=self,
             initial_warnings=[],
         )
+        if ancillary is not None:
+            payload.content = replace(
+                payload.content,
+                diagnostics={
+                    **payload.content.diagnostics,
+                    "arxiv_ancillary": ancillary,
+                },
+            )
         if not self.api_enrichment_enabled:
             return payload
+        context.raise_if_cancelled()
+        enrichment_started = time.monotonic()
         api_metadata, metadata_warnings = self._fetch_api_metadata_optional(arxiv_id)
+        context.raise_if_cancelled()
+        payload.content = replace(
+            payload.content,
+            diagnostics={
+                **payload.content.diagnostics,
+                "arxiv_optional_metadata": {
+                    "elapsed_seconds": round(time.monotonic() - enrichment_started, 3),
+                    "io_timeout_seconds": 10,
+                    "request_attempts": 1,
+                    "result": "merged" if api_metadata else "fallback",
+                    "fallback_reason": metadata_warnings[0]
+                    if metadata_warnings
+                    else None,
+                },
+            },
+        )
         return self._payload_with_api_metadata(
             payload,
             derived_metadata=derived_metadata,
@@ -534,8 +569,6 @@ class ArxivClient(ProviderClient):
         route_kind = normalize_text(
             content.route_kind if content is not None else ""
         ).lower()
-        if route_kind != "html":
-            return empty_asset_results()
         merged_metadata = (
             content.merged_metadata
             if content is not None
@@ -545,71 +578,60 @@ class ArxivClient(ProviderClient):
             str((merged_metadata or {}).get("arxiv_id") or "")
         ) or _arxiv_id_from_metadata_or_doi(doi, merged_metadata or {})
         article_id = arxiv_id or normalize_text(doi) or raw_payload.source_url
-        extracted_assets = [
-            dict(item)
-            for item in (content.extracted_assets if content is not None else [])
-            if _asset_has_download_candidate(item)
-        ]
-        if not extracted_assets:
-            article_html = bytes(
-                content.body if content is not None else raw_payload.body or b""
-            ).decode("utf-8", errors="replace")
-            return download_arxiv_source_figure_assets(
+        article_html = bytes(
+            content.body if content is not None else raw_payload.body or b""
+        ).decode("utf-8", errors="replace")
+        result = (
+            download_arxiv_html_figure_assets(
                 self.transport,
-                arxiv_id=arxiv_id,
-                article_id=article_id,
-                article_html=article_html,
-                source_url=normalize_text(
-                    content.source_url
-                    if content is not None
-                    else raw_payload.source_url
+                ArxivHtmlAssetDownloadPlan(
+                    arxiv_id=arxiv_id,
+                    article_id=article_id,
+                    article_html=article_html,
+                    source_url=normalize_text(
+                        content.source_url
+                        if content is not None
+                        else raw_payload.source_url
+                    ),
+                    extracted_assets=(
+                        content.extracted_assets if content is not None else []
+                    ),
+                    output_dir=output_dir,
+                    user_agent=self.user_agent,
+                    asset_profile=asset_profile,
+                    runtime_context=context,
+                    image_headers=self._image_headers(),
                 ),
+            )
+            if route_kind == "html"
+            else empty_asset_results()
+        )
+        ancillary = content.diagnostics.get("arxiv_ancillary") if content else None
+        if asset_profile == "all" and ancillary is not None:
+            supplementary = html_assets.download_assets(
+                html_assets.SUPPLEMENTARY_KIND,
+                self.transport,
+                article_id=article_id,
+                assets=ancillary["assets"],
                 output_dir=output_dir,
                 user_agent=self.user_agent,
+                asset_profile=asset_profile,
+                options=html_assets.AssetDownloadOptions(
+                    allowed_hosts=("arxiv.org",),
+                    provider_name=self.name,
+                    runtime_context=context,
+                    asset_download_concurrency=_arxiv_asset_download_concurrency(
+                        context.env
+                    ),
+                ),
             )
-        asset_download_concurrency = _arxiv_asset_download_concurrency(context.env)
-        initial_result = html_assets.download_assets(
-            html_assets.FIGURE_KIND,
-            self.transport,
-            article_id=article_id,
-            assets=extracted_assets,
-            output_dir=output_dir,
-            user_agent=self.user_agent,
-            asset_profile=asset_profile,
-            headers=self._image_headers(),
-            asset_download_concurrency=asset_download_concurrency,
-        )
-        retry_assets = assets_for_network_retry(
-            extracted_assets,
-            initial_result.get("asset_failures") or [],
-            policy=ARXIV_ASSET_RETRY_POLICY,
-        )
-        if not retry_assets:
-            return initial_result
-        retry_result = html_assets.download_assets(
-            html_assets.FIGURE_KIND,
-            self.transport,
-            article_id=article_id,
-            assets=retry_assets,
-            output_dir=output_dir,
-            user_agent=self.user_agent,
-            asset_profile=asset_profile,
-            headers=self._image_headers(),
-            asset_download_concurrency=1,
-        )
-        return {
-            "assets": merge_asset_retry_results(
-                initial_result.get("assets") or [],
-                retry_result.get("assets") or [],
-                policy=ARXIV_ASSET_RETRY_POLICY,
-            ),
-            "asset_failures": merge_asset_failures(
-                initial_result.get("asset_failures") or [],
-                retry_result.get("asset_failures") or [],
-                policy=ARXIV_ASSET_RETRY_POLICY,
-                retried_assets=retry_assets,
-            ),
-        }
+            paths = {item["url"]: item["source_path"] for item in ancillary["assets"]}
+            for item in supplementary["assets"]:
+                item["source_path"] = paths[item["download_url"]]
+            result["assets"].extend(supplementary["assets"])
+            result["asset_failures"].extend(ancillary["asset_failures"])
+            result["asset_failures"].extend(supplementary["asset_failures"])
+        return result
 
     def to_article_model(
         self,
@@ -640,10 +662,22 @@ class ArxivClient(ProviderClient):
         source: SourceKind = "arxiv_pdf" if route == PDF_FALLBACK else "arxiv_html"
         markdown_text = str(
             (content.markdown_text if content is not None else "") or ""
-        ).strip()
-        markdown_text = inline_arxiv_source_assets_in_markdown(
-            markdown_text, downloaded_assets
         )
+        if route != PDF_FALLBACK:
+            markdown_text = inline_arxiv_source_assets_in_markdown(
+                markdown_text, downloaded_assets
+            )
+            downloaded_assets = list(
+                reconcile_arxiv_body_assets(
+                    markdown_text,
+                    content.extracted_assets if content is not None else [],
+                    downloaded_assets or [],
+                    article_html=content.body.decode("utf-8", errors="replace")
+                    if content
+                    else "",
+                    source_url=content.source_url if content else "",
+                )
+            )
         default_route = PDF_FALLBACK if route == PDF_FALLBACK else "html"
         trace = list(
             raw_payload.trace
@@ -702,7 +736,10 @@ class ArxivClient(ProviderClient):
             assets=[
                 dict(item)
                 for item in (
-                    list(content.extracted_assets if content is not None else [])
+                    [
+                        *list(content.extracted_assets if content is not None else []),
+                        *list(downloaded_assets or []),
+                    ]
                     if route == PDF_FALLBACK
                     else list(downloaded_assets or [])
                 )
@@ -736,15 +773,17 @@ class ArxivClient(ProviderClient):
         ):
             return artifacts
         pdf_assets = list(content.extracted_assets if content is not None else [])
+        ancillary = content.diagnostics.get("arxiv_ancillary") if content else None
+        all_assets = [*list(artifacts.assets), *pdf_assets]
         return ProviderArtifacts(
-            assets=[*list(artifacts.assets), *pdf_assets],
+            assets=all_assets,
             asset_failures=list(artifacts.asset_failures),
-            allow_related_assets=False,
-            text_only=not pdf_assets,
+            allow_related_assets=ancillary is not None,
+            text_only=not all_assets,
             skip_trace=trace_from_markers(
                 [download_marker("arxiv_assets_skipped_text_only")]
             )
-            if not pdf_assets
+            if not all_assets
             else [],
         )
 
@@ -752,3 +791,49 @@ class ArxivClient(ProviderClient):
 __all__ = [
     "ArxivClient",
 ]
+
+
+PROVIDER_BUNDLE = ProviderBundle(
+    client_factory=ArxivClient,
+    metadata_probe_short_circuit=arxiv_metadata_probe_short_circuit,
+    catalog=ProviderSpec(
+        name="arxiv",
+        display_name="arXiv",
+        official=True,
+        domains=("arxiv.org",),
+        doi_prefixes=("10.48550/",),
+        publisher_aliases=("arxiv",),
+        asset_default="body",
+        probe_capability="metadata_api",
+        provider_managed_abstract_only=False,
+        status_order=7,
+        persist_provider_html=True,
+        routes=(
+            ProviderRouteSpec(
+                name="atom_metadata",
+                kind="metadata",
+                transport="api",
+                timeout_seconds=60,
+                qps=1,
+            ),
+            ProviderRouteSpec(name="official_html", kind="html"),
+            ProviderRouteSpec(
+                name="direct_pdf",
+                kind="pdf",
+                requires_pdf_conversion=True,
+            ),
+            ProviderRouteSpec(
+                name="source_assets",
+                kind="assets",
+                hosts=("arxiv.org",),
+                qps=1,
+                asset_scope="all",
+            ),
+        ),
+    ),
+    html_rules=ProviderHtmlRules(
+        name="arxiv",
+        availability=AvailabilityPolicy(name="arxiv"),
+    ),
+    sources=("arxiv_html", "arxiv_pdf"),
+)

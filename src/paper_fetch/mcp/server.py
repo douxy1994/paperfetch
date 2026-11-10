@@ -2,68 +2,38 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Annotated, Any
-from collections.abc import Callable, Mapping
+from typing import Literal, Any
 
 from mcp import types as mcp_types
-from mcp.server.mcpserver import Context, MCPServer
-from mcp.server.mcpserver.resources import FileResource, FunctionResource
 from mcp.server.lowlevel.server import NotificationOptions
+from mcp.server.mcpserver import Context, MCPServer
+from mcp.server.mcpserver.resources import FunctionResource
 from mcp.server.stdio import stdio_server
-from mcp.types import CallToolResult, Icon, ToolAnnotations
-from mcp.types.version import MODERN_PROTOCOL_VERSIONS
-from pydantic import ConfigDict
+from mcp.types import CallToolResult, ToolAnnotations
 
 from ..version import __version__
+from ._deps import default_mcp_deps
 from ._instructions import fetch_tool_description, server_instructions
-from ._deps import MCPDeps, default_mcp_deps
 from .batch import batch_check_tool_async, batch_resolve_tool_async
 from .batch_fetch import batch_fetch_tool_async
 from .browser_preflight import browser_preflight_tool_async
-from .cache_index import (
-    CACHE_INDEX_RESOURCE_URI,
-    CACHED_RESOURCE_TEMPLATE,
-    CACHED_RESOURCE_URI_PREFIX,
-    cache_scope_id,
-    cached_resource_uri,
-    is_text_mime_type,
-    list_cache_entries,
-    scoped_cache_index_resource_uri,
-    scoped_cached_resource_uri,
-    scoped_cached_resource_uri_prefix,
-)
 from .cache_payloads import (
-    cached_entry_payload,
     get_cached_tool,
-    list_cached_payload,
     list_cached_tool,
 )
 from .fetch_tool import (
     fetch_paper_tool_async,
-    has_fulltext_tool,
     provider_status_tool,
     resolve_paper_tool,
 )
-from .output_schemas import (
-    BatchCheckOutput,
-    BatchFetchOutput,
-    BatchResolveOutput,
-    BrowserPreflightOutput,
-    FetchPaperOutput,
-    GetCachedOutput,
-    HasFulltextOutput,
-    ListCachedOutput,
-    ProviderStatusOutput,
-    ResolvePaperOutput,
-    compact_tool_output_schema,
-)
-from .prompts import summarize_paper_prompt, verify_citation_list_prompt
 from .provider_catalog import (
     PROVIDER_CATALOG_RESOURCE_URI,
     provider_catalog_resource_payload,
 )
 from .schemas import (
+    MCP_TOOL_REQUEST_MODELS,
     ArtifactModeInput,
     BatchCheckModeInput,
     BatchContentMaxCharsInput,
@@ -73,11 +43,9 @@ from .schemas import (
     BrowserPreflightProviderInput,
     BrowserPreflightTimeoutInput,
     CacheDetailInput,
-    CacheModeInput,
     ConcurrencyInput,
     FetchStrategyToolInput,
     IncludeRefsInput,
-    MCP_TOOL_REQUEST_MODELS,
     MaxTokensInput,
     OutputModesInput,
     ProviderNameInput,
@@ -90,42 +58,38 @@ from .schemas import (
 class PaperFetchMCPServer(MCPServer):
     """MCPServer with strict native validation and host-safe public schemas."""
 
-    def add_tool(
-        self,
-        fn: Callable[..., Any],
-        name: str | None = None,
-        title: str | None = None,
-        description: str | None = None,
-        annotations: ToolAnnotations | None = None,
-        icons: list[Icon] | None = None,
-        meta: dict[str, Any] | None = None,
-        structured_output: bool | None = None,
-    ) -> None:
-        tool = self._tool_manager.add_tool(
-            fn,
-            name=name,
-            title=title,
-            description=description,
-            annotations=annotations,
-            icons=icons,
-            meta=meta,
-            structured_output=structured_output,
-        )
-        arg_model = tool.fn_metadata.arg_model
-        strict_config = dict(arg_model.model_config)
-        strict_config["extra"] = "forbid"
-        arg_model.model_config = ConfigDict(**strict_config)
-        arg_model.model_rebuild(force=True)
-        tool.parameters = arg_model.model_json_schema(by_alias=True)
-        tool.fn_metadata.output_schema = compact_tool_output_schema(
-            tool.fn_metadata.output_schema
-        )
-        tool.__dict__.pop("output_schema", None)
-
     async def list_native_tools(self) -> list[mcp_types.Tool]:
         """Expose the MCPServer-generated schemas for native contract tests."""
 
-        return await super().list_tools()
+        tools = await super().list_tools()
+        return [
+            tool.model_copy(
+                update={
+                    "input_schema": {
+                        **tool.input_schema,
+                        "additionalProperties": False,
+                    }
+                }
+            )
+            if tool.name in MCP_TOOL_REQUEST_MODELS
+            else tool
+            for tool in tools
+        ]
+
+    async def call_tool(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        context: Context | None = None,
+    ) -> Any:
+        """Validate public request models before delegating through the SDK API."""
+
+        request_model = MCP_TOOL_REQUEST_MODELS.get(name)
+        if request_model is not None:
+            validated = request_model.model_validate(arguments)
+            normalized = validated.model_dump(mode="python", exclude_unset=True)
+            arguments = dict(normalized) if isinstance(normalized, Mapping) else {}
+        return await super().call_tool(name, arguments, context)
 
     async def list_tools(self) -> list[mcp_types.Tool]:
         """Expose reference-free Pydantic schemas to stdio and other MCP hosts."""
@@ -141,20 +105,16 @@ class PaperFetchMCPServer(MCPServer):
         ]
 
     async def run_stdio_async(self) -> None:
-        """Run the official v2 stdio transport with legacy resource notifications."""
+        """Run the official v2 stdio transport."""
 
         async with stdio_server() as (read_stream, write_stream):
             await self._lowlevel_server.run(
                 read_stream,
                 write_stream,
                 self._lowlevel_server.create_initialization_options(
-                    NotificationOptions(resources_changed=True)
+                    NotificationOptions(resources_changed=False)
                 ),
             )
-
-
-def _default_download_dir(*, deps: MCPDeps = default_mcp_deps()) -> Path:
-    return deps.resolve_mcp_download_dir(deps.build_runtime_env())
 
 
 def _parse_download_dir(download_dir: str | None) -> Path | None:
@@ -162,17 +122,6 @@ def _parse_download_dir(download_dir: str | None) -> Path | None:
     if not text:
         return None
     return Path(text).expanduser()
-
-
-def _cache_index_resource_payload(
-    download_dir: Path | None = None,
-    *,
-    deps: MCPDeps = default_mcp_deps(),
-) -> dict[str, object]:
-    tool_kwargs: dict[str, Any] = {}
-    if download_dir is not None:
-        tool_kwargs["download_dir"] = download_dir
-    return list_cached_payload(**tool_kwargs, deps=deps)
 
 
 def _read_only_annotations(*, open_world: bool) -> ToolAnnotations:
@@ -200,154 +149,6 @@ def _browser_preflight_annotations() -> ToolAnnotations:
     )
 
 
-def _resource_uri_set(
-    resources: Mapping[str, object],
-    *,
-    index_uri: str,
-    entry_prefix: str,
-) -> set[str]:
-    return {
-        uri for uri in resources if uri == index_uri or uri.startswith(entry_prefix)
-    }
-
-
-def _sync_cache_resources(
-    server: MCPServer,
-    *,
-    download_dir: Path,
-    scope_id: str | None = None,
-) -> bool:
-    entries = list_cache_entries(download_dir)
-    # mcp has no public remove_resource() API; relies on internal _resources dict (verified mcp>=2).
-    # The assertion below will fire immediately if a future mcp version changes this layout.
-    resources = server._resource_manager._resources
-    assert isinstance(resources, dict), (
-        "MCPServer internal layout changed; update _sync_cache_resources for the new mcp version"
-    )
-
-    def default_entry_uri(entry_id: object) -> str:
-        return cached_resource_uri(str(entry_id))
-
-    def scoped_entry_uri(entry_id: object) -> str:
-        assert scope_id is not None
-        return scoped_cached_resource_uri(scope_id, str(entry_id))
-
-    if scope_id is None:
-        index_uri = CACHE_INDEX_RESOURCE_URI
-        entry_uri_for = default_entry_uri
-        entry_prefix = CACHED_RESOURCE_URI_PREFIX
-        name = "cache_index"
-        description = "JSON index of cached MCP downloads in the default shared download directory."
-    else:
-        index_uri = scoped_cache_index_resource_uri(scope_id)
-        entry_uri_for = scoped_entry_uri
-        entry_prefix = scoped_cached_resource_uri_prefix(scope_id)
-        name = f"cache_index_{scope_id}"
-        description = (
-            "JSON index of cached MCP downloads in an isolated download directory. "
-            f"Scope id: {scope_id}."
-        )
-
-    before_uris = _resource_uri_set(
-        resources,
-        index_uri=index_uri,
-        entry_prefix=entry_prefix,
-    )
-
-    def index_payload_for_download_dir() -> dict[str, object]:
-        return _cache_index_resource_payload(download_dir)
-
-    resources[index_uri] = FunctionResource.from_function(
-        index_payload_for_download_dir,
-        uri=index_uri,
-        name=name,
-        description=description,
-        mime_type="application/json",
-    )
-
-    active_uris = {entry_uri_for(entry["id"]) for entry in entries}
-    stale_uris = [
-        uri
-        for uri in list(resources)
-        if uri.startswith(entry_prefix) and uri not in active_uris
-    ]
-    for uri in stale_uris:
-        del resources[uri]
-
-    for entry in entries:
-        uri = entry_uri_for(entry["id"])
-        resources[uri] = FileResource(
-            uri=uri,
-            name=f"cached_{entry['id']}",
-            description=f"Cached {entry['kind']} for DOI {entry['doi']}.",
-            path=Path(str(entry["path"])),
-            mime_type=str(entry["mime"]),
-            encoding=("utf-8" if is_text_mime_type(str(entry["mime"])) else None),
-        )
-    after_uris = _resource_uri_set(
-        resources,
-        index_uri=index_uri,
-        entry_prefix=entry_prefix,
-    )
-    return before_uris != after_uris
-
-
-def _sync_resources_for_download_dir(
-    server: MCPServer,
-    download_dir: Path | None,
-    *,
-    deps: MCPDeps = default_mcp_deps(),
-) -> bool:
-    if download_dir is None:
-        return _sync_cache_resources(
-            server, download_dir=_default_download_dir(deps=deps)
-        )
-    return _sync_cache_resources(
-        server, download_dir=download_dir, scope_id=cache_scope_id(download_dir)
-    )
-
-
-def _fetch_resource_sync_dirs(
-    *,
-    parsed_download_dir: Path | None,
-    no_download: bool,
-    save_markdown: bool,
-    markdown_saved: bool,
-    parsed_markdown_output_dir: Path | None,
-) -> list[Path | None]:
-    sync_dirs: list[Path | None] = []
-    if not no_download:
-        sync_dirs.append(parsed_download_dir)
-    if save_markdown and markdown_saved:
-        sync_dirs.append(
-            parsed_markdown_output_dir
-            if parsed_markdown_output_dir is not None
-            else parsed_download_dir
-        )
-
-    deduped: list[Path | None] = []
-    seen: set[str] = set()
-    for item in sync_dirs:
-        key = "<default>" if item is None else str(item.resolve())
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(item)
-    return deduped
-
-
-async def _notify_resource_list_changed(ctx: Context | None) -> None:
-    if ctx is None:
-        return
-    try:
-        if ctx.protocol_version in MODERN_PROTOCOL_VERSIONS:
-            await ctx.notify_resources_changed()
-        else:
-            await ctx.session.send_resource_list_changed()
-    except Exception:
-        return
-
-
 def build_server() -> PaperFetchMCPServer:
     deps = default_mcp_deps()
     server = PaperFetchMCPServer(
@@ -369,62 +170,18 @@ def build_server() -> PaperFetchMCPServer:
         )
     )
 
-    def default_cache_index_resource_payload() -> dict[str, object]:
-        return _cache_index_resource_payload(deps=deps)
-
-    server.add_resource(
-        FunctionResource.from_function(
-            default_cache_index_resource_payload,
-            uri=CACHE_INDEX_RESOURCE_URI,
-            name="cache_index",
-            description="JSON index of cached MCP downloads in the default shared download directory.",
-            mime_type="application/json",
-        )
-    )
-
-    @server.resource(
-        CACHED_RESOURCE_TEMPLATE,
-        name="cached_entry_template",
-        description="Read a cached file from the default shared MCP download directory by entry id.",
-        mime_type="application/octet-stream",
-    )
-    def cached_entry_resource(entry_id: str) -> str | bytes:
-        entry = cached_entry_payload(entry_id=entry_id, deps=deps)
-        if entry is None:
-            raise FileNotFoundError(f"Unknown cached entry: {entry_id}")
-        path = Path(str(entry["path"]))
-        if is_text_mime_type(str(entry["mime"])):
-            return path.read_text(encoding="utf-8")
-        return path.read_bytes()
-
-    _sync_resources_for_download_dir(server, None, deps=deps)
-
-    @server.prompt(
-        name="summarize_paper",
-        description="Template for summarizing one known paper with cache-first and provenance-aware fetch discipline.",
-    )
-    def summarize_paper(query: str, focus: str = "general") -> str:
-        return summarize_paper_prompt(query=query, focus=focus)
-
-    @server.prompt(
-        name="verify_citation_list",
-        description="Template for checking a citation list with batch-first probe discipline.",
-    )
-    def verify_citation_list(citations: str, mode: str = "metadata") -> str:
-        return verify_citation_list_prompt(citations=citations, mode=mode)
-
     @server.tool(
         name="resolve_paper",
         description="Resolve a DOI, URL, or title query into a normalized paper candidate.",
         annotations=_read_only_annotations(open_world=True),
-        structured_output=True,
+        structured_output=False,
     )
     def resolve_paper(
         query: str | None = None,
         title: str | None = None,
         authors: list[str] | str | None = None,
         year: int | None = None,
-    ) -> Annotated[CallToolResult, ResolvePaperOutput]:
+    ) -> CallToolResult:
         return resolve_paper_tool(
             query=query,
             title=title,
@@ -434,22 +191,14 @@ def build_server() -> PaperFetchMCPServer:
         )
 
     @server.tool(
-        name="has_fulltext",
-        description="Probe whether a paper likely has accessible full text using cheap metadata and landing-page signals.",
-        annotations=_read_only_annotations(open_world=True),
-        structured_output=True,
-    )
-    def has_fulltext(query: str) -> Annotated[CallToolResult, HasFulltextOutput]:
-        return has_fulltext_tool(query=query, deps=deps)
-
-    @server.tool(
         name="fetch_paper",
         description=fetch_tool_description(),
         annotations=_fetch_annotations(),
-        structured_output=True,
+        structured_output=False,
     )
     async def fetch_paper(
         query: str,
+        target: Literal["paper", "supplementary"] = "paper",
         modes: OutputModesInput | None = None,
         strategy: FetchStrategyToolInput | None = None,
         include_refs: IncludeRefsInput | None = None,
@@ -462,14 +211,15 @@ def build_server() -> PaperFetchMCPServer:
         markdown_filename: str | None = None,
         download_dir: str | None = None,
         ctx: Context | None = None,
-    ) -> Annotated[CallToolResult, FetchPaperOutput]:
+    ) -> CallToolResult:
         parsed_download_dir = _parse_download_dir(download_dir)
         parsed_markdown_output_dir = _parse_download_dir(markdown_output_dir)
         tool_kwargs: dict[str, Any] = {}
         if parsed_download_dir is not None:
             tool_kwargs["download_dir"] = parsed_download_dir
-        result = await fetch_paper_tool_async(
+        return await fetch_paper_tool_async(
             query=query,
+            target=target,
             modes=[str(mode) for mode in modes] if modes is not None else None,
             strategy=strategy,
             include_refs=include_refs,
@@ -488,53 +238,25 @@ def build_server() -> PaperFetchMCPServer:
             deps=deps,
             **tool_kwargs,
         )
-        if not result.is_error:
-            resources_changed = False
-            for sync_dir in _fetch_resource_sync_dirs(
-                parsed_download_dir=parsed_download_dir,
-                no_download=no_download,
-                save_markdown=save_markdown,
-                markdown_saved=bool(
-                    (result.structured_content or {}).get("saved_markdown_path")
-                ),
-                parsed_markdown_output_dir=parsed_markdown_output_dir,
-            ):
-                resources_changed = (
-                    _sync_resources_for_download_dir(server, sync_dir, deps=deps)
-                    or resources_changed
-                )
-            if resources_changed:
-                await _notify_resource_list_changed(ctx)
-        return result
 
     @server.tool(
         name="list_cached",
         description=(
-            "List cached downloads without touching the network. cache_mode=index reads "
-            "the manifest only, refresh validates and prunes the manifest, and rescan "
-            "rebuilds it from DOI-proven fetch-envelope sidecars and Markdown YAML "
-            "front matter within the selected download_dir."
+            "List DOI-proven cached downloads from the current cache index without "
+            "touching the network or scanning loose files."
         ),
         annotations=_read_only_annotations(open_world=False),
-        structured_output=True,
+        structured_output=False,
     )
     async def list_cached(
         download_dir: str | None = None,
-        cache_mode: CacheModeInput = "index",
         ctx: Context | None = None,
-    ) -> Annotated[CallToolResult, ListCachedOutput]:
+    ) -> CallToolResult:
         parsed_download_dir = _parse_download_dir(download_dir)
         tool_kwargs: dict[str, Any] = {}
         if parsed_download_dir is not None:
             tool_kwargs["download_dir"] = parsed_download_dir
-        result = list_cached_tool(cache_mode=cache_mode, **tool_kwargs, deps=deps)
-        if not result.is_error:
-            resources_changed = _sync_resources_for_download_dir(
-                server, parsed_download_dir, deps=deps
-            )
-            if resources_changed:
-                await _notify_resource_list_changed(ctx)
-        return result
+        return list_cached_tool(**tool_kwargs, deps=deps)
 
     @server.tool(
         name="get_cached",
@@ -544,7 +266,7 @@ def build_server() -> PaperFetchMCPServer:
             "acceptance/asset summaries; preferred_only omits non-preferred entry arrays."
         ),
         annotations=_read_only_annotations(open_world=False),
-        structured_output=True,
+        structured_output=False,
     )
     async def get_cached(
         doi: str,
@@ -556,12 +278,12 @@ def build_server() -> PaperFetchMCPServer:
         include_refs: IncludeRefsInput | None = None,
         max_tokens: MaxTokensInput = "full_text",
         ctx: Context | None = None,
-    ) -> Annotated[CallToolResult, GetCachedOutput]:
+    ) -> CallToolResult:
         parsed_download_dir = _parse_download_dir(download_dir)
         tool_kwargs: dict[str, Any] = {}
         if parsed_download_dir is not None:
             tool_kwargs["download_dir"] = parsed_download_dir
-        result = get_cached_tool(
+        return get_cached_tool(
             doi=doi,
             detail=detail,
             preferred_only=preferred_only,
@@ -572,25 +294,18 @@ def build_server() -> PaperFetchMCPServer:
             **tool_kwargs,
             deps=deps,
         )
-        if not result.is_error:
-            resources_changed = _sync_resources_for_download_dir(
-                server, parsed_download_dir, deps=deps
-            )
-            if resources_changed:
-                await _notify_resource_list_changed(ctx)
-        return result
 
     @server.tool(
         name="batch_resolve",
         description="Resolve multiple DOI, URL, or title queries with shared transport reuse and optional cross-host concurrency.",
         annotations=_read_only_annotations(open_world=True),
-        structured_output=True,
+        structured_output=False,
     )
     async def batch_resolve(
         queries: BatchQueriesInput,
         concurrency: ConcurrencyInput = 1,
         ctx: Context | None = None,
-    ) -> Annotated[CallToolResult, BatchResolveOutput]:
+    ) -> CallToolResult:
         return await batch_resolve_tool_async(
             queries=queries, concurrency=concurrency, ctx=ctx, deps=deps
         )
@@ -601,14 +316,17 @@ def build_server() -> PaperFetchMCPServer:
             "Fetch 1..50 papers with bounded concurrency and input-ordered compact "
             "manifest/acceptance results. It may access remote services and write the "
             "same cache, artifacts, or Markdown as fetch_paper. detail=bounded returns "
-            "only a batch-wide bounded text sample. Set run_manifest or resume for "
-            "auditable persistence; overwrite defaults false."
+            "only a batch-wide bounded text sample. batch_results atomically writes "
+            "the final input-ordered JSONL result; overwrite defaults false. "
+            "Each batch checks managed Camoufox once at start, including HTTP/cache "
+            "hits (default official/prerelease allows stable and prerelease builds; official/stable excludes prereleases; explicit channel/pins take priority)."
         ),
         annotations=_fetch_annotations(),
-        structured_output=True,
+        structured_output=False,
     )
     async def batch_fetch(
         queries: BatchQueriesInput,
+        target: Literal["paper", "supplementary"] = "paper",
         concurrency: ConcurrencyInput = 1,
         modes: OutputModesInput | None = None,
         strategy: FetchStrategyToolInput | None = None,
@@ -624,19 +342,18 @@ def build_server() -> PaperFetchMCPServer:
         detail: BatchFetchDetailInput = "compact",
         content_max_chars: BatchContentMaxCharsInput = 20_000,
         continue_on_error: bool = True,
-        run_manifest: str | None = None,
         batch_results: str | None = None,
-        resume: str | None = None,
         overwrite: bool = False,
         ctx: Context | None = None,
-    ) -> Annotated[CallToolResult, BatchFetchOutput]:
+    ) -> CallToolResult:
         parsed_download_dir = _parse_download_dir(download_dir)
         parsed_markdown_output_dir = _parse_download_dir(markdown_output_dir)
         tool_kwargs: dict[str, Any] = {}
         if parsed_download_dir is not None:
             tool_kwargs["download_dir"] = parsed_download_dir
-        result = await batch_fetch_tool_async(
+        return await batch_fetch_tool_async(
             queries=queries,
+            target=target,
             concurrency=concurrency,
             modes=[str(mode) for mode in modes] if modes is not None else None,
             strategy=strategy,
@@ -655,62 +372,51 @@ def build_server() -> PaperFetchMCPServer:
             detail=detail,
             content_max_chars=content_max_chars,
             continue_on_error=continue_on_error,
-            run_manifest=run_manifest,
             batch_results=batch_results,
-            resume=resume,
             overwrite=overwrite,
             ctx=ctx,
             deps=deps,
             **tool_kwargs,
         )
-        if not result.is_error:
-            payload = result.structured_content or {}
-            resources_changed = False
-            for sync_dir in _fetch_resource_sync_dirs(
-                parsed_download_dir=parsed_download_dir,
-                no_download=no_download,
-                save_markdown=save_markdown,
-                markdown_saved=bool(
-                    (payload.get("summary") or {}).get("saved_markdown")
-                ),
-                parsed_markdown_output_dir=parsed_markdown_output_dir,
-            ):
-                resources_changed = (
-                    _sync_resources_for_download_dir(server, sync_dir, deps=deps)
-                    or resources_changed
-                )
-            if resources_changed:
-                await _notify_resource_list_changed(ctx)
-        return result
 
     @server.tool(
         name="batch_check",
         description=(
-            "Check multiple papers without returning full bodies, with optional cross-host concurrency. "
-            "Success items keep only lightweight provenance fields."
+            "Probe one or more papers using cheap metadata and landing-page signals, "
+            "with optional cross-host concurrency. mode defaults to metadata and accepts "
+            "only metadata; article mode and the standalone has_fulltext tool are removed. "
+            "Read probe_state, evidence, and errors from input-ordered results (results[0] "
+            "for one query). Never fetches full bodies or writes downloads. Use batch_fetch "
+            "for real fetching and judge results by acceptance."
         ),
         annotations=_read_only_annotations(open_world=True),
-        structured_output=True,
+        structured_output=False,
     )
     async def batch_check(
         queries: BatchQueriesInput,
         mode: BatchCheckModeInput = "metadata",
         concurrency: ConcurrencyInput = 1,
         ctx: Context | None = None,
-    ) -> Annotated[CallToolResult, BatchCheckOutput]:
+    ) -> CallToolResult:
         return await batch_check_tool_async(
-            queries=queries, mode=mode, concurrency=concurrency, ctx=ctx, deps=deps
+            queries=queries,
+            mode=mode,
+            concurrency=concurrency,
+            ctx=ctx,
+            deps=deps,
         )
 
     @server.tool(
         name="browser_preflight",
         description=(
             "Live-check the shared browser HTML path for one provider or all browser "
-            "providers. This opens publisher pages and may update filtered storage-state; "
-            "it never runs PDF fallback or automatic authentication."
+            "providers. This prepares managed Camoufox before launch, opens publisher "
+            "pages, and updates native publisher profiles. save_storage_state controls only "
+            "JSON snapshot export; it never runs PDF fallback "
+            "or automatic authentication."
         ),
         annotations=_browser_preflight_annotations(),
-        structured_output=True,
+        structured_output=False,
     )
     async def browser_preflight(
         provider: BrowserPreflightProviderInput | None = None,
@@ -721,7 +427,7 @@ def build_server() -> PaperFetchMCPServer:
         save_storage_state: bool = True,
         detail: BrowserPreflightDetailInput = "full",
         ctx: Context | None = None,
-    ) -> Annotated[CallToolResult, BrowserPreflightOutput]:
+    ) -> CallToolResult:
         return await browser_preflight_tool_async(
             provider=provider,
             test_url=test_url,
@@ -738,16 +444,16 @@ def build_server() -> PaperFetchMCPServer:
         name="provider_status",
         description=(
             "Inspect filtered static provider configuration and local dependency readiness. "
-            "This never opens Chrome/CDP or publisher pages; use browser_preflight for live health."
+            "This never opens Camoufox or publisher pages; use browser_preflight for live health."
         ),
         annotations=_read_only_annotations(open_world=False),
-        structured_output=True,
+        structured_output=False,
     )
     def provider_status(
         provider: ProviderNameInput | None = None,
         group: ProviderStatusGroupInput | None = None,
         detail: ProviderStatusDetailInput = "full",
-    ) -> Annotated[CallToolResult, ProviderStatusOutput]:
+    ) -> CallToolResult:
         return provider_status_tool(
             provider=provider,
             group=group,

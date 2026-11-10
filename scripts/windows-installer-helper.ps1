@@ -25,15 +25,7 @@ $McpEnvKeys = @(
     "MATHML_TO_LATEX_NODE_BIN",
     "PAPER_FETCH_BROWSER_HEADLESS"
 )
-$OfflineEnvKeys = @(
-    "PAPER_FETCH_DOWNLOAD_DIR",
-    "PAPER_FETCH_FORMULA_TOOLS_DIR",
-    "PAPER_FETCH_IMAGE_TOOLS_DIR",
-    "MATHML_TO_LATEX_NODE_BIN",
-    "PAPER_FETCH_BROWSER_HEADLESS",
-    "PYTHONUTF8",
-    "PYTHONIOENCODING"
-)
+$OfflineEnvKeys = @($McpEnvKeys | Where-Object { $_ -ne "PAPER_FETCH_ENV_FILE" })
 $InstallerWarnings = New-Object System.Collections.Generic.List[string]
 
 if ([string]::IsNullOrWhiteSpace($InstallRoot)) {
@@ -55,10 +47,10 @@ function Import-InstallerManifest {
     $script:CodexManagedBegin = [string]$manifest.managed_blocks.codex.begin
     $script:CodexManagedEnd = [string]$manifest.managed_blocks.codex.end
     $script:McpEnvKeys = @($manifest.mcp.env_keys | ForEach-Object { [string]$_ })
-    if ($null -ne $manifest.env_sets -and $null -ne $manifest.env_sets.offline_env_keys) {
-        $script:OfflineEnvKeys = @($manifest.env_sets.offline_env_keys | ForEach-Object { [string]$_ })
-    }
     Normalize-McpEnvKeys
+    $script:OfflineEnvKeys = @(
+        $script:McpEnvKeys | Where-Object { $_ -ne "PAPER_FETCH_ENV_FILE" }
+    )
 
     if ([string]::IsNullOrWhiteSpace($script:SkillName) -or
         [string]::IsNullOrWhiteSpace($script:McpName) -or
@@ -324,14 +316,14 @@ function Test-SkillBundleIntegrity {
     if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
         throw "Missing offline manifest: $manifestPath"
     }
-    Invoke-RuntimePythonScript -Script @'
-from pathlib import Path
-import sys
-
-from paper_fetch.skill_integrity import require_valid_skill_bundle
-
-require_valid_skill_bundle(Path(sys.argv[1]), skill_dir=Path(sys.argv[2]))
-'@ -Arguments @($manifestPath, $SkillDir)
+    $verifier = Join-Path $InstallRoot "scripts/skill_integrity.py"
+    if (-not (Test-Path -LiteralPath $verifier -PathType Leaf)) {
+        throw "Missing Skill verifier: $verifier"
+    }
+    Invoke-Checked -FilePath (ConvertTo-FullPath (Get-RuntimePython)) -Arguments @(
+        "-X", "utf8", $verifier, "verify", "--manifest", $manifestPath,
+        "--skill-dir", $SkillDir
+    )
 }
 
 function Get-AntigravityHome {
@@ -342,12 +334,14 @@ function Get-AntigravityHome {
 }
 
 function Install-Skills {
-    $codexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".codex") "skills") $SkillName
+    $codexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".agents") "skills") $SkillName
     $claudeSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".claude") "skills") $SkillName
     $antigravitySkill = Join-Path (Join-Path (Get-AntigravityHome) "skills") $SkillName
 
     Write-Log "Installing Codex skill to $codexSkill"
     Copy-InstalledSkill $codexSkill
+    $legacyCodexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".codex") "skills") $SkillName
+    Remove-Item -LiteralPath $legacyCodexSkill -Recurse -Force -ErrorAction SilentlyContinue
     Write-Log "Installing Claude Code skill to $claudeSkill"
     Copy-InstalledSkill $claudeSkill
     Write-Log "Installing Antigravity skill to $antigravitySkill"
@@ -355,10 +349,11 @@ function Install-Skills {
 }
 
 function Remove-Skills {
-    $codexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".codex") "skills") $SkillName
+    $codexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".agents") "skills") $SkillName
     $claudeSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".claude") "skills") $SkillName
     $antigravitySkill = Join-Path (Join-Path (Get-AntigravityHome) "skills") $SkillName
-    foreach ($skillDir in @($codexSkill, $claudeSkill, $antigravitySkill)) {
+    $legacyCodexSkill = Join-Path (Join-Path (Join-Path $env:USERPROFILE ".codex") "skills") $SkillName
+    foreach ($skillDir in @($codexSkill, $legacyCodexSkill, $claudeSkill, $antigravitySkill)) {
         Remove-Item -Recurse -Force -ErrorAction SilentlyContinue $skillDir
         Write-Log "Removed $skillDir"
     }
@@ -667,13 +662,22 @@ assert "providers" in payload
 import camoufox
 import playwright
 import pymupdf
-from paper_fetch.runtime_browser import BrowserContextManager
+from paper_fetch.providers.browser_runtime.camoufox_manager import CamoufoxBrowserManager
 
 assert hasattr(camoufox, "Camoufox")
-assert BrowserContextManager is not None
+assert CamoufoxBrowserManager is not None
 '@
     Invoke-RuntimePythonScript -Script $browserRuntimeCheck
-    Invoke-Checked -FilePath $texmath -Arguments @("--help")
+    Invoke-RuntimePythonScript -Arguments @($texmath) -Script @'
+import subprocess
+import sys
+
+result = subprocess.run([sys.argv[1], "--version"], capture_output=True, text=True, errors="replace")
+if result.returncode:
+    print(f"texmath smoke check failed (exit {result.returncode}):", file=sys.stderr)
+    print(result.stdout + result.stderr, file=sys.stderr)
+    raise SystemExit(result.returncode)
+'@
     Invoke-Checked -FilePath $node -Arguments @("--version")
     if (Test-Path -LiteralPath $gs -PathType Leaf) {
         Invoke-Checked -FilePath $gs -Arguments @("--version")

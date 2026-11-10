@@ -11,6 +11,7 @@ from ...extraction.html.ui_tokens import (
     FIGURE_FULL_SIZE_IMAGE_LABEL,
     FIGURE_POWERPOINT_SLIDE_LABEL,
 )
+from ..html.shared import class_tokens as _html_class_tokens
 from ...markdown.images import render_markdown_image
 from ...utils import normalize_text
 from ._ir import MarkdownFigure
@@ -33,7 +34,7 @@ SILVERCHAIR_FIGURE_BASENAME_PATTERN = re.compile(
     flags=re.IGNORECASE,
 )
 FIGURE_ACTION_TRAILING_LINK_PATTERN = re.compile(
-    rf"\b(?:{re.escape(FIGURE_POWERPOINT_SLIDE_LABEL)}|{re.escape(FIGURE_FULL_SIZE_IMAGE_LABEL)})\b.*$",
+    rf"\[?\b(?:{re.escape(FIGURE_POWERPOINT_SLIDE_LABEL)}|{re.escape(FIGURE_FULL_SIZE_IMAGE_LABEL)})\b.*$",
     flags=re.IGNORECASE,
 )
 FIGURE_DESCRIPTION_SELECTORS = (
@@ -76,7 +77,6 @@ def figure_from_entry(entry: Mapping[str, str]) -> MarkdownFigure:
         label=heading,
         caption=normalize_text(str(entry.get("caption") or "")),
         asset_url=normalize_text(str(entry.get("link") or "")),
-        page_url=normalize_text(str(entry.get("page_url") or "")) or None,
         alt=heading,
     )
 
@@ -116,23 +116,6 @@ def html_node_attr_text(node: Any) -> str:
         else:
             parts.append(normalize_text(str(value or "")))
     return " ".join(part.lower() for part in parts if part)
-
-
-def _html_class_tokens(node: Any) -> set[str]:
-    if not isinstance(node, Tag):
-        return set()
-    raw_classes = (getattr(node, "attrs", None) or {}).get("class") or []
-    if isinstance(raw_classes, str):
-        return {
-            normalize_text(value).lower()
-            for value in raw_classes.split()
-            if normalize_text(value)
-        }
-    return {
-        normalize_text(str(value)).lower()
-        for value in raw_classes
-        if normalize_text(str(value))
-    }
 
 
 def _is_silverchair_figure_section(node: Any) -> bool:
@@ -199,10 +182,22 @@ def clean_html_figure_text_candidate(text: str) -> str:
 
 def html_figure_label_from_text(text: str) -> tuple[str, str]:
     normalized = clean_html_figure_text_candidate(text)
+    wrapper = ""
+    styled_label = re.match(r"^\*\*(.*?)\*\*\s*(.*)$", normalized)
+    if styled_label:
+        label_match = FIGURE_LABEL_PATTERN.fullmatch(styled_label[1])
+        if label_match is not None and not label_match[2].strip():
+            normalized = styled_label[1] + " " + styled_label[2]
+    if normalized.startswith("**") and normalized.endswith("**"):
+        wrapper = "**"
+        normalized = normalized[2:-2]
     match = FIGURE_LABEL_PATTERN.match(normalized)
     if match is None:
         return "", normalized
-    return f"Figure {match.group(1)}.", normalize_text(match.group(2))
+    remainder = normalize_text(match.group(2))
+    return f"Figure {match.group(1)}.", (
+        wrapper + remainder + wrapper if wrapper and remainder else remainder
+    )
 
 
 def html_figure_label_from_node(node: Any) -> str:
@@ -247,6 +242,12 @@ def iter_html_figure_text_candidates(
     for selector in FIGURE_DESCRIPTION_SELECTORS:
         for match in node.select(selector):
             if not isinstance(match, Tag):
+                continue
+            if (
+                match.find_parent("figure") is not None
+                and match.find_parent("figure") is not node
+                and match.find_parent("figure").get("id")
+            ):
                 continue
             text = render_clean_text(match)
             if not text:
@@ -309,6 +310,18 @@ def iter_inline_html_figure_images(node: Any) -> list[tuple[str, str]]:
 
     add_image(node)
     for image in node.find_all("img"):
+        if (
+            image.find_parent("figure") is not None
+            and image.find_parent("figure") is not node
+            and image.find_parent("figure").get("id")
+        ):
+            continue
+        if (
+            image.find_parent("figcaption") is not None
+            or image.find_parent(class_="c-article-section__figure-description")
+            is not None
+        ):
+            continue
         add_image(image)
     return images
 
@@ -323,6 +336,14 @@ def render_html_figure_markdown(
     if not isinstance(node, Tag):
         return
 
+    if any(figure.get("id") for figure in node.find_all("figure")) or any(
+        "PAPER_FETCH_TABLE_PLACEHOLDER" in raw.get_text()
+        for raw in node.select("[data-paper-fetch-markdown]")
+    ):
+        from ...providers._html_section_markdown import render_container_markdown
+
+        render_container_markdown(node, lines, level=3)
+        return
     inline_images = iter_inline_html_figure_images(node)
     figure_items: list[tuple[str, str]] = []
     for text in iter_html_figure_text_candidates(
@@ -335,6 +356,16 @@ def render_html_figure_markdown(
             figure_items.append(item)
 
     fallback_label = html_figure_label_from_node(node)
+    # Deduplicate only within this logical figure. A bare copy of a caption
+    # should not repeat its labelled copy, but different figure numbers survive.
+    labelled_captions = {
+        caption for label, caption in figure_items if label and caption
+    }
+    figure_items = [
+        (label, caption)
+        for label, caption in figure_items
+        if label or caption not in labelled_captions
+    ]
     if not figure_items and fallback_label:
         figure_items.append((fallback_label, ""))
     if not figure_items:

@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+from .access_boundary import CONFIRMED_PAYWALL, html_paywall_diagnostics
+
 import re
+import copy
 from dataclasses import asdict, dataclass, field
 from typing import Any, Literal
 from collections.abc import Callable, Mapping
@@ -60,7 +63,7 @@ from .html_signals import (
     evaluate_text_marker_blocking_signals,
     evaluate_text_marker_positive_signals,
 )
-from .reason_codes import (
+from ..reason_codes import (
     ABSTRACT_ONLY,
     ACCESS_PAGE_URL,
     BODY_SUFFICIENT,
@@ -124,7 +127,6 @@ class HtmlContainerEvidence:
 @dataclass(frozen=True)
 class HtmlContainerSelectionPolicy:
     score_profile: str = HTML_CONTAINER_SCORE_AVAILABILITY
-    drop_profile: str = HTML_CONTAINER_DROP_AVAILABILITY
     fallback_tags: tuple[str, ...] = ()
     prefer_complete_ancestor: bool = False
     avoid_page_level_container: bool = False
@@ -169,6 +171,7 @@ class FulltextAvailabilityDiagnostics:
     title: str | None = None
     container_tag: str | None = None
     container_text_length: int | None = None
+    confirmed_article_paywall: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -219,6 +222,7 @@ def _extract_article_type(
     *,
     provider: str | None = None,
     html_text: str | None = None,
+    soup: BeautifulSoup | None = None,
 ) -> str | None:
     del provider
     metadata_map = dict(metadata or {})
@@ -226,9 +230,10 @@ def _extract_article_type(
         value = normalize_text(metadata_map.get(key))
         if value:
             return value
-    if not html_text:
-        return None
-    soup = BeautifulSoup(html_text, choose_parser())
+    if soup is None:
+        if not html_text:
+            return None
+        soup = BeautifulSoup(html_text, choose_parser())
     for selector in (
         "meta[name='citation_article_type']",
         "meta[property='article:section']",
@@ -297,24 +302,6 @@ def _detect_html_hard_negative_signals_impl(
             provider_metadata and provider_metadata.get("explicit_no_access")
         ),
         html_text=html_text,
-    )
-
-
-def detect_html_hard_negative_signals(
-    title: str,
-    text: str,
-    response_status: int | None,
-    *,
-    requested_url: str | None = None,
-    final_url: str | None = None,
-) -> list[str]:
-    return _detect_html_hard_negative_signals_impl(
-        title,
-        text,
-        response_status,
-        requested_url=requested_url,
-        final_url=final_url,
-        include_paywall_text=True,
     )
 
 
@@ -458,28 +445,30 @@ def prefer_complete_ancestor(
     abstract_node_finder: Callable[[Tag], list[Tag]] | None = None,
     body_selectors: tuple[str, ...] = HTML_CONTAINER_BODY_SELECTORS,
 ) -> Tag:
-    best = node
-    best_key = (
-        container_completeness_score(
-            node,
-            abstract_node_finder=abstract_node_finder,
-            body_selectors=body_selectors,
+    return _prefer_complete_ancestor(
+        node,
+        lambda candidate: (
+            container_completeness_score(
+                candidate,
+                abstract_node_finder=abstract_node_finder,
+                body_selectors=body_selectors,
+            ),
+            score_container(candidate, score_profile=score_profile),
         ),
-        score_container(node, score_profile=score_profile),
     )
+
+
+def _prefer_complete_ancestor(
+    node: Tag, score_key: Callable[[Tag], tuple[int, float]]
+) -> Tag:
+    best = node
+    best_key = score_key(node)
     current = node.parent if isinstance(node.parent, Tag) else None
     depth = 0
     while isinstance(current, Tag) and depth < 8:
         if normalize_text(current.name or "").lower() == "html":
             break
-        current_key = (
-            container_completeness_score(
-                current,
-                abstract_node_finder=abstract_node_finder,
-                body_selectors=body_selectors,
-            ),
-            score_container(current, score_profile=score_profile),
-        )
+        current_key = score_key(current)
         if current_key > best_key:
             best = current
             best_key = current_key
@@ -488,38 +477,75 @@ def prefer_complete_ancestor(
     return best
 
 
+class _ContainerSelectionScores:
+    """Identity-based scores for one selection's current read-only DOM phase."""
+
+    def __init__(self, policy: HtmlContainerSelectionPolicy) -> None:
+        self.policy = policy
+        self.scores: dict[int, float] = {}
+        self.completeness: dict[int, int] = {}
+        self.ancestors: dict[int, Tag] = {}
+
+    def clear(self) -> None:
+        self.scores.clear()
+        self.completeness.clear()
+        self.ancestors.clear()
+
+    def score(self, node: Tag) -> float:
+        identity = id(node)
+        if identity not in self.scores:
+            self.scores[identity] = score_container(
+                node, score_profile=self.policy.score_profile
+            )
+        return self.scores[identity]
+
+    def key(self, node: Tag) -> tuple[int, float]:
+        identity = id(node)
+        if identity not in self.completeness:
+            self.completeness[identity] = container_completeness_score(
+                node,
+                abstract_node_finder=self.policy.abstract_node_finder,
+                body_selectors=self.policy.body_selectors,
+            )
+        return self.completeness[identity], self.score(node)
+
+    def ancestor(self, node: Tag) -> Tag:
+        identity = id(node)
+        if identity not in self.ancestors:
+            self.ancestors[identity] = _prefer_complete_ancestor(node, self.key)
+        return self.ancestors[identity]
+
+
 def _is_page_level_container(node: Tag | None) -> bool:
     if not isinstance(node, Tag):
         return False
     return normalize_text(node.name or "").lower() in {"html", "body"}
 
 
-def _refine_selected_container(node: Tag, policy: HtmlContainerSelectionPolicy) -> Tag:
-    refined_node = (
-        prefer_complete_ancestor(
-            node,
-            score_profile=policy.score_profile,
-            abstract_node_finder=policy.abstract_node_finder,
-            body_selectors=policy.body_selectors,
-        )
-        if policy.prefer_complete_ancestor
-        else node
-    )
+def _refine_selected_container(
+    node: Tag, policy: HtmlContainerSelectionPolicy, scores: _ContainerSelectionScores
+) -> Tag:
+    refined_node = scores.ancestor(node) if policy.prefer_complete_ancestor else node
     if policy.refine_selected_container is None:
         return refined_node
-    refined = policy.refine_selected_container(
-        refined_node,
-        direct_child_tags=_direct_child_tags,
-        class_tokens=_class_tokens,
-        container_completeness_score=lambda candidate: container_completeness_score(
-            candidate,
-            abstract_node_finder=policy.abstract_node_finder,
-            body_selectors=policy.body_selectors,
-        ),
-        score_container=lambda candidate: score_container(
-            candidate, score_profile=policy.score_profile
-        ),
-    )
+    # Refiners (notably T&F) may mutate the DOM between scoring callbacks.
+    scores.clear()
+    try:
+        refined = policy.refine_selected_container(
+            refined_node,
+            direct_child_tags=_direct_child_tags,
+            class_tokens=_class_tokens,
+            container_completeness_score=lambda candidate: container_completeness_score(
+                candidate,
+                abstract_node_finder=policy.abstract_node_finder,
+                body_selectors=policy.body_selectors,
+            ),
+            score_container=lambda candidate: score_container(
+                candidate, score_profile=policy.score_profile
+            ),
+        )
+    finally:
+        scores.clear()
     if isinstance(refined, Tag):
         return refined
     return refined_node
@@ -555,13 +581,9 @@ def select_best_container(
         body = soup.body
         return body if isinstance(body, Tag) else None
 
-    candidates.sort(
-        key=lambda node: score_container(
-            node, score_profile=active_policy.score_profile
-        ),
-        reverse=True,
-    )
-    preferred = _refine_selected_container(candidates[0], active_policy)
+    scores = _ContainerSelectionScores(active_policy)
+    candidates.sort(key=scores.score, reverse=True)
+    preferred = _refine_selected_container(candidates[0], active_policy, scores)
     if not active_policy.avoid_page_level_container or not _is_page_level_container(
         preferred
     ):
@@ -569,7 +591,7 @@ def select_best_container(
 
     alternative_nodes: list[Tag] = []
     for node in candidates:
-        alternative = _refine_selected_container(node, active_policy)
+        alternative = _refine_selected_container(node, active_policy, scores)
         if _is_page_level_container(alternative):
             continue
         alternative_nodes.append(alternative)
@@ -577,14 +599,7 @@ def select_best_container(
         return preferred
     return max(
         alternative_nodes,
-        key=lambda node: (
-            container_completeness_score(
-                node,
-                abstract_node_finder=active_policy.abstract_node_finder,
-                body_selectors=active_policy.body_selectors,
-            ),
-            score_container(node, score_profile=active_policy.score_profile),
-        ),
+        key=scores.key,
     )
 
 
@@ -625,22 +640,7 @@ def should_drop_node(
     )
     if decision.action == "drop":
         return True
-    try:
-        return any(
-            classify_availability_node(
-                node,
-                rules,
-                identity=identity,
-                text=text,
-                matched_selector=selector,
-                is_mathml_script=_is_mathml_script(node),
-            ).action
-            == "drop"
-            for selector in rules.remove_selectors
-            if node.select_one(selector) is node
-        )
-    except Exception:
-        return False
+    return False
 
 
 def _is_figure_media_node(node: Tag) -> bool:
@@ -877,13 +877,30 @@ def _analyze_html_structure(
     metadata: Mapping[str, Any] | None,
     final_url: str | None,
 ) -> tuple[StructuredBodyAnalysis, HtmlContainerEvidence | None, int | None]:
-    analysis = StructuredBodyAnalysis(
-        narrative_article_type=_is_narrative_article_type(
-            _extract_article_type(metadata, provider=provider, html_text=html_text)
-        )
+    return _analyze_html_structure_dom(
+        BeautifulSoup(html_text, choose_parser()),
+        provider=provider,
+        title=title,
+        metadata=metadata,
+        final_url=final_url,
     )
 
-    soup = BeautifulSoup(html_text, choose_parser())
+
+def _analyze_html_structure_dom(
+    soup: BeautifulSoup,
+    *,
+    provider: str | None,
+    title: str | None,
+    metadata: Mapping[str, Any] | None,
+    final_url: str | None,
+) -> tuple[StructuredBodyAnalysis, HtmlContainerEvidence | None, int | None]:
+    """Analyze an independent DOM with availability selection and cleanup."""
+    analysis = StructuredBodyAnalysis(
+        narrative_article_type=_is_narrative_article_type(
+            _extract_article_type(metadata, provider=provider, soup=soup)
+        )
+    )
+    page_text = normalize_text(" ".join(soup.stripped_strings))
     container = select_best_container(soup, provider)
     if container is None:
         _apply_availability_override_policy(
@@ -904,7 +921,6 @@ def _analyze_html_structure(
     )
     analysis.explicit_body_container = analysis.substantive_body_container
     container_text = normalize_text(container.get_text(" ", strip=True))
-    page_text = _normalized_page_text(html_text)
     analysis.page_has_paywall_text = contains_access_gate_text(page_text)
     analysis.container_has_paywall_text = contains_access_gate_text(container_text)
 
@@ -1222,11 +1238,13 @@ def _dom_access_hints(
     structure: StructuredBodyAnalysis,
     final_url: str | None,
     metadata: Mapping[str, Any] | None,
+    soup: BeautifulSoup | None = None,
 ) -> tuple[list[str], list[str], list[str]]:
     hard_negative_signals: list[str] = []
     abstract_only_hints: list[str] = []
     blocking_fallback_signals: list[str] = []
-    soup = BeautifulSoup(html_text, choose_parser())
+    if soup is None:
+        soup = BeautifulSoup(html_text, choose_parser())
     if soup.select_one(".accessDenialWidget"):
         hard_negative_signals.append(PUBLISHER_PAYWALL)
         blocking_fallback_signals.append(PUBLISHER_PAYWALL)
@@ -1299,8 +1317,11 @@ def _dom_access_hints(
     )
 
 
-def _count_figures_from_html(html_text: str) -> int:
-    soup = BeautifulSoup(html_text, choose_parser())
+def _count_figures_from_html(
+    html_text: str, *, soup: BeautifulSoup | None = None
+) -> int:
+    if soup is None:
+        soup = BeautifulSoup(html_text, choose_parser())
     figure_count = len(soup.find_all("figure"))
     if figure_count:
         return figure_count
@@ -1314,6 +1335,7 @@ def assess_html_fulltext_availability(
     provider: str | None = None,
     html_text: str | None = None,
     structure_html_text: str | None = None,
+    structure_dom: BeautifulSoup | None = None,
     title: str | None = None,
     response_status: int | None = None,
     requested_url: str | None = None,
@@ -1322,12 +1344,21 @@ def assess_html_fulltext_availability(
     container_text_length: int | None = None,
     container_evidence: HtmlContainerEvidence | None = None,
     section_hints: Any = None,
+    context: Any = None,
 ) -> FulltextAvailabilityDiagnostics:
     metadata_map = dict(metadata or {})
+    boundary = html_paywall_diagnostics(
+        html_text or "",
+        metadata=metadata_map,
+        source_url=final_url or requested_url or "",
+        provider=provider,
+        context=context,
+    )
     normalized_title = normalize_text(title or metadata_map.get("title") or "") or None
+    page_soup = BeautifulSoup(html_text, choose_parser()) if html_text else None
     page_text = (
-        _normalized_page_text(html_text or "")
-        if html_text
+        normalize_text(" ".join(page_soup.stripped_strings))
+        if page_soup is not None
         else normalize_text(markdown_text)
     )
     hard_negative_signals = _detect_html_hard_negative_signals_impl(
@@ -1344,11 +1375,15 @@ def assess_html_fulltext_availability(
     resolved_container_tag = container_tag
     resolved_container_text_length = container_text_length
     resolved_container_evidence = container_evidence
-    analyzed_html_text = structure_html_text or html_text
+    analyzed_html_text = structure_dom is not None or structure_html_text or html_text
     if analyzed_html_text:
         structure, inferred_container_evidence, inferred_container_text_length = (
-            _analyze_html_structure(
-                analyzed_html_text,
+            _analyze_html_structure_dom(
+                copy.deepcopy(structure_dom)
+                if structure_dom is not None
+                else BeautifulSoup(structure_html_text, choose_parser())
+                if structure_html_text
+                else copy.deepcopy(page_soup),
                 provider=provider,
                 title=normalized_title,
                 metadata=metadata_map,
@@ -1418,7 +1453,9 @@ def assess_html_fulltext_availability(
     soft_positive_signals: list[str] = []
     abstract_only_hints: list[str] = []
     blocking_fallback_signals: list[str] = list(hard_negative_signals)
-    figure_count = _count_figures_from_html(html_text or "") if html_text else 0
+    figure_count = (
+        _count_figures_from_html(html_text or "", soup=page_soup) if html_text else 0
+    )
     if body_ok:
         strong_positive_signals.append(BODY_SUFFICIENT)
     if structure.explicit_body_container:
@@ -1461,6 +1498,7 @@ def assess_html_fulltext_availability(
             structure=structure,
             final_url=final_url,
             metadata=metadata_map,
+            soup=page_soup,
         )
         hard_negative_signals.extend(dom_hard_negative_signals)
         hard_negative_signals.extend(structure.provider_hard_negative_signals)
@@ -1533,6 +1571,13 @@ def assess_html_fulltext_availability(
             )
         )
     )
+    if boundary:
+        body_ok = False
+        content_kind = boundary["content_kind"]
+        reason = ABSTRACT_ONLY if content_kind == ABSTRACT_ONLY else PUBLISHER_PAYWALL
+        blocking_fallback_signals = _dedupe_signals(
+            [*blocking_fallback_signals, PUBLISHER_PAYWALL]
+        )
     return FulltextAvailabilityDiagnostics(
         accepted=body_ok and not blocking_fallback_signals,
         reason=reason,
@@ -1548,6 +1593,7 @@ def assess_html_fulltext_availability(
         title=normalized_title,
         container_tag=resolved_container_tag,
         container_text_length=resolved_container_text_length,
+        confirmed_article_paywall=boundary.get(CONFIRMED_PAYWALL, {}),
     )
 
 

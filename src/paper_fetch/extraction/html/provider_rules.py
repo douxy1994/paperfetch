@@ -5,10 +5,10 @@ from __future__ import annotations
 import copy
 import warnings
 from collections.abc import Iterator, Mapping as MappingABC, Set as SetABC
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
-from typing import Any
-from collections.abc import Callable, Mapping
+from typing import Any, Protocol
+from collections.abc import Callable, Mapping, Sequence
 
 from ...common_patterns import EXTENDED_DATA_LABEL
 from ...utils import normalize_text
@@ -384,6 +384,20 @@ class ProviderHeadingRules:
     normalizations: Mapping[str, str] = field(default_factory=dict)
 
 
+class TableRenderHook(Protocol):
+    def __call__(self, node: Any, *, label: str, caption: str) -> str | None: ...
+
+
+class LeadingAuxiliaryBlockHook(Protocol):
+    def __call__(
+        self,
+        block: str,
+        *,
+        publisher: str,
+        figure_assets: Sequence[Mapping[str, Any]] | None,
+    ) -> bool: ...
+
+
 @dataclass(frozen=True)
 class DomHooks:
     before_block_normalization: Callable[[Any], None] | None = None
@@ -391,6 +405,8 @@ class DomHooks:
     body_container: Callable[[Any], None] | None = None
     asset_body_container: Callable[[Any], None] | None = None
     asset_figure_extraction: Callable[[Any], None] | None = None
+    before_inline_formula_normalization: Callable[[Any], None] | None = None
+    render_table: TableRenderHook | None = None
 
 
 @dataclass(frozen=True)
@@ -399,6 +415,7 @@ class MarkdownHooks:
     classify_heading: Callable[[str, str | None], str | None] | None = None
     keep_unknown_abstract_block: Callable[[str], bool] | None = None
     suppress_missing_abstract: Callable[[str], bool] | None = None
+    keep_leading_auxiliary_block: LeadingAuxiliaryBlockHook | None = None
 
 
 def _empty_availability_policy() -> AvailabilityPolicy:
@@ -429,7 +446,6 @@ def _availability_container_rules_from_site_rule_overrides(
 ) -> AvailabilityContainerRules:
     site_rule = _merged_site_rule_from_overrides(site_rule_overrides)
     return AvailabilityContainerRules(
-        candidate_selectors=tuple(site_rule.get("candidate_selectors") or ()),
         remove_selectors=tuple(site_rule.get("remove_selectors") or ()),
         drop_keywords=tuple(site_rule.get("drop_keywords") or ()),
         drop_texts=tuple(site_rule.get("drop_text") or ()),
@@ -450,14 +466,14 @@ def _availability_policy_with_defaults(
         container_rules = _availability_container_rules_from_site_rule_overrides(
             availability.site_rule_overrides
         )
-    return AvailabilityPolicy(
+    return replace(
+        availability,
         name=availability.name or provider_name,
         container_rules=container_rules,
         site_rule_overrides=availability.site_rule_overrides,
         datalayer_signal_set=availability.datalayer_signal_set,
         text_marker_signal_set=availability.text_marker_signal_set,
         overrides=availability.overrides,
-        no_signals=availability.no_signals,
         access_block_text_tokens=(
             availability.access_block_text_tokens or cleanup.access_block_text_tokens
         ),
@@ -562,21 +578,15 @@ _PROVIDER_HTML_RULES_CACHE: Mapping[str, ProviderHtmlRules] | None = None
 
 
 def _build_provider_html_rules() -> Mapping[str, ProviderHtmlRules]:
-    from ...provider_catalog import _registered_provider_bundles
+    from ...provider_catalog import PROVIDER_BUNDLES
 
     return MappingProxyType(
         {
             bundle.html_rules.name: bundle.html_rules
-            for bundle in _registered_provider_bundles()
+            for bundle in PROVIDER_BUNDLES
             if bundle.html_rules is not None
         }
     )
-
-
-def _provider_entry_imports_complete() -> bool:
-    import paper_fetch.providers as providers
-
-    return bool(getattr(providers, "_PROVIDER_ENTRY_IMPORTS_COMPLETE", False))
 
 
 def _provider_html_rules_map() -> Mapping[str, ProviderHtmlRules]:
@@ -584,8 +594,7 @@ def _provider_html_rules_map() -> Mapping[str, ProviderHtmlRules]:
     rules = _PROVIDER_HTML_RULES_CACHE
     if rules is None:
         rules = _build_provider_html_rules()
-        if _provider_entry_imports_complete():
-            _PROVIDER_HTML_RULES_CACHE = rules
+        _PROVIDER_HTML_RULES_CACHE = rules
     return rules
 
 
@@ -673,8 +682,7 @@ def _provider_lookup() -> Mapping[str, ProviderHtmlRules]:
     lookup = _PROVIDER_LOOKUP_CACHE
     if lookup is None:
         lookup = MappingProxyType(_build_provider_lookup())
-        if _provider_entry_imports_complete():
-            _PROVIDER_LOOKUP_CACHE = lookup
+        _PROVIDER_LOOKUP_CACHE = lookup
     return lookup
 
 
@@ -683,8 +691,7 @@ def _noise_profile_lookup() -> Mapping[str, ProviderHtmlRules]:
     lookup = _NOISE_PROFILE_LOOKUP_CACHE
     if lookup is None:
         lookup = MappingProxyType(_build_noise_profile_lookup())
-        if _provider_entry_imports_complete():
-            _NOISE_PROFILE_LOOKUP_CACHE = lookup
+        _NOISE_PROFILE_LOOKUP_CACHE = lookup
     return lookup
 
 
@@ -726,14 +733,6 @@ def _reset_provider_html_rules_cache() -> None:
     _PROVIDER_HTML_RULES_CACHE = None
     _PROVIDER_LOOKUP_CACHE = None
     _NOISE_PROFILE_LOOKUP_CACHE = None
-
-
-def _availability_container_rules_from_rules(
-    rules: ProviderHtmlRules,
-) -> AvailabilityContainerRules:
-    return _availability_container_rules_from_site_rule_overrides(
-        rules.availability.site_rule_overrides
-    )
 
 
 def _cleanup_policy_from_rules(rules: ProviderHtmlRules) -> CleanupPolicy:
@@ -815,24 +814,6 @@ def normalize_provider_heading(provider_name: str | None, heading: str | None) -
     return replacement or normalized
 
 
-def _dedupe_tuple(values: list[str]) -> tuple[str, ...]:
-    return tuple(dict.fromkeys(value for value in values if value))
-
-
-def all_provider_formula_container_tokens() -> tuple[str, ...]:
-    values: list[str] = []
-    for rules in PROVIDER_HTML_RULES.values():
-        values.extend(rules.formula.container_tokens)
-    return _dedupe_tuple(values)
-
-
-def all_provider_display_formula_selectors() -> tuple[str, ...]:
-    values: list[str] = []
-    for rules in PROVIDER_HTML_RULES.values():
-        values.extend(rules.formula.display_selectors)
-    return _dedupe_tuple(values)
-
-
 __all__ = [
     "AMS_DOM_POSTPROCESS_CLEANUP_SELECTORS",
     "AMS_FRONT_MATTER_PUBLICATION_KEYWORDS",
@@ -878,8 +859,6 @@ __all__ = [
     "ProviderFrontMatterRules",
     "ProviderHeadingRules",
     "ProviderHtmlRules",
-    "all_provider_display_formula_selectors",
-    "all_provider_formula_container_tokens",
     "asset_rules_for_provider",
     "availability_rules_for_provider",
     "cleanup_policy_for_profile",

@@ -1,15 +1,17 @@
 from __future__ import annotations
-
+from unittest import mock
 from dataclasses import replace
 from pathlib import Path
 import re
-
+import json
+import pytest
+from paper_fetch.extraction.image_payloads import image_mime_type_from_bytes
 from paper_fetch.providers.frontiers import FrontiersClient
 from paper_fetch.reason_codes import PDF_FALLBACK
-from tests.unit._atypon_browser_workflow_provider_support import png_header
-from tests.unit._paper_fetch_support import (
+from tests.support._atypon_browser_workflow_provider_support import png_header
+from tests.support._paper_fetch_support import (
     FixtureHtmlTransport,
-    fulltext_pdf_bytes,
+    build_pdf_bytes,
     http_response,
 )
 
@@ -26,6 +28,29 @@ SUPPLEMENT_URL = (
     "https://www.frontiersin.org/files/Articles/1101972/supplementary-material/"
     "Table_1.docx"
 )
+SUPPLEMENT_API_URL = (
+    "https://www.frontiersin.org/api/v4/articles/1101972/supplemental-data"
+)
+TARGET_DOI = "10.3389/fpls.2020.01216"
+TARGET_CANONICAL_FULL_URL = (
+    f"https://www.frontiersin.org/journals/plant-science/articles/{TARGET_DOI}/full"
+)
+TARGET_XML_URL = (
+    f"https://www.frontiersin.org/journals/plant-science/articles/{TARGET_DOI}/xml"
+)
+TARGET_IMAGE_STEMS = tuple(f"fpls-11-01216-g{index:03d}" for index in range(1, 6))
+TARGET_IMAGE_URLS = tuple(
+    f"https://www.frontiersin.org/files/Articles/569407/xml-images/{stem}.webp"
+    for stem in TARGET_IMAGE_STEMS
+)
+TARGET_WRONG_IMAGE_URLS = tuple(
+    f"https://www.frontiersin.org/files/Articles/01216/xml-images/{stem}.webp"
+    for stem in TARGET_IMAGE_STEMS
+)
+WEBP_1X1 = bytes.fromhex(
+    "52494646220000005745425056503820160000003001009d012a010001000140262500"
+    "4e8021f000fefee0000000"
+)
 
 
 def _landing_html() -> bytes:
@@ -41,6 +66,68 @@ def _landing_html() -> bytes:
   </head>
   <body><main class="ArticleDetailsV4__main">Frontiers article page</main></body>
 </html>
+""".encode()
+
+
+def _target_landing_html() -> bytes:
+    images = "\n".join(
+        f"""
+    <img
+      src="https://www.frontiersin.org/api/ipx/w=680&amp;f=webp/{url}"
+      data-original="{url}"
+      data-preview="https://www.frontiersin.org/files/Articles/569407/image_m/{stem}.jpg"
+    />
+"""
+        for stem, url in zip(TARGET_IMAGE_STEMS, TARGET_IMAGE_URLS, strict=True)
+    )
+    return f"""<!doctype html>
+<html>
+  <head><meta name="citation_doi" content="{TARGET_DOI}"></head>
+  <body>{images}</body>
+</html>
+""".encode()
+
+
+def _target_frontiers_xml() -> bytes:
+    body = " ".join(
+        [
+            "This Frontiers plant-science article contains complete methods, results, and discussion text.",
+            "The fixture preserves enough body prose for canonical JATS full-text acceptance.",
+        ]
+        * 18
+    )
+    figures = "\n".join(
+        f"""
+      <fig id="f{index}">
+        <label>Figure {index}</label>
+        <caption><p>Target Frontiers figure {index}.</p></caption>
+        <graphic mimetype="image" mime-subtype="tiff" xlink:href="{stem}.tif"/>
+      </fig>
+"""
+        for index, stem in enumerate(TARGET_IMAGE_STEMS, start=1)
+    )
+    return f"""<?xml version="1.0" encoding="UTF-8"?>
+<article xmlns:xlink="http://www.w3.org/1999/xlink" article-type="research-article">
+  <front>
+    <journal-meta>
+      <journal-title>Frontiers in Plant Science</journal-title>
+      <publisher><publisher-name>Frontiers Media S.A.</publisher-name></publisher>
+    </journal-meta>
+    <article-meta>
+      <article-id pub-id-type="doi">{TARGET_DOI}</article-id>
+      <title-group><article-title>Target Frontiers plant-science article</article-title></title-group>
+      <pub-date pub-type="epub"><year>2020</year></pub-date>
+      <abstract><p>Target Frontiers article abstract.</p></abstract>
+    </article-meta>
+  </front>
+  <body>
+    <sec id="s1">
+      <title>Results</title>
+      <p>{body}</p>
+      {figures}
+    </sec>
+  </body>
+</article>
 """.encode()
 
 
@@ -226,6 +313,10 @@ def test_frontiers_canonical_xml_route_does_not_request_landing_page() -> None:
     }
 
 
+@mock.patch(
+    "paper_fetch.providers._pdf_common._render_default_pdf_markdown",
+    new=lambda *a, **k: "Mock converter output. " * 120,
+)
 def test_frontiers_direct_pdf_fallback_does_not_request_landing_page() -> None:
     transport = FixtureHtmlTransport(
         {
@@ -236,7 +327,7 @@ def test_frontiers_direct_pdf_fallback_does_not_request_landing_page() -> None:
             ),
             PDF_URL: http_response(
                 PDF_URL,
-                fulltext_pdf_bytes(),
+                build_pdf_bytes(["doi:" + DOI, "Article body."]),
                 "application/pdf",
             ),
         }
@@ -455,6 +546,75 @@ def test_frontiers_asset_download_resolves_xml_image_filename(tmp_path: Path) ->
     assert IMAGE_URL not in rendered
 
 
+def test_frontiers_asset_download_uses_landing_page_original_images(
+    tmp_path: Path,
+) -> None:
+    responses = {
+        TARGET_XML_URL: http_response(
+            TARGET_XML_URL,
+            _target_frontiers_xml(),
+            "text/xml",
+        ),
+        TARGET_CANONICAL_FULL_URL: http_response(
+            TARGET_CANONICAL_FULL_URL,
+            _target_landing_html(),
+            "text/html",
+        ),
+        **{
+            url: http_response(url, WEBP_1X1, "image/webp") for url in TARGET_IMAGE_URLS
+        },
+    }
+    transport = FixtureHtmlTransport(responses)
+    client = FrontiersClient(transport, {})
+    metadata = {
+        "doi": TARGET_DOI,
+        "landing_page_url": TARGET_CANONICAL_FULL_URL,
+    }
+
+    # asset-download-contract: provider=frontiers
+    result = client.fetch_result(
+        TARGET_DOI,
+        metadata,
+        tmp_path,
+        asset_profile="body",
+    )
+
+    requested_urls = [str(call["url"]) for call in transport.calls]
+    assert requested_urls[0] == TARGET_XML_URL
+    assert requested_urls.count(TARGET_CANONICAL_FULL_URL) == 1
+    assert set(TARGET_IMAGE_URLS).issubset(requested_urls)
+    assert not set(TARGET_WRONG_IMAGE_URLS).intersection(requested_urls)
+    assert result.content is not None
+    assert all(url in (result.content.markdown_text or "") for url in TARGET_IMAGE_URLS)
+    assert not any(
+        url in (result.content.markdown_text or "") for url in TARGET_WRONG_IMAGE_URLS
+    )
+    assert result.artifacts.asset_failures == []
+    assert len(result.artifacts.assets) == 5
+    assert {asset["download_url"] for asset in result.artifacts.assets} == set(
+        TARGET_IMAGE_URLS
+    )
+
+    local_paths: list[Path] = []
+    for asset in result.artifacts.assets:
+        assert asset["download_tier"] == "full_size"
+        assert asset["full_size_url"] == asset["download_url"]
+        path = Path(asset["path"])
+        local_paths.append(path)
+        assert path.exists()
+        assert path.stat().st_size == len(WEBP_1X1)
+        assert image_mime_type_from_bytes(path.read_bytes()) == "image/webp"
+
+    rendered = result.article.to_ai_markdown(
+        include_refs="all",
+        asset_profile="body",
+        max_tokens="full_text",
+    )
+    assert all(str(path) in rendered for path in local_paths)
+    assert not any(url in rendered for url in TARGET_IMAGE_URLS)
+    assert not any(url in rendered for url in TARGET_WRONG_IMAGE_URLS)
+
+
 def test_frontiers_supplementary_assets_respect_profile_and_archive_state(
     tmp_path: Path,
 ) -> None:
@@ -516,7 +676,12 @@ def test_frontiers_unresolved_supplementary_asset_maps_to_landing_anchor(
     tmp_path: Path,
 ) -> None:
     transport = FixtureHtmlTransport(
-        {XML_URL: http_response(XML_URL, _frontiers_xml(), "text/xml")}
+        {
+            XML_URL: http_response(XML_URL, _frontiers_xml(), "text/xml"),
+            SUPPLEMENT_API_URL: http_response(
+                SUPPLEMENT_API_URL, b"[]", "application/json"
+            ),
+        }
     )
     client = FrontiersClient(transport, {})
     raw_payload = client.fetch_raw_fulltext(
@@ -549,7 +714,7 @@ def test_frontiers_unresolved_supplementary_asset_maps_to_landing_anchor(
     assert result["asset_failures"] == [
         {
             "kind": "supplementary",
-            "heading": "Supplementary material",
+            "heading": "Supplementary material (Table_1.docx)",
             "source_url": "Table_1.docx",
             "section": "supplementary",
             "reason": (
@@ -558,16 +723,24 @@ def test_frontiers_unresolved_supplementary_asset_maps_to_landing_anchor(
             "archive_state": "not_archived",
         }
     ]
-    assert [call["url"] for call in transport.calls] == [XML_URL]
+    assert [call["url"] for call in transport.calls] == [XML_URL, SUPPLEMENT_API_URL]
 
 
+@mock.patch(
+    "paper_fetch.providers._pdf_common._render_default_pdf_markdown",
+    new=lambda *a, **k: "Mock converter output. " * 120,
+)
 def test_frontiers_pdf_fallback_rejects_html_xml_candidate() -> None:
     transport = _frontiers_transport(
         {
             XML_URL: http_response(
                 XML_URL, b"<!doctype html><html>Not XML</html>", "text/html"
             ),
-            PDF_URL: http_response(PDF_URL, fulltext_pdf_bytes(), "application/pdf"),
+            PDF_URL: http_response(
+                PDF_URL,
+                build_pdf_bytes(["doi:" + DOI, "Article body."]),
+                "application/pdf",
+            ),
         }
     )
     client = FrontiersClient(transport, {})
@@ -579,7 +752,7 @@ def test_frontiers_pdf_fallback_rejects_html_xml_candidate() -> None:
     assert raw_payload.content.route_kind == PDF_FALLBACK
     markdown = raw_payload.content.markdown_text or ""
     # markdown-review: purpose=pdf_fallback doi=10.3389/fmars.2023.1101972
-    assert "Abstract" in markdown
+    assert markdown == "Mock converter output. " * 120
     assert "Access Denied" not in markdown
     assert article.source == "frontiers_pdf"
     assert "fulltext:frontiers_xml_fail" in article.quality.source_trail
@@ -601,3 +774,65 @@ def test_frontiers_catalog_routes_domain_publisher_and_doi_signals() -> None:
     )
     assert provider_for_source("frontiers_xml") == "frontiers"
     assert provider_for_source("frontiers_pdf") == "frontiers"
+
+
+@pytest.mark.parametrize(
+    "entries, expected_count",
+    [
+        ([{"name": "Table 1.DOCX", "downloadUrl": SUPPLEMENT_URL}], 1),
+        ([{"name": "Table_2.docx", "downloadUrl": SUPPLEMENT_URL}], 0),
+        (
+            [
+                {"name": "Table 1.docx", "downloadUrl": SUPPLEMENT_URL},
+                {"name": "Table_1.DOCX", "downloadUrl": SUPPLEMENT_URL + "?other=1"},
+            ],
+            0,
+        ),
+        ([{"name": "Table 1.docx", "downloadUrl": "javascript:;"}], 0),
+    ],
+)
+def test_frontiers_maps_relative_supplement_only_from_unique_api_name(
+    tmp_path: Path,
+    entries: list,
+    expected_count: int,
+) -> None:
+    transport = FixtureHtmlTransport(
+        {
+            XML_URL: http_response(XML_URL, _frontiers_xml(), "text/xml"),
+            SUPPLEMENT_API_URL: http_response(
+                SUPPLEMENT_API_URL, json.dumps(entries).encode(), "application/json"
+            ),
+            SUPPLEMENT_URL: http_response(
+                SUPPLEMENT_URL, b"PK\x03\x04supplement", "application/octet-stream"
+            ),
+        }
+    )
+    client = FrontiersClient(transport, {})
+    payload = client.fetch_raw_fulltext(
+        DOI, {"doi": DOI, "landing_page_url": CANONICAL_FULL_URL}
+    )
+    payload.content = replace(
+        payload.content,
+        extracted_assets=[
+            a
+            for a in payload.content.extracted_assets
+            if a.get("kind") == "supplementary"
+        ],
+    )
+    client.download_related_assets(
+        DOI, {"doi": DOI}, payload, tmp_path, asset_profile="body"
+    )
+    assert [call["url"] for call in transport.calls] == [XML_URL]
+    result = client.download_related_assets(
+        DOI, {"doi": DOI}, payload, tmp_path, asset_profile="all"
+    )
+    assert len(result["assets"]) == expected_count
+    assert len(result["asset_failures"]) == 1 - expected_count
+    if expected_count:
+        assert result["assets"][0]["download_url"] == SUPPLEMENT_URL
+        assert Path(result["assets"][0]["path"]).suffix == ".DOCX"
+        assert (
+            payload.content.extracted_assets[0]["source_page_url"] == SUPPLEMENT_API_URL
+        )
+    else:
+        assert SUPPLEMENT_URL not in [call["url"] for call in transport.calls]

@@ -1,6 +1,10 @@
-# ruff: noqa: F403,F405
 from __future__ import annotations
-
+from tests.support.ieee_provider_routes import (
+    _FakeIeeeBrowserContext,
+    _FakeIeeeBrowserPage,
+    _FakeIeeeBrowserResponse,
+)
+import json
 from paper_fetch.providers import (
     _ieee_block_page,
     _ieee_browser_html,
@@ -11,119 +15,8 @@ from paper_fetch.providers import (
     browser_runtime,
 )
 from paper_fetch.extraction.html.html_tags import HTML_DROP_TAGS
-
-from ._ieee_provider_support import *
-
-
-class _FakeIeeeBrowserResponse:
-    def __init__(
-        self,
-        url: str,
-        body: bytes,
-        *,
-        status: int | None = 200,
-        content_type: str | None = "text/html;charset=utf-8",
-    ) -> None:
-        self.url = url
-        self.status = status
-        self.headers = (
-            {"content-type": content_type} if content_type is not None else {}
-        )
-        self._body = body
-
-    def body(self) -> bytes:
-        return self._body
-
-    def all_headers(self) -> dict[str, str]:
-        return dict(self.headers)
-
-
-class _FakeIeeeBrowserLocator:
-    def __init__(self, page: _FakeIeeeBrowserPage) -> None:
-        self._page = page
-
-    def count(self) -> int:
-        return int(_ieee_html._find_ieee_article(self._page.html_text) is not None)
-
-
-class _FakeIeeeBrowserPage:
-    def __init__(
-        self,
-        document_url: str,
-        *,
-        initial_responses: list[_FakeIeeeBrowserResponse] | None = None,
-        delayed_responses: list[_FakeIeeeBrowserResponse] | None = None,
-        html_text: str = "<html><body>IEEE document shell</body></html>",
-        delayed_html_text: str | None = None,
-    ) -> None:
-        self.url = document_url
-        self.html_text = html_text
-        self.initial_responses = list(initial_responses or [])
-        self.delayed_responses = list(delayed_responses or [])
-        self.delayed_html_text = delayed_html_text
-        self.closed = False
-        self._response_handler = None
-
-    def on(self, event_name, handler):
-        assert event_name == "response"
-        self._response_handler = handler
-
-    def _emit(self, responses: list[_FakeIeeeBrowserResponse]) -> None:
-        if self._response_handler is None:
-            return
-        for response in responses:
-            self._response_handler(response)
-
-    def goto(self, url, **kwargs):
-        assert url == self.url
-        del kwargs
-        self._emit(self.initial_responses)
-        return mock.Mock(status=200)
-
-    def wait_for_timeout(self, timeout):
-        assert timeout > 0
-        delayed, self.delayed_responses = self.delayed_responses, []
-        self._emit(delayed)
-        if self.delayed_html_text is not None:
-            self.html_text, self.delayed_html_text = self.delayed_html_text, None
-
-    def locator(self, selector):
-        assert selector == "#article"
-        return _FakeIeeeBrowserLocator(self)
-
-    def content(self):
-        return self.html_text
-
-    def title(self):
-        return "IEEE Dynamic Article"
-
-    def evaluate(self, expression):
-        assert expression == "() => navigator.userAgent"
-        return "Mozilla/5.0 Fake IEEE Browser"
-
-    def close(self):
-        self.closed = True
-
-
-class _FakeIeeeBrowserContext:
-    def __init__(self, page: _FakeIeeeBrowserPage) -> None:
-        self.page = page
-        self.closed = False
-        self.route_pattern = ""
-
-    def route(self, pattern, handler):
-        del handler
-        self.route_pattern = pattern
-
-    def new_page(self):
-        return self.page
-
-    def cookies(self, urls=None):
-        del urls
-        return []
-
-    def close(self):
-        self.closed = True
+from tests.support._ieee_provider_support import *
+# ruff: noqa: F403,F405
 
 
 def _browser_landing_attempt(
@@ -149,7 +42,190 @@ def _browser_landing_attempt(
     )
 
 
+class _PagedReferenceTransport:
+    def __init__(self, page_factory):
+        self.page_factory = page_factory
+        self.urls: list[str] = []
+
+    def request(self, _method, url, **_kwargs):
+        self.urls.append(url)
+        start = (
+            int(url.split("start=", 1)[1].split("&", 1)[0]) if "start=" in url else 0
+        )
+        payload = {"references": self.page_factory(start)}
+        return {"body": json.dumps(payload).encode("utf-8")}
+
+
+def _reference_page(start: int, count: int = 30) -> list[dict[str, object]]:
+    return [
+        {
+            "order": str(index + 1),
+            "text": f"Reference {index + 1}",
+        }
+        for index in range(start, start + count)
+    ]
+
+
+def test_ieee_reference_pagination_continues_past_twentieth_page() -> None:
+    transport = _PagedReferenceTransport(lambda start: _reference_page(start))
+
+    references = _ieee_metadata.fetch_ieee_reference_metadata(
+        transport,
+        "123456",
+        headers={},
+        decode_body=lambda body: body.decode("utf-8"),
+        expected_count=601,
+    )
+
+    assert len(references) == 601
+    assert references[-1]["label"] == "601"
+    assert any("start=600" in url for url in transport.urls)
+    assert len(transport.urls) == 21
+
+
+def test_ieee_reference_pagination_stops_on_short_page() -> None:
+    transport = _PagedReferenceTransport(lambda start: _reference_page(start, 5))
+
+    references = _ieee_metadata.fetch_ieee_reference_metadata(
+        transport,
+        "123456",
+        headers={},
+        decode_body=lambda body: body.decode("utf-8"),
+    )
+
+    assert len(references) == 5
+    assert len(transport.urls) == 1
+
+
+def test_ieee_reference_pagination_stops_on_repeated_page() -> None:
+    transport = _PagedReferenceTransport(lambda _start: _reference_page(0))
+
+    references = _ieee_metadata.fetch_ieee_reference_metadata(
+        transport,
+        "123456",
+        headers={},
+        decode_body=lambda body: body.decode("utf-8"),
+    )
+
+    assert len(references) == 30
+    assert len(transport.urls) == 2
+
+
+def test_ieee_reference_pagination_obeys_total_deadline() -> None:
+    transport = _PagedReferenceTransport(lambda start: _reference_page(start))
+
+    with mock.patch.object(
+        _ieee_metadata.time,
+        "monotonic",
+        side_effect=[0.0, 0.0, 2.0],
+    ):
+        references = _ieee_metadata.fetch_ieee_reference_metadata(
+            transport,
+            "123456",
+            headers={},
+            timeout=1,
+            decode_body=lambda body: body.decode("utf-8"),
+        )
+
+    assert len(references) == 30
+    assert len(transport.urls) == 1
+
+
+def test_ieee_landing_fetches_advertised_references_with_unknown_count() -> None:
+    doi = "10.1109/TEST.2026.1"
+    article_number = "123456"
+    document_url = f"https://ieeexplore.ieee.org/document/{article_number}/"
+    references_url = (
+        f"https://ieeexplore.ieee.org/rest/document/{article_number}/references"
+    )
+    landing_metadata = {
+        "articleNumber": article_number,
+        "doi": doi,
+        "title": "Unknown Reference Count",
+        "sections": {"references": "true"},
+    }
+    html_text = (
+        "<script>xplGlobal = {document: {}}; xplGlobal.document.metadata = "
+        + json.dumps(landing_metadata)
+        + ";</script>"
+    )
+    transport = RecordingTransport(
+        {
+            ("GET", references_url): {
+                "status_code": 200,
+                "headers": {"content-type": "application/json"},
+                "body": json.dumps({"references": _reference_page(0, count=1)}).encode(
+                    "utf-8"
+                ),
+                "url": references_url,
+            }
+        }
+    )
+    client = IeeeClient(transport, {})
+
+    attempt = _ieee_landing.build_ieee_landing_attempt(
+        client,
+        doi,
+        {"doi": doi},
+        landing_url=document_url,
+        response_url=document_url,
+        html_text=html_text,
+        acquisition_source="direct_http",
+    )
+
+    assert len(attempt.merged_metadata["references"]) == 1
+    assert attempt.merged_metadata["references"][0]["raw"] == "Reference 1"
+    assert [call["url"] for call in transport.calls] == [references_url]
+
+
 class IeeeProviderRouteTests(unittest.TestCase):
+    def test_browser_html_accepts_native_final_url_without_context_route(self) -> None:
+        doi = "10.1109/TIM.2024.3509573"
+        article_number = "10772041"
+        landing_attempt = _browser_landing_attempt(doi, article_number)
+        document_url = landing_attempt.landing_url
+        rest_url = (
+            f"https://ieeexplore.ieee.org/rest/document/{article_number}/"
+            "?logAccess=true"
+        )
+
+        class RedirectPage(_FakeIeeeBrowserPage):
+            def goto(self, url, **kwargs):
+                response = super().goto(url, **kwargs)
+                self.url = "http://127.0.0.1/internal"
+                return response
+
+        page = RedirectPage(
+            document_url,
+            html_text=_dynamic_html(article_number).decode("utf-8"),
+        )
+        fake_context = _FakeIeeeBrowserContext(page)
+        fake_runtime = mock.Mock()
+        fake_runtime.env = {}
+        fake_runtime.new_browser_context_for_runtime_config.return_value = fake_context
+        runtime_config = browser_runtime.BrowserRuntimeConfig(
+            provider="ieee",
+            doi=doi,
+            artifact_dir=Path(tempfile.mkdtemp()),
+            headless=True,
+            user_agent=None,
+        )
+        result = _ieee_browser_html.fetch_ieee_browser_html_payload(
+            provider_name="ieee",
+            browser_user_agent=None,
+            landing_attempt=landing_attempt,
+            document_url=document_url,
+            rest_url=rest_url,
+            direct_html_failure=None,
+            context=fake_runtime,
+            runtime_config=runtime_config,
+            extraction_assets=lambda _extraction, _landing: [],
+        )
+
+        self.assertEqual(result.content.route_kind, "html")
+        self.assertEqual(fake_context.route_pattern, "")
+        self.assertEqual(page.route_pattern, "**/*")
+
     def test_landing_nonrecoverable_statuses_do_not_load_browser_runtime(self) -> None:
         doi = "10.1109/example.landing"
         landing_url = f"https://doi.org/{doi}"
@@ -249,7 +325,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
             }
         )
         client = IeeeClient(transport, {})
-        runtime = mock.Mock(backend="camoufox")
+        runtime = mock.Mock(backend="byparr")
         browser_result = browser_runtime.BrowserFetchedHtml(
             source_url=landing_url,
             final_url=landing_url,
@@ -261,7 +337,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
             browser_context_seed={
                 "browser_cookies": [{"name": "sid", "value": "one"}],
                 "browser_final_url": landing_url,
-                "paper_fetch_html_fetcher": "camoufox",
+                "paper_fetch_html_fetcher": "byparr",
             },
         )
 
@@ -285,7 +361,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
             attempt.browser_context_seed["browser_cookies"][0]["name"], "sid"
         )
         self.assertTrue(attempt.diagnostics["browser_attempted"])
-        self.assertEqual(attempt.diagnostics["browser_backend"], "camoufox")
+        self.assertEqual(attempt.diagnostics["browser_backend"], "byparr")
         mocked_load.assert_called_once()
         mocked_browser.assert_called_once()
         browser_kwargs = mocked_browser.call_args.kwargs
@@ -294,8 +370,8 @@ class IeeeProviderRouteTests(unittest.TestCase):
             _ieee_landing.IEEE_LANDING_BROWSER_READINESS_WAIT_SECONDS,
         )
         readiness = browser_kwargs["readiness"]
-        self.assertEqual(readiness.selector, "#article")
-        self.assertEqual(readiness.selector_text, article_number)
+        self.assertEqual(readiness.selector, "body")
+        self.assertEqual(readiness.selector_text, "xplGlobal.document.metadata")
         self.assertTrue(readiness.require_selector)
 
     def test_ieee_preferred_provider_is_accepted(self) -> None:
@@ -329,7 +405,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
         self.assertTrue(metadata["isDynamicHtml"])
 
     def test_ieee_block_page_detection_is_cached_in_runtime_context(self) -> None:
-        """rule: rule-ieee-html-access-waterfall"""
         context = RuntimeContext(env={})
         html = "<html><body>Your request has been blocked. Verify you are human.</body></html>"
         try:
@@ -351,7 +426,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
             context.close()
 
     def test_ieee_block_page_detection_ignores_nonvisible_html_tags(self) -> None:
-        """rule: rule-ieee-html-access-waterfall"""
         article_number = "10772041"
         source_url = (
             f"https://ieeexplore.ieee.org/rest/document/{article_number}/"
@@ -378,7 +452,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
     def test_ieee_block_page_detection_rejects_visible_challenge_with_article(
         self,
     ) -> None:
-        """rule: rule-ieee-html-access-waterfall"""
         article_number = "10772041"
         html = (
             _dynamic_html(article_number)
@@ -425,8 +498,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
             context.close()
 
     def test_landing_attempt_merges_ieee_keywords_and_reference_text(self) -> None:
-        """rule: rule-ieee-landing-metadata-references
-        rule: rule-fulltext-reference-priority"""
         doi = "10.1109/ACCESS.2024.3352924"
         article_number = "10388355"
         landing_url = f"https://ieeexplore.ieee.org/document/{article_number}/"
@@ -519,8 +590,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
     def test_landing_attempt_keeps_metadata_references_when_ieee_payload_is_empty(
         self,
     ) -> None:
-        """rule: rule-ieee-landing-metadata-references
-        rule: rule-fulltext-reference-priority"""
         doi = "10.1109/ACCESS.2024.3352924"
         article_number = "10388355"
         landing_url = f"https://ieeexplore.ieee.org/document/{article_number}/"
@@ -710,7 +779,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
             headers = {"content-type": "text/html;charset=utf-8"}
 
             def body(self):
-                return _dynamic_html(article_number)
+                raise AssertionError("IEEE REST browser body must not be read")
 
             def all_headers(self):
                 return dict(self.headers)
@@ -743,9 +812,21 @@ class IeeeProviderRouteTests(unittest.TestCase):
                 return None
 
             def wait_for_timeout(self, timeout):
-                assert (
-                    timeout == _ieee_browser_html.IEEE_BROWSER_HTML_REST_WAIT_TIMEOUT_MS
-                )
+                raise AssertionError(f"ready DOM must not poll: {timeout}")
+
+            def locator(self, selector):
+                assert selector == "#article"
+                return SimpleNamespace(count=lambda: 1)
+
+            def content(self):
+                return _dynamic_html(article_number).decode("utf-8")
+
+            def title(self):
+                return "IEEE Dynamic Article"
+
+            def evaluate(self, expression):
+                assert expression == "() => navigator.userAgent"
+                return "Mozilla/5.0 Fake IEEE Browser"
 
             def close(self):
                 self.closed = True
@@ -766,9 +847,19 @@ class IeeeProviderRouteTests(unittest.TestCase):
             def close(self):
                 self.closed = True
 
-        fake_browser_context = FakeBrowserContext()
+        # The response listener sees REST metadata, while the page DOM
+        # is the only full-text body source.
+        fake_browser_context = _FakeIeeeBrowserContext(
+            _FakeIeeeBrowserPage(
+                document_url,
+                initial_responses=[
+                    _FakeIeeeBrowserResponse(rest_url, _dynamic_html(article_number))
+                ],
+                html_text=_dynamic_html(article_number).decode("utf-8"),
+            )
+        )
         fake_runtime = mock.Mock()
-        fake_runtime.env = {"PAPER_FETCH_BROWSER_BACKEND": "camoufox"}
+        fake_runtime.env = {}
         fake_runtime.new_browser_context_for_runtime_config.return_value = (
             fake_browser_context
         )
@@ -786,7 +877,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
         self.assertEqual(raw_payload.content.fetcher, "camoufox_ieee_html")
         self.assertEqual(
             raw_payload.content.diagnostics["browser_html"]["payload_source"],
-            "rest_response",
+            "dom_article",
         )
         self.assertEqual(
             raw_payload.content.diagnostics["browser_html"]["direct_html_failure"][
@@ -794,11 +885,12 @@ class IeeeProviderRouteTests(unittest.TestCase):
             ],
             "no_access",
         )
-        self.assertEqual(fake_browser_context.route_pattern, "**/*")
-        self.assertTrue(fake_browser_context.closed)
+        self.assertEqual(fake_browser_context.route_pattern, "")
+        self.assertEqual(fake_browser_context.page.route_pattern, "**/*")
+        self.assertFalse(fake_browser_context.closed)
         self.assertTrue(fake_browser_context.page.closed)
 
-    def test_browser_rest_selection_skips_newer_invalid_response(self) -> None:
+    def test_browser_rest_selection_keeps_metadata_without_reading_body(self) -> None:
         article_number = "10772041"
         rest_url = (
             f"https://ieeexplore.ieee.org/rest/document/{article_number}/"
@@ -818,12 +910,13 @@ class IeeeProviderRouteTests(unittest.TestCase):
             rest_url,
         )
 
-        self.assertIsNotNone(selection.selected)
-        self.assertIn('id="article"', selection.selected.html_text)
+        self.assertIsNone(selection.selected)
         self.assertEqual(selection.response_count, 2)
-        self.assertEqual(selection.invalid_response_count, 1)
+        self.assertEqual(selection.invalid_response_count, 2)
         self.assertIsNotNone(selection.latest_invalid)
-        self.assertNotIn("#article", selection.latest_invalid.html_text)
+        self.assertEqual(selection.latest_invalid.html_text, "")
+        self.assertEqual(valid_response.body_calls, 0)
+        self.assertEqual(invalid_response.body_calls, 0)
 
     def test_browser_rest_selection_rejects_mismatched_article_number(self) -> None:
         article_number = "10772041"
@@ -873,7 +966,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
         self.assertEqual(selection.response_count, 2)
         self.assertEqual(selection.invalid_response_count, 2)
 
-    def test_browser_rest_selection_allows_unknown_response_metadata(self) -> None:
+    def test_browser_rest_unknown_metadata_remains_non_body_candidate(self) -> None:
         article_number = "10772041"
         rest_url = (
             f"https://ieeexplore.ieee.org/rest/document/{article_number}/"
@@ -892,11 +985,11 @@ class IeeeProviderRouteTests(unittest.TestCase):
             rest_url,
         )
 
-        self.assertIsNotNone(selection.selected)
+        self.assertIsNone(selection.selected)
         self.assertEqual(selection.response_count, 1)
-        self.assertEqual(selection.invalid_response_count, 0)
+        self.assertEqual(selection.invalid_response_count, 1)
 
-    def test_browser_html_waits_past_invalid_rest_for_valid_response(self) -> None:
+    def test_browser_html_waits_for_dom_while_rest_bodies_remain_unread(self) -> None:
         doi = "10.1109/TIM.2024.3509573"
         article_number = "10772041"
         document_url = f"https://ieeexplore.ieee.org/document/{article_number}/"
@@ -915,10 +1008,11 @@ class IeeeProviderRouteTests(unittest.TestCase):
             delayed_responses=[
                 _FakeIeeeBrowserResponse(rest_url, _dynamic_html(article_number))
             ],
+            delayed_html_text=_dynamic_html(article_number).decode("utf-8"),
         )
         fake_browser_context = _FakeIeeeBrowserContext(page)
         fake_runtime = mock.Mock()
-        fake_runtime.env = {"PAPER_FETCH_BROWSER_BACKEND": "camoufox"}
+        fake_runtime.env = {}
         fake_runtime.new_browser_context_for_runtime_config.return_value = (
             fake_browser_context
         )
@@ -933,10 +1027,10 @@ class IeeeProviderRouteTests(unittest.TestCase):
         )
 
         browser_diagnostics = raw_payload.content.diagnostics["browser_html"]
-        self.assertEqual(browser_diagnostics["payload_source"], "rest_response")
+        self.assertEqual(browser_diagnostics["payload_source"], "dom_article")
         self.assertEqual(browser_diagnostics["rest_response_count"], 2)
-        self.assertEqual(browser_diagnostics["invalid_rest_response_count"], 1)
-        self.assertTrue(fake_browser_context.closed)
+        self.assertEqual(browser_diagnostics["invalid_rest_response_count"], 2)
+        self.assertFalse(fake_browser_context.closed)
         self.assertTrue(page.closed)
 
     def test_browser_html_uses_ready_dom_after_invalid_rest_response(self) -> None:
@@ -959,7 +1053,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
         )
         fake_browser_context = _FakeIeeeBrowserContext(page)
         fake_runtime = mock.Mock()
-        fake_runtime.env = {"PAPER_FETCH_BROWSER_BACKEND": "camoufox"}
+        fake_runtime.env = {}
         fake_runtime.new_browser_context_for_runtime_config.return_value = (
             fake_browser_context
         )
@@ -991,7 +1085,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
         )
         fake_browser_context = _FakeIeeeBrowserContext(page)
         fake_runtime = mock.Mock()
-        fake_runtime.env = {"PAPER_FETCH_BROWSER_BACKEND": "camoufox"}
+        fake_runtime.env = {}
         fake_runtime.new_browser_context_for_runtime_config.return_value = (
             fake_browser_context
         )
@@ -1029,7 +1123,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
         page = _FakeIeeeBrowserPage(document_url, html_text=article_html)
         fake_browser_context = _FakeIeeeBrowserContext(page)
         fake_runtime = mock.Mock()
-        fake_runtime.env = {"PAPER_FETCH_BROWSER_BACKEND": "camoufox"}
+        fake_runtime.env = {}
         fake_runtime.new_browser_context_for_runtime_config.return_value = (
             fake_browser_context
         )
@@ -1073,7 +1167,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
             output_dir = Path(tmpdir)
             runtime = RuntimeContext(
                 env={
-                    "PAPER_FETCH_BROWSER_BACKEND": "camoufox",
                     "PAPER_FETCH_BROWSER_USER_DATA_DIR": str(
                         output_dir / "browser-profile"
                     ),
@@ -1119,7 +1212,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
             finally:
                 runtime.close()
 
-    def test_invalid_browser_rest_challenge_keeps_block_classification(self) -> None:
+    def test_browser_rest_challenge_body_is_not_materialized(self) -> None:
         doi = "10.1109/TIM.2024.3509573"
         article_number = "10772041"
         document_url = f"https://ieeexplore.ieee.org/document/{article_number}/"
@@ -1143,7 +1236,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = RuntimeContext(
                 env={
-                    "PAPER_FETCH_BROWSER_BACKEND": "camoufox",
                     "PAPER_FETCH_BROWSER_USER_DATA_DIR": str(
                         Path(tmpdir) / "browser-profile"
                     ),
@@ -1173,10 +1265,10 @@ class IeeeProviderRouteTests(unittest.TestCase):
                     )
 
                 failure = raised.exception
-                self.assertEqual(failure.error_category, "cloudflare_challenge")
-                self.assertFalse(failure.retryable)
-                self.assertEqual(failure.stage, "block_detection")
-                self.assertEqual(failure.details["payload_source"], "rest_response")
+                self.assertEqual(failure.error_category, "browser_rest_wait_timeout")
+                self.assertTrue(failure.retryable)
+                self.assertEqual(failure.stage, "rest_readiness")
+                self.assertEqual(page.initial_responses[0].body_calls, 0)
             finally:
                 runtime.close()
 
@@ -1206,7 +1298,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime = RuntimeContext(
                 env={
-                    "PAPER_FETCH_BROWSER_BACKEND": "camoufox",
                     "PAPER_FETCH_BROWSER_USER_DATA_DIR": str(
                         Path(tmpdir) / "browser-profile"
                     ),
@@ -1240,10 +1331,6 @@ class IeeeProviderRouteTests(unittest.TestCase):
                 self.assertFalse(failure.retryable)
                 self.assertEqual(failure.stage, "block_detection")
                 self.assertEqual(failure.details["challenge_provider"], "aws_waf")
-                self.assertEqual(
-                    failure.details["legacy_reason_code"],
-                    "cloudflare_challenge",
-                )
             finally:
                 runtime.close()
 
@@ -1367,7 +1454,7 @@ class IeeeProviderRouteTests(unittest.TestCase):
             ),
             mock.patch.object(
                 ieee_provider,
-                "fetch_pdf_with_playwright",
+                "fetch_pdf_with_browser",
                 side_effect=PdfFetchFailure(
                     "publisher_access_challenge", "Browser PDF reached an access page."
                 ),

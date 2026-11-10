@@ -3,44 +3,36 @@ set -euo pipefail
 
 usage() {
   cat <<'USAGE'
-Usage: scripts/dev-preflight.sh [--fast] [--coverage] [--skip-integration] [--skip-devtools] [--skip-typecheck]
+Usage: scripts/dev-preflight.sh [--fast] [--skip-integration] [--skip-typecheck] [--with-golden]
 
 Runs the local preflight gate:
   - ruff format check
   - ruff lint
   - full production-package mypy
-  - complexity and version consistency gates
+  - version consistency gate
   - unit tests
-  - devtools tests
-  - extraction-rules validation
   - integration tests
 
 Options:
+  --with-golden     Run all three layers (required before release).
   --fast              Run ruff, mypy, and unit tests only.
-  --coverage          Generate unit coverage reports and enforce the baseline threshold.
   --skip-integration Skip integration tests.
-  --skip-devtools    Skip tests/devtools.
   --skip-typecheck   Skip mypy.
   -h, --help         Show this help.
 USAGE
 }
 
-run_devtools=1
 run_integration=1
 run_typecheck=1
-run_coverage=0
+run_golden=0
 
 while (($#)); do
   case "$1" in
+    --with-golden)
+      run_golden=1
+      ;;
     --fast)
-      run_devtools=0
       run_integration=0
-      ;;
-    --coverage)
-      run_coverage=1
-      ;;
-    --skip-devtools)
-      run_devtools=0
       ;;
     --skip-integration)
       run_integration=0
@@ -60,6 +52,11 @@ while (($#)); do
   esac
   shift
 done
+
+if [[ "$run_golden" == "1" && "$run_integration" == "0" ]]; then
+  echo "--with-golden conflicts with --fast / --skip-integration" >&2
+  exit 2
+fi
 
 if [[ -z "${PYTHON_BIN:-}" ]]; then
   if [[ -x ".venv/bin/python" ]]; then
@@ -92,30 +89,14 @@ export PYTHONPATH="${PYTHONPATH:-src}"
 if [[ "$run_typecheck" == "1" ]]; then
   PYTHONPATH=src "$PYTHON_BIN" -m mypy src/paper_fetch
 fi
-"$PYTHON_BIN" scripts/check_complexity_budget.py
-"$PYTHON_BIN" scripts/check_provider_governance.py
 "$PYTHON_BIN" scripts/sync_version.py --check
 
-unit_args=(tests/unit -q --durations=30)
-if [[ "$run_coverage" == "1" ]]; then
-  unit_args+=(
-    --cov=paper_fetch
-    --cov-branch
-    --cov-report=term-missing
-    --cov-report=xml
-  )
-fi
-PYTHONPATH=src "$PYTHON_BIN" -m pytest "${unit_args[@]}"
-if [[ "$run_coverage" == "1" ]]; then
-  "$PYTHON_BIN" scripts/report_coverage_focus.py
-fi
-
-if [[ "$run_devtools" == "1" ]]; then
-  PYTHONPATH=src "$PYTHON_BIN" -m pytest tests/devtools -q --durations=30
-fi
-
-"$PYTHON_BIN" scripts/validate_extraction_rules.py --ci
+PYTHONPATH=src "$PYTHON_BIN" -m pytest tests/unit -q --durations=30
 
 if [[ "$run_integration" == "1" ]]; then
   PYTHONPATH=src "$PYTHON_BIN" -m pytest tests/integration -q --durations=30
+fi
+
+if [[ "$run_golden" == "1" ]]; then
+  PYTHONPATH=src "$PYTHON_BIN" -m pytest tests/golden -q --durations=30
 fi

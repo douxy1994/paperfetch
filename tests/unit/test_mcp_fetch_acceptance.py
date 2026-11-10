@@ -1,13 +1,10 @@
 from __future__ import annotations
-
-from pathlib import Path
-
 import pytest
-
 from paper_fetch.mcp.fetch_tool import build_fetch_tool_result
 from paper_fetch.mcp.schemas import FetchPaperRequest
 from paper_fetch.mcp.server import build_server
 from paper_fetch.models import (
+    AcquisitionProvenance,
     ArticleModel,
     FetchEnvelope,
     Metadata,
@@ -15,7 +12,8 @@ from paper_fetch.models import (
     Section,
     SemanticLosses,
 )
-from paper_fetch.tracing import source_trail_from_trace, trace_event
+from paper_fetch.tracing import TraceContext, source_trail_from_trace, trace_event
+from tests.support._mcp_support import assert_mcp_tool_omits_output_schema
 
 
 def _successful_trace():
@@ -25,8 +23,7 @@ def _successful_trace():
             "fulltext",
             "elsevier",
             "ok",
-            provider="elsevier",
-            route="xml",
+            context=TraceContext(provider="elsevier", route="xml"),
         ),
     ]
 
@@ -54,6 +51,12 @@ def _fulltext_envelope(
         doi="10.1000/acceptance",
         source="elsevier_xml",
         metadata=metadata,
+        acquisition=AcquisitionProvenance(
+            provider="elsevier",
+            route="xml_api",
+            representation="xml",
+            transport="api",
+        ),
         sections=[
             Section(
                 heading="Introduction",
@@ -105,6 +108,12 @@ def _limited_envelope(content_kind: str) -> FetchEnvelope:
         doi="10.1000/limited",
         source="crossref_meta",
         has_fulltext=False,
+        acquisition=AcquisitionProvenance(
+            provider="crossref",
+            route="metadata",
+            representation="metadata",
+            transport="api",
+        ),
         content_kind=content_kind,
         has_abstract=has_abstract,
         source_trail=source_trail,
@@ -144,7 +153,9 @@ def test_successful_fetch_returns_ok_status_and_compact_acceptance() -> None:
     payload = result.structured_content
     assert payload is not None
     assert payload["status"] == "ok"
-    assert payload["acceptance"] == {
+    acceptance = dict(payload["acceptance"])
+    asset_summary = acceptance.pop("asset_summary")
+    assert acceptance == {
         "overall": "complete",
         "identity": "resolved",
         "fetch": "ok",
@@ -152,16 +163,25 @@ def test_successful_fetch_returns_ok_status_and_compact_acceptance() -> None:
         "asset": "not_requested",
         "output": "complete",
         "provenance": "complete",
+        "acquisition": {
+            "provider": "elsevier",
+            "route": "xml_api",
+            "representation": "xml",
+            "transport": "api",
+            "fallback_used": False,
+        },
         "has_fulltext": True,
         "has_abstract": True,
         "token_estimate": 128,
     }
+    assert asset_summary["status"] == "not_requested"
+    assert asset_summary["require_local_body_assets"] is False
+    assert asset_summary["require_full_size_body_assets"] is False
+    assert asset_summary["body_discovered"] == 0
+    assert asset_summary["local_body_assets_satisfied"] is True
+    assert asset_summary["full_size_body_assets_satisfied"] is True
 
-    output_model = (
-        build_server()._tool_manager._tools["fetch_paper"].fn_metadata.output_model
-    )
-    assert output_model is not None
-    output_model.model_validate(payload)
+    assert_mcp_tool_omits_output_schema(build_server(), "fetch_paper", payload)
 
 
 def test_fetch_acceptance_preserves_quality_degradation() -> None:
@@ -176,6 +196,32 @@ def test_fetch_acceptance_preserves_quality_degradation() -> None:
     assert payload["acceptance"]["overall"] == "degraded"
     assert payload["acceptance"]["content"] == "fulltext"
     assert payload["quality"]["semantic_losses"]["table_fallback_count"] == 1
+
+
+def test_mcp_full_size_requirement_implies_local_and_reaches_acceptance() -> None:
+    request = FetchPaperRequest.model_validate(
+        {
+            "query": "10.1000/acceptance",
+            "modes": ["article", "markdown"],
+            "strategy": {
+                "asset_profile": "body",
+                "require_full_size_body_assets": True,
+            },
+        }
+    )
+
+    result = build_fetch_tool_result(_fulltext_envelope(), request)
+
+    assert request.strategy.require_local_body_assets is True
+    assert request.strategy.to_service_strategy().require_local_body_assets is True
+    payload = result.structured_content
+    assert payload is not None
+    assert payload["status"] == "ok"
+    summary = payload["acceptance"]["asset_summary"]
+    assert summary["require_local_body_assets"] is True
+    assert summary["require_full_size_body_assets"] is True
+    assert payload["acceptance"]["fetch"] == "ok"
+    assert payload["acceptance"]["overall"] == "degraded"
 
 
 @pytest.mark.parametrize("content_kind", ["abstract_only", "metadata_only"])
@@ -201,13 +247,11 @@ def test_saved_markdown_compaction_keeps_pre_compaction_acceptance() -> None:
             modes=["article", "markdown"],
             save_markdown=True,
         ),
-        saved_markdown_path=Path("/tmp/acceptance.md"),
     )
 
     payload = result.structured_content
     assert payload is not None
     assert payload["article"] is None
     assert payload["markdown"] is None
-    assert payload["saved_markdown_path"] == "/tmp/acceptance.md"
     assert payload["acceptance"]["overall"] == "complete"
     assert payload["acceptance"]["output"] == "complete"

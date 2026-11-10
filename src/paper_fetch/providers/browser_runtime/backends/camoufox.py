@@ -2,29 +2,19 @@
 
 from __future__ import annotations
 
-import importlib
+from .playwright import PlaywrightBackend
+
 from importlib import metadata as importlib_metadata
 from importlib import util as importlib_util
-import json
-import os
-from pathlib import Path
 import time
 from typing import Any
 from collections.abc import Mapping
 
 from ....config import (
-    BROWSER_BINARY_PATH_ENV_VAR,
-    BROWSER_HEADLESS_ENV_VAR,
-    BROWSER_TIMEOUT_MS_ENV_VAR,
     BROWSER_USER_AGENT_ENV_VAR,
-    browser_env_value,
-    parse_positive_int_env,
-    resolve_user_data_dir,
 )
-from ....failure import FailureDiagnostics
 from ....reason_codes import ERROR, NOT_CONFIGURED, OK, READY
-from ....utils import normalize_text, sanitize_filename
-from ... import _playwright_browser
+from ....utils import normalize_text
 from ...base import (
     ProviderFailure,
     ProviderStatusResult,
@@ -33,7 +23,8 @@ from ...base import (
 )
 from .. import paths as runtime_paths
 from ..context import open_browser_context
-from ..types import BrowserFetchedHtml, BrowserRuntimeConfig, BrowserWarmResult
+from ..preparation import probe_camoufox_managed_runtime
+from ..types import BrowserRuntimeConfig
 
 CAMOUFOX_STATUS_PROBE_ID = "probe://camoufox/status"
 
@@ -65,31 +56,18 @@ def _dependency_details() -> dict[str, Any]:
             details[f"{package}_version"] = None
     if packages["camoufox"]:
         try:
-            pkgman = importlib.import_module("camoufox.pkgman")
-            multiversion = importlib.import_module("camoufox.multiversion")
-            config_path = Path(multiversion.CONFIG_FILE)
-            config_payload = (
-                json.loads(config_path.read_text(encoding="utf-8"))
-                if config_path.is_file()
-                else {}
-            )
-            active_version = normalize_text(
-                str(
-                    config_payload.get("active_version")
-                    if isinstance(config_payload, Mapping)
-                    else ""
-                )
-            )
-            runtime_path = (
-                Path(pkgman.INSTALL_DIR) / active_version if active_version else None
-            )
+            probe = probe_camoufox_managed_runtime()
+            runtime_path = probe.runtime_path
             details["runtime_path"] = (
                 str(runtime_path) if runtime_path is not None else None
             )
-            details["runtime_installed"] = bool(
-                runtime_path is not None and runtime_path.is_dir()
-            )
-            details["download_required"] = not details["runtime_installed"]
+            details["runtime_installed"] = probe.installed
+            details["runtime_valid"] = probe.valid
+            details["runtime_state"] = probe.state
+            details["runtime_version"] = probe.version
+            details["download_required"] = not probe.valid
+            if probe.message:
+                details["runtime_probe_message"] = probe.message
         except Exception as exc:
             details["runtime_probe_error"] = normalize_text(str(exc))
     return details
@@ -107,85 +85,27 @@ def _package_ready(details: Mapping[str, Any]) -> bool:
 def _runtime_installed(details: Mapping[str, Any]) -> bool:
     # The fallback keeps third-party/test probes that predate the richer status
     # payload compatible. The production probe always supplies runtime_installed.
+    if "runtime_valid" in details:
+        return bool(details.get("runtime_valid"))
     if "runtime_installed" not in details:
         return _package_ready(details)
     return bool(details.get("runtime_installed"))
 
 
-class CamoufoxBackend:
+class CamoufoxBackend(PlaywrightBackend):
     name = "camoufox"
 
-    def load_runtime_config(
-        self,
-        env: Mapping[str, str],
-        *,
-        provider: str,
-        doi: str,
-        require_storage_state: bool = False,
-    ) -> BrowserRuntimeConfig:
-        binary_value = browser_env_value(env, BROWSER_BINARY_PATH_ENV_VAR)
-        binary_path = binary_value or None
-        if binary_path:
-            path = Path(binary_path).expanduser()
-            if not path.is_file():
-                raise ProviderFailure(
-                    NOT_CONFIGURED,
-                    f"{BROWSER_BINARY_PATH_ENV_VAR} does not point to a file: {path}",
-                )
-            if os.name != "nt" and not os.access(path, os.X_OK):
-                raise ProviderFailure(
-                    NOT_CONFIGURED,
-                    f"{BROWSER_BINARY_PATH_ENV_VAR} is not executable: {path}",
-                )
-            binary_path = str(path)
+    def prepare(self, config, *, runtime_context=None):
+        from ..camoufox_manager import _launch_executable_path
 
-        profile_dir = runtime_paths.configured_profile_dir(
-            env, provider=provider, backend=self.name
-        )
-        user_data_dir = runtime_paths.configured_user_data_dir(env, backend=self.name)
-        if profile_dir is None and user_data_dir is None:
-            user_data_dir = runtime_paths.default_provider_user_data_dir(
-                env, provider=provider, backend=self.name
-            )
-        storage_state_path = runtime_paths.configured_storage_state_path(
-            env, provider=provider
-        )
-        storage_state_env_var = runtime_paths.provider_storage_state_env_var(provider)
-        runtime_paths.validate_storage_state_path(
-            storage_state_path,
-            provider=provider,
-            require_storage_state=require_storage_state,
-            explicit_path=bool(
-                (
-                    env.get(storage_state_env_var, "") if storage_state_env_var else ""
-                ).strip()
-            ),
-        )
-        timeout_value = browser_env_value(env, BROWSER_TIMEOUT_MS_ENV_VAR)
-        return BrowserRuntimeConfig(
-            provider=provider,
-            doi=doi,
-            artifact_dir=(
-                resolve_user_data_dir(env)
-                / "publisher-browser-artifacts"
-                / provider
-                / sanitize_filename(doi)
-            ),
-            headless=not _env_flag_false(
-                browser_env_value(env, BROWSER_HEADLESS_ENV_VAR)
-            ),
-            user_agent=None,
-            timeout_ms=parse_positive_int_env(
-                {BROWSER_TIMEOUT_MS_ENV_VAR: timeout_value},
-                BROWSER_TIMEOUT_MS_ENV_VAR,
-                default=_playwright_browser.DEFAULT_BROWSER_RUNTIME_MAX_TIMEOUT_MS,
-            ),
-            binary_path=binary_path,
-            profile_dir=profile_dir,
-            user_data_dir=user_data_dir,
-            storage_state_path=storage_state_path,
-            backend=self.name,
-        )
+        if runtime_context is not None:
+            runtime_context.raise_if_cancelled()
+        return _launch_executable_path(config.binary_path)
+
+    def create_manager(self, config, *, runtime_context=None):
+        from ..profile import PublisherProfileManager
+
+        return PublisherProfileManager(config, runtime_context=runtime_context)
 
     def ensure_runtime_ready(self, config: BrowserRuntimeConfig) -> None:
         details = _dependency_details()
@@ -193,19 +113,6 @@ class CamoufoxBackend:
             raise ProviderFailure(
                 NOT_CONFIGURED,
                 "Camoufox browser workflow requires compatible camoufox and playwright packages.",
-            )
-        if not config.binary_path and not _runtime_installed(details):
-            raise ProviderFailure(
-                NOT_CONFIGURED,
-                "Camoufox Python packages are installed, but the browser runtime is missing. "
-                "Prepare the Camoufox runtime explicitly before fetching.",
-                diagnostics=FailureDiagnostics(
-                    details={
-                        "package_ready": True,
-                        "runtime_installed": False,
-                        "download_required": True,
-                    }
-                ),
             )
 
     def probe_runtime_status(
@@ -279,7 +186,7 @@ class CamoufoxBackend:
                     if available
                     else (
                         "Camoufox Python packages are installed, but the browser runtime "
-                        "must be prepared explicitly before fetching."
+                        "will be prepared automatically when a browser session is first needed."
                         if package_ready
                         else "Camoufox browser runtime cannot be used until its Python packages are installed."
                     )
@@ -293,6 +200,14 @@ class CamoufoxBackend:
                     ),
                     "download_required": package_ready and not available,
                     "runtime_path": details.get("runtime_path"),
+                    "runtime_state": details.get("runtime_state"),
+                    "runtime_version": details.get("runtime_version"),
+                    "prepare_command": (
+                        'python -c "from paper_fetch.providers.browser_runtime.preparation '
+                        "import prepare_camoufox_managed_runtime; "
+                        "from camoufox.fpgen_model import ensure_fpgen_model; "
+                        'prepare_camoufox_managed_runtime(); ensure_fpgen_model()"'
+                    ),
                 },
             )
         )
@@ -343,53 +258,6 @@ class CamoufoxBackend:
             notes=[],
             checks=checks,
         )
-
-    def fetch_html(
-        self,
-        candidate_urls: list[str],
-        *,
-        publisher: str,
-        config: BrowserRuntimeConfig,
-        **kwargs: Any,
-    ) -> BrowserFetchedHtml:
-        kwargs.pop("warm_wait_seconds", None)
-        return _playwright_browser.fetch_html_with_playwright(
-            candidate_urls,
-            publisher=publisher,
-            config=config,
-            **kwargs,
-        )
-
-    def warm_context(
-        self,
-        candidate_urls: list[str],
-        *,
-        publisher: str,
-        config: BrowserRuntimeConfig,
-        browser_context_seed: Mapping[str, Any] | None = None,
-        runtime_context: Any | None = None,
-        lightweight: bool = False,
-    ) -> BrowserWarmResult:
-        return _playwright_browser.warm_browser_context_with_playwright(
-            candidate_urls,
-            publisher=publisher,
-            config=config,
-            browser_context_seed=browser_context_seed,
-            runtime_context=runtime_context,
-            lightweight=lightweight,
-        )
-
-    def storage_state_path(self, config: BrowserRuntimeConfig) -> Path | None:
-        return runtime_paths.storage_state_path(config)
-
-    def save_storage_state(
-        self,
-        context: Any,
-        config: BrowserRuntimeConfig,
-        *,
-        filter_url: str | None = None,
-    ) -> Mapping[str, Any]:
-        return runtime_paths.save_storage_state(context, config, filter_url=filter_url)
 
 
 DEFAULT_CAMOUFOX_BACKEND = CamoufoxBackend()

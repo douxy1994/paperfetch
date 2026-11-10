@@ -1,7 +1,5 @@
 from __future__ import annotations
-
 import pytest
-
 from paper_fetch.providers._article_markdown_jats import (
     assess_jats_body_availability,
     parse_jats_xml,
@@ -101,6 +99,49 @@ def test_jats_explicit_editorial_uses_short_body_policy() -> None:
     assert availability.short_article_policy is True
     assert availability.min_body_chars == 120
     assert availability.reason == "structured_short_article_body"
+
+
+def test_jats_xml_formatting_newlines_are_spaces_but_explicit_break_is_preserved() -> (
+    None
+):
+    extraction = parse_jats_xml(
+        _jats(
+            body="""
+<body><sec><title>Results</title>
+  <p>Rate <italic>r</italic>
+  = 1 and <italic>T<sub>leaf</sub> &lt;
+  T<sub>air</sub></italic>.</p>
+  <p>First<br/>— second.</p>
+</sec></body>
+"""
+        )
+    )
+
+    assert extraction is not None
+    assert "Rate *r* = 1 and *T<sub>leaf</sub> < T<sub>air</sub>*." in (
+        extraction.markdown_text
+    )
+    assert "First<br>— second." in extraction.markdown_text
+
+
+def test_jats_embedded_blocks_do_not_leak_xml_tail_newlines() -> None:
+    extraction = parse_jats_xml(
+        _jats(
+            body="""
+<body><sec><title>Results</title>
+  <p>Before <italic>value</italic>
+    <list><list-item><p>Item</p></list-item></list>
+  After <bold>block</bold>
+  = done.</p>
+</sec></body>
+"""
+        )
+    )
+
+    assert extraction is not None
+    assert "Before *value*" in extraction.markdown_text
+    assert "- Item" in extraction.markdown_text
+    assert "After **block** = done." in extraction.markdown_text
 
 
 def test_jats_cals_tgroups_render_as_independent_ordered_grids() -> None:

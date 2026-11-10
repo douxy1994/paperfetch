@@ -10,8 +10,7 @@ from ..formula_rules import (
     FORMULA_IMAGE_URL_PATTERN,
     FORMULA_IMAGE_SRCSET_ATTRS,
     display_formula_nodes,
-    formula_ancestor_identity_text,
-    formula_container_tokens_for_profile,
+    is_formula_container,
     formula_heading_for_image,
     formula_image_url_from_node,
     html_node_is_figure_asset_context,
@@ -29,18 +28,17 @@ def _looks_like_formula_image(
     *,
     noise_profile: str | None = None,
 ) -> bool:
+    if looks_like_formula_image(tag, url, noise_profile=noise_profile):
+        return True
     if html_node_is_figure_asset_context(tag, noise_profile=noise_profile):
         return False
     if FORMULA_IMAGE_URL_PATTERN.search(url):
         return True
-    if looks_like_formula_image(tag, url, noise_profile=noise_profile):
-        return True
     if not isinstance(tag, Tag):
         return False
-    identity = formula_ancestor_identity_text(tag)
     return any(
-        token in identity
-        for token in formula_container_tokens_for_profile(noise_profile)
+        is_formula_container(node, noise_profile=noise_profile)
+        for node in [tag, *list(tag.parents)[:5]]
     )
 
 
@@ -78,6 +76,9 @@ def _formula_asset_candidate_nodes(
 
     for image in soup.find_all("img"):
         add(image)
+    for node in soup.find_all(True):
+        if is_formula_container(node, noise_profile=noise_profile):
+            add(node)
     for node in display_formula_nodes(soup, noise_profile=noise_profile):
         add(node)
     for node in soup.find_all(True):
@@ -136,6 +137,7 @@ def extract_formula_assets(
                 "caption": "",
                 "url": absolute_url,
                 "preview_url": absolute_url,
+                "preview_accepted": "true",
                 "section": "body",
             }
         )

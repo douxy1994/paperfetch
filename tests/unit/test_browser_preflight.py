@@ -1,12 +1,12 @@
 from __future__ import annotations
-
+from tests.support.browser_preflight import _runtime_config
 from dataclasses import replace
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
-
 import pytest
-
 from paper_fetch import browser_preflight
+from paper_fetch.providers import _playwright_browser
 from paper_fetch.config import (
     BROWSER_TIMEOUT_MS_ENV_VAR,
     BROWSER_USER_AGENT_ENV_VAR,
@@ -32,7 +32,6 @@ from paper_fetch.providers.browser_workflow.shared import default_browser_workfl
         ("browser_connect_timeout", "browser_connect", "network_timeout"),
         ("article_container_not_found", "html_extraction", "extraction_error"),
         ("empty_article_shell", "html_extraction", "extraction_error"),
-        ("managed_chrome_cdp_timeout", "managed_chrome_startup", "runtime_error"),
         ("unknown_html_failure", "html_extraction", "extraction_error"),
         ("unknown_runtime_failure", "browser_context_create", "runtime_error"),
     ],
@@ -48,17 +47,6 @@ def test_preflight_failure_classification_is_code_and_stage_driven(
             stage=stage,
         )
         == expected
-    )
-
-
-def _runtime_config(tmp_path: Path, *, provider: str, doi: str) -> BrowserRuntimeConfig:
-    return BrowserRuntimeConfig(
-        provider=provider,
-        doi=doi,
-        artifact_dir=tmp_path / "artifacts" / provider,
-        headless=True,
-        user_agent=None,
-        backend="camoufox",
     )
 
 
@@ -95,9 +83,7 @@ def test_static_browser_capabilities_never_claims_live_health() -> None:
                 "ok",
                 "configured",
                 details={
-                    "cdp_endpoint_configured": True,
-                    "binary_path_configured": False,
-                    "auto_cdp_browser_enabled": False,
+                    "backend": "camoufox",
                 },
             ),
             build_provider_status_check(
@@ -118,9 +104,6 @@ def test_static_browser_capabilities_never_claims_live_health() -> None:
     assert report["publisher_page_checked"] is False
     assert report["playwright"]["available"] is True
     assert report["camoufox"]["available"] is True
-    assert report["chrome_cdp"]["status"] == "configured"
-    assert report["chrome_cdp"]["reason_code"] == ("cdp_endpoint_configured_not_probed")
-    assert report["chrome_cdp"]["connection_checked"] is False
 
 
 def test_browser_preflight_adds_provider_storage_path_for_camoufox(
@@ -211,6 +194,128 @@ def test_browser_preflight_adds_provider_storage_path_for_camoufox(
     assert isinstance(runtime_env, dict)
     assert runtime_env[BROWSER_TIMEOUT_MS_ENV_VAR] == "45000"
     assert BROWSER_USER_AGENT_ENV_VAR not in runtime_env
+
+
+def test_wiley_preflight_accepts_leading_login_navigation_after_body_readiness(
+    tmp_path: Path,
+) -> None:
+    body = "".join(
+        "<p>Paragraph "
+        f"{index}. "
+        + ("Substantive scientific article content with methods and results. " * 10)
+        + "</p>"
+        for index in range(12)
+    )
+    html = (
+        "<html><head><title>Open access article</title>"
+        "<meta name='citation_title' content='Open access article'>"
+        "<meta name='citation_doi' content='10.1111/gcb.15322'>"
+        '<script>window.adobeDataLayer = [{"content": {"item": '
+        '{"access": "yes", "format-viewed": "full"}}, '
+        '"page": {"tertiary-section": "full"}}];</script></head>'
+        "<body><nav>Login / Register Individual login Institutional login "
+        "Open Access</nav><article><section class='article-section__content en main'>"
+        f"<h2>Introduction</h2>{body}</section></article></body></html>"
+    )
+
+    class Response:
+        status = 200
+        headers = {"content-type": "text/html"}
+
+        def all_headers(self):
+            return dict(self.headers)
+
+    class Page:
+        def __init__(self) -> None:
+            self.url = "about:blank"
+            self.route_handler = None
+
+        def goto(self, url, **_kwargs):
+            self.url = url
+            return Response()
+
+        def route(self, _pattern, handler):
+            self.route_handler = handler
+
+        def content(self):
+            return html
+
+        def title(self):
+            return "Open access article"
+
+        def evaluate(self, _script):
+            return "Mozilla/5.0 Firefox/152.0"
+
+        def close(self):
+            return None
+
+    class Context:
+        def __init__(self) -> None:
+            self.page = Page()
+            self.route_handler = None
+
+        def route(self, _pattern, handler):
+            self.route_handler = handler
+
+        def new_page(self):
+            return self.page
+
+        def cookies(self, _urls=None):
+            return []
+
+        def close(self):
+            return None
+
+    runtime = replace(
+        _runtime_config(tmp_path, provider="wiley", doi="10.1111/gcb.15322"),
+        persist_storage_state=False,
+    )
+    context = Context()
+
+    def fetch_html_with_playwright(*args, warm_wait_seconds=None, **kwargs):
+        del warm_wait_seconds
+        return _playwright_browser.fetch_html_with_playwright(*args, **kwargs)
+
+    with (
+        mock.patch.object(
+            browser_preflight,
+            "load_runtime_config",
+            return_value=runtime,
+        ),
+        mock.patch.object(browser_preflight, "ensure_runtime_ready"),
+        mock.patch.object(
+            browser_preflight,
+            "fetch_html_with_browser",
+            side_effect=fetch_html_with_playwright,
+        ),
+        mock.patch.object(
+            _playwright_browser,
+            "open_browser_context",
+            return_value=(None, context),
+        ),
+        mock.patch.object(
+            _playwright_browser,
+            "wait_for_atypon_body_dom_ready",
+            return_value=SimpleNamespace(
+                attempted=True,
+                ready=True,
+                selector="section.article-section__content",
+                text_length=7600,
+                paragraph_count=12,
+                heading_count=1,
+            ),
+        ),
+    ):
+        result = browser_preflight.preflight_browser_provider(
+            "wiley",
+            env={},
+            save_storage_state=False,
+        )
+
+    assert result.status == "ready", (result.message, result.diagnostics)
+    assert result.reason_code == "browser_preflight_ready"
+    trace = result.diagnostics["browser_runtime_trace"]
+    assert trace["candidates"][0]["dom_readiness_ready"] is True
 
 
 def test_browser_preflight_uses_custom_target_and_disables_storage_write(
@@ -364,7 +469,6 @@ def test_preflight_preserves_captured_page_diagnostic_without_artifact_file(
                 stage="selector_readiness",
                 diagnostics={
                     "challenge_provider": "aws_waf",
-                    "legacy_reason_code": "cloudflare_challenge",
                     "failure_diagnostic": captured_page,
                 },
                 diagnostic_context=runtime,
@@ -432,7 +536,7 @@ def test_browser_preflight_uses_provider_html_candidates_for_aip(
 
     assert result.ready is True
     assert result.provider == "aip"
-    assert result.storage_state_path is None
+    assert result.storage_state_path.name == "storage-state.json"
     assert captured["candidate_urls"] == [
         (
             "https://pubs.aip.org/aip/adv/article/12/12/125205/2820011/"
@@ -441,7 +545,7 @@ def test_browser_preflight_uses_provider_html_candidates_for_aip(
         "https://pubs.aip.org/doi/full/10.1063/5.0129134",
         "https://pubs.aip.org/doi/10.1063/5.0129134",
     ]
-    assert captured["persist_storage_state"] is False
+    assert captured["persist_storage_state"] is True
 
 
 def test_browser_preflight_uses_provider_html_candidates_for_royal_society(
@@ -511,7 +615,6 @@ def test_browser_preflight_records_failure_and_continues(tmp_path: Path) -> None
             artifact_dir=tmp_path / "artifacts" / provider,
             headless=True,
             user_agent=None,
-            backend="camoufox",
             user_data_dir=tmp_path / "profiles" / provider,
         )
 
@@ -519,11 +622,11 @@ def test_browser_preflight_records_failure_and_continues(tmp_path: Path) -> None
         del config, kwargs
         if publisher == "science":
             raise BrowserRuntimeFailure(
-                "managed_chrome_exited_before_cdp",
-                "Managed Chrome exited before CDP was ready.",
+                "browser_context_create_failed",
+                "Camoufox browser context creation failed.",
                 details={
                     "browser_failure": {
-                        "stage": "managed_chrome_startup",
+                        "stage": "browser_context_create",
                         "exit_code": 12,
                         "stderr_summary": "profile startup failed",
                     }
@@ -573,13 +676,13 @@ def test_browser_preflight_records_failure_and_continues(tmp_path: Path) -> None
     assert [result.provider for result in results] == ["science", "wiley"]
     assert results[0].ready is False
     assert results[0].status == "runtime_error"
-    assert results[0].reason_code == "managed_chrome_exited_before_cdp"
+    assert results[0].reason_code == "browser_context_create_failed"
     assert results[0].diagnostics is not None
     assert results[0].diagnostics["browser_failure"]["exit_code"] == 12
     diagnostic_path = Path(results[0].diagnostics["diagnostic_path"])
     assert diagnostic_path.is_file()
     diagnostic = results[0].diagnostics["failure_diagnostic"]
-    assert diagnostic["stage"] == "managed_chrome_startup"
+    assert diagnostic["stage"] == "browser_context_create"
     assert diagnostic["raw_html"] is None
     assert (
         results[0].storage_state_path
@@ -625,6 +728,35 @@ def test_browser_preflight_cancellation_keeps_completed_provider_result() -> Non
     assert results[1].status == "cancelled"
     assert results[1].reason_code == "request_cancelled"
     assert progress == [("science", 1, 3), ("wiley", 2, 3)]
+
+
+def test_browser_preflight_stops_after_runtime_preparation_cancellation() -> None:
+    progress: list[tuple[str, int, int]] = []
+
+    def fake_preflight(provider, **_kwargs):
+        return browser_preflight.BrowserPreflightResult(
+            provider=provider,
+            provider_label=provider.title(),
+            status="cancelled",
+            reason_code="browser_runtime_prepare_cancelled",
+        )
+
+    with mock.patch.object(
+        browser_preflight,
+        "preflight_browser_provider",
+        side_effect=fake_preflight,
+    ):
+        results = browser_preflight.run_browser_provider_preflight(
+            providers=["science", "wiley"],
+            cancel_as_result=True,
+            on_result=lambda result, completed, total: progress.append(
+                (result.provider, completed, total)
+            ),
+            runtime_options=browser_preflight.BrowserPreflightRuntimeOptions(env={}),
+        )
+
+    assert [result.provider for result in results] == ["science"]
+    assert progress == [("science", 1, 2)]
 
 
 def test_browser_preflight_does_not_use_pdf_fallback(tmp_path: Path) -> None:

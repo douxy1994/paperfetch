@@ -1,10 +1,9 @@
 from __future__ import annotations
-
 import io
 from contextlib import redirect_stderr, redirect_stdout
+from dataclasses import asdict
 from pathlib import Path
 from unittest import mock
-
 from paper_fetch import cli
 from paper_fetch.manifest import ManifestRecord, build_manifest_record
 from paper_fetch.mcp.fetch_cache import (
@@ -20,8 +19,7 @@ from paper_fetch.workflow.acceptance import (
     FetchAcceptanceReport,
     evaluate_fetch_acceptance,
 )
-
-from .test_workflow_acceptance import _envelope
+from tests.support.workflow_acceptance import _envelope
 
 
 def _contract_envelope():
@@ -65,7 +63,7 @@ def _contract_envelope():
     return envelope
 
 
-def _summary(report: FetchAcceptanceReport) -> dict[str, str]:
+def _summary(report: FetchAcceptanceReport) -> dict[str, object]:
     return {
         "status": "evaluated",
         "overall": report.overall.value,
@@ -75,6 +73,11 @@ def _summary(report: FetchAcceptanceReport) -> dict[str, str]:
         "asset": report.asset.status.value,
         "output": report.output.status.value,
         "provenance": report.provenance.status.value,
+        "acquisition": (
+            asdict(report.provenance.acquisition)
+            if report.provenance.acquisition is not None
+            else None
+        ),
     }
 
 

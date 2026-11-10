@@ -3,12 +3,8 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
-import os
-import tempfile
 import urllib.parse
 from dataclasses import dataclass, replace
-import re
 from pathlib import Path
 from typing import Any
 from collections.abc import Callable, Mapping
@@ -20,6 +16,7 @@ from .config import (
     BROWSER_USER_AGENT_ENV_VAR,
     WILEY_STORAGE_STATE_JSON_ENV_VAR,
     build_runtime_env,
+    browser_env_value,
 )
 from .extraction.html.signals import detect_html_block, summarize_html
 from .provider_catalog import (
@@ -37,25 +34,17 @@ from .providers.browser_runtime import (
 )
 from .providers.browser_runtime.paths import (
     commit_staged_storage_state,
+    configured_storage_state_path,
     runtime_with_default_storage_profile,
     stage_storage_state,
 )
-from .providers.browser_runtime.context import (
-    context_options_for_config,
-    open_browser_context,
-)
-from .providers.browser_runtime.camoufox_manager import (
-    CamoufoxPersistentContextManager,
-)
+from .providers.browser_runtime.profile import PublisherProfileManager, profile_path
 from .providers.base import ProviderFailure
 from .reason_codes import (
     AUTH_FINAL_URL_INVALID,
     AUTH_REPLAY_FAILED,
-    AUTH_STATE_SAVE_FAILED,
-    AUTH_STATE_STAGE_FAILED,
     ERROR,
 )
-from .runtime_browser import BrowserContextManager
 from .utils import normalize_text, provider_display_name
 
 
@@ -66,6 +55,10 @@ class AuthTarget:
 
 
 AUTH_TARGETS: Mapping[str, AuthTarget] = {
+    "elsevier": AuthTarget(
+        doi="10.1016/j.agrformet.2024.109975",
+        url="https://www.sciencedirect.com/science/article/pii/S016819232400090X",
+    ),
     "ams": AuthTarget(
         doi="10.1175/jcli-d-23-0738.1",
         url="https://journals.ametsoc.org/view/journals/clim/37/24/JCLI-D-23-0738.1.xml",
@@ -127,11 +120,10 @@ class AuthResult:
     provider: str
     storage_state_path: Path
     profile_dir: Path | None
-    env_file_path: Path | None
-    env_written: bool
     verified: bool
     final_url: str | None
     title: str | None
+    json_export: Mapping[str, Any] | None = None
 
 
 def browser_auth_provider_names() -> tuple[str, ...]:
@@ -176,31 +168,6 @@ def _provider_label(provider: str) -> str:
     return provider_display_name(provider)
 
 
-def _dotenv_quote(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
-
-
-def upsert_env_file(path: Path, values: Mapping[str, str]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    existing_lines = (
-        path.read_text(encoding="utf-8").splitlines() if path.exists() else []
-    )
-    pending = dict(values)
-    output_lines: list[str] = []
-    assignment_pattern = re.compile(r"^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=")
-    for line in existing_lines:
-        match = assignment_pattern.match(line.strip())
-        if match and match.group(1) in pending:
-            key = match.group(1)
-            output_lines.append(f"{key}={_dotenv_quote(pending.pop(key))}")
-        else:
-            output_lines.append(line)
-    for key, value in pending.items():
-        output_lines.append(f"{key}={_dotenv_quote(value)}")
-    path.write_text("\n".join(output_lines).rstrip() + "\n", encoding="utf-8")
-
-
 def _manual_auth_prompt(
     *,
     provider_label: str,
@@ -219,7 +186,7 @@ def _manual_auth_prompt(
     lines.extend(
         [
             "Complete any publisher login or verification in the browser.",
-            "Press Enter here when finished to save browser state and close the auth browser.",
+            "Press Enter here when finished to close and verify the same native profile.",
         ]
     )
     return "\n".join(lines) + "\n"
@@ -268,22 +235,6 @@ def _runtime_with_auth_storage(
     return replace(
         runtime,
         storage_state_path=storage_state_path.expanduser().resolve(),
-    )
-
-
-def _storage_state_fingerprint(path: Path | None) -> tuple[int, int, int, str] | None:
-    if path is None or not path.is_file():
-        return None
-    try:
-        payload = path.read_bytes()
-        stat_result = path.stat()
-    except OSError:
-        return None
-    return (
-        stat_result.st_ino,
-        stat_result.st_mtime_ns,
-        stat_result.st_size,
-        hashlib.sha256(payload).hexdigest(),
     )
 
 
@@ -357,76 +308,6 @@ def _require_accepted_auth_page(
     return final_url, title
 
 
-def _verify_staged_auth_state(
-    runtime: BrowserRuntimeConfig,
-    stage: BrowserStagedStorageState,
-    *,
-    target_url: str,
-    provider_label: str,
-) -> tuple[str, str | None]:
-    """Replay a staged state in a fresh context before committing it."""
-
-    stage.path.parent.mkdir(parents=True, exist_ok=True)
-    file_descriptor, temporary_name = tempfile.mkstemp(
-        prefix=f".{stage.path.name}.auth-replay.",
-        suffix=".json",
-        dir=str(stage.path.parent),
-    )
-    os.close(file_descriptor)
-    temporary_path = Path(temporary_name)
-    temporary_path.unlink(missing_ok=True)
-    temporary_lock_path = Path(str(temporary_path) + ".lock")
-    replay_config = replace(
-        runtime,
-        headless=True,
-        storage_state_path=temporary_path,
-        persist_storage_state=False,
-    )
-    replay_stage = replace(stage, path=temporary_path)
-    staged_result = commit_staged_storage_state(replay_stage, replay_config)
-    if not staged_result.get("saved"):
-        raise ProviderFailure(
-            AUTH_REPLAY_FAILED,
-            (
-                f"{provider_label} authentication state could not be prepared for "
-                f"fresh-context replay ({staged_result.get('reason') or 'save_failed'})."
-            ),
-        )
-
-    manager = None
-    context = None
-    page = None
-    try:
-        manager, context = open_browser_context(replay_config)
-        page = context.new_page()
-        page.goto(
-            target_url,
-            wait_until="domcontentloaded",
-            timeout=replay_config.timeout_ms,
-        )
-        return _require_accepted_auth_page(
-            page,
-            provider=runtime.provider,
-            provider_label=provider_label,
-            fallback_url=target_url,
-        )
-    except ProviderFailure:
-        raise
-    except Exception as exc:
-        message = normalize_text(str(exc)) or exc.__class__.__name__
-        raise ProviderFailure(
-            AUTH_REPLAY_FAILED,
-            f"{provider_label} authentication replay failed: {message}",
-        ) from exc
-    finally:
-        for value in (page, context, manager):
-            if value is not None:
-                with contextlib.suppress(Exception):
-                    value.close()
-        temporary_path.unlink(missing_ok=True)
-        temporary_lock_path.unlink(missing_ok=True)
-
-
 def authenticate_provider_profile(
     *,
     provider: str,
@@ -434,14 +315,26 @@ def authenticate_provider_profile(
     timeout_ms: int | None = None,
     browser_user_agent: str | None = None,
     confirm: Callable[[str], object] | None = input,
+    env: Mapping[str, str] | None = None,
 ) -> AuthResult:
     provider_key = _require_browser_auth_provider(provider)
     provider_label = _provider_label(provider_key)
     auth_target = _auth_target_for_provider(provider_key, target_url=target_url)
     active_url = target_url or auth_target.url
 
-    runtime_env = build_runtime_env()
+    runtime_env = build_runtime_env() if env is None else build_runtime_env(env)
+    fetch_headless = normalize_text(
+        browser_env_value(runtime_env, BROWSER_HEADLESS_ENV_VAR)
+    ).lower() not in {
+        "0",
+        "false",
+        "no",
+        "off",
+    }
     runtime_env[BROWSER_HEADLESS_ENV_VAR] = "0"
+    explicit_storage_path = configured_storage_state_path(
+        runtime_env, provider=provider_key
+    )
     legacy_storage_env_var = _LEGACY_AUTH_STORAGE_STATE_ENV_VARS.get(provider_key)
     if legacy_storage_env_var is not None:
         runtime_env.pop(legacy_storage_env_var, None)
@@ -459,10 +352,11 @@ def authenticate_provider_profile(
         runtime,
         env=runtime_env,
         provider=provider_key,
+        storage_state_path=explicit_storage_path,
     )
     ensure_runtime_ready(runtime)
 
-    profile_dir = runtime.profile_dir or runtime.user_data_dir
+    profile_dir = profile_path(runtime)
     resolved_storage_state_path = storage_state_path(runtime)
     manager: Any | None = None
     context = None
@@ -470,39 +364,36 @@ def authenticate_provider_profile(
     final_url: str | None = None
     title: str | None = None
     staged_state: BrowserStagedStorageState | None = None
-    previous_fingerprint = _storage_state_fingerprint(resolved_storage_state_path)
     try:
-        if runtime.backend == "camoufox":
-            if browser_user_agent:
-                raise ProviderFailure(
-                    ERROR,
-                    "--browser-user-agent cannot be used with Camoufox because it would make the generated Firefox fingerprint inconsistent.",
-                )
-            if profile_dir is None:
-                raise ProviderFailure(
-                    ERROR,
-                    "Camoufox authentication requires a provider profile directory.",
-                )
-            profile_dir.mkdir(parents=True, exist_ok=True)
-            manager = CamoufoxPersistentContextManager(
-                user_data_dir=str(profile_dir),
-                binary_path=runtime.binary_path,
-                headless=False,
+        if browser_user_agent:
+            raise ProviderFailure(
+                ERROR,
+                "--browser-user-agent cannot be used with Camoufox because it would make the generated Firefox fingerprint inconsistent.",
             )
-            context = manager.new_context()
+        if profile_dir is None:
+            raise ProviderFailure(
+                ERROR,
+                "Camoufox authentication requires a provider profile directory.",
+            )
+        profile_dir.mkdir(parents=True, exist_ok=True)
+        if runtime.state_mode == "json":
+            from .providers.browser_runtime.byparr_manager import (
+                ByparrManager,
+            )
+
+            manager = ByparrManager(runtime)
         else:
-            manager = BrowserContextManager(
-                binary_path=runtime.binary_path,
-                cdp_endpoint=runtime.cdp_endpoint,
-                profile_dir=runtime.profile_dir,
-                user_data_dir=runtime.user_data_dir,
-            )
-            context = manager.new_context(
-                headless=False,
-                **context_options_for_config(runtime),
-            )
+            manager = PublisherProfileManager(runtime)
+        context = manager.new_context()
         page = context.new_page()
-        page.goto(active_url, wait_until="domcontentloaded", timeout=runtime.timeout_ms)
+        from .providers.browser_runtime.navigation import navigate_page
+
+        navigate_page(
+            page,
+            active_url,
+            wait_until="domcontentloaded",
+            timeout_ms=runtime.timeout_ms,
+        )
         _wait_for_manual_completion(
             provider_label=provider_label,
             url=active_url,
@@ -516,19 +407,17 @@ def authenticate_provider_profile(
             provider_label=provider_label,
             fallback_url=active_url,
         )
-        staged_state, stage_result = stage_storage_state(
-            context,
-            runtime,
-            filter_url=final_url,
-        )
-        if staged_state is None:
-            raise ProviderFailure(
-                AUTH_STATE_STAGE_FAILED,
-                (
-                    f"{provider_label} authentication state could not be staged "
-                    f"({stage_result.get('reason') or 'stage_failed'})."
-                ),
+        if runtime.state_mode == "json":
+            staged_state, stage_result = stage_storage_state(
+                context, runtime, filter_url=final_url
             )
+            if staged_state is None or not commit_staged_storage_state(
+                staged_state, runtime
+            ).get("saved"):
+                raise ProviderFailure(
+                    ERROR,
+                    f"Cannot save accepted {provider_label} browser authentication state.",
+                )
     except ProviderFailure:
         raise
     except Exception as exc:
@@ -537,50 +426,85 @@ def authenticate_provider_profile(
             ERROR, f"{provider_label} authentication failed: {message}"
         ) from exc
     finally:
-        for value in (page, context, manager):
+        for value in (page, manager):
             try:
                 if value is not None:
                     value.close()
             except Exception:
                 pass
 
-    if staged_state is None:
-        raise ProviderFailure(
-            AUTH_STATE_STAGE_FAILED,
-            f"{provider_label} authentication did not produce staged browser state.",
+    # Native replay is the auth condition; JSON export is an auxiliary snapshot.
+    replay_runtime = replace(runtime, headless=fetch_headless)
+    manager = None
+    page = None
+    try:
+        if replay_runtime.state_mode == "json":
+            from .providers.browser_runtime.byparr_manager import (
+                ByparrManager,
+            )
+
+            manager = ByparrManager(replay_runtime)
+        else:
+            manager = PublisherProfileManager(replay_runtime)
+        context = manager.new_context()
+        page = context.new_page()
+        from .providers.browser_runtime.navigation import navigate_page
+
+        navigate_page(
+            page,
+            active_url,
+            wait_until="domcontentloaded",
+            timeout_ms=runtime.timeout_ms,
         )
-    final_url, title = _verify_staged_auth_state(
-        runtime,
-        staged_state,
-        target_url=active_url,
-        provider_label=provider_label,
-    )
-    save_result = commit_staged_storage_state(staged_state, runtime)
-    if not save_result.get("saved"):
-        raise ProviderFailure(
-            AUTH_STATE_SAVE_FAILED,
-            (
-                f"{provider_label} authentication state could not be committed "
-                f"({save_result.get('reason') or 'save_failed'})."
-            ),
+        final_url, title = _require_accepted_auth_page(
+            page,
+            provider=provider_key,
+            provider_label=provider_label,
+            fallback_url=active_url,
         )
-    current_fingerprint = _storage_state_fingerprint(resolved_storage_state_path)
-    if current_fingerprint is None or current_fingerprint == previous_fingerprint:
+        digest = manager.refresh()
+        manager.metadata["auth"] = {
+            "native_profile_verified": runtime.state_mode == "native",
+            "state_replay_verified": True,
+            "headless": fetch_headless,
+            "state_sha256": digest,
+        }
+        try:
+            staged_state, stage_result = stage_storage_state(
+                context, runtime, filter_url=final_url
+            )
+            if staged_state is None:
+                save_result = {**stage_result, "saved": False}
+            else:
+                save_result = commit_staged_storage_state(staged_state, runtime)
+                if save_result.get("saved"):
+                    manager.note_json_export(staged_state.path)
+        except Exception as exc:
+            save_result = {
+                "attempted": True,
+                "saved": False,
+                "reason": "export_failed",
+                "error": normalize_text(str(exc)),
+            }
+    except ProviderFailure:
+        raise
+    except Exception as exc:
         raise ProviderFailure(
-            AUTH_STATE_SAVE_FAILED,
-            (
-                f"{provider_label} authentication did not produce a fresh "
-                f"storage-state JSON: {resolved_storage_state_path}"
-            ),
-        )
+            AUTH_REPLAY_FAILED, f"{provider_label} native profile replay failed: {exc}"
+        ) from exc
+    finally:
+        if page is not None:
+            with contextlib.suppress(Exception):
+                page.close()
+        if manager is not None:
+            manager.close()
 
     return AuthResult(
         provider=provider_key,
         storage_state_path=resolved_storage_state_path,
         profile_dir=profile_dir,
-        env_file_path=None,
-        env_written=False,
         verified=True,
         final_url=final_url,
         title=title,
+        json_export=save_result,
     )

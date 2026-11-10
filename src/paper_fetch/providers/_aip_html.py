@@ -7,6 +7,7 @@ from functools import partial
 import re
 from typing import Any
 from collections.abc import Mapping
+from urllib.parse import urlparse
 
 from bs4 import BeautifulSoup, Tag
 
@@ -14,6 +15,7 @@ from ..extraction.html.inline import render_html_inline_node
 from ..extraction.html.parsing import choose_parser
 from ..models import markdown_image_fullmatch, normalize_markdown_text
 from ..publisher_identity import DOI_CORE_PATTERN
+from ..reason_codes import OFFICIAL_FULL_SIZE_NOT_EXPOSED
 from ..utils import normalize_text
 from ._html_authors import (
     AuthorExtractionPipeline,
@@ -28,6 +30,7 @@ AIP_JSONLD_ARTICLE_TYPES = frozenset({"article", "scholarlyarticle"})
 # SITE_UI_COPY_REGRESSION_MARKER: AIP article chrome selectors owned by provider cleanup policy.
 # STRUCTURAL_UI_COPY_HOOK: provider cleanup removes these only from AIP article HTML.
 AIP_DOM_CHROME_SELECTORS = (
+    ".fig-modal",
     ".article-metrics",
     ".article-tools",
     ".articleTool",
@@ -232,6 +235,7 @@ def aip_normalize_markdown(markdown_text: str) -> str:
 
 def _strip_aip_title_badges(value: str) -> str:
     text = normalize_markdown_text(value)
+    text = re.sub(r"!\[[^\]]*\]\([^)]*/editorspick-icon\.svg\)", "", text)
     return normalize_text(AIP_TITLE_BADGE_RE.sub("", text))
 
 
@@ -482,10 +486,43 @@ def finalize_extraction(
     return markdown_text, finalized
 
 
-def scoped_asset_extractor(*args: Any, **kwargs: Any) -> list[dict[str, str]]:
+def scoped_asset_extractor(*args: Any, **kwargs: Any) -> list[dict[str, Any]]:
+    from ..extraction.html.assets.silverchair import (
+        promote_silverchair_srcset_originals,
+    )
     from .atypon_browser_workflow.asset_scopes import extract_scoped_html_assets
 
-    return extract_scoped_html_assets(*args, **kwargs)
+    if args:
+        args = (promote_silverchair_srcset_originals(str(args[0])), *args[1:])
+    elif "body_html_text" in kwargs:
+        kwargs = {
+            **kwargs,
+            "body_html_text": promote_silverchair_srcset_originals(
+                str(kwargs["body_html_text"])
+            ),
+        }
+    extracted = extract_scoped_html_assets(*args, **kwargs)
+    assets: list[dict[str, Any]] = []
+    for raw_asset in extracted:
+        asset: dict[str, Any] = dict(raw_asset)
+        parsed = urlparse(str(asset.get("url") or ""))
+        if (
+            asset.get("kind") == "supplementary"
+            and parsed.hostname == "pubs.aip.org"
+            and re.search(r"/article-supplement/.+/zip/", parsed.path)
+        ):
+            filename = parsed.path.rstrip("/").rsplit("/", 1)[-1]
+            asset["filename_hint"] = (
+                filename if filename.lower().endswith(".zip") else f"{filename}.zip"
+            )
+        if normalize_text(
+            str(asset.get("kind") or "")
+        ).lower() == "figure" and not normalize_text(
+            str(asset.get("full_size_url") or asset.get("download_url") or "")
+        ):
+            asset["provenance"] = [OFFICIAL_FULL_SIZE_NOT_EXPOSED]
+        assets.append(asset)
+    return assets
 
 
 __all__ = [

@@ -1,7 +1,6 @@
-# ruff: noqa: F403,F405
 from __future__ import annotations
-
-from ._service_support import *
+from tests.support._service_support import *
+# ruff: noqa: F403,F405
 
 
 class ServicePdfAndProviderFallbackTests(unittest.TestCase):
@@ -20,7 +19,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
             article = fetch_paper_model(
                 "10.1016/test",
                 clients={
-                    "elsevier": StubProvider(
+                    "elsevier": FixtureProvider(
                         metadata={
                             "provider": "elsevier",
                             "official_provider": True,
@@ -36,7 +35,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                             retry_after_seconds=3,
                         ),
                     ),
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -133,7 +132,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                     "10.1111/test",
                     output_dir=Path(tmpdir),
                     clients={
-                        "wiley": StubProvider(
+                        "wiley": FixtureProvider(
                             metadata=paper_fetch.ProviderFailure(
                                 "not_supported", "No official metadata."
                             ),
@@ -166,7 +165,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                                 HttpTransport(), {}
                             ).to_article_model,
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -221,7 +220,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                     "10.1111/scanned",
                     output_dir=Path(tmpdir),
                     clients={
-                        "wiley": StubProvider(
+                        "wiley": FixtureProvider(
                             metadata=paper_fetch.ProviderFailure(
                                 "not_supported", "No official metadata."
                             ),
@@ -246,7 +245,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                                 HttpTransport(), {}
                             ).to_article_model,
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -275,7 +274,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
             )
         )
 
-    def test_wiley_pdf_fallback_markdown_creates_multiple_sections_with_heading_priority(
+    def test_wiley_pdf_fallback_markdown_remains_one_opaque_section(
         self,
     ) -> None:
         article = WileyClient(HttpTransport(), {}).to_article_model(
@@ -307,15 +306,13 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
             ),
         )
 
-        headings = [section.heading for section in article.sections]
-        self.assertIn("Introduction", headings)
-        self.assertIn("Methods", headings)
-        self.assertIn("Results", headings)
-
-        truncated_markdown = article.to_ai_markdown(max_tokens=500)
-        self.assertIn("## Introduction", truncated_markdown)
-        self.assertIn("## Methods", truncated_markdown)
-        self.assertNotIn("## Discussion", truncated_markdown)
+        self.assertEqual(len(article.sections), 1)
+        self.assertEqual(article.sections[0].heading, "")
+        self.assertIn("# Wiley PDF Article", article.sections[0].text)
+        self.assertIn(article.sections[0].text, article.to_ai_markdown())
+        self.assertLess(
+            len(article.to_ai_markdown(max_tokens=500)), len(article.to_ai_markdown())
+        )
 
     def test_binary_downloads_follow_payload_semantics_not_provider_name(self) -> None:
         resolved = paper_fetch.ResolvedQuery(
@@ -335,7 +332,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                     "10.1016/test",
                     output_dir=Path(tmpdir),
                     clients={
-                        "elsevier": StubProvider(
+                        "elsevier": FixtureProvider(
                             metadata={
                                 "provider": "elsevier",
                                 "official_provider": True,
@@ -356,7 +353,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                             ),
                             article=official_article,
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -397,7 +394,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                     allow_downloads=False,
                     output_dir=Path(tmpdir),
                     clients={
-                        "wiley": StubProvider(
+                        "wiley": FixtureProvider(
                             metadata=paper_fetch.ProviderFailure(
                                 "not_supported", "No official metadata."
                             ),
@@ -425,7 +422,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                                 HttpTransport(), {}
                             ).to_article_model,
                         ),
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -448,7 +445,10 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
         self.assertTrue(article.quality.has_fulltext)
         self.assertIn("download:wiley_skipped", article.quality.source_trail)
         self.assertTrue(
-            any("--no-download" in warning for warning in article.quality.warnings)
+            any(
+                "artifact mode is none" in warning
+                for warning in article.quality.warnings
+            )
         )
 
     def test_wiley_provider_skips_generic_html_fallback_after_provider_failure(
@@ -469,7 +469,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                 "10.1111/test",
                 allow_downloads=False,
                 clients={
-                    "wiley": StubProvider(
+                    "wiley": FixtureProvider(
                         metadata=paper_fetch.ProviderFailure(
                             "not_supported", "No official metadata."
                         ),
@@ -477,7 +477,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                             "no_result", "Browser workflow failed."
                         ),
                     ),
-                    "crossref": StubProvider(
+                    "crossref": FixtureProvider(
                         metadata={
                             "provider": "crossref",
                             "official_provider": False,
@@ -562,21 +562,23 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
             }
         )
         original_resolve = paper_fetch.resolve_paper
-        original_extract = springer_html_helper.extract_article_markdown
+        original_extract = springer_markdown_helper.extract_article_markdown
         try:
             paper_fetch.resolve_paper = lambda *args, **kwargs: resolved
-            springer_html_helper.extract_article_markdown = lambda html, url: "\n".join(
-                [
-                    "# HTML Springer Article",
-                    "",
-                    "## Introduction",
-                    ("Important body text for HTML fallback. " * 30).strip(),
-                    "",
-                    "## Results",
-                    ("More important body text for HTML fallback. " * 30).strip(),
-                    "",
-                    "**Figure 1.** Figure showing a woodland canopy.",
-                ]
+            springer_markdown_helper.extract_article_markdown = lambda html, url: (
+                "\n".join(
+                    [
+                        "# HTML Springer Article",
+                        "",
+                        "## Introduction",
+                        ("Important body text for HTML fallback. " * 30).strip(),
+                        "",
+                        "## Results",
+                        ("More important body text for HTML fallback. " * 30).strip(),
+                        "",
+                        "**Figure 1.** Figure showing a woodland canopy.",
+                    ]
+                )
             )
             with tempfile.TemporaryDirectory() as tmpdir:
                 article = fetch_paper_model(
@@ -587,7 +589,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                         "springer": paper_fetch.build_clients(transport, {})[
                             "springer"
                         ],
-                        "crossref": StubProvider(
+                        "crossref": FixtureProvider(
                             metadata={
                                 "provider": "crossref",
                                 "official_provider": False,
@@ -617,7 +619,7 @@ class ServicePdfAndProviderFallbackTests(unittest.TestCase):
                 self.assertNotIn("## Figures", markdown)
         finally:
             paper_fetch.resolve_paper = original_resolve
-            springer_html_helper.extract_article_markdown = original_extract
+            springer_markdown_helper.extract_article_markdown = original_extract
 
         self.assertIn("fulltext:springer_html_ok", article.quality.source_trail)
         self.assertIn(

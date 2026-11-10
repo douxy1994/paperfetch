@@ -2,6 +2,16 @@
 
 from __future__ import annotations
 
+from .browser_runtime.navigation import (
+    navigate_page,
+    evaluate_get,
+    settle_page_navigation,
+)
+
+from ..quality.access_boundary import propagate_paywall
+
+from ..quality.access_boundary import raise_for_paywall
+
 import base64
 import contextlib
 import logging
@@ -14,34 +24,37 @@ from typing import TYPE_CHECKING, Any
 from bs4 import BeautifulSoup
 
 from ..extraction.html.signals import (
+    HtmlExtractionFailure,
+    html_failure_message,
     detect_html_block,
     summarize_html,
     summarize_visible_html,
 )
-from ..extraction.image_payloads import (
-    image_dimensions_from_bytes,
-    image_mime_type_from_bytes,
+from ..http import (
+    RequestCancelledError,
+    diagnostic_url_payload,
+    redact_text_for_diagnostics,
 )
-from ..http import RequestCancelledError, diagnostic_url_payload
 from ..page_diagnostics import PageDiagnosticRequest, capture_page_diagnostic
-from ..quality.html_availability import choose_parser, extract_page_title
+from ..provider_catalog import compile_route_execution_policy_for_kind
+from ..publisher_identity import extract_doi, extract_doi_from_url, normalize_doi
+from ..quality.html_availability import (
+    HtmlQualityAssessor,
+    choose_parser,
+    extract_page_title,
+)
 from ..quality.html_signals import looks_like_abstract_redirect
-from ..quality.reason_codes import (
+from ..reason_codes import (
     ABSTRACT_ONLY,
     AWS_WAF_CHALLENGE,
+    BROWSER_CONTEXT_CREATE_FAILED,
+    BROWSER_PAGE_CREATE_FAILED,
     CLOUDFLARE_CHALLENGE,
     PUBLISHER_ACCESS_DENIED,
     PUBLISHER_PAYWALL,
     REDIRECTED_TO_ABSTRACT,
 )
-from ..reason_codes import (
-    BROWSER_CONTEXT_CREATE_FAILED,
-    BROWSER_PAGE_CREATE_FAILED,
-)
-from ..runtime_browser import (
-    ManagedBrowserError,
-    browser_page_user_agent,
-)
+from ..runtime_browser import browser_page_user_agent
 from ..utils import normalize_text
 from ._atypon_browser_workflow_profiles import publisher_profile
 from .browser_runtime.context import open_browser_context
@@ -87,13 +100,90 @@ logger = logging.getLogger("paper_fetch.providers.playwright")
 DEFAULT_BROWSER_RUNTIME_MAX_TIMEOUT_MS = 120000
 DEFAULT_BROWSER_RUNTIME_WAIT_SECONDS = 8
 DEFAULT_BROWSER_RUNTIME_WARM_WAIT_SECONDS = 1
+MAX_BROWSER_SCREENSHOT_BYTES = 16 * 1024 * 1024
+MAX_BROWSER_DIAGNOSTIC_EVENTS = 8
+MAX_BROWSER_DIAGNOSTIC_TEXT_CHARS = 500
 DEFAULT_BROWSER_HTML_READINESS = BrowserHtmlReadiness()
 DEFAULT_BROWSER_HTML_FETCH_OPTIONS = BrowserHtmlFetchOptions()
-_IMAGE_PAYLOAD_MIN_IMAGE_DIMENSION = 1
 _IMAGE_RESPONSE_BLOCKED_BY_HTML_WRAPPER = "image_response_blocked_by_html_wrapper"
 _IMAGE_PAYLOAD_RESPONSE_ATTR = "_paper_fetch_top_level_response"
 _IMAGE_PAYLOAD_TIMEOUT_ATTR = "_paper_fetch_image_payload_timeout_ms"
 _IMAGE_PAYLOAD_FAILURE_ATTR = "_paper_fetch_image_payload_failure"
+_HTTP_ACCESS_STATUS_REVIEW_KEY = "http_access_status_review"
+_WILEY_REVIEWABLE_HTTP_STATUSES = frozenset({401, 403})
+_WILEY_DOI_META_NAMES = frozenset(
+    {"citation_doi", "dc.identifier", "dc.identifier.doi", "prism.doi"}
+)
+_MAIN_CONTEXT_SNAPSHOT_PROVIDERS = frozenset({"pnas", "science", "wiley", "elsevier"})
+_MAIN_CONTEXT_HTML_SNAPSHOT_SCRIPT = """
+() => ({
+  html: (document.doctype ? new XMLSerializer().serializeToString(document.doctype) + '\\n' : '')
+    + document.documentElement.outerHTML,
+  title: document.title,
+  url: location.href,
+})
+"""
+_MAIN_DOCUMENT_NAVIGATION_DIAGNOSTIC_SCRIPT = """
+() => {
+  const entry = performance.getEntriesByType('navigation')[0] || null;
+  const finite = (value) => Number.isFinite(value) ? value : null;
+  return {
+    documentReadyState: String(document.readyState || ''),
+    navigation: entry ? {
+      type: String(entry.type || ''),
+      nextHopProtocol: String(entry.nextHopProtocol || ''),
+      responseStart: finite(entry.responseStart),
+      responseEnd: finite(entry.responseEnd),
+      domInteractive: finite(entry.domInteractive),
+      domContentLoadedEventEnd: finite(entry.domContentLoadedEventEnd),
+      loadEventEnd: finite(entry.loadEventEnd),
+      duration: finite(entry.duration),
+      transferSize: finite(entry.transferSize),
+      encodedBodySize: finite(entry.encodedBodySize),
+      decodedBodySize: finite(entry.decodedBodySize),
+    } : null,
+  };
+}
+"""
+_IMAGE_ARRAY_BUFFER_EXPORT_SCRIPT = """
+async ([targetUrl, timeoutMs]) => {
+  const bytesToBase64 = (bytes) => {
+    const chunkSize = 0x8000;
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + chunkSize));
+    }
+    return btoa(binary);
+  };
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const response = await fetch(targetUrl, {
+      credentials: 'include',
+      cache: 'no-store',
+      signal: controller.signal,
+    });
+    const buffer = await response.arrayBuffer();
+    return {
+      ok: response.ok,
+      status: response.status,
+      url: response.url || targetUrl,
+      headers: {'cf-mitigated': response.headers.get('cf-mitigated') || ''},
+      bodySnippet: new TextDecoder().decode(buffer.slice(0, 8192)),
+      contentType: response.headers.get('content-type') || '',
+      bodyB64: bytesToBase64(new Uint8Array(buffer)),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'browser_array_buffer_failed',
+      error: String((error && (error.name || error.message)) || error || ''),
+    };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+"""
 _STABLE_BROWSER_ACCESS_FAILURE_KINDS = frozenset(
     {
         ABSTRACT_ONLY,
@@ -127,6 +217,332 @@ _SELECTOR_TEXT_READINESS_SCRIPT = """
 
 PlaywrightRuntimeConfig = BrowserRuntimeConfig
 PlaywrightBrowserFailure = BrowserRuntimeFailure
+
+
+def _diagnostic_event_value(value: Any) -> Any:
+    try:
+        return value() if callable(value) else value
+    except Exception:
+        return None
+
+
+def _diagnostic_event_attr(value: Any, name: str) -> Any:
+    try:
+        return _diagnostic_event_value(getattr(value, name, None))
+    except Exception:
+        return None
+
+
+def _bounded_diagnostic_text(value: Any) -> str:
+    return redact_text_for_diagnostics(str(value or ""))[
+        :MAX_BROWSER_DIAGNOSTIC_TEXT_CHARS
+    ]
+
+
+def _append_bounded_event(target: list[dict[str, Any]], value: dict[str, Any]) -> None:
+    if len(target) < MAX_BROWSER_DIAGNOSTIC_EVENTS:
+        target.append(value)
+
+
+def _install_page_diagnostic_listeners(
+    page: Any,
+    trace: dict[str, Any],
+) -> tuple[
+    list[tuple[str, Callable[[Any], None]]],
+    dict[int, tuple[dict[str, Any], float]],
+]:
+    """Collect a small, secret-safe summary of browser failures."""
+
+    events: dict[str, list[dict[str, Any]]] = {
+        "document_requests": [],
+        "failed_requests": [],
+        "failed_scripts": [],
+        "console_errors": [],
+        "page_errors": [],
+    }
+    trace["page_events"] = events
+    document_requests: dict[int, tuple[dict[str, Any], float]] = {}
+
+    def document_request_record(
+        request: Any,
+    ) -> tuple[dict[str, Any], float] | None:
+        resource_type = normalize_text(
+            str(_diagnostic_event_attr(request, "resource_type") or "")
+        ).lower()
+        if resource_type != "document":
+            return None
+        request_key = id(request)
+        existing = document_requests.get(request_key)
+        if existing is not None:
+            return existing
+        if len(document_requests) >= MAX_BROWSER_DIAGNOSTIC_EVENTS:
+            return None
+        url = normalize_text(str(_diagnostic_event_attr(request, "url") or ""))
+        record: dict[str, Any] = {
+            **diagnostic_url_payload(url),
+            "resource_type": "document",
+            "response_received_observed": False,
+            "request_finished_observed": False,
+            "request_failed_observed": False,
+        }
+        started_at = time.monotonic()
+        document_requests[request_key] = (record, started_at)
+        _append_bounded_event(events["document_requests"], record)
+        return record, started_at
+
+    def request_started(request: Any) -> None:
+        document_request_record(request)
+
+    def response_received(response: Any) -> None:
+        request = _diagnostic_event_attr(response, "request")
+        tracked = document_request_record(request)
+        if tracked is None:
+            return
+        record, started_at = tracked
+        headers = _browser_response_headers(response)
+        record.update(
+            {
+                "response_received_observed": True,
+                "response_received_ms": round(
+                    max(0.0, time.monotonic() - started_at) * 1000,
+                    3,
+                ),
+                "status": _browser_response_status(response, zero_as_none=False),
+                "content_type": (
+                    _normalized_content_type(headers.get("content-type")) or None
+                ),
+                "content_length_bytes": _content_length_diagnostic(headers),
+                "transfer_encoding_present": bool(
+                    normalize_text(headers.get("transfer-encoding"))
+                ),
+                "chunked_transfer_declared": (
+                    "chunked"
+                    in normalize_text(headers.get("transfer-encoding")).lower()
+                ),
+            }
+        )
+
+    def request_finished(request: Any) -> None:
+        tracked = document_request_record(request)
+        if tracked is None:
+            return
+        record, started_at = tracked
+        record.update(
+            {
+                "request_finished_observed": True,
+                "request_finished_ms": round(
+                    max(0.0, time.monotonic() - started_at) * 1000,
+                    3,
+                ),
+            }
+        )
+
+    def request_failed(request: Any) -> None:
+        resource_type = normalize_text(
+            str(_diagnostic_event_attr(request, "resource_type") or "")
+        ).lower()
+        url = normalize_text(str(_diagnostic_event_attr(request, "url") or ""))
+        failure = _diagnostic_event_attr(request, "failure")
+        summary = {
+            **diagnostic_url_payload(url),
+            "resource_type": resource_type or None,
+            "error": _bounded_diagnostic_text(failure) or None,
+        }
+        _append_bounded_event(events["failed_requests"], summary)
+        if resource_type == "script":
+            _append_bounded_event(events["failed_scripts"], summary)
+        tracked = document_request_record(request)
+        if tracked is not None:
+            record, started_at = tracked
+            record.update(
+                {
+                    "request_failed_observed": True,
+                    "request_failure": _bounded_diagnostic_text(failure) or None,
+                    "request_failed_ms": round(
+                        max(0.0, time.monotonic() - started_at) * 1000,
+                        3,
+                    ),
+                }
+            )
+
+    def console_message(message: Any) -> None:
+        message_type = normalize_text(
+            str(_diagnostic_event_value(getattr(message, "type", "")) or "")
+        ).lower()
+        if message_type != "error":
+            return
+        text = _diagnostic_event_value(getattr(message, "text", ""))
+        _append_bounded_event(
+            events["console_errors"],
+            {"type": "error", "message": _bounded_diagnostic_text(text)},
+        )
+
+    def page_error(error: Any) -> None:
+        _append_bounded_event(
+            events["page_errors"],
+            {
+                "error_type": type(error).__name__,
+                "message": _bounded_diagnostic_text(error),
+            },
+        )
+
+    listeners: list[tuple[str, Callable[[Any], None]]] = [
+        ("request", request_started),
+        ("response", response_received),
+        ("requestfinished", request_finished),
+        ("requestfailed", request_failed),
+        ("console", console_message),
+        ("pageerror", page_error),
+    ]
+    on = getattr(page, "on", None)
+    if callable(on):
+        for event, callback in listeners:
+            with contextlib.suppress(Exception):
+                on(event, callback)
+    return listeners, document_requests
+
+
+def _remove_page_diagnostic_listeners(
+    page: Any,
+    listeners: list[tuple[str, Callable[[Any], None]]],
+) -> None:
+    remove = getattr(page, "remove_listener", None)
+    if not callable(remove):
+        remove = getattr(page, "off", None)
+    if not callable(remove):
+        return
+    for event, callback in listeners:
+        with contextlib.suppress(Exception):
+            remove(event, callback)
+
+
+def _main_document_response_diagnostic(
+    response: Any,
+    *,
+    page: Any,
+    fallback_url: str,
+    status: int | None,
+    headers: Mapping[str, str],
+    document_requests: Mapping[int, tuple[Mapping[str, Any], float]],
+    captured_html_bytes: int | None = None,
+) -> dict[str, Any]:
+    response_url = normalize_text(
+        str(_diagnostic_event_attr(response, "url") or "")
+    ) or normalize_text(fallback_url)
+    result: dict[str, Any] = {
+        **diagnostic_url_payload(response_url),
+        "status": status,
+        "content_type": _normalized_content_type(headers.get("content-type")) or None,
+        "content_length_bytes": _content_length_diagnostic(headers),
+        "transfer_encoding_present": bool(
+            normalize_text(headers.get("transfer-encoding"))
+        ),
+        "chunked_transfer_declared": (
+            "chunked" in normalize_text(headers.get("transfer-encoding")).lower()
+        ),
+        "captured_html_bytes": captured_html_bytes,
+        "navigation_timing": _main_document_navigation_diagnostic(page),
+    }
+    request = _diagnostic_event_attr(response, "request")
+    tracked = document_requests.get(id(request)) if request is not None else None
+    if tracked is not None:
+        lifecycle, started_at = tracked
+        result["request_lifecycle"] = {
+            key: lifecycle[key]
+            for key in (
+                "response_received_observed",
+                "response_received_ms",
+                "request_finished_observed",
+                "request_finished_ms",
+                "request_failed_observed",
+                "request_failed_ms",
+                "request_failure",
+            )
+            if key in lifecycle
+        }
+        result["request_lifecycle"]["observed_ms"] = round(
+            max(0.0, time.monotonic() - started_at) * 1000,
+            3,
+        )
+    return result
+
+
+def _content_length_diagnostic(headers: Mapping[str, str]) -> int | None:
+    raw_value = normalize_text(headers.get("content-length"))
+    if not raw_value.isascii() or not raw_value.isdecimal():
+        return None
+    value = int(raw_value)
+    return value if value >= 0 else None
+
+
+def _finite_nonnegative_diagnostic_number(value: Any) -> float | int | None:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if numeric < 0 or numeric == float("inf") or numeric != numeric:
+        return None
+    if numeric.is_integer():
+        return int(numeric)
+    return round(numeric, 3)
+
+
+def _main_document_navigation_diagnostic(page: Any) -> dict[str, Any]:
+    try:
+        raw = page.evaluate(_MAIN_DOCUMENT_NAVIGATION_DIAGNOSTIC_SCRIPT)
+    except Exception as exc:
+        return {
+            "available": False,
+            "error_type": type(exc).__name__,
+        }
+    if not isinstance(raw, Mapping):
+        return {"available": False}
+    ready_state = normalize_text(str(raw.get("documentReadyState") or "")).lower()
+    if ready_state not in {"loading", "interactive", "complete"}:
+        ready_state = ""
+    result: dict[str, Any] = {
+        "available": True,
+        "document_ready_state": ready_state or None,
+    }
+    navigation = raw.get("navigation")
+    if not isinstance(navigation, Mapping):
+        result["navigation_entry_present"] = False
+        return result
+    result["navigation_entry_present"] = True
+    for source_key, target_key in (
+        ("responseStart", "response_start_ms"),
+        ("responseEnd", "response_end_ms"),
+        ("domInteractive", "dom_interactive_ms"),
+        ("domContentLoadedEventEnd", "dom_content_loaded_event_end_ms"),
+        ("loadEventEnd", "load_event_end_ms"),
+        ("duration", "duration_ms"),
+        ("transferSize", "transfer_size_bytes"),
+        ("encodedBodySize", "encoded_body_size_bytes"),
+        ("decodedBodySize", "decoded_body_size_bytes"),
+    ):
+        result[target_key] = _finite_nonnegative_diagnostic_number(
+            navigation.get(source_key)
+        )
+    navigation_type = normalize_text(str(navigation.get("type") or "")).lower()
+    result["navigation_type"] = (
+        navigation_type
+        if navigation_type in {"navigate", "reload", "back_forward", "prerender"}
+        else None
+    )
+    next_hop_protocol = normalize_text(str(navigation.get("nextHopProtocol") or ""))
+    result["next_hop_protocol"] = next_hop_protocol[:32] if next_hop_protocol else None
+    response_end = result.get("response_end_ms")
+    dom_content_loaded_end = result.get("dom_content_loaded_event_end_ms")
+    load_event_end = result.get("load_event_end_ms")
+    result["response_completed"] = bool(
+        isinstance(response_end, (int, float)) and response_end > 0
+    )
+    result["dom_content_loaded_completed"] = bool(
+        isinstance(dom_content_loaded_end, (int, float)) and dom_content_loaded_end > 0
+    )
+    result["load_event_completed"] = bool(
+        isinstance(load_event_end, (int, float)) and load_event_end > 0
+    )
+    return result
 
 
 def _same_site_navigation(candidate_url: str, final_url: str) -> bool:
@@ -186,50 +602,6 @@ def _normalized_content_type(value: str | None) -> str:
     return normalize_text(str(value or "")).split(";", 1)[0].lower()
 
 
-def _response_body(response: Any) -> bytes | None:
-    if response is None:
-        return None
-    try:
-        body = response.body()
-    except Exception:
-        return None
-    if not isinstance(body, (bytes, bytearray)) or not body:
-        return None
-    return bytes(body)
-
-
-def _browser_image_payload_from_bytes(
-    body: bytes | bytearray | None,
-    *,
-    content_type: str | None,
-    url: str,
-    status: int | None,
-    width: int = 0,
-    height: int = 0,
-) -> BrowserImagePayload | None:
-    if not isinstance(body, (bytes, bytearray)) or not body:
-        return None
-    payload_body = bytes(body)
-    detected_type = image_mime_type_from_bytes(payload_body)
-    if not detected_type:
-        return None
-    normalized_content_type = _normalized_content_type(content_type) or detected_type
-    if not normalized_content_type.startswith("image/"):
-        normalized_content_type = detected_type
-    dimensions = image_dimensions_from_bytes(payload_body)
-    if dimensions is not None:
-        width = width or dimensions[0]
-        height = height or dimensions[1]
-    return {
-        "bodyB64": base64.b64encode(payload_body).decode("ascii"),
-        "contentType": normalized_content_type,
-        "url": normalize_text(url),
-        "status": status or 200,
-        "width": max(0, _safe_int(width)),
-        "height": max(0, _safe_int(height)),
-    }
-
-
 def _capture_expected_response(page: Any, request_url: str) -> Any:
     response = getattr(page, _IMAGE_PAYLOAD_RESPONSE_ATTR, None)
     if response is not None:
@@ -257,63 +629,6 @@ def _capture_expected_response(page: Any, request_url: str) -> Any:
         return None
 
 
-def _image_element_has_loaded_natural_size(image_element: Any) -> bool | None:
-    try:
-        image_info = image_element.evaluate(
-            """
-            (image) => ({
-              width: image.naturalWidth || 0,
-              height: image.naturalHeight || 0,
-              complete: !!image.complete,
-            })
-            """
-        )
-    except Exception:
-        return None
-    if not isinstance(image_info, Mapping):
-        return None
-    return (
-        bool(image_info.get("complete", True))
-        and _safe_int(image_info.get("width")) > 0
-        and _safe_int(image_info.get("height")) > 0
-    )
-
-
-def _payload_from_canvas_export(
-    rendered: Any,
-    *,
-    fallback_url: str,
-    status: int | None,
-) -> BrowserImagePayload | None:
-    if not isinstance(rendered, Mapping) or not rendered.get("ok"):
-        return None
-    body_b64 = normalize_text(str(rendered.get("bodyB64") or ""))
-    content_type = (
-        _normalized_content_type(str(rendered.get("contentType") or "")) or "image/png"
-    )
-    data_url = normalize_text(
-        str(rendered.get("dataURL") or rendered.get("dataUrl") or "")
-    )
-    if data_url.startswith("data:") and "," in data_url:
-        metadata, body_b64 = data_url.split(",", 1)
-        content_type = (
-            _normalized_content_type(metadata.removeprefix("data:").split(";", 1)[0])
-            or content_type
-        )
-    try:
-        body = base64.b64decode(body_b64, validate=True)
-    except Exception:
-        return None
-    return _browser_image_payload_from_bytes(
-        body,
-        content_type=content_type,
-        url=fallback_url,
-        status=status,
-        width=_safe_int(rendered.get("width")),
-        height=_safe_int(rendered.get("height")),
-    )
-
-
 def _clear_image_payload_failure(page: Any) -> None:
     with contextlib.suppress(Exception):
         delattr(page, _IMAGE_PAYLOAD_FAILURE_ATTR)
@@ -322,6 +637,62 @@ def _clear_image_payload_failure(page: Any) -> None:
 def _record_image_payload_failure(page: Any, values: Mapping[str, Any]) -> None:
     with contextlib.suppress(Exception):
         setattr(page, _IMAGE_PAYLOAD_FAILURE_ATTR, dict(values))
+
+
+def _encoded_browser_image_payload(
+    body: bytes | bytearray,
+    *,
+    content_type: str,
+    final_url: str,
+    status: int,
+    width: int,
+    height: int,
+) -> BrowserImagePayload | None:
+    if not body:
+        return None
+    return {
+        "bodyB64": base64.b64encode(bytes(body)).decode("ascii"),
+        "contentType": content_type or "image/png",
+        "url": final_url,
+        "status": status,
+        "width": width,
+        "height": height,
+    }
+
+
+def _mapped_browser_image_payload(
+    value: Any,
+    *,
+    fallback_content_type: str,
+    fallback_url: str,
+    fallback_status: int,
+    width: int,
+    height: int,
+) -> BrowserImagePayload | None:
+    if not isinstance(value, Mapping) or value.get("ok") is False:
+        return None
+    encoded = normalize_text(str(value.get("bodyB64") or ""))
+    if not encoded:
+        data_url = normalize_text(str(value.get("dataURL") or ""))
+        if "," in data_url:
+            encoded = data_url.split(",", 1)[1]
+    try:
+        decoded = base64.b64decode(encoded, validate=True)
+    except Exception:
+        return None
+    if not decoded:
+        return None
+    return {
+        "bodyB64": encoded,
+        "contentType": _normalized_content_type(
+            str(value.get("contentType") or fallback_content_type)
+        )
+        or "image/png",
+        "url": normalize_text(str(value.get("url") or "")) or fallback_url,
+        "status": _safe_int(value.get("status"), default=fallback_status),
+        "width": max(0, _safe_int(value.get("width"), default=width)),
+        "height": max(0, _safe_int(value.get("height"), default=height)),
+    }
 
 
 def _capture_image_payload(
@@ -338,60 +709,119 @@ def _capture_image_payload(
     headers = _browser_response_headers(response)
     content_type = _normalized_content_type(headers.get("content-type"))
 
-    if content_type.startswith("image/"):
-        payload = _browser_image_payload_from_bytes(
-            _response_body(response),
-            content_type=content_type,
-            url=normalized_final_url,
-            status=status,
+    image_element = None
+    try:
+        image_element = page.query_selector("img")
+    except Exception:
+        image_element = None
+    width = 0
+    height = 0
+    loaded = False
+    discovered_image_url = ""
+    if image_element is not None:
+        try:
+            image_info = image_element.evaluate(
+                """
+                (image) => ({
+                  width: image.naturalWidth || 0,
+                  height: image.naturalHeight || 0,
+                  complete: !!image.complete,
+                  url: image.currentSrc || image.src || '',
+                })
+                """
+            )
+        except Exception:
+            image_info = None
+        if isinstance(image_info, Mapping):
+            width = max(0, _safe_int(image_info.get("width")))
+            height = max(0, _safe_int(image_info.get("height")))
+            loaded = bool(image_info.get("complete")) and width > 0 and height > 0
+            discovered_url = normalize_text(str(image_info.get("url") or ""))
+            if discovered_url.lower().startswith(("http://", "https://")):
+                discovered_image_url = discovered_url
+                normalized_final_url = discovered_url
+
+    response_is_image = content_type.startswith("image/") and status < 400
+    discovered_loaded_image = bool(discovered_image_url and loaded)
+    if normalized_final_url.lower().startswith(("http://", "https://")) and (
+        response_is_image or discovered_loaded_image
+    ):
+        if response_is_image and response is not None:
+            try:
+                response_body = response.body()
+            except Exception:
+                response_body = b""
+            if isinstance(response_body, (bytes, bytearray)):
+                payload = _encoded_browser_image_payload(
+                    response_body,
+                    content_type=content_type,
+                    final_url=normalized_final_url,
+                    status=status,
+                    width=width,
+                    height=height,
+                )
+                if payload is not None:
+                    return payload
+
+        try:
+            array_buffer_result = evaluate_get(
+                page,
+                _IMAGE_ARRAY_BUFFER_EXPORT_SCRIPT,
+                [
+                    normalized_final_url,
+                    max(
+                        1,
+                        int(
+                            (
+                                getattr(
+                                    page,
+                                    "_paper_fetch_image_deadline",
+                                    time.monotonic() + 30,
+                                )
+                                - time.monotonic()
+                            )
+                            * 1000
+                        ),
+                    ),
+                ],
+            )
+        except Exception:
+            array_buffer_result = None
+        payload = _mapped_browser_image_payload(
+            array_buffer_result,
+            fallback_content_type=content_type,
+            fallback_url=normalized_final_url,
+            fallback_status=status if response_is_image else 200,
+            width=width,
+            height=height,
         )
         if payload is not None:
             return payload
+
+        if discovered_loaded_image or image_element is not None:
+            try:
+                canvas_result = page.evaluate(
+                    _LOADED_IMAGE_CANVAS_EXPORT_SCRIPT,
+                    [normalized_final_url, 1, 1],
+                )
+            except Exception:
+                canvas_result = None
+            payload = _mapped_browser_image_payload(
+                canvas_result,
+                fallback_content_type="image/png",
+                fallback_url=normalized_final_url,
+                fallback_status=200,
+                width=width,
+                height=height,
+            )
+            if payload is not None:
+                return payload
 
     html = ""
     try:
         html = str(page.content() or "")
     except Exception:
         html = ""
-    if _normalized_content_type(content_type) in {
-        "image/svg+xml",
-        "",
-    } or normalize_text(html).startswith("<"):
-        svg_payload = _browser_image_payload_from_bytes(
-            html.encode("utf-8"),
-            content_type="image/svg+xml",
-            url=normalized_final_url,
-            status=status,
-        )
-        if svg_payload is not None and svg_payload["contentType"] == "image/svg+xml":
-            return svg_payload
-
-    image_element = None
-    try:
-        image_element = page.query_selector("img")
-    except Exception:
-        image_element = None
-    if image_element is not None:
-        loaded = _image_element_has_loaded_natural_size(image_element)
-        if loaded is not False:
-            try:
-                rendered = page.evaluate(
-                    _LOADED_IMAGE_CANVAS_EXPORT_SCRIPT,
-                    [
-                        normalized_request_url,
-                        _IMAGE_PAYLOAD_MIN_IMAGE_DIMENSION,
-                        _IMAGE_PAYLOAD_MIN_IMAGE_DIMENSION,
-                    ],
-                )
-            except Exception:
-                rendered = None
-            payload = _payload_from_canvas_export(
-                rendered,
-                fallback_url=normalized_final_url,
-                status=status,
-            )
-            if payload is not None:
-                return payload
 
     try:
         title = normalize_text(str(page.title() or ""))
@@ -449,28 +879,8 @@ def _safe_close(value: Any) -> None:
         value.close()
 
 
-def _raise_if_cancelled(runtime_context: RuntimeContext | None) -> None:
-    cancel_check = getattr(runtime_context, "cancel_check", None)
-    if callable(cancel_check) and cancel_check() is True:
-        raise RequestCancelledError("Request cancelled.")
-
-
 def _storage_state_path(config: PlaywrightRuntimeConfig) -> Path | None:
     return _runtime_paths().storage_state_path(config)
-
-
-def _storage_context_options(config: PlaywrightRuntimeConfig) -> dict[str, Any]:
-    return _runtime_paths().storage_context_options(config)
-
-
-def _storage_origin_matches_url(origin: Mapping[str, Any], url: str | None) -> bool:
-    return _runtime_paths().storage_origin_matches_url(origin, url)
-
-
-def _filtered_storage_state_payload(
-    context: Any, *, url: str
-) -> Mapping[str, Any] | None:
-    return _runtime_paths().filtered_storage_state_payload(context, url=url)
 
 
 def _stage_storage_state(
@@ -501,10 +911,13 @@ def _navigate_browser_page(
     return_image_payload: bool,
 ) -> Any:
     if not return_image_payload:
-        return page.goto(url, wait_until="commit", timeout=timeout_ms)
+        return navigate_page(
+            page, url, wait_until="commit", timeout=timeout_ms, mode="html"
+        )
 
     with contextlib.suppress(Exception):
         setattr(page, _IMAGE_PAYLOAD_TIMEOUT_ATTR, timeout_ms)
+        page._paper_fetch_image_deadline = time.monotonic() + timeout_ms / 1000
     response = None
     top_level_response = None
     try:
@@ -514,10 +927,12 @@ def _navigate_browser_page(
             ),
             timeout=timeout_ms,
         ) as response_info:
-            response = page.goto(
+            response = navigate_page(
+                page,
                 url,
                 wait_until="domcontentloaded",
                 timeout=timeout_ms,
+                mode="image",
             )
         try:
             top_level_response = response_info.value
@@ -559,7 +974,8 @@ def _wait_for_browser_html_readiness(
     body_readiness = None
     selector_wait_attempted = False
     if readiness.wait_for_article_body:
-        _raise_if_cancelled(runtime_context)
+        if runtime_context is not None:
+            runtime_context.raise_if_cancelled()
         remaining_timeout_seconds = max(
             0.0,
             (float(timeout_ms) / 1000.0) - (time.monotonic() - request_started),
@@ -570,10 +986,14 @@ def _wait_for_browser_html_readiness(
             if readiness_timeout_seconds is not None
             else min(max(float(wait_seconds), 20.0), remaining_timeout_seconds)
         )
+        readiness_kwargs: dict[str, Any] = {}
+        if runtime_context is not None:
+            readiness_kwargs["cancel_check"] = runtime_context.raise_if_cancelled
         body_readiness = wait_for_atypon_body_dom_ready(
             page,
             publisher,
             timeout_seconds=max(0.0, body_timeout_seconds),
+            **readiness_kwargs,
         )
         candidate_trace["dom_readiness_seconds"] = round(
             time.monotonic() - readiness_started, 3
@@ -592,13 +1012,26 @@ def _wait_for_browser_html_readiness(
         candidate_trace["dom_readiness_heading_count"] = getattr(
             body_readiness, "heading_count", 0
         )
+        candidate_trace["dom_readiness_fingerprint_present"] = bool(
+            normalize_text(str(getattr(body_readiness, "fingerprint", "") or ""))
+        )
+        blocking_reason = getattr(body_readiness, "blocking_reason", None)
         candidate_trace["dom_readiness_result"] = (
             "ready"
             if body_readiness.ready
-            else ("timeout" if body_readiness.attempted else "unsupported")
+            else (
+                "blocked"
+                if blocking_reason
+                else "timeout"
+                if body_readiness.attempted
+                else "unsupported"
+            )
         )
+        if blocking_reason:
+            candidate_trace["dom_readiness_blocking_reason"] = blocking_reason
     elif normalized_selector and wait_seconds > 0:
-        _raise_if_cancelled(runtime_context)
+        if runtime_context is not None:
+            runtime_context.raise_if_cancelled()
         selector_wait_attempted = True
         remaining_timeout_ms = max(
             1,
@@ -656,7 +1089,8 @@ def _wait_for_browser_html_readiness(
         and not selector_wait_attempted
         and wait_seconds > 0
     ):
-        _raise_if_cancelled(runtime_context)
+        if runtime_context is not None:
+            runtime_context.raise_if_cancelled()
         remaining_wait_ms = max(
             0,
             int(
@@ -674,7 +1108,8 @@ def _wait_for_browser_html_readiness(
         )
         if fixed_wait_ms > 0:
             page.wait_for_timeout(fixed_wait_ms)
-        _raise_if_cancelled(runtime_context)
+        if runtime_context is not None:
+            runtime_context.raise_if_cancelled()
         candidate_trace["dom_readiness_result"] = "fixed_wait"
     if wait_seconds > 0:
         readiness_elapsed = max(
@@ -685,15 +1120,38 @@ def _wait_for_browser_html_readiness(
             readiness_elapsed,
             3,
         )
-        if runtime_context is not None and hasattr(
-            runtime_context, "accumulate_stage_timing"
-        ):
-            with contextlib.suppress(Exception):
-                runtime_context.accumulate_stage_timing(
-                    "dom_readiness_seconds",
-                    elapsed=readiness_elapsed,
-                )
     return body_readiness
+
+
+def _main_context_html_snapshot(
+    page: Any, *, runtime_context: RuntimeContext | None = None
+) -> tuple[str, str, str] | None:
+    """Capture one document synchronously, falling back on a navigation race."""
+    if runtime_context is not None:
+        runtime_context.raise_if_cancelled()
+    try:
+        before_url = str(page.url or "")
+        raw = page.evaluate(_MAIN_CONTEXT_HTML_SNAPSHOT_SCRIPT)
+        if runtime_context is not None:
+            runtime_context.raise_if_cancelled()
+        if not isinstance(raw, Mapping):
+            return None
+        html, title, url = (raw.get(key) for key in ("html", "title", "url"))
+        if (
+            not isinstance(html, str)
+            or not html.strip()
+            or not isinstance(title, str)
+            or not isinstance(url, str)
+            or not url.strip()
+            or url != before_url
+            or url != str(page.url or "")
+        ):
+            return None
+        return html, normalize_text(title), url
+    except RequestCancelledError:
+        raise
+    except Exception:
+        return None
 
 
 def _prepare_provider_browser_page(
@@ -702,16 +1160,23 @@ def _prepare_provider_browser_page(
     publisher: str,
     timeout_ms: int,
     candidate_trace: dict[str, Any],
+    runtime_context: RuntimeContext | None = None,
 ) -> None:
     prepare_browser_page = publisher_profile(publisher).prepare_browser_page
     if prepare_browser_page is None:
         return
     preparation_started = time.monotonic()
     try:
-        preparation = prepare_browser_page(page, timeout_ms=timeout_ms)
+        kwargs: dict[str, Any] = {}
+        if publisher == "science" and runtime_context is not None:
+            kwargs["cancel_check"] = runtime_context.raise_if_cancelled
+        preparation = prepare_browser_page(page, timeout_ms=timeout_ms, **kwargs)
         if isinstance(preparation, Mapping):
             candidate_trace["provider_page_preparation"] = dict(preparation)
+    except RequestCancelledError:
+        raise
     except Exception as exc:
+        propagate_paywall(exc)
         candidate_trace["provider_page_preparation"] = {
             "attempted": True,
             "error_type": type(exc).__name__,
@@ -743,12 +1208,7 @@ def _browser_page_failure_details(
         "page_summary": (request.summary or "")[:1000] or None,
     }
     if request.failure_code == "aws_waf_challenge":
-        details.update(
-            {
-                "challenge_provider": "aws_waf",
-                "legacy_reason_code": "cloudflare_challenge",
-            }
-        )
+        details.update({"challenge_provider": "aws_waf"})
     if runtime_context is None:
         return details
     diagnostic = capture_page_diagnostic(runtime_context, request)
@@ -788,6 +1248,15 @@ def _candidate_deadline_failure(
     *,
     trace: Mapping[str, Any],
 ) -> PlaywrightBrowserFailure:
+    if (
+        trace.get(
+            "state_mode", "json" if trace.get("backend") == "byparr" else "native"
+        )
+        == "json"
+        and last_failure is not None
+    ):
+        last_failure.details.setdefault("browser_runtime_trace", dict(trace))
+        return last_failure
     timeout_failure = PlaywrightBrowserFailure(
         "browser_connect_timeout",
         "Browser HTML request deadline was exhausted before another candidate.",
@@ -857,6 +1326,8 @@ def _capture_page_screenshot(
     except Exception:
         return None
     if isinstance(payload, bytes):
+        if len(payload) > MAX_BROWSER_SCREENSHOT_BYTES:
+            return None
         return base64.b64encode(payload).decode("ascii")
     return payload if isinstance(payload, str) else None
 
@@ -903,6 +1374,7 @@ def _seed_browser_html_context(
 def _active_browser_resource_types(
     *,
     backend_name: str,
+    state_mode: str = "native",
     disable_media: bool,
     options: BrowserHtmlFetchOptions,
 ) -> set[str]:
@@ -915,7 +1387,7 @@ def _active_browser_resource_types(
     }
     if not disable_media:
         return configured
-    if options.blocked_resource_types is None and backend_name != "camoufox":
+    if options.blocked_resource_types is None and state_mode != "native":
         # Preserve the established Playwright fast-attempt policy for profiles
         # (including Science) that did not opt into provider-specific blocking.
         configured.update(BROWSER_HTML_BLOCKED_RESOURCE_TYPES)
@@ -931,8 +1403,6 @@ def _open_browser_html_context(
     *,
     runtime_context: RuntimeContext | None,
     shared_page_session: Any | None,
-    browser_context_seed: Mapping[str, Any] | None,
-    candidate_url: str | None,
     trace: dict[str, Any],
 ) -> tuple[Any, Any, Any | None]:
     manager = None
@@ -957,53 +1427,15 @@ def _open_browser_html_context(
             )
         trace["runtime_page_reused"] = reused
         trace["browser_connect_seconds"] = round(time.monotonic() - connect_started, 3)
-        external_diagnostics = getattr(
-            browser_context, "_paper_fetch_external_cdp_diagnostics", None
-        )
-        if isinstance(external_diagnostics, Mapping):
-            trace["external_cdp_context"] = dict(external_diagnostics)
-        elif config.cdp_endpoint:
-            trace["external_cdp_context"] = {
-                "external_cdp": True,
-                "borrowed_existing_context": None,
-                "ignored_context_options": [],
-                "storage_state_cookie_count": None,
-            }
-        if reused:
-            trace["browser_context_seed"] = {
-                "provided": browser_context_seed is not None,
-                "applied": False,
-                "reason": "reused_runtime_page_context",
-            }
-        else:
-            _seed_browser_html_context(
-                browser_context,
-                browser_context_seed=browser_context_seed,
-                candidate_url=candidate_url,
-                trace=trace,
-            )
         return manager, browser_context, page
     except PlaywrightBrowserFailure:
         if not reused:
-            _safe_close(browser_context)
             _safe_close(manager)
         raise
-    except ManagedBrowserError as exc:
-        trace["browser_connect_seconds"] = round(time.monotonic() - connect_started, 3)
-        trace["browser_failure"] = dict(exc.details)
-        if not reused:
-            _safe_close(browser_context)
-            _safe_close(manager)
-        raise PlaywrightBrowserFailure(
-            exc.code,
-            exc.message,
-            details={"trace": trace, "browser_failure": dict(exc.details)},
-        ) from exc
     except Exception as exc:
         trace["browser_connect_seconds"] = round(time.monotonic() - connect_started, 3)
         message = normalize_text(str(exc)) or "Browser context creation failed."
         if not reused:
-            _safe_close(browser_context)
             _safe_close(manager)
         raise PlaywrightBrowserFailure(
             BROWSER_CONTEXT_CREATE_FAILED,
@@ -1054,6 +1486,307 @@ def _ensure_browser_html_page(
         ) from exc
 
 
+def _browser_route_timeout_ms(
+    publisher: str,
+    *,
+    configured_timeout_ms: int,
+) -> int:
+    """Cap the caller budget with the catalog-compiled browser route timeout."""
+
+    try:
+        route_timeout_ms = (
+            compile_route_execution_policy_for_kind(
+                publisher,
+                "html",
+                prefer_transport="browser",
+            ).timeout_seconds
+            * 1000
+        )
+    except ValueError:
+        # Unknown names are retained for deterministic browser doubles.
+        route_timeout_ms = configured_timeout_ms
+    return min(configured_timeout_ms, route_timeout_ms)
+
+
+def _browser_html_deadline(
+    *,
+    started_at: float,
+    timeout_ms: int,
+    runtime_context: RuntimeContext | None,
+) -> float:
+    deadline = started_at + (timeout_ms / 1000.0)
+    if runtime_context is not None and runtime_context.deadline_monotonic is not None:
+        return min(deadline, runtime_context.deadline_monotonic)
+    return deadline
+
+
+def _record_browser_challenge_signal(
+    trace: dict[str, Any],
+    *,
+    reason: str,
+    status: int | None,
+    final_url: str,
+) -> None:
+    challenge_signals = trace.setdefault("challenge_signals", [])
+    if not isinstance(challenge_signals, list):
+        return
+    _append_bounded_event(
+        challenge_signals,
+        {
+            "reason": normalize_text(reason).lower(),
+            "status": status,
+            **diagnostic_url_payload(final_url),
+        },
+    )
+
+
+def _wiley_document_doi_evidence(html_text: str) -> list[tuple[str, str]]:
+    """Return normalized DOI evidence from Wiley-owned identity nodes."""
+
+    try:
+        soup = BeautifulSoup(html_text, choose_parser())
+    except Exception:
+        return []
+
+    evidence: list[tuple[str, str]] = []
+
+    def add(source: str, value: Any, *, from_url: bool = False) -> None:
+        raw_value = normalize_text(str(value or ""))
+        if not raw_value:
+            return
+        doi = extract_doi_from_url(raw_value) if from_url else extract_doi(raw_value)
+        normalized = normalize_doi(doi or "")
+        item = (source, normalized)
+        if normalized and item not in evidence:
+            evidence.append(item)
+
+    for node in soup.find_all("meta"):
+        attrs = getattr(node, "attrs", None) or {}
+        name = normalize_text(
+            str(attrs.get("name") or attrs.get("property") or "")
+        ).lower()
+        if name in _WILEY_DOI_META_NAMES:
+            add("citation_meta", attrs.get("content"))
+
+    for node in soup.select("link[rel~='canonical']"):
+        attrs = getattr(node, "attrs", None) or {}
+        add("canonical", attrs.get("href"), from_url=True)
+
+    for node in soup.select(".epub-doi"):
+        add("epub_doi", node.get_text(" ", strip=True))
+        attrs = getattr(node, "attrs", None) or {}
+        add("epub_doi", attrs.get("href"), from_url=True)
+        for link in node.select("a[href]"):
+            add(
+                "epub_doi",
+                (getattr(link, "attrs", None) or {}).get("href"),
+                from_url=True,
+            )
+    return evidence
+
+
+def _wiley_http_access_status_review(
+    *,
+    publisher: str,
+    return_image_payload: bool,
+    status: int | None,
+    requested_doi: str,
+    requested_url: str,
+    final_url: str,
+    html_text: str,
+    title: str,
+    body_ready: bool,
+    runtime_context: RuntimeContext | None = None,
+) -> dict[str, Any] | None:
+    if (
+        normalize_text(publisher).lower() != "wiley"
+        or status not in _WILEY_REVIEWABLE_HTTP_STATUSES
+        or return_image_payload
+    ):
+        return None
+
+    expected_doi = normalize_doi(requested_doi)
+    doi_evidence = _wiley_document_doi_evidence(html_text)
+    matching_sources = [
+        source for source, observed_doi in doi_evidence if observed_doi == expected_doi
+    ]
+    evidence_sources = list(dict.fromkeys(source for source, _doi in doi_evidence))
+
+    preliminary = HtmlQualityAssessor("wiley").assess(
+        "",
+        {"doi": expected_doi},
+        html_text=html_text,
+        structure_html_text=html_text,
+        title=title or None,
+        response_status=None,
+        requested_url=requested_url,
+        final_url=final_url,
+        context=runtime_context,
+    )
+    blocking_signals = list(
+        dict.fromkeys(
+            [
+                *preliminary.hard_negative_signals,
+                *preliminary.blocking_fallback_signals,
+            ]
+        )
+    )
+    doi_match = bool(expected_doi and matching_sources)
+    candidate_confirmed = bool(body_ready and doi_match and not blocking_signals)
+    if not body_ready:
+        reason = "body_not_ready"
+    elif not expected_doi:
+        reason = "requested_doi_missing"
+    elif not doi_evidence:
+        reason = "doi_evidence_missing"
+    elif not doi_match:
+        reason = "doi_mismatch"
+    elif blocking_signals:
+        reason = "blocking_signal"
+    else:
+        reason = "pending_fulltext_acceptance"
+
+    return {
+        "status": status,
+        "body_ready": bool(body_ready),
+        "doi_evidence_present": bool(doi_evidence),
+        "doi_evidence_sources": evidence_sources,
+        "doi_match": doi_match,
+        "doi_match_sources": list(dict.fromkeys(matching_sources)),
+        "blocking_signals": blocking_signals,
+        "candidate_confirmed": candidate_confirmed,
+        "status_override_applied": False,
+        "fulltext_acceptance": "pending" if candidate_confirmed else "not_attempted",
+        "accepted": False,
+        "reason": reason,
+    }
+
+
+def _reject_wiley_http_access_status_review(
+    review: dict[str, Any] | None,
+    *,
+    blocking_reason: str,
+) -> None:
+    if review is None or review.get("candidate_confirmed") is not True:
+        return
+    signals = list(review.get("blocking_signals") or [])
+    normalized_reason = normalize_text(blocking_reason).lower()
+    if normalized_reason and normalized_reason not in signals:
+        signals.append(normalized_reason)
+    review.update(
+        {
+            "blocking_signals": signals,
+            "candidate_confirmed": False,
+            "status_override_applied": False,
+            "fulltext_acceptance": "not_attempted",
+            "accepted": False,
+            "reason": "blocking_signal",
+        }
+    )
+
+
+def _record_wiley_http_access_status_review(
+    candidate_trace: dict[str, Any],
+    review: dict[str, Any] | None,
+    *,
+    apply_override: bool = False,
+) -> bool:
+    if review is None:
+        return False
+    confirmed = review.get("candidate_confirmed") is True
+    if apply_override:
+        review["status_override_applied"] = confirmed
+    candidate_trace[_HTTP_ACCESS_STATUS_REVIEW_KEY] = review
+    return confirmed
+
+
+def _select_owned_document_response(
+    response,
+    *,
+    owned_document_responses,
+    owned_finished_requests,
+    owned_document_requests,
+    final_url,
+    html,
+    doi,
+    response_hosts,
+    page_policy,
+):
+    """Select the completed main document using the provider's match policy."""
+    if owned_document_responses:
+        current_response = owned_document_responses[-1]
+        current_url = normalize_text(
+            str(_diagnostic_event_attr(current_response, "url") or "")
+        )
+        target_doi = normalize_doi(doi)
+        if (
+            id(_diagnostic_event_attr(current_response, "request"))
+            in owned_finished_requests
+            and id(_diagnostic_event_attr(current_response, "request"))
+            == next(reversed(owned_document_requests))
+            and urllib.parse.urldefrag(current_url)[0]
+            == urllib.parse.urldefrag(final_url)[0]
+            and urllib.parse.urlsplit(current_url).hostname in response_hosts
+            and target_doi
+            and (
+                page_policy.document_matches(current_url, final_url, html, target_doi)
+                if page_policy.document_matches is not None
+                else normalize_doi(extract_doi_from_url(current_url)) == target_doi
+            )
+        ):
+            response = current_response
+    return response
+
+
+def _capture_browser_html(
+    page, *, use_main_context_snapshot, runtime_context, candidate_url
+):
+    snapshot = (
+        _main_context_html_snapshot(page, runtime_context=runtime_context)
+        if use_main_context_snapshot
+        else None
+    )
+    if snapshot is not None:
+        return snapshot
+    final_url = normalize_text(str(getattr(page, "url", "") or "")) or candidate_url
+    return str(page.content() or ""), normalize_text(str(page.title() or "")), final_url
+
+
+def _assemble_browser_html_result(
+    *, browser_context, config, trace, options, **captured
+):
+    """Stage accepted state and assemble the captured result without owning cleanup."""
+    staged_storage_state = None
+    if (
+        config.persist_storage_state
+        and not options.return_image_payload
+        and not options.supplementary_index
+    ):
+        staged_storage_state, storage_state_result = _stage_storage_state(
+            browser_context,
+            config,
+            filter_url=captured["final_url"],
+        )
+        trace["storage_state_save"] = storage_state_result
+    else:
+        trace["storage_state_save"] = {
+            "attempted": False,
+            "staged": False,
+            "saved": False,
+            "path": str(_storage_state_path(config) or "") or None,
+            "reason": (
+                "non_article_payload"
+                if options.return_image_payload
+                else "storage_state_write_disabled"
+            ),
+        }
+    return BrowserFetchedHtml(
+        **captured,
+        diagnostics={"browser_runtime_trace": trace},
+        staged_storage_state=staged_storage_state,
+    )
+
+
 def fetch_html_with_playwright(
     candidate_urls: list[str],
     *,
@@ -1067,6 +1800,7 @@ def fetch_html_with_playwright(
     browser_context_seed: Mapping[str, Any] | None = None,
     options: BrowserHtmlFetchOptions = DEFAULT_BROWSER_HTML_FETCH_OPTIONS,
 ) -> BrowserFetchedHtml:
+    supplementary_index = options.supplementary_index
     return_image_payload = options.return_image_payload
     return_screenshot = options.return_screenshot
     lightweight_seed_only = options.lightweight_seed_only
@@ -1074,28 +1808,45 @@ def fetch_html_with_playwright(
         raise PlaywrightBrowserFailure(
             "empty_html_attempts", "No publisher HTML candidates were attempted."
         )
-    backend_name = normalize_text(config.backend).lower()
+    backend_name = config.backend
     active_blocked_resource_types = _active_browser_resource_types(
         backend_name=backend_name,
+        state_mode=config.state_mode,
         disable_media=disable_media,
         options=options,
     )
+    empty_script_response_urls = frozenset(
+        str(item).strip()
+        for item in options.empty_script_response_urls
+        if str(item).strip()
+    )
     readiness_budget_seconds = options.readiness_budget_seconds
     reuse_runtime_page = options.reuse_runtime_page
+    from ._registry import provider_bundle, BrowserPagePolicy
+
+    try:
+        page_policy = provider_bundle(publisher).browser_page_policy
+    except KeyError:
+        page_policy = BrowserPagePolicy()
+    empty_request = page_policy.empty_request
 
     last_failure: PlaywrightBrowserFailure | None = None
     latest_browser_context_seed: Mapping[str, Any] | None = None
-    timeout_ms = config.timeout_ms if max_timeout_ms is None else max(1, max_timeout_ms)
-    if backend_name != "camoufox":
-        raise PlaywrightBrowserFailure(
-            "browser_backend_invalid",
-            f"Unsupported browser backend {config.backend!r}.",
-        )
+    caller_timeout_ms = (
+        config.timeout_ms if max_timeout_ms is None else max(1, max_timeout_ms)
+    )
+    timeout_ms = _browser_route_timeout_ms(
+        publisher,
+        configured_timeout_ms=caller_timeout_ms,
+    )
     artifact_dir = config.artifact_dir / backend_name
     configured_user_agent = normalize_text(config.user_agent)
     normalized_wait_for_selector = normalize_text(readiness.selector)
+    configured_storage_state_path = _storage_state_path(config)
     trace: dict[str, Any] = {
         "backend": backend_name,
+        "engine": "camoufox",
+        "state_mode": config.state_mode,
         "candidate_count": len(candidate_urls),
         "candidates": [],
         "navigation_count": 0,
@@ -1103,25 +1854,34 @@ def fetch_html_with_playwright(
         "blocked_resource_types": sorted(active_blocked_resource_types),
         "blocked_request_count": 0,
         "blocked_request_types": [],
+        "empty_script_response_count": 0,
         "return_image_payload": bool(return_image_payload),
         "return_screenshot": bool(return_screenshot),
         "lightweight_seed_only": bool(lightweight_seed_only),
         "article_body_wait_enabled": bool(readiness.wait_for_article_body),
         "selector_wait_enabled": bool(normalized_wait_for_selector),
         "wait_for_selector": normalized_wait_for_selector or None,
-        "external_cdp": bool(config.cdp_endpoint),
-        "storage_state_path": str(_storage_state_path(config) or ""),
+        "storage_state_path": str(configured_storage_state_path or ""),
+        "storage_state_load": {
+            "path": str(configured_storage_state_path or "") or None,
+            "exists": bool(
+                configured_storage_state_path is not None
+                and configured_storage_state_path.is_file()
+            ),
+            "used": False,
+        },
         "storage_state_write_enabled": config.persist_storage_state,
+        "json_export_enabled": config.persist_storage_state,
+        "native_profile_write_enabled": config.state_mode == "native",
         "readiness_budget_seconds": readiness_budget_seconds,
         "runtime_page_reuse_enabled": bool(reuse_runtime_page),
     }
     overall_started = time.monotonic()
-    local_deadline = overall_started + (timeout_ms / 1000.0)
-    if runtime_context is not None and runtime_context.deadline_monotonic is not None:
-        local_deadline = min(
-            local_deadline,
-            runtime_context.deadline_monotonic,
-        )
+    local_deadline = _browser_html_deadline(
+        started_at=overall_started,
+        timeout_ms=timeout_ms,
+        runtime_context=runtime_context,
+    )
     trace["timeout_budget_ms"] = timeout_ms
     readiness_deadline: float | None = None
     observed_blocked_resource_types: set[str] = set()
@@ -1135,20 +1895,59 @@ def fetch_html_with_playwright(
     manager = None
     browser_context = None
     page = None
+    page_diagnostic_listeners: list[tuple[str, Callable[[Any], None]]] = []
+    document_request_diagnostics: dict[int, tuple[dict[str, Any], float]] = {}
     shared_page_session = _runtime_figure_page_session(
         runtime_context,
         create=bool(reuse_runtime_page),
     )
+
     try:
-        _raise_if_cancelled(runtime_context)
+        if runtime_context is not None:
+            runtime_context.raise_if_cancelled()
+        launch_config = config
+        if config.backend == "byparr":
+            from dataclasses import replace
+
+            launch_config = replace(config, timeout_ms=max(1, remaining_timeout_ms()))
         manager, browser_context, page = _open_browser_html_context(
-            config,
+            launch_config,
             runtime_context=runtime_context,
             shared_page_session=shared_page_session,
-            browser_context_seed=browser_context_seed,
-            candidate_url=candidate_urls[0] if candidate_urls else None,
             trace=trace,
         )
+        storage_state_load = trace.get("storage_state_load")
+        if isinstance(storage_state_load, dict):
+            profile_trace = (
+                runtime_context.browser_profile_diagnostics(browser_context)
+                if runtime_context is not None
+                and hasattr(runtime_context, "browser_profile_diagnostics")
+                else dict(getattr(manager, "diagnostics", {}))
+            )
+            if trace.get("runtime_page_reused"):
+                profile_trace.update(
+                    context_reused=True,
+                    native_profile_loaded=False,
+                    json_imported=False,
+                )
+            trace["persistent_profile"] = profile_trace
+            storage_state_load["used"] = bool(
+                profile_trace.get("json_imported")
+                or profile_trace.get("state_restored")
+            )
+        if trace.get("runtime_page_reused"):
+            trace["browser_context_seed"] = {
+                "provided": browser_context_seed is not None,
+                "applied": False,
+                "reason": "reused_runtime_page_context",
+            }
+        else:
+            _seed_browser_html_context(
+                browser_context,
+                browser_context_seed=browser_context_seed,
+                candidate_url=candidate_urls[0] if candidate_urls else None,
+                trace=trace,
+            )
         page = _ensure_browser_html_page(
             browser_context,
             page,
@@ -1156,13 +1955,78 @@ def fetch_html_with_playwright(
             shared_page_session=shared_page_session,
             trace=trace,
         )
+        (
+            page_diagnostic_listeners,
+            document_request_diagnostics,
+        ) = _install_page_diagnostic_listeners(page, trace)
+
+        # Science and PNAS can replace an initial denied document through an automatic
+        # main-frame navigation while readiness waits. Keep response ownership
+        # separate from the bounded, serializable diagnostic event summaries.
+        owned_document_requests: dict[int, Any] = {}
+        owned_document_responses: list[Any] = []
+        owned_finished_requests: set[int] = set()
+        response_hosts = set(page_policy.document_hosts)
+        if response_hosts:
+
+            def owned_request_started(request: Any) -> None:
+                if (
+                    _diagnostic_event_value(
+                        getattr(request, "is_navigation_request", False)
+                    )
+                    and _diagnostic_event_attr(request, "resource_type") == "document"
+                    and getattr(page, "main_frame", None) is not None
+                    and _diagnostic_event_attr(request, "frame")
+                    is getattr(page, "main_frame", None)
+                ):
+                    owned_document_requests[id(request)] = request
+
+            def owned_response_received(response: Any) -> None:
+                if (
+                    id(_diagnostic_event_attr(response, "request"))
+                    in owned_document_requests
+                ):
+                    owned_document_responses.append(response)
+
+            def owned_request_finished(request: Any) -> None:
+                if id(request) in owned_document_requests:
+                    owned_finished_requests.add(id(request))
+
+            for event, callback in (
+                ("request", owned_request_started),
+                ("response", owned_response_received),
+                ("requestfinished", owned_request_finished),
+            ):
+                if callable(getattr(page, "on", None)):
+                    page.on(event, callback)
+                    page_diagnostic_listeners.append((event, callback))
 
         def route_handler(route: Any) -> None:
             try:
                 resource_type = normalize_text(
                     str(route.request.resource_type or "")
                 ).lower()
-                if resource_type in active_blocked_resource_types:
+                request_url = str(route.request.url or "")
+                if (
+                    resource_type == "script"
+                    and request_url in empty_script_response_urls
+                ):
+                    try:
+                        route.fulfill(
+                            status=200,
+                            content_type="application/javascript",
+                            body="",
+                        )
+                    except Exception:
+                        with contextlib.suppress(Exception):
+                            route.continue_()
+                    else:
+                        trace["empty_script_response_count"] = (
+                            int(trace.get("empty_script_response_count") or 0) + 1
+                        )
+                    return
+                sidebar_metrics = bool(empty_request and empty_request(request_url))
+                if resource_type in active_blocked_resource_types or sidebar_metrics:
                     trace["blocked_request_count"] = (
                         int(trace.get("blocked_request_count") or 0) + 1
                     )
@@ -1170,6 +2034,10 @@ def fetch_html_with_playwright(
                     trace["blocked_request_types"] = sorted(
                         observed_blocked_resource_types
                     )
+                    if sidebar_metrics:
+                        trace["blocked_sidebar_metrics_count"] = (
+                            int(trace.get("blocked_sidebar_metrics_count") or 0) + 1
+                        )
                     route.abort()
                     return
                 route.continue_()
@@ -1177,12 +2045,13 @@ def fetch_html_with_playwright(
                 with contextlib.suppress(Exception):
                     route.continue_()
 
-        if active_blocked_resource_types:
+        if active_blocked_resource_types or empty_script_response_urls or empty_request:
             with contextlib.suppress(Exception):
                 page.route("**/*", route_handler)
 
         for url in candidate_urls:
-            _raise_if_cancelled(runtime_context)
+            if runtime_context is not None:
+                runtime_context.raise_if_cancelled()
             candidate_timeout_ms = remaining_timeout_ms()
             if candidate_timeout_ms <= 0:
                 trace["deadline_exhausted"] = True
@@ -1201,6 +2070,9 @@ def fetch_html_with_playwright(
             }
             trace["candidates"].append(candidate_trace)
             candidate_started = time.monotonic()
+            owned_document_requests.clear()
+            owned_document_responses.clear()
+            owned_finished_requests.clear()
             try:
                 logger.debug(
                     "browser_request backend=%s provider=%s action=request wait_seconds=%s url=%s",
@@ -1215,16 +2087,26 @@ def fetch_html_with_playwright(
                     trace["runtime_page_navigation_count"] = (
                         shared_page_session.mark_navigation()
                     )
-                response = _navigate_browser_page(
-                    page,
-                    url=normalized_url,
-                    timeout_ms=candidate_timeout_ms,
-                    return_image_payload=return_image_payload,
-                )
+                try:
+                    response = _navigate_browser_page(
+                        page,
+                        url=normalized_url,
+                        timeout_ms=candidate_timeout_ms,
+                        return_image_payload=return_image_payload,
+                    )
+                finally:
+                    navigator = getattr(browser_context, "__dict__", {}).get(
+                        "_paper_fetch_navigator"
+                    )
+                    if navigator is not None:
+                        candidate_trace["byparr"] = dict(navigator.diagnostics)
                 candidate_trace["navigation_seconds"] = round(
                     time.monotonic() - request_started, 3
                 )
                 if lightweight_seed_only:
+                    settle_page_navigation(
+                        page, timeout_ms=max(1, remaining_timeout_ms())
+                    )
                     final_url = (
                         normalize_text(str(getattr(page, "url", "") or ""))
                         or normalized_url
@@ -1242,6 +2124,17 @@ def fetch_html_with_playwright(
                         html = str(page.content() or "")
                     except Exception:
                         html = ""
+                    candidate_trace["main_document_response"] = (
+                        _main_document_response_diagnostic(
+                            response,
+                            page=page,
+                            fallback_url=final_url,
+                            status=status,
+                            headers=headers,
+                            document_requests=document_request_diagnostics,
+                            captured_html_bytes=len(html.encode("utf-8")),
+                        )
+                    )
                     try:
                         title = normalize_text(str(page.title() or ""))
                     except Exception:
@@ -1265,7 +2158,10 @@ def fetch_html_with_playwright(
                         browser_context_seed,
                         {
                             "paper_fetch_html_fetcher": backend_name,
-                            "diagnostics": {"browser_backend": backend_name},
+                            "diagnostics": {
+                                "browser_backend": backend_name,
+                                "browser_engine": "camoufox",
+                            },
                         },
                     )
                     candidate_trace["duration_seconds"] = round(
@@ -1314,13 +2210,17 @@ def fetch_html_with_playwright(
                         browser_context_seed=browser_context_seed,
                         diagnostics={"browser_runtime_trace": trace},
                     )
-                if readiness_budget_seconds is not None and readiness_deadline is None:
+                if readiness_budget_seconds is not None and (
+                    readiness_deadline is None or page_policy.readiness_per_candidate
+                ):
                     # Readiness owns its own budget: browser startup and the first
                     # document navigation remain governed by the request deadline.
+                    # PNAS candidates each need time for their own document body;
+                    # the overall request deadline still bounds every wait.
                     readiness_deadline = time.monotonic() + max(
                         0.0, float(readiness_budget_seconds)
                     )
-                _wait_for_browser_html_readiness(
+                body_readiness = _wait_for_browser_html_readiness(
                     page,
                     publisher=publisher,
                     readiness=readiness,
@@ -1336,25 +2236,77 @@ def fetch_html_with_playwright(
                         else None
                     ),
                 )
+                use_main_context_snapshot = bool(
+                    not return_image_payload
+                    and normalize_text(publisher).lower()
+                    in _MAIN_CONTEXT_SNAPSHOT_PROVIDERS
+                    and body_readiness is not None
+                    and body_readiness.ready
+                )
+                settle_page_navigation(page, timeout_ms=max(1, remaining_timeout_ms()))
+                if not return_image_payload and not supplementary_index:
+                    snapshot = (
+                        _main_context_html_snapshot(
+                            page, runtime_context=runtime_context
+                        )
+                        if use_main_context_snapshot
+                        else None
+                    )
+                    raise_for_paywall(
+                        snapshot[0]
+                        if snapshot is not None
+                        else str(page.content() or ""),
+                        metadata={"doi": config.doi},
+                        source_url=(
+                            snapshot[2]
+                            if snapshot is not None
+                            else str(getattr(page, "url", "") or normalized_url)
+                        ),
+                        provider=publisher,
+                        context=runtime_context,
+                    )
                 _prepare_provider_browser_page(
                     page,
                     publisher=publisher,
                     timeout_ms=remaining_timeout_ms(),
                     candidate_trace=candidate_trace,
+                    runtime_context=runtime_context,
                 )
-                final_url = (
-                    normalize_text(str(getattr(page, "url", "") or ""))
-                    or normalized_url
+                html, title, final_url = _capture_browser_html(
+                    page,
+                    use_main_context_snapshot=use_main_context_snapshot,
+                    runtime_context=runtime_context,
+                    candidate_url=normalized_url,
                 )
-                html = str(page.content() or "")
-                title = normalize_text(str(page.title() or ""))
                 if not title and normalize_text(publisher).lower() != "ieee":
                     title = (
                         extract_page_title(BeautifulSoup(html, choose_parser())) or ""
                     )
+                response = _select_owned_document_response(
+                    response,
+                    owned_document_responses=owned_document_responses,
+                    owned_finished_requests=owned_finished_requests,
+                    owned_document_requests=owned_document_requests,
+                    final_url=final_url,
+                    html=html,
+                    doi=config.doi,
+                    response_hosts=response_hosts,
+                    page_policy=page_policy,
+                )
                 status = _browser_response_status(response, zero_as_none=False)
                 headers = _browser_response_headers(response)
                 candidate_trace["status"] = status
+                candidate_trace["main_document_response"] = (
+                    _main_document_response_diagnostic(
+                        response,
+                        page=page,
+                        fallback_url=final_url,
+                        status=status,
+                        headers=headers,
+                        document_requests=document_request_diagnostics,
+                        captured_html_bytes=len(html.encode("utf-8")),
+                    )
+                )
                 candidate_trace["final_url"] = diagnostic_url_payload(final_url).get(
                     "url"
                 )
@@ -1372,7 +2324,10 @@ def fetch_html_with_playwright(
                     browser_context_seed,
                     {
                         "paper_fetch_html_fetcher": backend_name,
-                        "diagnostics": {"browser_backend": backend_name},
+                        "diagnostics": {
+                            "browser_backend": backend_name,
+                            "browser_engine": "camoufox",
+                        },
                     },
                 )
                 if browser_context_seed.get(
@@ -1403,15 +2358,23 @@ def fetch_html_with_playwright(
                 candidate_trace["error"] = "cancelled"
                 raise
             except Exception as exc:
+                propagate_paywall(exc)
                 candidate_trace["duration_seconds"] = round(
                     time.monotonic() - candidate_started,
                     3,
                 )
                 candidate_trace["error"] = (
-                    normalize_text(str(exc)) or exc.__class__.__name__
+                    _bounded_diagnostic_text(exc) or exc.__class__.__name__
                 )
                 if isinstance(exc, PlaywrightBrowserFailure):
                     candidate_failure = exc
+                    if backend_name == "byparr":
+                        candidate_failure.details.setdefault(
+                            "browser_runtime_trace", trace
+                        )
+                        candidate_failure.details.setdefault(
+                            "stage", "byparr_navigation"
+                        )
                 else:
                     candidate_failure = PlaywrightBrowserFailure(
                         f"{backend_name}_request_failed",
@@ -1426,7 +2389,9 @@ def fetch_html_with_playwright(
                 )
                 continue
 
-            if looks_like_abstract_redirect(normalized_url, final_url):
+            if not supplementary_index and looks_like_abstract_redirect(
+                normalized_url, final_url
+            ):
                 candidate_trace["duration_seconds"] = round(
                     time.monotonic() - candidate_started, 3
                 )
@@ -1443,18 +2408,69 @@ def fetch_html_with_playwright(
                 )
                 continue
 
+            if not return_image_payload and not supplementary_index:
+                raise_for_paywall(
+                    html,
+                    metadata={"doi": config.doi},
+                    source_url=final_url,
+                    provider=publisher,
+                    context=runtime_context,
+                )
             required_selector_ready = bool(
                 readiness.require_selector
                 and candidate_trace.get("selector_readiness_ready")
             )
+            # Stable provider body readiness outweighs navigation-only access
+            # labels. Wiley may provisionally review 401/403 below; challenges
+            # and every unconfirmed HTTP failure still fail closed.
+            substantive_body_ready = bool(
+                readiness.wait_for_article_body
+                and candidate_trace.get("dom_readiness_ready")
+            )
+            stable_wiley_body_ready = bool(
+                substantive_body_ready
+                and candidate_trace.get("dom_readiness_fingerprint_present")
+            )
+            http_access_status_review = _wiley_http_access_status_review(
+                publisher=publisher,
+                return_image_payload=return_image_payload,
+                status=status,
+                requested_doi=config.doi,
+                requested_url=normalized_url,
+                final_url=final_url,
+                html_text=html,
+                title=title or "",
+                body_ready=stable_wiley_body_ready,
+                runtime_context=runtime_context,
+            )
+            wiley_candidate_confirmed = _record_wiley_http_access_status_review(
+                candidate_trace,
+                http_access_status_review,
+            )
+            status_for_block_detection = None if wiley_candidate_confirmed else status
             detected = detect_html_block(
                 title or "",
                 summary,
-                status,
+                status_for_block_detection,
+                substantive_body_ready=substantive_body_ready,
+                include_paywall_text=not supplementary_index,
                 html_text="" if required_selector_ready else html,
                 response_headers={} if required_selector_ready else headers,
             )
+            if candidate_trace.get("dom_readiness_blocking_reason"):
+                reason = candidate_trace["dom_readiness_blocking_reason"]
+                detected = HtmlExtractionFailure(reason, html_failure_message(reason))
             if detected is not None and not return_image_payload:
+                _reject_wiley_http_access_status_review(
+                    http_access_status_review,
+                    blocking_reason=detected.reason,
+                )
+                _record_browser_challenge_signal(
+                    trace,
+                    reason=detected.reason,
+                    status=status,
+                    final_url=final_url,
+                )
                 candidate_trace["duration_seconds"] = round(
                     time.monotonic() - candidate_started, 3
                 )
@@ -1491,6 +2507,11 @@ def fetch_html_with_playwright(
                     trace=trace,
                 )
                 continue
+            _record_wiley_http_access_status_review(
+                candidate_trace,
+                http_access_status_review,
+                apply_override=True,
+            )
             if (
                 readiness.require_selector
                 and not return_image_payload
@@ -1563,27 +2584,11 @@ def fetch_html_with_playwright(
                 time.monotonic() - candidate_started, 3
             )
             candidate_trace["result"] = "success"
-            staged_storage_state = None
-            if config.persist_storage_state and not return_image_payload:
-                staged_storage_state, storage_state_result = _stage_storage_state(
-                    browser_context,
-                    config,
-                    filter_url=final_url,
-                )
-                trace["storage_state_save"] = storage_state_result
-            else:
-                trace["storage_state_save"] = {
-                    "attempted": False,
-                    "staged": False,
-                    "saved": False,
-                    "path": str(_storage_state_path(config) or "") or None,
-                    "reason": (
-                        "non_article_payload"
-                        if return_image_payload
-                        else "storage_state_write_disabled"
-                    ),
-                }
-            return BrowserFetchedHtml(
+            return _assemble_browser_html_result(
+                browser_context=browser_context,
+                config=config,
+                trace=trace,
+                options=options,
                 source_url=normalized_url,
                 final_url=final_url,
                 html=html,
@@ -1594,8 +2599,6 @@ def fetch_html_with_playwright(
                 browser_context_seed=browser_context_seed,
                 screenshot_b64=screenshot_b64,
                 image_payload=image_payload,
-                diagnostics={"browser_runtime_trace": trace},
-                staged_storage_state=staged_storage_state,
             )
     finally:
         if "storage_state_save" not in trace:
@@ -1612,20 +2615,12 @@ def fetch_html_with_playwright(
             }
         trace["duration_seconds"] = round(time.monotonic() - overall_started, 3)
         trace["remaining_ms"] = remaining_timeout_ms()
-        if runtime_context is not None and hasattr(
-            runtime_context, "accumulate_stage_timing"
-        ):
-            with contextlib.suppress(Exception):
-                runtime_context.accumulate_stage_timing(
-                    "browser_seconds",
-                    elapsed=time.monotonic() - overall_started,
-                )
+        _remove_page_diagnostic_listeners(page, page_diagnostic_listeners)
         if (
             shared_page_session is None
             or shared_page_session.context is not browser_context
         ):
             _safe_close(page)
-            _safe_close(browser_context)
             _safe_close(manager)
 
     if last_failure is None and latest_browser_context_seed is not None:
@@ -1648,13 +2643,6 @@ def fetch_html_with_playwright(
 
 
 fetch_html_with_playwright.paper_fetch_html_fetcher_name = "camoufox"  # type: ignore[attr-defined]
-
-
-def fetch_html_with_playwright_fast(*args: Any, **kwargs: Any) -> BrowserFetchedHtml:
-    return fetch_html_with_playwright(*args, **kwargs)
-
-
-fetch_html_with_playwright_fast.paper_fetch_html_fetcher_name = "camoufox_fast"  # type: ignore[attr-defined]
 
 
 def warm_browser_context_with_playwright(

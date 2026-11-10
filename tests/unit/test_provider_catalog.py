@@ -1,15 +1,20 @@
 from __future__ import annotations
-
+import json
+import xml.etree.ElementTree as ET
+from paper_fetch.provider_catalog import provider_for_xml_source
 from typing import get_args
 import unittest
-import xml.etree.ElementTree as ET
-
+from unittest import mock
 from paper_fetch import publisher_identity
 from paper_fetch.provider_catalog import (
     DEFAULT_BODY_TEXT_THRESHOLDS,
+    PROVIDER_BUNDLE_MAP,
     PROVIDER_CATALOG,
+    ProviderRouteSpec,
+    ProviderSpec,
     SOURCE_PROVIDER_MAP,
     api_like_hosts,
+    compile_route_execution_policy_for_kind,
     default_asset_profile_for_provider,
     default_asset_profile_for_source,
     is_official_provider,
@@ -23,7 +28,6 @@ from paper_fetch.provider_catalog import (
     provider_domain_matches,
     provider_emits_html_managed_marker,
     provider_for_source,
-    provider_for_xml_source,
     provider_html_path_templates,
     provider_managed_abstract_only_names,
     provider_metadata_probe_short_circuit,
@@ -45,7 +49,6 @@ from paper_fetch.extraction.html.provider_rules import (
     SPRINGER_NATURE_FORMULA_CONTAINER_TOKENS,
 )
 from paper_fetch.quality.html_profiles import site_rule_for_publisher
-from paper_fetch.quality.issues import EXPECTED_FULLTEXT_SOURCES_BY_PROVIDER
 from paper_fetch.models.schema import SourceKind
 from paper_fetch.providers import _pdf_candidates, html_springer_nature
 from paper_fetch import utils
@@ -63,6 +66,7 @@ class ProviderCatalogTests(unittest.TestCase):
         clients = build_clients(DummyTransport(), {})
 
         self.assertEqual(set(clients), set(PROVIDER_CATALOG))
+        self.assertEqual(tuple(clients), provider_status_order())
         for name, client in clients.items():
             self.assertEqual(client.name, name)
 
@@ -86,11 +90,88 @@ class ProviderCatalogTests(unittest.TestCase):
             self.assertEqual(
                 default_asset_profile_for_provider(spec.name), spec.asset_default
             )
-            self.assertTrue(spec.client_factory_path)
+            self.assertTrue(callable(PROVIDER_BUNDLE_MAP[spec.name].client_factory))
             self.assertEqual(
                 provider_supports_metadata_api_probe(spec.name),
                 spec.probe_capability == "metadata_api",
             )
+
+    def test_body_asset_providers_declare_bounded_explicit_asset_routes(self) -> None:
+        browser_recovery_without_direct_retries = {
+            "wiley",
+            "science",
+            "pnas",
+            "ieee",
+            "mdpi",
+            "royalsocietypublishing",
+            "acs",
+            "iop",
+            "aip",
+            "tandf",
+        }
+
+        for spec in PROVIDER_CATALOG.values():
+            if spec.asset_default == "none":
+                continue
+            with self.subTest(provider=spec.name):
+                asset_routes = [
+                    route for route in spec.routes if route.kind == "assets"
+                ]
+                self.assertTrue(asset_routes)
+                policy = compile_route_execution_policy_for_kind(spec.name, "assets")
+                self.assertEqual(policy.timeout_seconds, 20)
+                self.assertEqual(policy.asset_concurrency_cap, 2)
+                if spec.name in browser_recovery_without_direct_retries:
+                    self.assertEqual(policy.transient_retries, 0)
+
+    def test_explicit_routes_are_not_augmented(self) -> None:
+        spec = ProviderSpec(
+            name="example",
+            display_name="Example",
+            official=True,
+            domains=("example.test",),
+            doi_prefixes=("10.9999/",),
+            publisher_aliases=("example",),
+            asset_default="body",
+            probe_capability="routing_signal",
+            provider_managed_abstract_only=False,
+            status_order=99,
+            routes=(
+                ProviderRouteSpec(
+                    name="assets",
+                    kind="assets",
+                    timeout_seconds=20,
+                    concurrency=2,
+                ),
+            ),
+        )
+
+        self.assertEqual(
+            [(route.name, route.kind) for route in spec.routes],
+            [("assets", "assets")],
+        )
+
+    def test_body_asset_provider_without_explicit_asset_route_is_rejected(self) -> None:
+        with self.assertRaisesRegex(ValueError, "explicit assets route"):
+            ProviderSpec(
+                name="invalid",
+                display_name="Invalid",
+                official=True,
+                domains=("invalid.test",),
+                doi_prefixes=("10.9998/",),
+                publisher_aliases=("invalid",),
+                asset_default="body",
+                probe_capability="routing_signal",
+                provider_managed_abstract_only=False,
+                status_order=100,
+                routes=(ProviderRouteSpec(name="direct_html", kind="html"),),
+            )
+
+    def test_wiley_tries_verified_doi_route_before_full_route(self) -> None:
+        self.assertEqual(
+            provider_html_path_templates("wiley"),
+            ("/doi/{doi}", "/doi/full/{doi}"),
+        )
 
     def test_provider_rule_constants_keep_shared_and_incremental_layers(self) -> None:
         self.assertTrue(
@@ -132,14 +213,7 @@ class ProviderCatalogTests(unittest.TestCase):
             },
         )
 
-    def test_runtime_provider_order_constants_are_catalog_derived(self) -> None:
-        self.assertEqual(
-            set(routing.OFFICIAL_PROVIDER_NAMES), set(official_provider_names())
-        )
-        self.assertEqual(
-            set(fulltext.PROVIDER_MANAGED_ABSTRACT_ONLY_PROVIDERS),
-            set(provider_managed_abstract_only_names()),
-        )
+    def test_runtime_provider_order_is_catalog_derived(self) -> None:
         self.assertEqual(_PROVIDER_STATUS_ORDER, provider_names())
         self.assertEqual(_PROVIDER_STATUS_ORDER, provider_status_order())
 
@@ -194,7 +268,6 @@ class ProviderCatalogTests(unittest.TestCase):
             sources_by_provider(),
             {provider: frozenset(sources) for provider, sources in expected.items()},
         )
-        self.assertEqual(EXPECTED_FULLTEXT_SOURCES_BY_PROVIDER, sources_by_provider())
 
     def test_every_declared_source_maps_to_catalog_provider(self) -> None:
         for source, provider in SOURCE_PROVIDER_MAP.items():
@@ -303,9 +376,23 @@ class ProviderCatalogTests(unittest.TestCase):
             PROVIDER_CATALOG["arxiv"] = PROVIDER_CATALOG["arxiv"]  # type: ignore[index]
 
     def test_arxiv_metadata_probe_short_circuit_is_catalog_derived(self) -> None:
+        spec = PROVIDER_CATALOG["arxiv"]
+        self.assertEqual(spec.asset_default, "body")
+        assets = next(route for route in spec.routes if route.kind == "assets")
+        self.assertEqual(assets.asset_scope, "all")
+        self.assertEqual(assets.qps, 1)
+        self.assertEqual(assets.hosts, ("arxiv.org",))
         callback = provider_metadata_probe_short_circuit("arxiv")
 
         self.assertIsNotNone(callback)
+        self.assertIs(
+            callback,
+            PROVIDER_BUNDLE_MAP["arxiv"].metadata_probe_short_circuit,
+        )
+        self.assertNotIn(
+            "metadata_probe_short_circuit",
+            json.dumps(PROVIDER_CATALOG["arxiv"].to_dict()),
+        )
         result = routing.probe_official_provider(
             "arxiv",
             doi="10.48550/arxiv.2605.06663",
@@ -324,76 +411,6 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertFalse(provider_persists_provider_html("wiley"))
         self.assertFalse(provider_persists_provider_html(None))
 
-    def test_xml_source_provider_inference_is_catalog_derived(self) -> None:
-        self.assertEqual(
-            provider_for_xml_source(
-                "full-text-retrieval-response",
-                "/tmp/10.1016_example/original.xml",
-            ),
-            "elsevier",
-        )
-        self.assertEqual(
-            provider_for_xml_source(
-                "article",
-                "/tmp/10.5194_acp-24-1-2024/original.xml",
-            ),
-            "copernicus",
-        )
-        self.assertEqual(
-            provider_for_xml_source("article", "/tmp/10.1038_example/original.xml"),
-            "springer",
-        )
-        self.assertEqual(
-            provider_for_xml_source("unknown-root", "/tmp/payload.xml"),
-            "unknown",
-        )
-        neutral = ET.fromstring("<article />")
-        self.assertEqual(
-            provider_for_xml_source(
-                "article",
-                "/tmp/payload.xml",
-                xml_root=neutral,
-            ),
-            "unknown",
-        )
-        for doi, publisher, expected in (
-            ("10.1038/example", "Springer Nature", "springer"),
-            ("10.5194/example", "Copernicus Publications", "copernicus"),
-            ("10.1371/example", "Public Library of Science", "plos"),
-            ("10.3389/example", "Frontiers Media S.A.", "frontiers"),
-        ):
-            with self.subTest(doi=doi):
-                root = ET.fromstring(
-                    "<article><front><journal-meta>"
-                    f"<publisher><publisher-name>{publisher}</publisher-name></publisher>"
-                    "</journal-meta><article-meta>"
-                    f'<article-id pub-id-type="doi">{doi}</article-id>'
-                    "</article-meta></front></article>"
-                )
-                self.assertEqual(
-                    provider_for_xml_source(
-                        "article",
-                        "/tmp/payload.xml",
-                        xml_root=root,
-                    ),
-                    expected,
-                )
-        conflict = ET.fromstring(
-            "<article><front><journal-meta><publisher>"
-            "<publisher-name>Frontiers Media S.A.</publisher-name>"
-            "</publisher></journal-meta><article-meta>"
-            '<article-id pub-id-type="doi">10.1371/conflict</article-id>'
-            "</article-meta></front></article>"
-        )
-        self.assertEqual(
-            provider_for_xml_source(
-                "article",
-                "/tmp/payload.xml",
-                xml_root=conflict,
-            ),
-            "unknown",
-        )
-
     def test_provider_fallback_and_body_thresholds_are_catalog_derived(self) -> None:
         self.assertFalse(provider_emits_html_managed_marker("crossref"))
         self.assertFalse(provider_emits_html_managed_marker("copernicus"))
@@ -409,11 +426,10 @@ class ProviderCatalogTests(unittest.TestCase):
     def test_fulltext_provider_attempt_skips_non_official_catalog_provider(
         self,
     ) -> None:
-        class ExplodingProvider:
-            def fetch_result(self, *args, **kwargs):
-                raise AssertionError(
-                    "non-official providers should not enter fulltext provider attempts"
-                )
+        provider = mock.Mock()
+        provider.fetch_result.side_effect = AssertionError(
+            "non-official providers should not enter fulltext provider attempts"
+        )
 
         warnings: list[str] = []
         source_trail: list[str] = []
@@ -425,7 +441,7 @@ class ProviderCatalogTests(unittest.TestCase):
             strategy=fulltext.FetchStrategy(),
             artifact_store=object(),
             context=object(),
-            clients={"crossref": ExplodingProvider()},
+            clients={"crossref": provider},
             outputs=fulltext._ProviderAttemptOutputs(
                 warnings=warnings,
                 source_trail=source_trail,
@@ -433,6 +449,7 @@ class ProviderCatalogTests(unittest.TestCase):
         )
 
         self.assertIsNone(article)
+        provider.fetch_result.assert_not_called()
         self.assertEqual(warnings, [])
         self.assertEqual(source_trail, [])
 
@@ -561,6 +578,76 @@ class ProviderCatalogTests(unittest.TestCase):
                 doi="10.1111/example",
             ),
             [("elsevier", "domain"), ("springer", "publisher"), ("wiley", "doi")],
+        )
+
+    def test_xml_source_provider_inference_is_catalog_derived(self) -> None:
+        self.assertEqual(
+            provider_for_xml_source(
+                "full-text-retrieval-response",
+                "/tmp/10.1016_example/original.xml",
+            ),
+            "elsevier",
+        )
+        self.assertEqual(
+            provider_for_xml_source(
+                "article",
+                "/tmp/10.5194_acp-24-1-2024/original.xml",
+            ),
+            "copernicus",
+        )
+        self.assertEqual(
+            provider_for_xml_source("article", "/tmp/10.1038_example/original.xml"),
+            "springer",
+        )
+        self.assertEqual(
+            provider_for_xml_source("unknown-root", "/tmp/payload.xml"),
+            "unknown",
+        )
+        neutral = ET.fromstring("<article />")
+        self.assertEqual(
+            provider_for_xml_source(
+                "article",
+                "/tmp/payload.xml",
+                xml_root=neutral,
+            ),
+            "unknown",
+        )
+        for doi, publisher, expected in (
+            ("10.1038/example", "Springer Nature", "springer"),
+            ("10.5194/example", "Copernicus Publications", "copernicus"),
+            ("10.1371/example", "Public Library of Science", "plos"),
+            ("10.3389/example", "Frontiers Media S.A.", "frontiers"),
+        ):
+            with self.subTest(doi=doi):
+                root = ET.fromstring(
+                    "<article><front><journal-meta>"
+                    f"<publisher><publisher-name>{publisher}</publisher-name></publisher>"
+                    "</journal-meta><article-meta>"
+                    f'<article-id pub-id-type="doi">{doi}</article-id>'
+                    "</article-meta></front></article>"
+                )
+                self.assertEqual(
+                    provider_for_xml_source(
+                        "article",
+                        "/tmp/payload.xml",
+                        xml_root=root,
+                    ),
+                    expected,
+                )
+        conflict = ET.fromstring(
+            "<article><front><journal-meta><publisher>"
+            "<publisher-name>Frontiers Media S.A.</publisher-name>"
+            "</publisher></journal-meta><article-meta>"
+            '<article-id pub-id-type="doi">10.1371/conflict</article-id>'
+            "</article-meta></front></article>"
+        )
+        self.assertEqual(
+            provider_for_xml_source(
+                "article",
+                "/tmp/payload.xml",
+                xml_root=conflict,
+            ),
+            "unknown",
         )
 
 

@@ -37,6 +37,7 @@ _ASSET_KINDS: tuple[AssetLogicalKind, ...] = (
     "decoration",
 )
 _BODY_ASSET_KINDS = frozenset({"figure", "formula", "table"})
+_DUPLICATE_SHA_ASSET_KINDS = frozenset({"figure", "table"})
 _REMOTE_PREFIXES = ("http://", "https://", "//")
 _REMOTE_FIELDS = (
     "url",
@@ -169,6 +170,15 @@ def _asset_provenance(asset: AssetLike) -> list[str]:
 def preview_asset_is_accepted(asset: AssetLike) -> bool:
     """Classify a preview from explicit evidence or the shared size threshold."""
 
+    # These providers retain explicit original-image degradation even when
+    # the preview exceeds the ordinary acceptable-preview dimensions.
+    if _text_field(asset, "kind") == "figure" and any(
+        isinstance(attempt, Mapping)
+        and attempt.get("provider") in {"wiley", "oxfordacademic"}
+        and attempt.get("stage") == "preview_fallback"
+        for attempt in (_field(asset, "recovery_attempts") or [])
+    ):
+        return False
     if bool(_field(asset, "preview_accepted")):
         return True
     try:
@@ -281,7 +291,8 @@ def _diagnose_asset(
         ).startswith("image/"):
             suspected_reasons.append("invalid_mime")
         if (
-            width is not None
+            kind != "formula"
+            and width is not None
             and height is not None
             and (
                 min(width, height) <= PLACEHOLDER_SUSPECT_MAX_DIMENSION
@@ -345,7 +356,7 @@ def _apply_duplicate_sha_suspicions(
         if (
             path_exists
             and diagnostic.sha256
-            and diagnostic.kind in _BODY_ASSET_KINDS
+            and diagnostic.kind in _DUPLICATE_SHA_ASSET_KINDS
             and diagnostic.status != "failed"
         ):
             by_sha.setdefault(diagnostic.sha256, []).append((diagnostic, identity))
